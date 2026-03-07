@@ -3,14 +3,10 @@
     "target": "es2022",
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "lib": [
-      "es2022"
-    ],
+    "lib": ["es2022", "dom"],
     "baseUrl": ".",
     "paths": {
-      "@/*": [
-        "src/*"
-      ]
+      "@/*": ["src/*"]
     },
     "rootDir": "./src",
     "outDir": "./dist",
@@ -18,10 +14,9 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "strict": true,
-    "jsx": "react",
+    "jsx": "react-jsx",
+    "jsxImportSource": "@opentui/react",
     "allowSyntheticDefaultImports": true
   },
-  "include": [
-    "src"
-  ]
+  "include": ["src"]
 }

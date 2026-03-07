@@ -7,3 +7,9 @@
  * This aligns with the default timeout expected by the MCP tool.
  */
 export const USER_INPUT_TIMEOUT_SECONDS = 60;
+
+/**
+ * Sentinel string written by UI processes when a prompt times out.
+ * This should be handled consistently across command and tool layers.
+ */
+export const USER_INPUT_TIMEOUT_SENTINEL = '__TIMEOUT__';

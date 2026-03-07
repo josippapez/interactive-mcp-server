@@ -1,36 +1,85 @@
-import React, { FC, useState, useEffect, useRef } from 'react';
-import { render, Box, Text, useApp } from 'ink';
-import { ProgressBar } from '@inkjs/ui';
+import * as OpenTuiCore from '@opentui/core';
+import * as OpenTuiReact from '@opentui/react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import fs from 'fs/promises';
 import path from 'path';
 import crypto from 'crypto';
 import { InteractiveInput } from '@/components/InteractiveInput.js';
-import { USER_INPUT_TIMEOUT_SECONDS } from '@/constants.js'; // Import the constant
+import { MarkdownText } from '@/components/MarkdownText.js';
+import { PromptStatus } from '@/components/PromptStatus.js';
+import {
+  USER_INPUT_TIMEOUT_SECONDS,
+  USER_INPUT_TIMEOUT_SENTINEL,
+} from '@/constants.js';
 import logger from '../../utils/logger.js';
+import { resolveSearchRoot } from '../../utils/search-root.js';
 
-// Interface for chat message
 interface ChatMessage {
   text: string;
   isQuestion: boolean;
   answer?: string;
 }
 
-// Parse command line arguments from a single JSON-encoded argument
+interface CliRendererLike {
+  destroy: () => void;
+}
+
+interface CliRootLike {
+  render: (node: unknown) => void;
+  unmount?: () => void;
+}
+
+interface ScrollBoxLike {
+  scrollTo?: (position: number | { x: number; y: number }) => void;
+}
+
+const { createCliRenderer } = OpenTuiCore as unknown as {
+  createCliRenderer: (config?: {
+    exitOnCtrlC?: boolean;
+  }) => Promise<CliRendererLike>;
+};
+
+const { createRoot } = OpenTuiReact as unknown as {
+  createRoot: (renderer: CliRendererLike) => CliRootLike;
+};
+const { useTerminalDimensions } = OpenTuiReact as unknown as {
+  useTerminalDimensions: () => { width: number; height: number };
+};
+
+const decodeSearchRootArg = (
+  encodedSearchRoot?: string,
+): string | undefined => {
+  if (!encodedSearchRoot) {
+    return undefined;
+  }
+
+  try {
+    return Buffer.from(encodedSearchRoot, 'base64').toString('utf8');
+  } catch {
+    return undefined;
+  }
+};
+
 const parseArgs = () => {
   const args = process.argv.slice(2);
+  const searchRootFromArg = decodeSearchRootArg(args[1]);
   const defaults = {
     sessionId: crypto.randomUUID(),
     title: 'Interactive Chat Session',
     outputDir: undefined as string | undefined,
+    searchRoot: searchRootFromArg,
     timeoutSeconds: USER_INPUT_TIMEOUT_SECONDS,
   };
 
   if (args[0]) {
     try {
-      // Decode base64-encoded JSON payload to avoid quoting issues
       const decoded = Buffer.from(args[0], 'base64').toString('utf8');
       const parsed = JSON.parse(decoded);
-      return { ...defaults, ...parsed };
+      return {
+        ...defaults,
+        ...parsed,
+        searchRoot: parsed.searchRoot ?? searchRootFromArg,
+      };
     } catch (e) {
       logger.error(
         { error: e },
@@ -38,40 +87,32 @@ const parseArgs = () => {
       );
     }
   }
+
   return defaults;
 };
 
-// Get command line arguments
 const options = parseArgs();
 
-// Function to write response to output file
 const writeResponseToFile = async (questionId: string, response: string) => {
   if (!options.outputDir) return;
 
-  // Create response file path
   const responseFilePath = path.join(
     options.outputDir,
     `response-${questionId}.txt`,
   );
-
-  // Write file in UTF-8 format
   await fs.writeFile(responseFilePath, response, 'utf8');
-
-  //wait 500 ms
   await new Promise((resolve) => setTimeout(resolve, 500));
 };
 
-// Create a heartbeat file to indicate the session is still active
 const updateHeartbeat = async () => {
   if (!options.outputDir) return;
 
   const heartbeatPath = path.join(options.outputDir, 'heartbeat.txt');
   try {
     const dir = path.dirname(heartbeatPath);
-    await fs.mkdir(dir, { recursive: true }); // Ensure directory exists
+    await fs.mkdir(dir, { recursive: true });
     await fs.writeFile(heartbeatPath, Date.now().toString(), 'utf8');
   } catch (writeError) {
-    // Log the specific error but allow the poll cycle to continue
     logger.error(
       { heartbeatPath, error: writeError },
       `Failed to write heartbeat file ${heartbeatPath}`,
@@ -79,10 +120,8 @@ const updateHeartbeat = async () => {
   }
 };
 
-// Register process termination handlers
 const handleExit = () => {
   if (options.outputDir) {
-    // Write exit file to indicate session has ended
     fs.writeFile(path.join(options.outputDir, 'session-closed.txt'), '', 'utf8')
       .then(() => process.exit(0))
       .catch((error) => {
@@ -94,7 +133,6 @@ const handleExit = () => {
   }
 };
 
-// Listen for termination signals
 process.on('SIGINT', handleExit);
 process.on('SIGTERM', handleExit);
 process.on('beforeExit', handleExit);
@@ -103,12 +141,19 @@ interface AppProps {
   sessionId: string;
   title: string;
   outputDir?: string;
+  searchRoot?: string;
   timeoutSeconds: number;
+  onCloseSession: () => void;
 }
 
-const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
-  // console.clear(); // Clear console before rendering UI - Removed from here
-  const { exit: appExit } = useApp();
+const App = ({
+  sessionId,
+  title,
+  outputDir,
+  searchRoot,
+  timeoutSeconds,
+  onCloseSession,
+}: AppProps) => {
   const [chatHistory, setChatHistory] = useState<ChatMessage[]>([]);
   const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(
     null,
@@ -116,40 +161,83 @@ const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
   const [currentPredefinedOptions, setCurrentPredefinedOptions] = useState<
     string[] | undefined
   >(undefined);
-  const [timeLeft, setTimeLeft] = useState<number | null>(null); // State for countdown timer
-  const timerRef = useRef<NodeJS.Timeout | null>(null); // Ref to hold timer ID
+  const [sessionSearchRoot, setSessionSearchRoot] = useState<
+    string | undefined
+  >(undefined);
+  const [currentSearchRoot, setCurrentSearchRoot] = useState<
+    string | undefined
+  >(undefined);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+  const [followInput, setFollowInput] = useState(false);
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const scrollRef = useRef<ScrollBoxLike | null>(null);
+  const { width, height } = useTerminalDimensions();
+  const isNarrow = width < 90;
 
-  // Clear console only once on mount
+  const keepInputVisible = useCallback(() => {
+    setFollowInput(true);
+    scrollRef.current?.scrollTo?.({ x: 0, y: Number.MAX_SAFE_INTEGER });
+  }, []);
+
   useEffect(() => {
     console.clear();
-  }, []); // Empty dependency array ensures this runs only once
+  }, []);
 
-  // Check for new questions periodically
   useEffect(() => {
-    // Set up polling for new inputs
+    let mounted = true;
+
+    void resolveSearchRoot(searchRoot, { argvEntry: process.argv[1] }).then(
+      (resolvedSearchRoot) => {
+        if (!mounted) {
+          return;
+        }
+
+        setSessionSearchRoot(resolvedSearchRoot);
+        setCurrentSearchRoot((prev) => prev ?? resolvedSearchRoot);
+      },
+    );
+
+    return () => {
+      mounted = false;
+    };
+  }, [searchRoot]);
+
+  useEffect(() => {
+    if (!currentQuestionId) {
+      return;
+    }
+
+    setFollowInput(false);
+    scrollRef.current?.scrollTo?.({ x: 0, y: 0 });
+  }, [currentQuestionId]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo?.({
+      x: 0,
+      y: followInput ? Number.MAX_SAFE_INTEGER : 0,
+    });
+  }, [followInput, height, width]);
+
+  useEffect(() => {
     const questionPoller = setInterval(async () => {
       if (!outputDir) return;
 
       try {
-        // Update heartbeat to indicate we're still running
         await updateHeartbeat();
 
-        // Look for the session-specific input file
         const inputFilePath = path.join(outputDir, `${sessionId}.json`);
 
-        // Check if new input file exists
         try {
           const inputExists = await fs.stat(inputFilePath);
 
           if (inputExists) {
-            // Read input file content
             const inputFileContent = await fs.readFile(inputFilePath, 'utf8');
             let questionId: string | null = null;
             let questionText: string | null = null;
-            let options: string[] | undefined = undefined;
+            let incomingOptions: string[] | undefined;
+            let incomingSearchRoot: string | undefined;
 
             try {
-              // Parse input file content as JSON { id: string, text: string, options?: string[] }
               const inputData = JSON.parse(inputFileContent);
               if (
                 typeof inputData === 'object' &&
@@ -157,17 +245,19 @@ const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
                 typeof inputData.id === 'string' &&
                 typeof inputData.text === 'string' &&
                 (inputData.options === undefined ||
-                  Array.isArray(inputData.options))
+                  Array.isArray(inputData.options)) &&
+                (inputData.searchRoot === undefined ||
+                  typeof inputData.searchRoot === 'string')
               ) {
                 questionId = inputData.id;
                 questionText = inputData.text;
-                // Ensure options are strings if they exist
-                options = Array.isArray(inputData.options)
+                incomingOptions = Array.isArray(inputData.options)
                   ? inputData.options.map(String)
                   : undefined;
+                incomingSearchRoot = inputData.searchRoot;
               } else {
                 logger.error(
-                  `Invalid format in ${sessionId}.json. Expected JSON with id (string), text (string), and optional options (array).`,
+                  `Invalid format in ${sessionId}.json. Expected JSON with id (string), text (string), and optional options (array), and optional searchRoot (string).`,
                 );
               }
             } catch (parseError) {
@@ -177,21 +267,20 @@ const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
               );
             }
 
-            // Proceed only if we successfully parsed the question ID and text
             if (questionId && questionText) {
-              // Add question to chat using the ID and options from the file
-              addNewQuestion(questionId, questionText, options);
-
-              // Delete the input file
+              await addNewQuestion(
+                questionId,
+                questionText,
+                incomingOptions,
+                incomingSearchRoot,
+              );
               await fs.unlink(inputFilePath);
             } else {
-              // If parsing failed or format was invalid, delete the problematic file
               logger.error(`Deleting invalid input file: ${inputFilePath}`);
               await fs.unlink(inputFilePath);
             }
           }
         } catch (e: unknown) {
-          // Type guard to check if it's an error with a code property
           if (
             typeof e === 'object' &&
             e !== null &&
@@ -203,17 +292,14 @@ const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
               `Error checking/reading input file ${inputFilePath}`,
             );
           }
-          // If it's not an error with a code or the code is ENOENT, we ignore it silently.
         }
 
-        // Check if we should exit
         const closeFilePath = path.join(outputDir, 'close-session.txt');
         try {
           await fs.stat(closeFilePath);
-          // If close file exists, exit the process
-          handleExit();
-        } catch (_e) {
-          // No close request
+          onCloseSession();
+        } catch {
+          // No close request.
         }
       } catch (error) {
         logger.error({ error }, 'Error in poll cycle');
@@ -221,50 +307,48 @@ const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
     }, 100);
 
     return () => clearInterval(questionPoller);
-  }, [outputDir, sessionId]);
+  }, [onCloseSession, outputDir, sessionId]);
 
-  // Countdown timer effect
   useEffect(() => {
-    if (timeLeft === null || timeLeft <= 0 || !currentQuestionId) {
+    if (timeLeft === null || !currentQuestionId) {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
-      return; // No timer needed or timer expired
+      return;
     }
 
-    // Start timer if not already running
+    if (timeLeft <= 0) {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+      void handleSubmit(currentQuestionId, USER_INPUT_TIMEOUT_SENTINEL);
+      return;
+    }
+
     if (!timerRef.current) {
       timerRef.current = setInterval(() => {
         setTimeLeft((prev) => (prev !== null ? prev - 1 : null));
       }, 1000);
     }
 
-    // Check if timer reached zero
-    if (timeLeft <= 0 && timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-      // Auto-submit timeout indicator on timeout
-      handleSubmit(currentQuestionId, '__TIMEOUT__');
-    }
-
-    // Cleanup function to clear interval on unmount or when dependencies change
     return () => {
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, [timeLeft, currentQuestionId]); // Rerun effect when timeLeft or currentQuestionId changes
+  }, [timeLeft, currentQuestionId]);
 
-  // Add a new question to the chat
-  const addNewQuestion = (
+  const addNewQuestion = async (
     questionId: string,
     questionText: string,
-    options?: string[],
+    incomingOptions?: string[],
+    incomingSearchRoot?: string,
   ) => {
-    console.clear(); // Clear console before displaying new question
-    // Clear existing timer before starting new one
+    console.clear();
+
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -279,24 +363,25 @@ const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
     ]);
 
     setCurrentQuestionId(questionId);
-    setCurrentPredefinedOptions(options);
-    setTimeLeft(timeoutSeconds); // Use timeout from props
+    setCurrentPredefinedOptions(incomingOptions);
+    const resolvedSearchRoot = await resolveSearchRoot(
+      incomingSearchRoot ?? sessionSearchRoot ?? searchRoot,
+      { argvEntry: process.argv[1] },
+    );
+    setCurrentSearchRoot(resolvedSearchRoot);
+    setTimeLeft(timeoutSeconds);
   };
 
-  // Handle user submitting an answer
   const handleSubmit = async (questionId: string, value: string) => {
-    // Clear the timer
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    setTimeLeft(null); // Reset timer state
 
-    // Update the chat history with the answer
+    setTimeLeft(null);
+
     setChatHistory((prev) =>
       prev.map((msg) => {
-        // Find the last question in history that matches the ID and doesn't have an answer yet
-        // Use slice().reverse().find() for broader compatibility instead of findLast()
         if (
           msg.isQuestion &&
           !msg.answer &&
@@ -312,87 +397,143 @@ const App: FC<AppProps> = ({ sessionId, title, outputDir, timeoutSeconds }) => {
       }),
     );
 
-    // Reset current question state
     setCurrentQuestionId(null);
     setCurrentPredefinedOptions(undefined);
+    setCurrentSearchRoot(sessionSearchRoot);
 
-    // Write response to file
     if (outputDir) {
       await writeResponseToFile(questionId, value);
     }
   };
 
-  // Calculate progress bar value (moved slightly down, renamed to percentage)
-  const percentage = timeLeft !== null ? (timeLeft / timeoutSeconds) * 100 : 0; // Use timeout from props
+  const percentage =
+    timeLeft !== null && timeoutSeconds > 0
+      ? (timeLeft / timeoutSeconds) * 100
+      : 0;
 
   return (
-    <Box
+    <box
       flexDirection="column"
-      padding={1}
-      borderStyle="round"
-      borderColor="blue"
+      width="100%"
+      height="100%"
+      backgroundColor="black"
+      paddingLeft={isNarrow ? 0 : 1}
+      paddingRight={isNarrow ? 0 : 1}
     >
-      <Box marginBottom={1} flexDirection="column" width="100%">
-        <Text bold color="magentaBright" wrap="wrap">
-          {title}
-        </Text>
-        <Text color="gray">Session ID: {sessionId}</Text>
-        <Text color="gray">Press Ctrl+C to exit the chat session</Text>
-      </Box>
+      <box
+        marginBottom={1}
+        flexDirection="column"
+        width="100%"
+        paddingLeft={1}
+        paddingRight={1}
+        gap={0}
+      >
+        <text fg="magenta">
+          <strong>{title}</strong>
+        </text>
+        <text fg="gray" wrapMode="word">
+          Session {sessionId}
+        </text>
+        {!isNarrow && <text fg="gray">Waiting for prompts…</text>}
+      </box>
 
-      <Box flexDirection="column" width="100%">
-        {/* Chat history */}
-        {chatHistory.map((msg, i) => (
-          <Box key={i} flexDirection="column" marginY={1}>
-            {msg.isQuestion ? (
-              <Text color="cyan" wrap="wrap">
-                Q: {msg.text}
-              </Text>
-            ) : null}
-            {msg.answer ? (
-              <Text color="green" wrap="wrap">
-                A: {msg.answer}
-              </Text>
-            ) : null}
-          </Box>
-        ))}
-      </Box>
+      <scrollbox
+        ref={scrollRef}
+        flexGrow={1}
+        width="100%"
+        scrollY
+        stickyScroll={followInput}
+        stickyStart={followInput ? 'bottom' : undefined}
+        viewportCulling={false}
+        scrollbarOptions={{
+          showArrows: false,
+        }}
+      >
+        <box flexDirection="column" width="100%" paddingBottom={1}>
+          <box flexDirection="column" width="100%" gap={2}>
+            {chatHistory.map((msg, i) => (
+              <box
+                key={`msg-${i}`}
+                flexDirection="column"
+                width="100%"
+                paddingLeft={1}
+                paddingRight={1}
+                gap={1}
+              >
+                {msg.isQuestion ? (
+                  <box flexDirection="column" width="100%" gap={0}>
+                    <text fg="cyan">
+                      <strong>QUESTION</strong>
+                    </text>
+                    <box paddingLeft={isNarrow ? 1 : 2}>
+                      <MarkdownText content={msg.text} showCodeCopyControls />
+                    </box>
+                  </box>
+                ) : null}
+                {msg.answer ? (
+                  <box flexDirection="column" width="100%" marginTop={0}>
+                    <text fg="green">
+                      <strong>ANSWER</strong>
+                    </text>
+                    <box paddingLeft={isNarrow ? 1 : 2}>
+                      <MarkdownText content={msg.answer} showCodeCopyControls />
+                    </box>
+                  </box>
+                ) : null}
+              </box>
+            ))}
+          </box>
 
-      {/* Current question input */}
-      {currentQuestionId && (
-        <Box
-          flexDirection="column"
-          marginTop={1}
-          padding={1}
-          borderStyle="single"
-          borderColor={timeLeft !== null && timeLeft <= 10 ? 'red' : 'yellow'} // Highlight border when time is low
-        >
-          <InteractiveInput
-            // Use slice().reverse().find() for broader compatibility instead of findLast()
-            question={
-              chatHistory
-                .slice()
-                .reverse()
-                .find((m: ChatMessage) => m.isQuestion && !m.answer)?.text || ''
-            }
-            questionId={currentQuestionId}
-            predefinedOptions={currentPredefinedOptions}
-            onSubmit={handleSubmit}
-          />
-          {/* Countdown Timer and Progress Bar */}
-          {timeLeft !== null && (
-            <Box flexDirection="column" marginTop={1}>
-              <Text color={timeLeft <= 10 ? 'red' : 'yellow'}>
-                Time remaining: {timeLeft}s
-              </Text>
-              <ProgressBar value={percentage} />
-            </Box>
+          {currentQuestionId && (
+            <box
+              flexDirection="column"
+              marginTop={1}
+              paddingLeft={1}
+              paddingRight={1}
+              gap={1}
+            >
+              <InteractiveInput
+                question={
+                  chatHistory
+                    .slice()
+                    .reverse()
+                    .find((m: ChatMessage) => m.isQuestion && !m.answer)
+                    ?.text || ''
+                }
+                questionId={currentQuestionId}
+                predefinedOptions={currentPredefinedOptions}
+                searchRoot={currentSearchRoot}
+                onSubmit={handleSubmit}
+                onInputActivity={keepInputVisible}
+              />
+
+              {timeLeft !== null && (
+                <box marginTop={0}>
+                  <PromptStatus
+                    value={percentage}
+                    timeLeftSeconds={timeLeft}
+                    critical={timeLeft <= 10}
+                  />
+                </box>
+              )}
+            </box>
           )}
-        </Box>
-      )}
-    </Box>
+        </box>
+      </scrollbox>
+    </box>
   );
 };
 
-// Render the app
-render(<App {...options} />);
+async function startUi() {
+  const renderer = await createCliRenderer({
+    exitOnCtrlC: false,
+  });
+  const root = createRoot(renderer);
+
+  root.render(<App {...options} onCloseSession={handleExit} />);
+}
+
+void startUi().catch((error) => {
+  logger.error({ error }, 'Failed to start intensive chat UI');
+  process.exit(1);
+});

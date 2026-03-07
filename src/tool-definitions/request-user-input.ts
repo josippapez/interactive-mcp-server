@@ -8,7 +8,7 @@ import {
 // Define capability conforming to ToolCapabilityInfo
 const capabilityInfo: ToolCapabilityInfo = {
   description:
-    'Send a question to the user via a pop-up command prompt and await their reply.',
+    'Ask the user a question in an OpenTUI terminal prompt and await their reply.',
   parameters: {
     type: 'object',
     properties: {
@@ -29,8 +29,13 @@ const capabilityInfo: ToolCapabilityInfo = {
         description:
           'Predefined options for the user to choose from (optional)',
       },
+      baseDirectory: {
+        type: 'string',
+        description:
+          'Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope)',
+      },
     },
-    required: ['projectName', 'message'],
+    required: ['projectName', 'message', 'baseDirectory'],
   },
 };
 
@@ -38,7 +43,7 @@ const capabilityInfo: ToolCapabilityInfo = {
 const registrationDescription: ToolRegistrationDescription = (
   globalTimeoutSeconds: number,
 ) => `<description>
-Send a question to the user via a pop-up command prompt. **Crucial for clarifying requirements, confirming plans, or resolving ambiguity.**
+Send a question to the user via the OpenTUI terminal prompt. **Crucial for clarifying requirements, confirming plans, or resolving ambiguity.**
 You should call this tool whenever it has **any** uncertainty or needs clarification or confirmation, even for trivial or silly questions.
 Feel free to ask anything! **Proactive questioning is preferred over making assumptions.**
 </description>
@@ -64,11 +69,13 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 </whenToUseThisTool>
 
 <features>
-- Pop-up command prompt display for user input
-- Returns user response or timeout notification (timeout defaults to ${globalTimeoutSeconds} seconds))
+- OpenTUI prompt with markdown rendering (including code/diff blocks)
+- Supports option mode + free-text input mode when predefinedOptions are provided
+- Returns user response or timeout notification (timeout defaults to ${globalTimeoutSeconds} seconds)
 - Maintains context across user interactions
 - Handles empty responses gracefully
 - Properly formats prompt with project context
+- baseDirectory is required, must be the current repository root, and controls file autocomplete/search scope explicitly
 </features>
 
 <bestPractices>
@@ -88,6 +95,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - projectName: Identifies the context/project making the request (used in prompt formatting)
 - message: The specific question for the user (appears in the prompt)
 - predefinedOptions: Predefined options for the user to choose from (optional)
+- baseDirectory: Required absolute path to the current repository root (must be a git repo root)
 </parameters>
 
 <examples>
@@ -97,6 +105,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - "Can I refactor the database connection code to use connection pooling?"
 - "Is it acceptable to add React Router as a dependency?"
 - "I plan to modify function X in file Y. Is that correct?"
+- { "projectName": "web-app", "message": "Which file should I edit?", "baseDirectory": "/workspace/web-app" }
 </examples>`;
 
 // Define the Zod schema (as a raw shape object)
@@ -113,6 +122,11 @@ const rawSchema: z.ZodRawShape = {
     .array(z.string())
     .optional()
     .describe('Predefined options for the user to choose from (optional)'),
+  baseDirectory: z
+    .string()
+    .describe(
+      'Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope)',
+    ),
 };
 
 // Combine into a single ToolDefinition object

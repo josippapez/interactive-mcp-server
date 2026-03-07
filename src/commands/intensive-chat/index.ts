@@ -1,14 +1,19 @@
-import { spawn, ChildProcess } from 'child_process';
+import { ChildProcess } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs/promises';
 import os from 'os';
 import crypto from 'crypto';
 import logger from '../../utils/logger.js';
+import { spawnDetachedTerminal } from '../../utils/spawn-detached-terminal.js';
+import { SEARCH_ROOT_ENV_KEY } from '../../utils/search-root.js';
+import {
+  USER_INPUT_TIMEOUT_SECONDS,
+  USER_INPUT_TIMEOUT_SENTINEL,
+} from '@/constants.js';
 
 // Get the directory name of the current module
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 // Interface for active session info
 interface SessionInfo {
   id: string;
@@ -18,6 +23,7 @@ interface SessionInfo {
   isActive: boolean;
   title: string;
   timeoutSeconds?: number;
+  baseDirectory: string;
 }
 
 // Global object to keep track of active intensive chat sessions
@@ -44,11 +50,13 @@ async function createSessionDir(): Promise<string> {
 /**
  * Start an intensive chat session
  * @param title Title for the chat session
+ * @param baseDirectory Default base directory for autocomplete/search
  * @param timeoutSeconds Optional timeout for each question in seconds
  * @returns Session ID for the created session
  */
 export async function startIntensiveChatSession(
   title: string,
+  baseDirectory: string,
   timeoutSeconds?: number,
 ): Promise<string> {
   // Create a session directory
@@ -66,95 +74,36 @@ export async function startIntensiveChatSession(
     title,
     outputDir: sessionDir,
     timeoutSeconds,
+    searchRoot: baseDirectory,
   };
+
+  logger.info(
+    {
+      sessionId,
+      title,
+      timeoutSeconds: timeoutSeconds ?? USER_INPUT_TIMEOUT_SECONDS,
+    },
+    'Starting intensive chat session with timeout configuration.',
+  );
 
   // Encode options as base64 payload
   const payload = Buffer.from(JSON.stringify(options)).toString('base64');
+  const encodedSearchRoot = Buffer.from(baseDirectory, 'utf8').toString(
+    'base64',
+  );
 
-  // Platform-specific spawning
-  const platform = os.platform();
-  let childProcess: ChildProcess;
-
-  if (platform === 'darwin') {
-    // macOS
-    // Escape potential special characters in paths/payload for the shell command
-    // For the shell command executed by 'do script', we primarily need to handle spaces
-    // or other characters that might break the command if paths aren't quoted.
-    // The `${...}` interpolation within backticks handles basic variable insertion.
-    // Quoting the paths within nodeCommand handles spaces.
-    const escapedScriptPath = uiScriptPath; // Keep original path, rely on quotes below
-    const escapedPayload = payload; // Keep original payload, rely on quotes below
-
-    // Construct the command string directly for the shell. Quotes handle paths with spaces.
-    const nodeBin = process.execPath;
-    const nodeCommand = `exec "${nodeBin}" "${escapedScriptPath}" "${escapedPayload}"; exit 0`;
-
-    // Escape the node command for osascript's AppleScript string:
-    // 1. Escape existing backslashes (\ -> \\)
-    // 2. Escape double quotes (" -> \")
-    const escapedNodeCommand = nodeCommand
-      // Escape backslashes first
-      .replace(/\\/g, '\\\\') // Using /\\/g instead of /\/g
-      // Then escape double quotes
-      .replace(/"/g, '\\"');
-
-    // Activate Terminal first, then do script with exec
-    const command = `osascript -e 'tell application "Terminal" to activate' -e 'tell application "Terminal" to do script "${escapedNodeCommand}"'`;
-    const commandArgs: string[] = []; // No args needed when command is a single string for shell
-
-    // Fallback launcher using .command + open -a Terminal
-    const launchViaOpenCommand = async () => {
-      try {
-        const launcherPath = path.join(
-          sessionDir,
-          `interactive-mcp-intchat-${sessionId}.command`,
-        );
-        const scriptContent = `#!/bin/bash\nexec "${process.execPath}" "${escapedScriptPath}" "${escapedPayload}"\n`;
-        await fs.writeFile(launcherPath, scriptContent, 'utf8');
-        await fs.chmod(launcherPath, 0o755);
-        const openProc = spawn('open', ['-a', 'Terminal', launcherPath], {
-          stdio: ['ignore', 'ignore', 'ignore'],
-          detached: true,
-        });
-        openProc.unref();
-      } catch (e) {
-        logger.error(
-          { error: e },
-          'Fallback open -a Terminal failed (intensive chat)',
-        );
-      }
-    };
-
-    childProcess = spawn(command, commandArgs, {
-      stdio: ['ignore', 'ignore', 'ignore'],
-      shell: true,
-      detached: true,
-    });
-
-    childProcess.on('error', () => {
-      void launchViaOpenCommand();
-    });
-    childProcess.on('close', (code: number | null) => {
-      if (code !== null && code !== 0) {
-        void launchViaOpenCommand();
-      }
-    });
-  } else if (platform === 'win32') {
-    // Windows
-    childProcess = spawn(process.execPath, [uiScriptPath, payload], {
-      stdio: ['ignore', 'ignore', 'ignore'],
-      shell: true,
-      detached: true,
-      windowsHide: false,
-    });
-  } else {
-    // Linux or other - use original method (might not pop up window)
-    childProcess = spawn(process.execPath, [uiScriptPath, payload], {
-      stdio: ['ignore', 'ignore', 'ignore'],
-      shell: true,
-      detached: true,
-    });
-  }
+  const childProcess: ChildProcess = spawnDetachedTerminal({
+    scriptPath: uiScriptPath,
+    args: [payload, encodedSearchRoot],
+    macLauncherPath: path.join(
+      sessionDir,
+      `interactive-mcp-intchat-${sessionId}.command`,
+    ),
+    macFallbackLogMessage: 'Fallback open -a Terminal failed (intensive chat)',
+    env: {
+      [SEARCH_ROOT_ENV_KEY]: baseDirectory,
+    },
+  });
 
   // Unref the process so it can run independently
   childProcess.unref();
@@ -168,6 +117,7 @@ export async function startIntensiveChatSession(
     isActive: true,
     title,
     timeoutSeconds,
+    baseDirectory,
   };
 
   // Wait a bit to ensure the UI has started
@@ -180,12 +130,14 @@ export async function startIntensiveChatSession(
  * Ask a new question in an existing intensive chat session
  * @param sessionId ID of the session to ask in
  * @param question The question text to ask
+ * @param baseDirectory Base directory override for this question
  * @param predefinedOptions Optional predefined options for the question
  * @returns The user's response or null if session is not active
  */
 export async function askQuestionInSession(
   sessionId: string,
   question: string,
+  baseDirectory: string,
   predefinedOptions?: string[],
 ): Promise<string | null> {
   const session = activeSessions[sessionId];
@@ -194,13 +146,21 @@ export async function askQuestionInSession(
     return null; // Session doesn't exist or is not active
   }
 
+  const effectiveSearchRoot = baseDirectory || session.baseDirectory;
+
   // Generate a unique ID for this question-answer pair
   const questionId = crypto.randomUUID();
 
   // Create the input data object
-  const inputData: { id: string; text: string; options?: string[] } = {
+  const inputData: {
+    id: string;
+    text: string;
+    options?: string[];
+    searchRoot: string;
+  } = {
     id: questionId,
     text: question,
+    searchRoot: effectiveSearchRoot,
   };
 
   if (predefinedOptions && predefinedOptions.length > 0) {
@@ -218,9 +178,16 @@ export async function askQuestionInSession(
   );
 
   // Wait for response with timeout
-  const maxWaitTime = (session.timeoutSeconds ?? 60) * 1000; // Use session timeout or default to 60s
+  const effectiveTimeoutSeconds =
+    session.timeoutSeconds ?? USER_INPUT_TIMEOUT_SECONDS;
+  const maxWaitTime = effectiveTimeoutSeconds * 1000;
   const pollInterval = 100; // 100ms polling interval
   const startTime = Date.now();
+
+  logger.info(
+    { sessionId, questionId, timeoutSeconds: effectiveTimeoutSeconds },
+    'Waiting for intensive chat response using effective timeout.',
+  );
 
   while (Date.now() - startTime < maxWaitTime) {
     try {
@@ -246,7 +213,11 @@ export async function askQuestionInSession(
   }
 
   // Timeout reached
-  return 'User closed intensive chat session';
+  logger.info(
+    { sessionId, questionId, timeoutSeconds: effectiveTimeoutSeconds },
+    'Intensive chat question timed out.',
+  );
+  return USER_INPUT_TIMEOUT_SENTINEL;
 }
 
 /**

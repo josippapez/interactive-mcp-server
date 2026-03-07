@@ -1,7 +1,6 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import { z } from 'zod';
 import notifier from 'node-notifier';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
@@ -11,7 +10,12 @@ import {
   askQuestionInSession,
   stopIntensiveChatSession,
 } from './commands/intensive-chat/index.js';
-import { USER_INPUT_TIMEOUT_SECONDS } from './constants.js';
+import {
+  USER_INPUT_TIMEOUT_SECONDS,
+  USER_INPUT_TIMEOUT_SENTINEL,
+} from './constants.js';
+import logger from './utils/logger.js';
+import { validateRepositoryBaseDirectory } from './utils/base-directory.js';
 
 // Import tool definitions using the new structure
 import { requestUserInputTool } from './tool-definitions/request-user-input.js';
@@ -20,11 +24,8 @@ import { intensiveChatTools } from './tool-definitions/intensive-chat.js';
 // Import the types for better type checking
 import { ToolCapabilityInfo } from './tool-definitions/types.js';
 
-// --- Define Type for Tool Capabilities --- (Adjusted to use ToolCapabilityInfo)
 type ToolCapabilitiesStructure = Record<string, ToolCapabilityInfo>;
-// --- End Define Type ---
 
-// --- Define Full Tool Capabilities from Imports --- (Simplified construction)
 const allToolCapabilities = {
   request_user_input: requestUserInputTool.capability,
   message_complete_notification: messageCompleteNotificationTool.capability,
@@ -32,9 +33,6 @@ const allToolCapabilities = {
   ask_intensive_chat: intensiveChatTools.ask.capability,
   stop_intensive_chat: intensiveChatTools.stop.capability,
 } satisfies ToolCapabilitiesStructure;
-// --- End Define Full Tool Capabilities from Imports ---
-
-// Parse command-line arguments for global timeout
 const argv = yargs(hideBin(process.argv))
   .option('timeout', {
     alias: 't',
@@ -58,6 +56,14 @@ const disabledTools = argv['disable-tools']
   .split(',')
   .map((tool) => tool.trim())
   .filter(Boolean);
+
+logger.info(
+  {
+    globalTimeoutSeconds,
+    disabledTools,
+  },
+  'Interactive MCP server configuration loaded.',
+);
 
 // Store active intensive chat sessions
 const activeChatSessions = new Map<string, string>();
@@ -119,32 +125,43 @@ if (isToolEnabled('request_user_input')) {
     requestUserInputTool.schema, // Use schema property
     async (args) => {
       // Use inferred args type
-      const { projectName, message, predefinedOptions } = args;
-      const promptMessage = `${projectName}: ${message}`;
-      const answer = await getCmdWindowInput(
-        projectName,
-        promptMessage,
-        globalTimeoutSeconds,
-        true,
-        predefinedOptions,
-      );
+      const { projectName, message, predefinedOptions, baseDirectory } = args;
+      try {
+        const validatedBaseDirectory =
+          await validateRepositoryBaseDirectory(baseDirectory);
+        const promptMessage = `${projectName}: ${message}`;
+        const answer = await getCmdWindowInput(
+          projectName,
+          promptMessage,
+          globalTimeoutSeconds,
+          true,
+          validatedBaseDirectory,
+          predefinedOptions,
+        );
 
-      // Check for the specific timeout indicator
-      if (answer === '__TIMEOUT__') {
-        return {
-          content: [
-            { type: 'text', text: 'User did not reply: Timeout occurred.' },
-          ],
-        };
-      }
-      // Empty string means user submitted empty input, non-empty is actual reply
-      else if (answer === '') {
-        return {
-          content: [{ type: 'text', text: 'User replied with empty input.' }],
-        };
-      } else {
-        const reply = `User replied: ${answer}`;
-        return { content: [{ type: 'text', text: reply }] };
+        // Check for the specific timeout indicator
+        if (answer === USER_INPUT_TIMEOUT_SENTINEL) {
+          return {
+            content: [
+              { type: 'text', text: 'User did not reply: Timeout occurred.' },
+            ],
+          };
+        }
+        // Empty string means user submitted empty input, non-empty is actual reply
+        else if (answer === '') {
+          return {
+            content: [{ type: 'text', text: 'User replied with empty input.' }],
+          };
+        } else {
+          const reply = `User replied: ${answer}`;
+          return { content: [{ type: 'text', text: reply }] };
+        }
+      } catch (error: unknown) {
+        const errorMessage =
+          error instanceof Error
+            ? `Failed to request user input: ${error.message}`
+            : 'Failed to request user input: unknown error.';
+        return { content: [{ type: 'text', text: errorMessage }] };
       }
     },
   );
@@ -188,11 +205,14 @@ if (isToolEnabled('start_intensive_chat')) {
     intensiveChatTools.start.schema, // Use schema property
     async (args) => {
       // Use inferred args type
-      const { sessionTitle } = args;
+      const { sessionTitle, baseDirectory } = args;
       try {
+        const validatedBaseDirectory =
+          await validateRepositoryBaseDirectory(baseDirectory);
         // Start a new intensive chat session, passing global timeout
         const sessionId = await startIntensiveChatSession(
           sessionTitle,
+          validatedBaseDirectory,
           globalTimeoutSeconds,
         );
 
@@ -238,7 +258,7 @@ if (isToolEnabled('ask_intensive_chat')) {
     intensiveChatTools.ask.schema, // Use schema property
     async (args) => {
       // Use inferred args type
-      const { sessionId, question, predefinedOptions } = args;
+      const { sessionId, question, predefinedOptions, baseDirectory } = args;
       // Check if session exists
       if (!activeChatSessions.has(sessionId)) {
         return {
@@ -249,20 +269,32 @@ if (isToolEnabled('ask_intensive_chat')) {
       }
 
       try {
+        const validatedBaseDirectory =
+          await validateRepositoryBaseDirectory(baseDirectory);
         // Ask the question in the session
         const answer = await askQuestionInSession(
           sessionId,
           question,
+          validatedBaseDirectory,
           predefinedOptions,
         );
 
         // Check for the specific timeout indicator
-        if (answer === '__TIMEOUT__') {
+        if (answer === USER_INPUT_TIMEOUT_SENTINEL) {
           return {
             content: [
               {
                 type: 'text',
                 text: 'User did not reply to question in intensive chat: Timeout occurred.',
+              },
+            ],
+          };
+        } else if (answer === null) {
+          return {
+            content: [
+              {
+                type: 'text',
+                text: 'User closed intensive chat session before replying.',
               },
             ],
           };

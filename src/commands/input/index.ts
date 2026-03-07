@@ -1,4 +1,3 @@
-import { spawn } from 'child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fsPromises from 'fs/promises';
@@ -6,12 +5,16 @@ import { watch, FSWatcher } from 'fs';
 import os from 'os';
 import crypto from 'crypto';
 // Updated import to use @ alias
-import { USER_INPUT_TIMEOUT_SECONDS } from '@/constants.js'; // Import the constant
+import {
+  USER_INPUT_TIMEOUT_SECONDS,
+  USER_INPUT_TIMEOUT_SENTINEL,
+} from '@/constants.js';
 import logger from '../../utils/logger.js';
+import { spawnDetachedTerminal } from '../../utils/spawn-detached-terminal.js';
+import { SEARCH_ROOT_ENV_KEY } from '../../utils/search-root.js';
 
 // Get the directory name of the current module
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
 // Define cleanupResources outside the promise to be accessible in the final catch
 async function cleanupResources(
   heartbeatPath: string,
@@ -32,14 +35,16 @@ async function cleanupResources(
  * @param promptMessage Message to display to the user
  * @param timeoutSeconds Timeout in seconds
  * @param showCountdown Whether to show a countdown timer
+ * @param baseDirectory Base directory for autocomplete/search root
  * @param predefinedOptions Optional list of predefined options for quick selection
- * @returns User input or empty string if timeout
+ * @returns User input, timeout sentinel, or empty string if process exits unexpectedly
  */
 export async function getCmdWindowInput(
   projectName: string,
   promptMessage: string,
   timeoutSeconds: number = USER_INPUT_TIMEOUT_SECONDS, // Use constant as default
   showCountdown: boolean = true,
+  baseDirectory: string,
   predefinedOptions?: string[],
 ): Promise<string> {
   // Create a temporary file for the detached process to write to
@@ -67,6 +72,7 @@ export async function getCmdWindowInput(
         prompt: promptMessage,
         timeout: timeoutSeconds,
         showCountdown,
+        searchRoot: baseDirectory,
         sessionId,
         outputFile: tempFilePath,
         heartbeatFile: heartbeatFilePath, // Pass heartbeat file path too
@@ -77,6 +83,17 @@ export async function getCmdWindowInput(
 
       // Moved setup into try block
       try {
+        logger.info(
+          {
+            sessionId,
+            timeoutSeconds,
+            showCountdown,
+            hasPredefinedOptions:
+              Array.isArray(predefinedOptions) && predefinedOptions.length > 0,
+          },
+          'Starting command input UI with timeout configuration.',
+        );
+
         // Write options to the file before spawning
         await fsPromises.writeFile(
           optionsFilePath,
@@ -84,87 +101,30 @@ export async function getCmdWindowInput(
           'utf8',
         );
 
-        // Platform-specific spawning
-        const platform = os.platform();
-
-        if (platform === 'darwin') {
-          // macOS
-          const escapedScriptPath = uiScriptPath;
-          const escapedSessionId = sessionId; // Only need sessionId now
-
-          // Construct the command string directly for the shell. Quotes handle paths with spaces.
-          // Pass only the sessionId
-          const nodeBin = process.execPath;
-          const nodeCommand = `exec "${nodeBin}" "${escapedScriptPath}" "${escapedSessionId}" "${tempDir}"; exit 0`;
-
-          // Escape the node command for osascript's AppleScript string:
-          const escapedNodeCommand = nodeCommand
-            .replace(/\\/g, '\\\\') // Escape backslashes
-            .replace(/"/g, '\\"'); // Escape double quotes
-
-          // Activate Terminal first, then do script with exec
-          const command = `osascript -e 'tell application "Terminal" to activate' -e 'tell application "Terminal" to do script "${escapedNodeCommand}"'`;
-          const commandArgs: string[] = [];
-
-          // Fallback launcher using .command + open -a Terminal (handles Automation issues)
-          const launchViaOpenCommand = async () => {
-            try {
-              const launcherPath = path.join(
-                tempDir,
-                `interactive-mcp-launch-${sessionId}.command`,
-              );
-              const scriptContent = `#!/bin/bash\nexec "${nodeBin}" "${escapedScriptPath}" "${escapedSessionId}" "${tempDir}"\n`;
-              await fsPromises.writeFile(launcherPath, scriptContent, 'utf8');
-              await fsPromises.chmod(launcherPath, 0o755);
-              const openProc = spawn('open', ['-a', 'Terminal', launcherPath], {
-                stdio: ['ignore', 'ignore', 'ignore'],
-                detached: true,
-              });
-              openProc.unref();
-            } catch (e) {
-              logger.error({ error: e }, 'Fallback open -a Terminal failed');
-            }
-          };
-
-          ui = spawn(command, commandArgs, {
-            stdio: ['ignore', 'ignore', 'ignore'],
-            shell: true,
-            detached: true,
-          });
-
-          // If AppleScript fails or exits non-zero, fallback to open -a Terminal
-          ui.on('error', () => {
-            void launchViaOpenCommand();
-          });
-          ui.on('close', (code: number | null) => {
-            if (code !== null && code !== 0) {
-              void launchViaOpenCommand();
-            }
-          });
-        } else if (platform === 'win32') {
-          // Windows
-          // Pass only the sessionId
-          ui = spawn(process.execPath, [uiScriptPath, sessionId], {
-            stdio: ['ignore', 'ignore', 'ignore'],
-            shell: true,
-            detached: true,
-            windowsHide: false,
-          });
-        } else {
-          // Linux or other
-          // Pass only the sessionId
-          ui = spawn(process.execPath, [uiScriptPath, sessionId], {
-            stdio: ['ignore', 'ignore', 'ignore'],
-            shell: true,
-            detached: true,
-          });
-        }
+        // Platform-specific detached terminal spawning
+        const encodedSearchRoot = Buffer.from(baseDirectory, 'utf8').toString(
+          'base64',
+        );
+        ui = spawnDetachedTerminal({
+          scriptPath: uiScriptPath,
+          args: [sessionId, tempDir, encodedSearchRoot],
+          darwinArgs: [sessionId, tempDir, encodedSearchRoot],
+          macLauncherPath: path.join(
+            tempDir,
+            `interactive-mcp-launch-${sessionId}.command`,
+          ),
+          macFallbackLogMessage: 'Fallback open -a Terminal failed',
+          env: {
+            [SEARCH_ROOT_ENV_KEY]: baseDirectory,
+          },
+        });
 
         let watcher: FSWatcher | null = null;
         let timeoutHandle: NodeJS.Timeout | null = null;
         let heartbeatInterval: NodeJS.Timeout | null = null;
         let heartbeatFileSeen = false; // Track if we've ever seen the heartbeat file
         const startTime = Date.now(); // Record start time for initial grace period
+        const startupGraceMs = timeoutSeconds * 1000 + 5000;
 
         // Define cleanupAndResolve inside the promise scope
         const cleanupAndResolve = async (response: string) => {
@@ -229,6 +189,12 @@ export async function getCmdWindowInput(
                 const data = await fsPromises.readFile(tempFilePath, 'utf8'); // Use renamed import
                 if (data) {
                   const response = data.trim();
+                  if (response === USER_INPUT_TIMEOUT_SENTINEL) {
+                    logger.info(
+                      { sessionId, timeoutSeconds },
+                      'Input UI reported timeout sentinel.',
+                    );
+                  }
                   void cleanupAndResolve(response); // Mark promise as intentionally ignored
                 }
               } catch (readError) {
@@ -269,12 +235,12 @@ export async function getCmdWindowInput(
                       `Heartbeat file ${heartbeatFilePath} not found after being seen. Process likely exited.`, // Added logger info
                     );
                     void cleanupAndResolve(''); // Mark promise as intentionally ignored
-                  } else if (Date.now() - startTime > 60000) {
-                    // File never appeared and extended grace period (60s) passed, assume dead
+                  } else if (Date.now() - startTime > startupGraceMs) {
+                    // File never appeared before configured timeout budget passed, assume dead
                     logger.info(
-                      `Heartbeat file ${heartbeatFilePath} never appeared within 60s. Process likely failed to start or was blocked by permissions.`,
+                      `Heartbeat file ${heartbeatFilePath} never appeared within ${Math.floor(startupGraceMs / 1000)}s. Process likely failed to start or was blocked by permissions.`,
                     );
-                    void cleanupAndResolve('');
+                    void cleanupAndResolve(USER_INPUT_TIMEOUT_SENTINEL);
                   }
                   // Otherwise, file just hasn't appeared yet, wait longer
                 } else {
@@ -301,7 +267,7 @@ export async function getCmdWindowInput(
             logger.info(
               `Input timeout reached after ${timeoutSeconds} seconds.`,
             ); // Added logger info
-            void cleanupAndResolve(''); // Mark promise as intentionally ignored
+            void cleanupAndResolve(USER_INPUT_TIMEOUT_SENTINEL); // Mark promise as intentionally ignored
           },
           timeoutSeconds * 1000 + 5000,
         ); // Add a bit more buffer

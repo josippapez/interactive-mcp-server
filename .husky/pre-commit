@@ -1,10 +1,8 @@
 #!/bin/sh
+set -e
 
 # Run lint-staged
-pnpm exec lint-staged
+bunx lint-staged
 
 # Check types (existing command)
-pnpm check-types
-
-# Exit with the status of the last command
-exit $?
+bun run check-types

@@ -10,7 +10,7 @@ import {
 
 const startCapability: ToolCapabilityInfo = {
   description:
-    'Start an intensive chat session for gathering multiple answers quickly.',
+    'Start a persistent OpenTUI intensive chat session for gathering multiple answers quickly.',
   parameters: {
     type: 'object',
     properties: {
@@ -18,15 +18,20 @@ const startCapability: ToolCapabilityInfo = {
         type: 'string',
         description: 'Title for the intensive chat session',
       },
+      baseDirectory: {
+        type: 'string',
+        description:
+          'Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session)',
+      },
     },
-    required: ['sessionTitle'],
+    required: ['sessionTitle', 'baseDirectory'],
   },
 };
 
 const startDescription: ToolRegistrationDescription = (
   globalTimeoutSeconds: number,
 ) => `<description>
-Start an intensive chat session for gathering multiple answers quickly from the user.
+Start an intensive chat session (OpenTUI terminal UI) for gathering multiple answers quickly from the user.
 **Highly recommended** for scenarios requiring a sequence of related inputs or confirmations.
 Very useful for gathering multiple answers from the user in a short period of time.
 Especially useful for brainstorming ideas or discussing complex topics with the user.
@@ -49,12 +54,14 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 </whenToUseThisTool>
 
 <features>
-- Opens a persistent console window for continuous interaction
-- Supports starting with an initial question
+- Opens a persistent OpenTUI window for continuous interaction
+- Renders markdown prompts, including code/diff snippets, for richer question context
+- Supports option mode + free-text mode while asking follow-up questions
 - Configurable timeout for each question (set via -t/--timeout, defaults to ${globalTimeoutSeconds} seconds)
 - Returns a session ID for subsequent interactions
 - Keeps full chat history visible to the user
 - Maintains state between questions
+- Requires baseDirectory and pins autocomplete/search scope to the repository root
 </features>
 
 <bestPractices>
@@ -69,14 +76,21 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 
 <parameters>
 - sessionTitle: Title for the intensive chat session (appears at the top of the console)
+- baseDirectory: Required absolute path to the current repository root (must be a git repo root)
 </parameters>
 
 <examples>
-- Start session for project setup: { "sessionTitle": "Project Configuration" }
+- Start session for project setup: { "sessionTitle": "Project Configuration", "baseDirectory": "/workspace/project" }
+- Start session with repository root scope: { "sessionTitle": "Project Configuration", "baseDirectory": "/workspace/project" }
 </examples>`;
 
 const startSchema: ZodRawShape = {
   sessionTitle: z.string().describe('Title for the intensive chat session'),
+  baseDirectory: z
+    .string()
+    .describe(
+      'Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session)',
+    ),
 };
 
 const startToolDefinition: ToolDefinition = {
@@ -88,7 +102,7 @@ const startToolDefinition: ToolDefinition = {
 // === Ask Intensive Chat Definition ===
 
 const askCapability: ToolCapabilityInfo = {
-  description: 'Ask a question in an active intensive chat session.',
+  description: 'Ask a question in an active OpenTUI intensive chat session.',
   parameters: {
     type: 'object',
     properties: {
@@ -107,8 +121,13 @@ const askCapability: ToolCapabilityInfo = {
         description:
           'Predefined options for the user to choose from (optional)',
       },
+      baseDirectory: {
+        type: 'string',
+        description:
+          'Required absolute path to the current repository root (must be a git repo root; autocomplete/search scope for this question)',
+      },
     },
-    required: ['sessionId', 'question'],
+    required: ['sessionId', 'question', 'baseDirectory'],
   },
 };
 
@@ -135,6 +154,7 @@ Ask a new question in an active intensive chat session previously started with '
 - Supports predefined options for quick selection
 - Returns the user's response
 - Maintains the chat history in the console
+- Requires baseDirectory for each question and scopes autocomplete/search to the repository root
 </features>
 
 <bestPractices>
@@ -148,11 +168,13 @@ Ask a new question in an active intensive chat session previously started with '
 - sessionId: ID of the intensive chat session (from start_intensive_chat)
 - question: The question text to display to the user
 - predefinedOptions: Array of predefined options for the user to choose from (optional)
+- baseDirectory: Required absolute path to the current repository root (must be a git repo root)
 </parameters>
 
 <examples>
-- Simple question: { "sessionId": "abcd1234", "question": "What is your project named?" }
-- With predefined options: { "sessionId": "abcd1234", "question": "Would you like to use TypeScript?", "predefinedOptions": ["Yes", "No"] }
+- Simple question: { "sessionId": "abcd1234", "question": "What is your project named?", "baseDirectory": "/workspace/project" }
+- With predefined options: { "sessionId": "abcd1234", "question": "Would you like to use TypeScript?", "predefinedOptions": ["Yes", "No"], "baseDirectory": "/workspace/project" }
+- Ask another repo-scoped question: { "sessionId": "abcd1234", "question": "Pick a file", "baseDirectory": "/workspace/project" }
 </examples>`;
 
 const askSchema: ZodRawShape = {
@@ -162,6 +184,11 @@ const askSchema: ZodRawShape = {
     .array(z.string())
     .optional()
     .describe('Predefined options for the user to choose from (optional)'),
+  baseDirectory: z
+    .string()
+    .describe(
+      'Required absolute path to the current repository root (must be a git repo root; autocomplete/search scope for this question)',
+    ),
 };
 
 const askToolDefinition: ToolDefinition = {

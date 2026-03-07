@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "interactive-opentui-mcp": {
+      "command": "bun",
+      "args": [
+        "run",
+        "dist/index.js",
+        "-t",
+        "800",
+        "--disable-tools",
+        "message_complete_notification",
+        "--tui-renderer",
+        "opentui"
+      ],
+      "timeout": 800000,
+      "type": "stdio"
+    }
+  }
+}
