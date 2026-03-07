@@ -11,6 +11,6 @@ plugins:
   - '@semantic-release/git':
       assets:
         - package.json
-        - pnpm-lock.yaml
+        - bun.lock
       message: "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
   - '@semantic-release/github' # Handles creating GitHub Releases
