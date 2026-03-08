@@ -556,7 +556,7 @@ export function InteractiveInput({
     <>
       <box
         flexDirection="column"
-        marginBottom={1}
+        marginBottom={0}
         width="100%"
         gap={0}
         border
@@ -572,7 +572,7 @@ export function InteractiveInput({
         <MarkdownText content={question} showCodeCopyControls />
       </box>
 
-      <box flexDirection="column" marginBottom={1} width="100%" gap={0}>
+      <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
         <text fg="gray">Mode</text>
         <box
           flexDirection="row"
@@ -587,8 +587,8 @@ export function InteractiveInput({
           {predefinedOptions.length > 0 && (
             <box
               justifyContent="center"
-              paddingLeft={1}
-              paddingRight={1}
+              paddingLeft={0}
+              paddingRight={0}
               onClick={setModeToOption}
               backgroundColor={mode === 'option' ? 'orange' : '#151515'}
             >
@@ -600,8 +600,8 @@ export function InteractiveInput({
           {predefinedOptions.length > 0 && <text fg="#3a3a3a">│</text>}
           <box
             justifyContent="center"
-            paddingLeft={1}
-            paddingRight={1}
+            paddingLeft={0}
+            paddingRight={0}
             onClick={focusInputMode}
             backgroundColor={mode === 'input' ? 'orange' : '#151515'}
           >
