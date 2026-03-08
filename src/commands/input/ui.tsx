@@ -168,7 +168,6 @@ interface AppProps {
 
 const App = ({ options: appOptions, onExit }: AppProps) => {
   const {
-    projectName,
     prompt,
     timeout,
     showCountdown,
@@ -307,21 +306,6 @@ const App = ({ options: appOptions, onExit }: AppProps) => {
         }}
       >
         <box flexDirection="column" width="100%" paddingBottom={1} gap={2}>
-          <box width="100%" paddingLeft={1} paddingRight={1}>
-            <box flexDirection="column" width="100%" gap={0}>
-              {projectName && (
-                <text fg="magenta">
-                  <strong>{projectName}</strong>
-                </text>
-              )}
-              <text fg="gray" wrapMode="word">
-                {isNarrow
-                  ? 'Keyboard-first prompt mode'
-                  : 'Keyboard-first prompt mode • Tab / Shift+Tab switches mode'}
-              </text>
-            </box>
-          </box>
-
           <box width="100%" paddingLeft={1} paddingRight={1} gap={1}>
             <InteractiveInput
               question={prompt}

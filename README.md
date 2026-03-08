@@ -18,6 +18,8 @@ This server exposes the following tools via the Model Context Protocol (MCP):
 - `ask_intensive_chat`: Asks a question within an active intensive chat session.
 - `stop_intensive_chat`: Closes an active intensive chat session.
 
+Prompt UIs support markdown-friendly question text (including multiline prompts, fenced code blocks, and diff snippets). When useful, you can also include VS Code-style file links in prompt text (for example, `vscode://file/<absolute-path>:<line>:<column>`).
+
 ## Usage Scenarios
 
 This server is ideal for scenarios where an LLM needs to interact directly with the user on their local machine, such as:

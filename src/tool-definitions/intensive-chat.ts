@@ -10,7 +10,7 @@ import {
 
 const startCapability: ToolCapabilityInfo = {
   description:
-    'Start a persistent OpenTUI intensive chat session for gathering multiple answers quickly.',
+    'Start a persistent OpenTUI intensive chat session for gathering multiple answers quickly with markdown-friendly prompts.',
   parameters: {
     type: 'object',
     properties: {
@@ -56,6 +56,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 <features>
 - Opens a persistent OpenTUI window for continuous interaction
 - Renders markdown prompts, including code/diff snippets, for richer question context
+- Preserves markdown links, including VS Code file links (for example: "vscode://file/<abs-path>:<line>:<column>") in prompt content
 - Supports option mode + free-text mode while asking follow-up questions
 - Configurable timeout for each question (set via -t/--timeout, defaults to ${globalTimeoutSeconds} seconds)
 - Returns a session ID for subsequent interactions
@@ -67,6 +68,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 <bestPractices>
 - Use a descriptive session title related to the task
 - Start with a clear initial question when possible
+- Use markdown for longer/multiline prompts, code fences, and diff context
 - Do not ask the question if you have another tool that can answer the question
   - e.g. when you searching file in the current repository, do not ask the question "Do you want to search for a file in the current repository?"
   - e.g. prefer to use other tools to find the answer (Cursor tools or other MCP Server tools)
@@ -102,7 +104,8 @@ const startToolDefinition: ToolDefinition = {
 // === Ask Intensive Chat Definition ===
 
 const askCapability: ToolCapabilityInfo = {
-  description: 'Ask a question in an active OpenTUI intensive chat session.',
+  description:
+    'Ask a markdown-friendly question in an active OpenTUI intensive chat session.',
   parameters: {
     type: 'object',
     properties: {
@@ -151,6 +154,8 @@ Ask a new question in an active intensive chat session previously started with '
 
 <features>
 - Adds a new question to an existing chat session
+- Supports markdown-friendly prompts (including multiline text, code fences, and diff snippets)
+- Preserves markdown links, including VS Code file links (for example: "vscode://file/<abs-path>:<line>:<column>") in question text
 - Supports predefined options for quick selection
 - Returns the user's response
 - Maintains the chat history in the console

@@ -27,4 +27,6 @@ export interface TextareaRenderableLike {
   cursorOffset: number;
   setText: (value: string) => void;
   replaceText?: (value: string) => void;
+  hasSelection?: () => boolean;
+  getSelectedText?: () => string;
 }

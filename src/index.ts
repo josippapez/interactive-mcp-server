@@ -129,10 +129,9 @@ if (isToolEnabled('request_user_input')) {
       try {
         const validatedBaseDirectory =
           await validateRepositoryBaseDirectory(baseDirectory);
-        const promptMessage = `${projectName}: ${message}`;
         const answer = await getCmdWindowInput(
           projectName,
-          promptMessage,
+          message,
           globalTimeoutSeconds,
           true,
           validatedBaseDirectory,

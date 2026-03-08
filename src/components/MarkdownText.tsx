@@ -1,6 +1,14 @@
 import * as OpenTuiCore from '@opentui/core';
-import { createElement, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  createElement,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { copyTextToClipboard } from '@/utils/clipboard.js';
+import { openExternalLink } from '@/utils/open-external-link.js';
 
 interface MarkdownTextProps {
   content: string;
@@ -37,8 +45,17 @@ interface ParsedUnifiedDiff {
   unifiedDiff: string;
 }
 
+interface MarkdownInlineSegment {
+  type: 'text' | 'link';
+  value: string;
+  href?: string;
+}
+
 const CODE_BLOCK_REGEX = /```([^\n`]*)\n?([\s\S]*?)```/g;
+const INLINE_LINK_REGEX =
+  /\[([^\]\n]+)\]\(([^)\s]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,!?;:])/g;
 const DIFF_LANGUAGES = new Set(['diff', 'patch']);
+const VSCODE_FILE_LINK_REGEX = /^vscode(-insiders)?:\/\/file\//;
 
 const LANGUAGE_TO_FILETYPE: Record<string, string> = {
   js: 'javascript',
@@ -230,6 +247,60 @@ function splitMarkdownSegments(content: string): MarkdownSegment[] {
   return segments;
 }
 
+function parseMarkdownInlineLinks(content: string): MarkdownInlineSegment[] {
+  const segments: MarkdownInlineSegment[] = [];
+  let lastIndex = 0;
+  INLINE_LINK_REGEX.lastIndex = 0;
+
+  for (const match of content.matchAll(INLINE_LINK_REGEX)) {
+    const fullMatch = match[0];
+    if (typeof fullMatch !== 'string' || typeof match.index !== 'number') {
+      continue;
+    }
+
+    if (match.index > lastIndex) {
+      segments.push({
+        type: 'text',
+        value: content.slice(lastIndex, match.index),
+      });
+    }
+
+    const markdownLabel = match[1];
+    const markdownHref = match[2];
+    const rawHref = match[3];
+    const href = markdownHref ?? rawHref;
+    const label = markdownLabel ?? rawHref;
+
+    if (href && label) {
+      segments.push({
+        type: 'link',
+        value: label,
+        href,
+      });
+    } else {
+      segments.push({
+        type: 'text',
+        value: fullMatch,
+      });
+    }
+
+    lastIndex = match.index + fullMatch.length;
+  }
+
+  if (lastIndex < content.length) {
+    segments.push({
+      type: 'text',
+      value: content.slice(lastIndex),
+    });
+  }
+
+  return segments.length > 0 ? segments : [{ type: 'text', value: content }];
+}
+
+function isVscodeFileLink(href: string): boolean {
+  return VSCODE_FILE_LINK_REGEX.test(href);
+}
+
 export function MarkdownText({
   content,
   streaming = false,
@@ -300,6 +371,20 @@ export function MarkdownText({
     }
   };
 
+  const openLinkWithHint = useCallback(
+    async (href: string, target: 'default' | 'vscode' | 'vscode-insiders') => {
+      try {
+        await openExternalLink(href, target);
+        setClipboardHint('Opening link…');
+      } catch (error: unknown) {
+        setClipboardHint(
+          `Open link failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+    [],
+  );
+
   return (
     <box flexDirection="column" width="100%" gap={1}>
       {showContentCopyControl && (
@@ -318,7 +403,128 @@ export function MarkdownText({
       {segments.map((segment, index) => {
         if (segment.type === 'markdown') {
           if (!segment.value.trim()) {
-            return <box key={`segment-${index}`} />;
+            const spacerHeight = Math.max(
+              1,
+              segment.value.split('\n').length - 1,
+            );
+            return <box key={`segment-${index}`} height={spacerHeight} />;
+          }
+
+          INLINE_LINK_REGEX.lastIndex = 0;
+          if (INLINE_LINK_REGEX.test(segment.value)) {
+            INLINE_LINK_REGEX.lastIndex = 0;
+            const lines = segment.value.split('\n');
+            return (
+              <box key={`segment-${index}`} flexDirection="column" width="100%">
+                {lines.map((line, lineIndex) => {
+                  if (!line) {
+                    return (
+                      <box
+                        key={`segment-${index}-line-${lineIndex}`}
+                        height={1}
+                      />
+                    );
+                  }
+
+                  const inlineSegments = parseMarkdownInlineLinks(line);
+                  return (
+                    <box
+                      key={`segment-${index}-line-${lineIndex}`}
+                      flexDirection="row"
+                      width="100%"
+                    >
+                      {inlineSegments.flatMap(
+                        (inlineSegment, inlineSegmentIndex) => {
+                          const baseKey = `segment-${index}-line-${lineIndex}-part-${inlineSegmentIndex}`;
+
+                          if (
+                            inlineSegment.type !== 'link' ||
+                            !inlineSegment.href
+                          ) {
+                            return (
+                              <text key={baseKey} wrapMode="word">
+                                {inlineSegment.value}
+                              </text>
+                            );
+                          }
+
+                          if (!isVscodeFileLink(inlineSegment.href)) {
+                            return (
+                              <text
+                                key={baseKey}
+                                fg="cyan"
+                                wrapMode="word"
+                                onMouseUp={() => {
+                                  void openLinkWithHint(
+                                    inlineSegment.href ?? '',
+                                    'default',
+                                  );
+                                }}
+                              >
+                                {inlineSegment.value}
+                              </text>
+                            );
+                          }
+
+                          return [
+                            <text key={`${baseKey}-label`} wrapMode="word">
+                              {inlineSegment.value}
+                            </text>,
+                            <text
+                              key={`${baseKey}-open-paren`}
+                              fg="gray"
+                              wrapMode="word"
+                            >
+                              {' ('}
+                            </text>,
+                            <text
+                              key={`${baseKey}-vscode`}
+                              fg="cyan"
+                              wrapMode="word"
+                              onMouseUp={() => {
+                                void openLinkWithHint(
+                                  inlineSegment.href ?? '',
+                                  'vscode',
+                                );
+                              }}
+                            >
+                              VS Code
+                            </text>,
+                            <text
+                              key={`${baseKey}-separator`}
+                              fg="gray"
+                              wrapMode="word"
+                            >
+                              {' | '}
+                            </text>,
+                            <text
+                              key={`${baseKey}-insiders`}
+                              fg="cyan"
+                              wrapMode="word"
+                              onMouseUp={() => {
+                                void openLinkWithHint(
+                                  inlineSegment.href ?? '',
+                                  'vscode-insiders',
+                                );
+                              }}
+                            >
+                              VS Code Insiders
+                            </text>,
+                            <text
+                              key={`${baseKey}-close-paren`}
+                              fg="gray"
+                              wrapMode="word"
+                            >
+                              {')'}
+                            </text>,
+                          ];
+                        },
+                      )}
+                    </box>
+                  );
+                })}
+              </box>
+            );
           }
 
           return (

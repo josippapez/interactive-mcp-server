@@ -8,19 +8,18 @@ import {
 // Define capability conforming to ToolCapabilityInfo
 const capabilityInfo: ToolCapabilityInfo = {
   description:
-    'Ask the user a question in an OpenTUI terminal prompt and await their reply.',
+    'Ask the user a question in an OpenTUI terminal prompt with markdown-friendly rendering and await their reply.',
   parameters: {
     type: 'object',
     properties: {
       projectName: {
         type: 'string',
         description:
-          'Identifies the context/project making the request (used in prompt formatting)',
+          'Identifies the context/project making the request (shown in prompt header/title context)',
       },
       message: {
         type: 'string',
-        description:
-          'The specific question for the user (appears in the prompt)',
+        description: 'The specific question for the user (prompt body text)',
       },
       predefinedOptions: {
         type: 'array',
@@ -70,17 +69,20 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 
 <features>
 - OpenTUI prompt with markdown rendering (including code/diff blocks)
+- Preserves markdown links, including VS Code file links (for example: "vscode://file/<abs-path>:<line>:<column>") when provided in the prompt text
 - Supports option mode + free-text input mode when predefinedOptions are provided
 - Returns user response or timeout notification (timeout defaults to ${globalTimeoutSeconds} seconds)
 - Maintains context across user interactions
 - Handles empty responses gracefully
-- Properly formats prompt with project context
+- Shows project context in the prompt header/title
 - baseDirectory is required, must be the current repository root, and controls file autocomplete/search scope explicitly
 </features>
 
 <bestPractices>
 - Keep questions concise and specific
 - Provide clear options when applicable
+- Use markdown for richer context (multiline structure, code fences, unified diff snippets)
+- When referencing repository files, prefer VS Code-compatible file links in markdown where helpful
 - Do not ask the question if you have another tool that can answer the question
   - e.g. when you searching file in the current repository, do not ask the question "Do you want to search for a file in the current repository?"
   - e.g. prefer to use other tools to find the answer (Cursor tools or other MCP Server tools)
@@ -92,8 +94,8 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 </bestPractices>
 
 <parameters>
-- projectName: Identifies the context/project making the request (used in prompt formatting)
-- message: The specific question for the user (appears in the prompt)
+- projectName: Identifies the context/project making the request (shown in prompt header/title context)
+- message: The specific question for the user (prompt body text)
 - predefinedOptions: Predefined options for the user to choose from (optional)
 - baseDirectory: Required absolute path to the current repository root (must be a git repo root)
 </parameters>
@@ -113,11 +115,11 @@ const rawSchema: z.ZodRawShape = {
   projectName: z
     .string()
     .describe(
-      'Identifies the context/project making the request (used in prompt formatting)',
+      'Identifies the context/project making the request (shown in prompt header/title context)',
     ),
   message: z
     .string()
-    .describe('The specific question for the user (appears in the prompt)'),
+    .describe('The specific question for the user (prompt body text)'),
   predefinedOptions: z
     .array(z.string())
     .optional()

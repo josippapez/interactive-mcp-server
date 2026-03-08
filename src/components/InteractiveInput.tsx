@@ -1,5 +1,6 @@
 import * as OpenTuiReact from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import path from 'node:path';
 import {
   getAutocompleteTarget,
   rankFileSuggestions,
@@ -7,10 +8,18 @@ import {
 } from './interactive-input/autocomplete.js';
 import {
   isPrintableCharacter,
+  isCopyShortcut,
   isReverseTabShortcut,
   isSubmitShortcut,
   textareaKeyBindings,
 } from './interactive-input/keyboard.js';
+import {
+  InputEditor,
+  ModeTabs,
+  OptionList,
+  SuggestionsPanel,
+} from './interactive-input/sections.js';
+import { getTextareaDimensions } from './interactive-input/textarea-height.js';
 import type {
   AutocompleteTarget,
   InteractiveInputProps,
@@ -18,13 +27,16 @@ import type {
   TextareaRenderableLike,
 } from './interactive-input/types.js';
 import { MarkdownText } from './MarkdownText.js';
+import { copyTextToClipboard } from '@/utils/clipboard.js';
 
 const { useKeyboard } = OpenTuiReact as unknown as {
   useKeyboard: (handler: (key: OpenTuiKeyEvent) => void) => void;
 };
+
 const { useTerminalDimensions } = OpenTuiReact as unknown as {
   useTerminalDimensions: () => { width: number; height: number };
 };
+
 const repositoryFileCache = new Map<string, string[]>();
 
 export function InteractiveInput({
@@ -47,19 +59,70 @@ export function InteractiveInput({
   const [selectedSuggestionIndex, setSelectedSuggestionIndex] = useState(0);
   const [textareaRenderVersion, setTextareaRenderVersion] = useState(0);
   const [focusRequestToken, setFocusRequestToken] = useState(0);
+  const [clipboardStatus, setClipboardStatus] = useState<string | null>(null);
+
   const textareaRef = useRef<TextareaRenderableLike | null>(null);
   const latestInputValueRef = useRef(inputValue);
   const latestCaretPositionRef = useRef(caretPosition);
   const autocompleteTargetRef = useRef<AutocompleteTarget | null>(null);
+
   const { width, height } = useTerminalDimensions();
   const isNarrow = width < 90;
+  const hasOptions = predefinedOptions.length > 0;
+  const hasSearchRoot = Boolean(searchRoot);
+
   const activeAutocompleteTarget =
     mode === 'input' ? getAutocompleteTarget(inputValue, caretPosition) : null;
-  const hasSearchRoot = Boolean(searchRoot);
+
+  const { rows: textareaRows, containerHeight: textareaContainerHeight } =
+    useMemo(
+      () =>
+        getTextareaDimensions({
+          value: inputValue,
+          width,
+          terminalHeight: height,
+          isNarrow,
+        }),
+      [height, inputValue, isNarrow, width],
+    );
+
   const textareaBaseKeyBindings = useMemo(
     () => textareaKeyBindings.filter((binding) => binding.action !== 'submit'),
     [],
   );
+
+  const hasActiveSearchSuggestions =
+    mode === 'input' &&
+    activeAutocompleteTarget !== null &&
+    fileSuggestions.length > 0;
+
+  const textareaBindings = useMemo(() => {
+    if (!hasActiveSearchSuggestions) {
+      return textareaBaseKeyBindings;
+    }
+
+    return [
+      ...textareaBaseKeyBindings,
+      { name: 'enter', action: 'submit' as const },
+      { name: 'return', action: 'submit' as const },
+    ];
+  }, [hasActiveSearchSuggestions, textareaBaseKeyBindings]);
+
+  const selectedSuggestion = fileSuggestions[selectedSuggestionIndex];
+
+  const selectedSuggestionVscodeLink = useMemo(() => {
+    if (!searchRoot || !selectedSuggestion) {
+      return null;
+    }
+
+    const absolutePath = path.resolve(searchRoot, selectedSuggestion);
+    const normalizedPath = absolutePath.split(path.sep).join('/');
+    const vscodePath = normalizedPath.startsWith('/')
+      ? normalizedPath
+      : `/${normalizedPath}`;
+
+    return `vscode://file${encodeURI(vscodePath)}`;
+  }, [searchRoot, selectedSuggestion]);
 
   const safeReadTextarea = useCallback(() => {
     const textarea = textareaRef.current;
@@ -89,6 +152,7 @@ export function InteractiveInput({
         if (textarea.plainText !== nextValue) {
           textarea.setText(nextValue);
         }
+
         textarea.cursorOffset = nextCaretPosition;
         return true;
       } catch {
@@ -103,6 +167,7 @@ export function InteractiveInput({
     const textarea = textareaRef.current as
       | (TextareaRenderableLike & { focus?: () => void })
       | null;
+
     if (!textarea) {
       return false;
     }
@@ -125,8 +190,23 @@ export function InteractiveInput({
   }, [caretPosition]);
 
   useEffect(() => {
+    if (!clipboardStatus) {
+      return;
+    }
+
+    const clearStatusTimeout = setTimeout(() => {
+      setClipboardStatus(null);
+    }, 2000);
+
+    return () => {
+      clearTimeout(clearStatusTimeout);
+    };
+  }, [clipboardStatus]);
+
+  useEffect(() => {
     let active = true;
     const repositoryRoot = searchRoot;
+
     autocompleteTargetRef.current = null;
     setFileSuggestions([]);
     setSelectedSuggestionIndex(0);
@@ -156,6 +236,7 @@ export function InteractiveInput({
         if (!active) {
           return;
         }
+
         repositoryFileCache.set(repositoryRoot, files);
         setRepositoryFiles(files);
         setIsIndexingFiles(false);
@@ -164,6 +245,7 @@ export function InteractiveInput({
         if (!active) {
           return;
         }
+
         setRepositoryFiles([]);
         setIsIndexingFiles(false);
       });
@@ -196,14 +278,15 @@ export function InteractiveInput({
       0,
       Math.min(latestCaretPositionRef.current, nextValue.length),
     );
+
     const didWrite = safeWriteTextarea(nextValue, clampedCaret);
     if (!didWrite) {
-      setTextareaRenderVersion((prev) => prev + 1);
+      setTextareaRenderVersion((previous) => previous + 1);
       return;
     }
 
     if (!focusTextarea()) {
-      setTextareaRenderVersion((prev) => prev + 1);
+      setTextareaRenderVersion((previous) => previous + 1);
     }
   }, [
     focusRequestToken,
@@ -235,10 +318,10 @@ export function InteractiveInput({
 
     const nextSuggestions = rankFileSuggestions(repositoryFiles, target.query);
     setFileSuggestions(nextSuggestions);
-    setSelectedSuggestionIndex((prev) =>
+    setSelectedSuggestionIndex((previous) =>
       nextSuggestions.length === 0
         ? 0
-        : Math.min(prev, nextSuggestions.length - 1),
+        : Math.min(previous, nextSuggestions.length - 1),
     );
   }, [caretPosition, inputValue, mode, repositoryFiles]);
 
@@ -273,7 +356,6 @@ export function InteractiveInput({
       );
 
       safeWriteTextarea(nextValue, clampedCaret);
-
       latestInputValueRef.current = nextValue;
       latestCaretPositionRef.current = clampedCaret;
       setInputValue(nextValue);
@@ -292,9 +374,9 @@ export function InteractiveInput({
     (forceRemount = false) => {
       setMode('input');
       if (forceRemount) {
-        setTextareaRenderVersion((prev) => prev + 1);
+        setTextareaRenderVersion((previous) => previous + 1);
       }
-      setFocusRequestToken((prev) => prev + 1);
+      setFocusRequestToken((previous) => previous + 1);
       onInputActivity?.();
     },
     [onInputActivity],
@@ -312,6 +394,38 @@ export function InteractiveInput({
     setMode('option');
     onInputActivity?.();
   }, [onInputActivity, predefinedOptions.length]);
+
+  const copyInputToClipboard = useCallback(() => {
+    if (mode !== 'input') {
+      return;
+    }
+
+    const textarea = textareaRef.current;
+    const selectedText =
+      typeof textarea?.hasSelection === 'function' &&
+      textarea.hasSelection() &&
+      typeof textarea.getSelectedText === 'function'
+        ? textarea.getSelectedText()
+        : '';
+    const fallbackText = textarea?.plainText ?? inputValue;
+    const textToCopy = selectedText.length > 0 ? selectedText : fallbackText;
+
+    if (textToCopy.length === 0) {
+      setClipboardStatus('Nothing to copy');
+      return;
+    }
+
+    void copyTextToClipboard(textToCopy)
+      .then(() => {
+        setClipboardStatus('Copied input to clipboard');
+      })
+      .catch((error: unknown) => {
+        const errorMessage =
+          error instanceof Error ? error.message : 'unknown error';
+        setClipboardStatus(`Copy failed: ${errorMessage}`);
+      });
+    onInputActivity?.();
+  }, [inputValue, mode, onInputActivity]);
 
   const submitCurrentSelection = useCallback(() => {
     if (mode === 'option' && predefinedOptions.length > 0) {
@@ -339,20 +453,19 @@ export function InteractiveInput({
     ) => {
       const target = targetOverride ?? autocompleteTargetRef.current;
       const availableSuggestions = suggestionsOverride ?? fileSuggestions;
+
       if (!target || availableSuggestions.length === 0) {
         return;
       }
 
       const index = selectedIndexOverride ?? selectedSuggestionIndex;
-      const selectedSuggestion =
-        availableSuggestions[index] ?? availableSuggestions[0];
-
+      const suggestion = availableSuggestions[index] ?? availableSuggestions[0];
       const currentValue = safeReadTextarea()?.value ?? inputValue;
       const nextValue =
         currentValue.slice(0, target.start) +
-        selectedSuggestion +
+        suggestion +
         currentValue.slice(target.end);
-      const nextCaret = target.start + selectedSuggestion.length;
+      const nextCaret = target.start + suggestion.length;
 
       setTextareaValue(nextValue, nextCaret);
     },
@@ -364,23 +477,6 @@ export function InteractiveInput({
       setTextareaValue,
     ],
   );
-
-  const hasActiveSearchSuggestions =
-    mode === 'input' &&
-    activeAutocompleteTarget !== null &&
-    fileSuggestions.length > 0;
-
-  const textareaBindings = useMemo(() => {
-    if (!hasActiveSearchSuggestions) {
-      return textareaBaseKeyBindings;
-    }
-
-    return [
-      ...textareaBaseKeyBindings,
-      { name: 'enter', action: 'submit' as const },
-      { name: 'return', action: 'submit' as const },
-    ];
-  }, [hasActiveSearchSuggestions, textareaBaseKeyBindings]);
 
   const insertCharacterInTextarea = useCallback(
     (character: string) => {
@@ -424,6 +520,7 @@ export function InteractiveInput({
           selectedSuggestionIndex,
           nextSuggestions.length - 1,
         );
+
         setFileSuggestions(nextSuggestions);
         setSelectedSuggestionIndex(clampedSelectedSuggestionIndex);
         applySelectedSuggestion(
@@ -453,10 +550,12 @@ export function InteractiveInput({
       return;
     }
 
-    if (
-      predefinedOptions.length > 0 &&
-      (isReverseTabShortcut(key) || key.name === 'tab')
-    ) {
+    if (isCopyShortcut(key)) {
+      copyInputToClipboard();
+      return;
+    }
+
+    if (hasOptions && (isReverseTabShortcut(key) || key.name === 'tab')) {
       if (mode === 'option') {
         setModeToInput();
       } else {
@@ -465,7 +564,7 @@ export function InteractiveInput({
       return;
     }
 
-    if (mode === 'option' && predefinedOptions.length > 0) {
+    if (mode === 'option' && hasOptions) {
       const isOptionSubmitKey =
         key.name === 'enter' ||
         key.name === 'return' ||
@@ -487,32 +586,20 @@ export function InteractiveInput({
         return;
       }
 
-      if (key.name === 'up') {
+      if (key.name === 'up' || key.name.toLowerCase() === 'k') {
         setSelectedIndex(
-          (prev) =>
-            (prev - 1 + predefinedOptions.length) % predefinedOptions.length,
+          (previous) =>
+            (previous - 1 + predefinedOptions.length) %
+            predefinedOptions.length,
         );
         onInputActivity?.();
         return;
       }
 
-      if (key.name.toLowerCase() === 'k') {
+      if (key.name === 'down' || key.name.toLowerCase() === 'j') {
         setSelectedIndex(
-          (prev) =>
-            (prev - 1 + predefinedOptions.length) % predefinedOptions.length,
+          (previous) => (previous + 1) % predefinedOptions.length,
         );
-        onInputActivity?.();
-        return;
-      }
-
-      if (key.name === 'down') {
-        setSelectedIndex((prev) => (prev + 1) % predefinedOptions.length);
-        onInputActivity?.();
-        return;
-      }
-
-      if (key.name.toLowerCase() === 'j') {
-        setSelectedIndex((prev) => (prev + 1) % predefinedOptions.length);
         onInputActivity?.();
         return;
       }
@@ -535,28 +622,32 @@ export function InteractiveInput({
     }
 
     if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'n') {
-      setSelectedSuggestionIndex((prev) => (prev + 1) % fileSuggestions.length);
+      setSelectedSuggestionIndex(
+        (previous) => (previous + 1) % fileSuggestions.length,
+      );
       onInputActivity?.();
       return;
     }
 
     if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'p') {
-      setSelectedSuggestionIndex((prev) =>
-        prev <= 0 ? fileSuggestions.length - 1 : prev - 1,
+      setSelectedSuggestionIndex((previous) =>
+        previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
       );
       onInputActivity?.();
       return;
     }
 
     if (key.name === 'down') {
-      setSelectedSuggestionIndex((prev) => (prev + 1) % fileSuggestions.length);
+      setSelectedSuggestionIndex(
+        (previous) => (previous + 1) % fileSuggestions.length,
+      );
       onInputActivity?.();
       return;
     }
 
     if (key.name === 'up') {
-      setSelectedSuggestionIndex((prev) =>
-        prev <= 0 ? fileSuggestions.length - 1 : prev - 1,
+      setSelectedSuggestionIndex((previous) =>
+        previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
       );
       onInputActivity?.();
     }
@@ -568,13 +659,15 @@ export function InteractiveInput({
         flexDirection="column"
         marginBottom={0}
         width="100%"
-        gap={0}
+        gap={1}
         border
         borderStyle="single"
         borderColor="cyan"
         backgroundColor="#121212"
         paddingLeft={1}
         paddingRight={1}
+        paddingTop={1}
+        paddingBottom={1}
       >
         <text fg="cyan">
           <strong>PROMPT</strong>
@@ -582,143 +675,45 @@ export function InteractiveInput({
         <MarkdownText content={question} showCodeCopyControls />
       </box>
 
-      <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
-        <text fg="gray">Mode</text>
-        <box
-          flexDirection="row"
-          alignSelf="flex-start"
-          border
-          borderStyle="single"
-          borderColor="orange"
-          backgroundColor="#151515"
-          paddingLeft={0}
-          paddingRight={0}
-        >
-          {predefinedOptions.length > 0 && (
-            <box
-              justifyContent="center"
-              paddingLeft={0}
-              paddingRight={0}
-              onClick={setModeToOption}
-              backgroundColor={mode === 'option' ? 'orange' : '#151515'}
-            >
-              <text fg={mode === 'option' ? 'black' : 'gray'}>
-                {mode === 'option' ? 'Option' : 'option'}
-              </text>
-            </box>
-          )}
-          {predefinedOptions.length > 0 && <text fg="#3a3a3a">│</text>}
-          <box
-            justifyContent="center"
-            paddingLeft={0}
-            paddingRight={0}
-            onClick={recoverInputFocusFromClick}
-            backgroundColor={mode === 'input' ? 'orange' : '#151515'}
-          >
-            <text fg={mode === 'input' ? 'black' : 'gray'}>
-              {mode === 'input' ? 'Input' : 'input'}
-            </text>
-          </box>
-        </box>
-      </box>
+      <ModeTabs
+        mode={mode}
+        hasOptions={hasOptions}
+        onSelectOptionMode={setModeToOption}
+        onSelectInputMode={recoverInputFocusFromClick}
+      />
 
-      {predefinedOptions.length > 0 && (
-        <box flexDirection="column" marginBottom={1} width="100%" gap={1}>
-          <text fg="gray" wrapMode="word">
-            Option mode: ↑/↓ or j/k choose • Enter select • Tab switch mode
-          </text>
-          <box flexDirection="column" width="100%" gap={1}>
-            {predefinedOptions.map((opt, i) => (
-              <box
-                key={`${opt}-${i}`}
-                width="100%"
-                paddingLeft={0}
-                paddingRight={1}
-                onClick={() => {
-                  setSelectedIndex(i);
-                  setModeToOption();
-                }}
-              >
-                <text
-                  wrapMode="char"
-                  fg={
-                    i === selectedIndex && mode === 'option' ? 'cyan' : 'gray'
-                  }
-                >
-                  {i === selectedIndex && mode === 'option' ? '› ' : '  '}
-                  {opt}
-                </text>
-              </box>
-            ))}
-          </box>
-        </box>
-      )}
+      <OptionList
+        mode={mode}
+        options={predefinedOptions}
+        selectedIndex={selectedIndex}
+        onSelectOption={setSelectedIndex}
+        onActivateOptionMode={setModeToOption}
+      />
 
       {mode === 'input' && (
-        <box flexDirection="column" marginBottom={0} width="100%">
-          <text fg="gray">Input</text>
-          <box
-            border
-            borderStyle="single"
-            borderColor={fileSuggestions.length > 0 ? 'cyan' : 'gray'}
-            backgroundColor="#1f1f1f"
-            width="100%"
-            height={isNarrow ? 4 : 6}
-            paddingLeft={0}
-            paddingRight={0}
-            onClick={recoverInputFocusFromClick}
-          >
-            <textarea
-              ref={textareaRef}
-              key={`textarea-${questionId}-${textareaRenderVersion}`}
-              focused
-              wrapMode="word"
-              backgroundColor="#1f1f1f"
-              focusedBackgroundColor="#1f1f1f"
-              textColor="white"
-              focusedTextColor="white"
-              placeholderColor="gray"
-              placeholder="Type your answer..."
-              keyBindings={textareaBindings}
-              onContentChange={syncInputStateFromTextarea}
-              onCursorChange={syncInputStateFromTextarea}
-              onSubmit={handleTextareaSubmit}
-            />
-          </box>
-        </box>
+        <InputEditor
+          questionId={questionId}
+          textareaRenderVersion={textareaRenderVersion}
+          textareaRef={textareaRef}
+          textareaContainerHeight={textareaContainerHeight}
+          textareaRows={textareaRows}
+          hasSuggestions={fileSuggestions.length > 0}
+          keyBindings={textareaBindings as Array<Record<string, unknown>>}
+          onFocusRequest={recoverInputFocusFromClick}
+          onContentSync={syncInputStateFromTextarea}
+          onSubmitFromTextarea={handleTextareaSubmit}
+        />
       )}
 
       {mode === 'input' && activeAutocompleteTarget !== null && (
-        <box flexDirection="column" marginBottom={1} width="100%" gap={0}>
-          <text fg="gray">
-            {predefinedOptions.length > 0
-              ? 'File suggestions • ↑/↓ or Ctrl+N/P navigate • Enter apply'
-              : 'File suggestions • ↑/↓ or Ctrl+N/P navigate • Enter/Tab apply'}
-          </text>
-          {isIndexingFiles ? (
-            <text fg="gray">Indexing files...</text>
-          ) : fileSuggestions.length > 0 ? (
-            <box flexDirection="column" width="100%">
-              {fileSuggestions.map((suggestion, index) => (
-                <box key={suggestion} paddingLeft={0} paddingRight={1}>
-                  <text
-                    fg={index === selectedSuggestionIndex ? 'cyan' : 'gray'}
-                    wrapMode="char"
-                  >
-                    {index === selectedSuggestionIndex ? '› ' : '  '}
-                    {suggestion}
-                  </text>
-                </box>
-              ))}
-            </box>
-          ) : (
-            <text fg="gray">
-              {hasSearchRoot
-                ? '#search: no matches'
-                : '#search: no search root configured'}
-            </text>
-          )}
-        </box>
+        <SuggestionsPanel
+          hasOptions={hasOptions}
+          isIndexingFiles={isIndexingFiles}
+          fileSuggestions={fileSuggestions}
+          selectedSuggestionIndex={selectedSuggestionIndex}
+          selectedSuggestionVscodeLink={selectedSuggestionVscodeLink}
+          hasSearchRoot={hasSearchRoot}
+        />
       )}
 
       {mode === 'input' && (
@@ -748,6 +743,12 @@ export function InteractiveInput({
         <text fg="gray">{inputValue.length} chars</text>
       </box>
 
+      {mode === 'input' && clipboardStatus && (
+        <text fg={clipboardStatus.startsWith('Copy failed:') ? 'red' : 'green'}>
+          {clipboardStatus}
+        </text>
+      )}
+
       {mode === 'input' && (
         <box
           backgroundColor="cyan"
@@ -765,9 +766,9 @@ export function InteractiveInput({
 
       {mode === 'input' && (
         <text fg="gray" wrapMode="word">
-          {predefinedOptions.length > 0
-            ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete'
-            : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete'}
+          {hasOptions
+            ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete • Cmd/Ctrl+C copy'
+            : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete • Cmd/Ctrl+C copy'}
         </text>
       )}
     </>

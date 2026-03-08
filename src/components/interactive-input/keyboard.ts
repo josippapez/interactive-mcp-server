@@ -39,6 +39,10 @@ export const isControlKeyShortcut = (
 export const isSubmitShortcut = (key: OpenTuiKeyEvent): boolean =>
   isControlKeyShortcut(key, 's');
 
+export const isCopyShortcut = (key: OpenTuiKeyEvent): boolean =>
+  isControlKeyShortcut(key, 'c') ||
+  (key.ctrl && key.shift && key.name.toLowerCase() === 'c');
+
 export const isReverseTabShortcut = (key: OpenTuiKeyEvent): boolean =>
   key.name === 'backtab' ||
   (key.name === 'tab' && key.shift) ||
