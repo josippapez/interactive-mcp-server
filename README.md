@@ -171,6 +171,7 @@ Package releases are handled by **GitHub Actions** in `.github/workflows/publish
 - The workflow uses:
   - **Node.js 24** (`actions/setup-node`)
   - **Bun** (`oven-sh/setup-bun`)
+- For semantic-release + trusted publishing, keep `actions/setup-node` without `registry-url` to avoid npm auth conflicts (`EINVALIDNPMTOKEN`).
 - Release pipeline commands:
   - `bun install --frozen-lockfile`
   - `bun run build`

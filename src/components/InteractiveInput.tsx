@@ -288,11 +288,21 @@ export function InteractiveInput({
     onInputActivity?.();
   }, [onInputActivity]);
 
-  const focusInputMode = useCallback(() => {
-    setMode('input');
-    setFocusRequestToken((prev) => prev + 1);
-    onInputActivity?.();
-  }, [onInputActivity]);
+  const requestInputFocus = useCallback(
+    (forceRemount = false) => {
+      setMode('input');
+      if (forceRemount) {
+        setTextareaRenderVersion((prev) => prev + 1);
+      }
+      setFocusRequestToken((prev) => prev + 1);
+      onInputActivity?.();
+    },
+    [onInputActivity],
+  );
+
+  const recoverInputFocusFromClick = useCallback(() => {
+    requestInputFocus();
+  }, [requestInputFocus]);
 
   const setModeToOption = useCallback(() => {
     if (predefinedOptions.length === 0) {
@@ -602,7 +612,7 @@ export function InteractiveInput({
             justifyContent="center"
             paddingLeft={0}
             paddingRight={0}
-            onClick={focusInputMode}
+            onClick={recoverInputFocusFromClick}
             backgroundColor={mode === 'input' ? 'orange' : '#151515'}
           >
             <text fg={mode === 'input' ? 'black' : 'gray'}>
@@ -656,7 +666,7 @@ export function InteractiveInput({
             height={isNarrow ? 4 : 6}
             paddingLeft={0}
             paddingRight={0}
-            onClick={focusInputMode}
+            onClick={recoverInputFocusFromClick}
           >
             <textarea
               ref={textareaRef}
