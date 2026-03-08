@@ -659,7 +659,7 @@ export function InteractiveInput({
         flexDirection="column"
         marginBottom={0}
         width="100%"
-        gap={1}
+        gap={0}
         border
         borderStyle="single"
         borderColor="cyan"
@@ -717,7 +717,7 @@ export function InteractiveInput({
       )}
 
       {mode === 'input' && (
-        <box flexDirection="column" marginBottom={1} width="100%">
+        <box flexDirection="column" marginBottom={0} width="100%">
           <text fg="gray" wrapMode="char">
             {hasSearchRoot
               ? `#search root: ${searchRoot}`
@@ -734,7 +734,7 @@ export function InteractiveInput({
       <box
         flexDirection={isNarrow ? 'column' : 'row'}
         justifyContent="space-between"
-        marginBottom={1}
+        marginBottom={0}
         gap={isNarrow ? 0 : undefined}
       >
         <text fg="gray">
@@ -755,7 +755,7 @@ export function InteractiveInput({
           paddingLeft={1}
           paddingRight={1}
           alignSelf="flex-start"
-          marginBottom={1}
+          marginBottom={0}
           onClick={submitCurrentSelection}
         >
           <text fg="black">

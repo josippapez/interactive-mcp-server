@@ -75,11 +75,11 @@ export const OptionList = ({
   }
 
   return (
-    <box flexDirection="column" marginBottom={1} width="100%" gap={1}>
+    <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
       <text fg="gray" wrapMode="word">
         Option mode: ↑/↓ or j/k choose • Enter select • Tab switch mode
       </text>
-      <box flexDirection="column" width="100%" gap={1}>
+      <box flexDirection="column" width="100%" gap={0}>
         {options.map((opt, index) => (
           <box
             key={`${opt}-${index}`}
@@ -183,7 +183,7 @@ export const SuggestionsPanel = ({
   selectedSuggestionVscodeLink,
   hasSearchRoot,
 }: SuggestionsPanelProps) => (
-  <box flexDirection="column" marginBottom={1} width="100%" gap={0}>
+  <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
     <text fg="gray">
       {hasOptions
         ? 'File suggestions • ↑/↓ or Ctrl+N/P navigate • Enter apply'

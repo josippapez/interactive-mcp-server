@@ -2,7 +2,7 @@
 
 [![npm version](https://img.shields.io/npm/v/%40rawwee%2Finteractive-mcp)](https://www.npmjs.com/package/@rawwee/interactive-mcp) [![npm downloads](https://img.shields.io/npm/dm/%40rawwee%2Finteractive-mcp)](https://www.npmjs.com/package/@rawwee/interactive-mcp) [![GitHub license](https://img.shields.io/github/license/josippapez/interactive-mcp-server)](https://github.com/josippapez/interactive-mcp-server/blob/main/LICENSE) [![code style: prettier](https://img.shields.io/badge/code_style-prettier-ff69b4.svg?style=flat-square)](https://github.com/prettier/prettier) [![Platforms](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-blue)](https://github.com/josippapez/interactive-mcp-server) [![GitHub last commit](https://img.shields.io/github/last-commit/josippapez/interactive-mcp-server)](https://github.com/josippapez/interactive-mcp-server/commits/main)
 
-![Screenshot 2025-05-13 213745](https://github.com/user-attachments/assets/40208534-5910-4eb2-bfbc-58f7d93aec95)
+![Interactive MCP screenshot](docs/image.png)
 
 A MCP Server implemented in Node.js/TypeScript, facilitating interactive communication between LLMs and users. **Note:** This server is designed to run locally alongside the MCP client (e.g., Claude Desktop, VS Code), as it needs direct access to the user's operating system to display notifications and command-line prompts.
 
