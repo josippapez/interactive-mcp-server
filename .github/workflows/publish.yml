@@ -47,7 +47,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: '24' # npm trusted publishing requires Node >= 22.14
-          registry-url: 'https://registry.npmjs.org' # Required for npm trusted publisher auth flow
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
