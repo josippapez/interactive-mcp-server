@@ -43,6 +43,10 @@ export const isCopyShortcut = (key: OpenTuiKeyEvent): boolean =>
   isControlKeyShortcut(key, 'c') ||
   (key.ctrl && key.shift && key.name.toLowerCase() === 'c');
 
+export const isPasteShortcut = (key: OpenTuiKeyEvent): boolean =>
+  isControlKeyShortcut(key, 'v') ||
+  (key.ctrl && key.shift && key.name.toLowerCase() === 'v');
+
 export const isReverseTabShortcut = (key: OpenTuiKeyEvent): boolean =>
   key.name === 'backtab' ||
   (key.name === 'tab' && key.shift) ||
@@ -66,6 +70,22 @@ export const isPrintableCharacter = (key: OpenTuiKeyEvent): string | null => {
   }
 
   return null;
+};
+
+export const extractPastedText = (key: OpenTuiKeyEvent): string | null => {
+  if (key.ctrl || key.meta || key.option || key.sequence.length <= 1) {
+    return null;
+  }
+
+  for (const character of key.sequence) {
+    const code = character.charCodeAt(0);
+    const isAllowedControl = code === 9 || code === 10 || code === 13;
+    if (!isAllowedControl && code < 32) {
+      return null;
+    }
+  }
+
+  return key.sequence;
 };
 
 export const textareaKeyBindings: Array<{

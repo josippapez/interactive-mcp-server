@@ -1,5 +1,7 @@
 import * as OpenTuiReact from '@opentui/react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import {
   getAutocompleteTarget,
@@ -7,8 +9,10 @@ import {
   readRepositoryFiles,
 } from './interactive-input/autocomplete.js';
 import {
+  extractPastedText,
   isPrintableCharacter,
   isCopyShortcut,
+  isPasteShortcut,
   isReverseTabShortcut,
   isSubmitShortcut,
   textareaKeyBindings,
@@ -27,7 +31,12 @@ import type {
   TextareaRenderableLike,
 } from './interactive-input/types.js';
 import { MarkdownText } from './MarkdownText.js';
-import { copyTextToClipboard } from '@/utils/clipboard.js';
+import {
+  copyTextToClipboard,
+  readFilePathsFromClipboard,
+  readImageDataUrlFromClipboard,
+  readTextFromClipboard,
+} from '@/utils/clipboard.js';
 
 const { useKeyboard } = OpenTuiReact as unknown as {
   useKeyboard: (handler: (key: OpenTuiKeyEvent) => void) => void;
@@ -38,6 +47,165 @@ const { useTerminalDimensions } = OpenTuiReact as unknown as {
 };
 
 const repositoryFileCache = new Map<string, string[]>();
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.svg': 'image/svg+xml',
+};
+const IMAGE_EMBED_MAX_BYTES = 2 * 1024 * 1024;
+const TEXT_EMBED_MAX_BYTES = 512 * 1024;
+const TEXT_EMBED_MAX_CHARS = 20000;
+const COLLAPSE_TEXT_PASTE_CHARS = 800;
+const COLLAPSE_TEXT_PASTE_LINES = 12;
+
+interface QueuedAttachment {
+  id: string;
+  label: string;
+  payload: string;
+}
+
+const inferCodeFenceLanguage = (fileName: string): string => {
+  const extension = path.extname(fileName).slice(1).toLowerCase();
+  const mapping: Record<string, string> = {
+    js: 'javascript',
+    jsx: 'jsx',
+    ts: 'typescript',
+    tsx: 'tsx',
+    json: 'json',
+    md: 'markdown',
+    py: 'python',
+    sh: 'bash',
+    yml: 'yaml',
+    yaml: 'yaml',
+    html: 'html',
+    css: 'css',
+    go: 'go',
+    rs: 'rust',
+    java: 'java',
+    cs: 'csharp',
+  };
+  return mapping[extension] ?? '';
+};
+
+const normalizeClipboardPath = (
+  clipboardText: string,
+  searchRoot?: string,
+): string | null => {
+  const trimmed = clipboardText.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const lines = trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  let candidate = lines[0] ?? '';
+  if (!candidate) {
+    return null;
+  }
+  if (
+    (candidate.startsWith('"') && candidate.endsWith('"')) ||
+    (candidate.startsWith("'") && candidate.endsWith("'"))
+  ) {
+    candidate = candidate.slice(1, -1);
+  }
+
+  if (candidate.startsWith('file://')) {
+    candidate = decodeURIComponent(candidate.replace(/^file:\/\//, ''));
+  }
+
+  if (path.isAbsolute(candidate)) {
+    return candidate;
+  }
+
+  if (!searchRoot) {
+    return null;
+  }
+
+  return path.resolve(searchRoot, candidate);
+};
+
+const isLikelyTextBuffer = (buffer: Buffer): boolean => {
+  if (buffer.includes(0)) {
+    return false;
+  }
+
+  const sample = buffer.subarray(0, Math.min(buffer.length, 2048));
+  let suspiciousBytes = 0;
+  for (const byte of sample) {
+    const isPrintableAscii = byte >= 32 && byte <= 126;
+    const isWhitespace = byte === 9 || byte === 10 || byte === 13;
+    const isExtendedUtf8Byte = byte >= 128;
+    if (!isPrintableAscii && !isWhitespace && !isExtendedUtf8Byte) {
+      suspiciousBytes += 1;
+    }
+  }
+
+  return suspiciousBytes < 8;
+};
+
+const shouldCollapsePastedText = (text: string): boolean =>
+  text.length >= COLLAPSE_TEXT_PASTE_CHARS ||
+  text.split(/\r?\n/).length >= COLLAPSE_TEXT_PASTE_LINES;
+
+const buildAttachmentFromPath = async (
+  absolutePath: string,
+): Promise<QueuedAttachment> => {
+  const fileStats = await fs.stat(absolutePath);
+  if (!fileStats.isFile()) {
+    throw new Error('Clipboard path is not a file');
+  }
+
+  const fileName = path.basename(absolutePath);
+  const extension = path.extname(fileName).toLowerCase();
+  const imageMimeType = IMAGE_MIME_BY_EXTENSION[extension];
+
+  if (imageMimeType) {
+    if (fileStats.size > IMAGE_EMBED_MAX_BYTES) {
+      return {
+        id: crypto.randomUUID(),
+        label: `Image: ${fileName} (${Math.round(fileStats.size / 1024)}KB, too large to embed)`,
+        payload: `[Image attachment: ${fileName}] (${imageMimeType}, ${fileStats.size} bytes, too large to embed)`,
+      };
+    }
+
+    const imageBuffer = await fs.readFile(absolutePath);
+    return {
+      id: crypto.randomUUID(),
+      label: `Image: ${fileName}`,
+      payload: `![${fileName}](data:${imageMimeType};base64,${imageBuffer.toString('base64')})`,
+    };
+  }
+
+  const fileBuffer = await fs.readFile(absolutePath);
+  if (
+    fileStats.size <= TEXT_EMBED_MAX_BYTES &&
+    isLikelyTextBuffer(fileBuffer)
+  ) {
+    const fileText = fileBuffer.toString('utf8');
+    const truncatedText =
+      fileText.length > TEXT_EMBED_MAX_CHARS
+        ? `${fileText.slice(0, TEXT_EMBED_MAX_CHARS)}\n\n...[truncated ${fileText.length - TEXT_EMBED_MAX_CHARS} chars]`
+        : fileText;
+    const language = inferCodeFenceLanguage(fileName);
+    return {
+      id: crypto.randomUUID(),
+      label: `File: ${fileName} (${truncatedText.length} chars)`,
+      payload: `Attached file: ${fileName}\n\`\`\`${language}\n${truncatedText}\n\`\`\``,
+    };
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    label: `File: ${fileName} (${Math.round(fileStats.size / 1024)}KB binary)`,
+    payload: `[File attachment: ${fileName}] (${fileStats.size} bytes, binary content omitted)`,
+  };
+};
 
 export function InteractiveInput({
   question,
@@ -60,6 +228,9 @@ export function InteractiveInput({
   const [textareaRenderVersion, setTextareaRenderVersion] = useState(0);
   const [focusRequestToken, setFocusRequestToken] = useState(0);
   const [clipboardStatus, setClipboardStatus] = useState<string | null>(null);
+  const [queuedAttachments, setQueuedAttachments] = useState<
+    QueuedAttachment[]
+  >([]);
 
   const textareaRef = useRef<TextareaRenderableLike | null>(null);
   const latestInputValueRef = useRef(inputValue);
@@ -260,6 +431,7 @@ export function InteractiveInput({
     setSelectedIndex(0);
     setInputValue('');
     setCaretPosition(0);
+    setQueuedAttachments([]);
     latestInputValueRef.current = '';
     latestCaretPositionRef.current = 0;
     setFileSuggestions([]);
@@ -427,19 +599,154 @@ export function InteractiveInput({
     onInputActivity?.();
   }, [inputValue, mode, onInputActivity]);
 
-  const submitCurrentSelection = useCallback(() => {
-    if (mode === 'option' && predefinedOptions.length > 0) {
-      onSubmit(questionId, predefinedOptions[selectedIndex]);
-      return;
-    }
+  const insertTextAtCaret = useCallback(
+    (text: string) => {
+      if (!text) {
+        return;
+      }
 
-    const textareaValue = safeReadTextarea()?.value ?? inputValue;
-    onSubmit(questionId, textareaValue);
+      const textareaState = safeReadTextarea();
+      const currentValue = textareaState?.value ?? inputValue;
+      const currentCaret = Math.max(
+        0,
+        Math.min(textareaState?.caret ?? caretPosition, currentValue.length),
+      );
+      const nextValue =
+        currentValue.slice(0, currentCaret) +
+        text +
+        currentValue.slice(currentCaret);
+      setTextareaValue(nextValue, currentCaret + text.length);
+    },
+    [caretPosition, inputValue, safeReadTextarea, setTextareaValue],
+  );
+
+  const queueAttachment = useCallback((attachment: QueuedAttachment) => {
+    setQueuedAttachments((previous) => [...previous, attachment]);
+  }, []);
+
+  const handlePastedText = useCallback(
+    (pastedText: string) => {
+      if (!pastedText) {
+        return;
+      }
+
+      const pasteAsPlainText = () => {
+        insertTextAtCaret(pastedText);
+        setClipboardStatus('Pasted text');
+        onInputActivity?.();
+      };
+
+      const normalizedPath = normalizeClipboardPath(pastedText, searchRoot);
+      if (normalizedPath) {
+        void buildAttachmentFromPath(normalizedPath)
+          .then((attachment) => {
+            queueAttachment(attachment);
+            setClipboardStatus(`Queued ${attachment.label}`);
+            onInputActivity?.();
+          })
+          .catch(() => {
+            pasteAsPlainText();
+          });
+        return;
+      }
+
+      if (shouldCollapsePastedText(pastedText)) {
+        queueAttachment({
+          id: crypto.randomUUID(),
+          label: `Pasted text block (${pastedText.length} chars)`,
+          payload: pastedText,
+        });
+        setClipboardStatus('Queued pasted text block');
+        onInputActivity?.();
+        return;
+      }
+
+      pasteAsPlainText();
+    },
+    [insertTextAtCaret, onInputActivity, queueAttachment, searchRoot],
+  );
+
+  const pasteClipboardIntoInput = useCallback(() => {
+    requestInputFocus();
+
+    void readTextFromClipboard()
+      .then(async (clipboardText) => {
+        if (clipboardText.trim()) {
+          handlePastedText(clipboardText);
+          return;
+        }
+
+        const clipboardPaths = await readFilePathsFromClipboard();
+        if (clipboardPaths.length > 0) {
+          const attachments = await Promise.all(
+            clipboardPaths.map(async (clipboardPath) => {
+              try {
+                return await buildAttachmentFromPath(clipboardPath);
+              } catch {
+                return null;
+              }
+            }),
+          );
+          const validAttachments = attachments.filter(
+            (value): value is QueuedAttachment => value !== null,
+          );
+          if (validAttachments.length > 0) {
+            validAttachments.forEach((attachment) => {
+              queueAttachment(attachment);
+            });
+            setClipboardStatus(
+              validAttachments.length === 1
+                ? `Queued ${validAttachments[0].label}`
+                : `Queued ${validAttachments.length} clipboard files`,
+            );
+            onInputActivity?.();
+            return;
+          }
+        }
+
+        const imageDataUrl = await readImageDataUrlFromClipboard();
+        if (imageDataUrl) {
+          queueAttachment({
+            id: crypto.randomUUID(),
+            label: 'Image: pasted-image.png',
+            payload: `![pasted-image.png](${imageDataUrl})`,
+          });
+          setClipboardStatus('Queued clipboard image');
+          onInputActivity?.();
+          return;
+        }
+
+        setClipboardStatus('Paste failed: clipboard is empty');
+      })
+      .catch((error: unknown) => {
+        const errorMessage =
+          error instanceof Error ? error.message : 'unknown error';
+        setClipboardStatus(`Paste failed: ${errorMessage}`);
+      });
+  }, [handlePastedText, onInputActivity, queueAttachment, requestInputFocus]);
+
+  const submitCurrentSelection = useCallback(() => {
+    const baseValue =
+      mode === 'option' && predefinedOptions.length > 0
+        ? predefinedOptions[selectedIndex]
+        : (safeReadTextarea()?.value ?? inputValue);
+    const attachmentPayload = queuedAttachments
+      .map((attachment) => attachment.payload)
+      .join('\n\n');
+    const finalValue = attachmentPayload
+      ? baseValue.trim().length > 0
+        ? `${baseValue}\n\n${attachmentPayload}`
+        : attachmentPayload
+      : baseValue;
+
+    onSubmit(questionId, finalValue);
+    setQueuedAttachments([]);
   }, [
     inputValue,
     mode,
     onSubmit,
     predefinedOptions,
+    queuedAttachments,
     questionId,
     safeReadTextarea,
     selectedIndex,
@@ -547,6 +854,20 @@ export function InteractiveInput({
   useKeyboard((key) => {
     if (isSubmitShortcut(key)) {
       submitCurrentSelection();
+      return;
+    }
+
+    const pastedText = extractPastedText(key);
+    if (pastedText !== null) {
+      if (mode === 'option' && hasOptions) {
+        setModeToInput();
+      }
+      handlePastedText(pastedText);
+      return;
+    }
+
+    if (isPasteShortcut(key)) {
+      pasteClipboardIntoInput();
       return;
     }
 
@@ -740,13 +1061,30 @@ export function InteractiveInput({
         <text fg="gray">
           {mode === 'input' ? 'Custom input' : 'Option selection'}
         </text>
-        <text fg="gray">{inputValue.length} chars</text>
+        <text fg="gray">
+          {mode === 'input' && queuedAttachments.length > 0
+            ? `${inputValue.length} chars + ${queuedAttachments.length} queued`
+            : `${inputValue.length} chars`}
+        </text>
       </box>
 
       {mode === 'input' && clipboardStatus && (
         <text fg={clipboardStatus.startsWith('Copy failed:') ? 'red' : 'green'}>
           {clipboardStatus}
         </text>
+      )}
+
+      {mode === 'input' && queuedAttachments.length > 0 && (
+        <box flexDirection="column" width="100%">
+          <text fg="yellow">
+            <strong>QUEUED ATTACHMENTS</strong>
+          </text>
+          {queuedAttachments.map((attachment) => (
+            <text key={attachment.id} fg="gray" wrapMode="word">
+              - {attachment.label}
+            </text>
+          ))}
+        </box>
       )}
 
       {mode === 'input' && (
@@ -767,8 +1105,8 @@ export function InteractiveInput({
       {mode === 'input' && (
         <text fg="gray" wrapMode="word">
           {hasOptions
-            ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete • Cmd/Ctrl+C copy'
-            : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete • Cmd/Ctrl+C copy'}
+            ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'
+            : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'}
         </text>
       )}
     </>
