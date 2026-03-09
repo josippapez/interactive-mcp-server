@@ -19,7 +19,7 @@ This server exposes the following tools via the Model Context Protocol (MCP):
 - `stop_intensive_chat`: Closes an active intensive chat session.
 
 Prompt UIs support markdown-friendly question text (including multiline prompts, fenced code blocks, and diff snippets). When useful, you can also include VS Code-style file links in prompt text (for example, `vscode://file/<absolute-path>:<line>:<column>`).
-In TUI input mode, `Cmd/Ctrl+V` supports clipboard text plus file/image includes from pasted paths, copied file objects, and copied images (platform support varies).
+In TUI input mode, `Cmd/Ctrl+V` supports clipboard text plus file/image includes from pasted paths, copied file objects, and copied images (platform support varies). Files are sent as path references rather than full contents to optimize token usage—the AI can then read files directly using its available tools.
 
 ## Usage Scenarios
 

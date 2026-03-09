@@ -431,6 +431,7 @@ export function MarkdownText({
                     <box
                       key={`segment-${index}-line-${lineIndex}`}
                       flexDirection="row"
+                      flexWrap="wrap"
                       width="100%"
                     >
                       {inlineSegments.flatMap(
@@ -453,7 +454,7 @@ export function MarkdownText({
                               <text
                                 key={baseKey}
                                 fg="cyan"
-                                wrapMode="word"
+                                wrapMode="char"
                                 onMouseUp={() => {
                                   void openLinkWithHint(
                                     inlineSegment.href ?? '',

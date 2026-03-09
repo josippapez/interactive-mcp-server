@@ -506,20 +506,20 @@ const App = ({
                 onSubmit={handleSubmit}
                 onInputActivity={keepInputVisible}
               />
-
-              {timeLeft !== null && (
-                <box marginTop={0}>
-                  <PromptStatus
-                    value={percentage}
-                    timeLeftSeconds={timeLeft}
-                    critical={timeLeft <= 10}
-                  />
-                </box>
-              )}
             </box>
           )}
         </box>
       </scrollbox>
+
+      {currentQuestionId && timeLeft !== null && (
+        <box paddingLeft={1} paddingRight={1} paddingTop={1}>
+          <PromptStatus
+            value={percentage}
+            timeLeftSeconds={timeLeft}
+            critical={timeLeft <= 10}
+          />
+        </box>
+      )}
     </box>
   );
 };
