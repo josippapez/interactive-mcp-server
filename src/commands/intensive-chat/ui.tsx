@@ -180,10 +180,6 @@ const App = ({
   }, []);
 
   useEffect(() => {
-    console.clear();
-  }, []);
-
-  useEffect(() => {
     let mounted = true;
 
     void resolveSearchRoot(searchRoot, { argvEntry: process.argv[1] }).then(
@@ -347,8 +343,6 @@ const App = ({
     incomingOptions?: string[],
     incomingSearchRoot?: string,
   ) => {
-    console.clear();
-
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
@@ -525,6 +519,9 @@ const App = ({
 };
 
 async function startUi() {
+  // Clear before the renderer takes over so @opentui starts with a clean slate
+  // and its diff engine is in sync with what's on screen.
+  console.clear();
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
   });

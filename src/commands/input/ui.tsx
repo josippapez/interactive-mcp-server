@@ -208,10 +208,6 @@ const App = ({ options: appOptions, onExit }: AppProps) => {
   );
 
   useEffect(() => {
-    console.clear();
-  }, []);
-
-  useEffect(() => {
     setFollowInput(false);
     scrollRef.current?.scrollTo?.({ x: 0, y: 0 });
   }, [prompt]);
@@ -341,6 +337,9 @@ async function startUi() {
     return;
   }
 
+  // Clear before the renderer takes over so @opentui starts with a clean slate
+  // and its diff engine is in sync with what's on screen.
+  console.clear();
   const renderer = await createCliRenderer({
     exitOnCtrlC: false,
   });
