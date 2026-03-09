@@ -1,3 +1,4 @@
+import type React from 'react';
 import type { TextareaRenderableLike } from './types.js';
 import { openExternalLink } from '@/utils/open-external-link.js';
 
@@ -241,4 +242,145 @@ export const SuggestionsPanel = ({
       </text>
     )}
   </box>
+);
+
+interface QuestionBoxProps {
+  question: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  MarkdownTextComponent: any;
+}
+
+export const QuestionBox = ({
+  question,
+  MarkdownTextComponent,
+}: QuestionBoxProps) => (
+  <box
+    flexDirection="column"
+    marginBottom={0}
+    width="100%"
+    gap={0}
+    border
+    borderStyle="single"
+    borderColor="cyan"
+    backgroundColor="#121212"
+    paddingLeft={1}
+    paddingRight={1}
+    paddingTop={1}
+    paddingBottom={1}
+  >
+    <text fg="cyan">
+      <strong>PROMPT</strong>
+    </text>
+    <MarkdownTextComponent content={question} showCodeCopyControls />
+  </box>
+);
+
+interface SearchStatusProps {
+  isIndexingFiles: boolean;
+  repositoryFiles: string[];
+  searchRoot?: string;
+  hasSearchRoot: boolean;
+}
+
+export const SearchStatus = ({
+  isIndexingFiles,
+  repositoryFiles,
+  searchRoot,
+  hasSearchRoot,
+}: SearchStatusProps) => (
+  <box flexDirection="column" marginBottom={0} width="100%">
+    <text fg="gray" wrapMode="char">
+      {hasSearchRoot
+        ? `#search root: ${searchRoot}`
+        : '#search root: no search root'}
+    </text>
+    <text fg="gray">
+      {isIndexingFiles
+        ? '#search index: indexing...'
+        : `#search index: ${repositoryFiles.length} files indexed`}
+    </text>
+  </box>
+);
+
+interface InputStatusProps {
+  mode: 'option' | 'input';
+  isNarrow: boolean;
+  inputValue: string;
+  queuedAttachments: Array<{ id: string }>;
+}
+
+export const InputStatus = ({
+  mode,
+  isNarrow,
+  inputValue,
+  queuedAttachments,
+}: InputStatusProps) => (
+  <box
+    flexDirection={isNarrow ? 'column' : 'row'}
+    justifyContent="space-between"
+    marginBottom={0}
+    gap={isNarrow ? 0 : undefined}
+  >
+    <text fg="gray">
+      {mode === 'input' ? 'Custom input' : 'Option selection'}
+    </text>
+    <text fg="gray">
+      {mode === 'input' && queuedAttachments.length > 0
+        ? `${inputValue.length} chars + ${queuedAttachments.length} queued`
+        : `${inputValue.length} chars`}
+    </text>
+  </box>
+);
+
+interface ClipboardStatusProps {
+  status: string;
+}
+
+export const ClipboardStatus = ({ status }: ClipboardStatusProps) => (
+  <text fg={status.startsWith('Copy failed:') ? 'red' : 'green'}>{status}</text>
+);
+
+interface AttachmentsDisplayProps {
+  queuedAttachments: Array<{ id: string; label: string }>;
+}
+
+export const AttachmentsDisplay = ({
+  queuedAttachments,
+}: AttachmentsDisplayProps) => (
+  <box flexDirection="column" width="100%" gap={0}>
+    <text fg="yellow">
+      <strong>QUEUED ATTACHMENTS</strong> (Delete placeholder text to remove)
+    </text>
+    {queuedAttachments.map((attachment, index) => (
+      <text key={attachment.id} fg="gray" wrapMode="word">
+        [File {index + 1}] {attachment.label}
+      </text>
+    ))}
+  </box>
+);
+
+export const SendButton = () => (
+  <box
+    backgroundColor="cyan"
+    paddingLeft={1}
+    paddingRight={1}
+    alignSelf="flex-start"
+    marginBottom={0}
+  >
+    <text fg="black">
+      <strong>Send</strong> ⌃S
+    </text>
+  </box>
+);
+
+interface HelpTextProps {
+  hasOptions: boolean;
+}
+
+export const HelpText = ({ hasOptions }: HelpTextProps) => (
+  <text fg="gray" wrapMode="word">
+    {hasOptions
+      ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'
+      : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'}
+  </text>
 );

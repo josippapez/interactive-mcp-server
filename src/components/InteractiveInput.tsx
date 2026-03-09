@@ -6,20 +6,19 @@ import {
   rankFileSuggestions,
   readRepositoryFiles,
 } from './interactive-input/autocomplete.js';
-import {
-  extractPastedText,
-  isPrintableCharacter,
-  isCopyShortcut,
-  isPasteShortcut,
-  isReverseTabShortcut,
-  isSubmitShortcut,
-  textareaKeyBindings,
-} from './interactive-input/keyboard.js';
+import { textareaKeyBindings } from './interactive-input/keyboard.js';
 import {
   InputEditor,
   ModeTabs,
   OptionList,
   SuggestionsPanel,
+  QuestionBox,
+  SearchStatus,
+  InputStatus,
+  ClipboardStatus,
+  AttachmentsDisplay,
+  SendButton,
+  HelpText,
 } from './interactive-input/sections.js';
 import { getTextareaDimensions } from './interactive-input/textarea-height.js';
 import type {
@@ -34,6 +33,13 @@ import {
   type QueuedAttachment,
 } from './interactive-input/constants.js';
 import { createClipboardHandlers } from './interactive-input/clipboard-handlers.js';
+import {
+  safeReadTextarea,
+  safeWriteTextarea,
+  focusTextarea,
+} from './interactive-input/textarea-operations.js';
+import { createSubmitHandler } from './interactive-input/submit-handler.js';
+import { createKeyboardRouter } from './interactive-input/keyboard-router.js';
 
 const { useKeyboard } = OpenTuiReact as unknown as {
   useKeyboard: (handler: (key: OpenTuiKeyEvent) => void) => void;
@@ -130,63 +136,6 @@ export function InteractiveInput({
 
     return `vscode://file${encodeURI(vscodePath)}`;
   }, [searchRoot, selectedSuggestion]);
-
-  const safeReadTextarea = useCallback(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) {
-      return null;
-    }
-
-    try {
-      return {
-        value: textarea.plainText,
-        caret: textarea.cursorOffset,
-      };
-    } catch {
-      textareaRef.current = null;
-      return null;
-    }
-  }, []);
-
-  const safeWriteTextarea = useCallback(
-    (nextValue: string, nextCaretPosition: number) => {
-      const textarea = textareaRef.current;
-      if (!textarea) {
-        return false;
-      }
-
-      try {
-        if (textarea.plainText !== nextValue) {
-          textarea.setText(nextValue);
-        }
-
-        textarea.cursorOffset = nextCaretPosition;
-        return true;
-      } catch {
-        textareaRef.current = null;
-        return false;
-      }
-    },
-    [],
-  );
-
-  const focusTextarea = useCallback(() => {
-    const textarea = textareaRef.current as
-      | (TextareaRenderableLike & { focus?: () => void })
-      | null;
-
-    if (!textarea) {
-      return false;
-    }
-
-    try {
-      textarea.focus?.();
-      return true;
-    } catch {
-      textareaRef.current = null;
-      return false;
-    }
-  }, []);
 
   useEffect(() => {
     latestInputValueRef.current = inputValue;
@@ -304,8 +253,8 @@ export function InteractiveInput({
     setFileSuggestions([]);
     setSelectedSuggestionIndex(0);
 
-    safeWriteTextarea('', 0);
-  }, [predefinedOptions.length, questionId, safeWriteTextarea]);
+    safeWriteTextarea(textareaRef, '', 0);
+  }, [predefinedOptions.length, questionId]);
 
   useEffect(() => {
     if (mode !== 'input') {
@@ -318,22 +267,20 @@ export function InteractiveInput({
       Math.min(latestCaretPositionRef.current, nextValue.length),
     );
 
-    const didWrite = safeWriteTextarea(nextValue, clampedCaret);
+    const didWrite = safeWriteTextarea(textareaRef, nextValue, clampedCaret);
     if (!didWrite) {
       setTextareaRenderVersion((previous) => previous + 1);
       return;
     }
 
-    if (!focusTextarea()) {
+    if (!focusTextarea(textareaRef)) {
       setTextareaRenderVersion((previous) => previous + 1);
     }
   }, [
     focusRequestToken,
-    focusTextarea,
     height,
     mode,
     questionId,
-    safeWriteTextarea,
     textareaRenderVersion,
     width,
   ]);
@@ -365,7 +312,7 @@ export function InteractiveInput({
   }, [caretPosition, inputValue, mode, repositoryFiles]);
 
   const syncInputStateFromTextarea = useCallback(() => {
-    const textareaState = safeReadTextarea();
+    const textareaState = safeReadTextarea(textareaRef);
     if (!textareaState) {
       return;
     }
@@ -385,7 +332,7 @@ export function InteractiveInput({
     setInputValue(nextValue);
     setCaretPosition(nextCaret);
     onInputActivity?.();
-  }, [onInputActivity, safeReadTextarea]);
+  }, [onInputActivity]);
 
   const setTextareaValue = useCallback(
     (nextValue: string, nextCaretPosition: number) => {
@@ -394,14 +341,14 @@ export function InteractiveInput({
         Math.min(nextCaretPosition, nextValue.length),
       );
 
-      safeWriteTextarea(nextValue, clampedCaret);
+      safeWriteTextarea(textareaRef, nextValue, clampedCaret);
       latestInputValueRef.current = nextValue;
       latestCaretPositionRef.current = clampedCaret;
       setInputValue(nextValue);
       setCaretPosition(clampedCaret);
       onInputActivity?.();
     },
-    [onInputActivity, safeWriteTextarea],
+    [onInputActivity],
   );
 
   const setModeToInput = useCallback(() => {
@@ -440,7 +387,7 @@ export function InteractiveInput({
         return;
       }
 
-      const textareaState = safeReadTextarea();
+      const textareaState = safeReadTextarea(textareaRef);
       const currentValue = textareaState?.value ?? inputValue;
       const currentCaret = Math.max(
         0,
@@ -452,7 +399,7 @@ export function InteractiveInput({
         currentValue.slice(currentCaret);
       setTextareaValue(nextValue, currentCaret + text.length);
     },
-    [caretPosition, inputValue, safeReadTextarea, setTextareaValue],
+    [caretPosition, inputValue, setTextareaValue],
   );
 
   const queueAttachment = useCallback(
@@ -498,31 +445,29 @@ export function InteractiveInput({
   const { copyInputToClipboard, handlePastedText, pasteClipboardIntoInput } =
     clipboardHandlers;
 
-  const submitCurrentSelection = useCallback(() => {
-    let finalValue =
-      mode === 'option' && predefinedOptions.length > 0
-        ? predefinedOptions[selectedIndex]
-        : (safeReadTextarea()?.value ?? inputValue);
-
-    // Replace [Attached file N] placeholders with actual payloads
-    queuedAttachments.forEach((attachment, index) => {
-      const placeholder = `[Attached file ${index + 1}]`;
-      const regex = new RegExp(placeholder.replace(/[[\]]/g, '\\$&'), 'g');
-      finalValue = finalValue.replace(regex, attachment.payload);
-    });
-
-    onSubmit(questionId, finalValue);
-    setQueuedAttachments([]);
-  }, [
-    inputValue,
-    mode,
-    onSubmit,
-    predefinedOptions,
-    queuedAttachments,
-    questionId,
-    safeReadTextarea,
-    selectedIndex,
-  ]);
+  const submitCurrentSelection = useMemo(
+    () =>
+      createSubmitHandler({
+        mode,
+        predefinedOptions,
+        selectedIndex,
+        inputValue,
+        queuedAttachments,
+        textareaRef,
+        onSubmit,
+        questionId,
+        setQueuedAttachments,
+      }),
+    [
+      mode,
+      predefinedOptions,
+      selectedIndex,
+      inputValue,
+      queuedAttachments,
+      onSubmit,
+      questionId,
+    ],
+  );
 
   const applySelectedSuggestion = useCallback(
     (
@@ -539,7 +484,7 @@ export function InteractiveInput({
 
       const index = selectedIndexOverride ?? selectedSuggestionIndex;
       const suggestion = availableSuggestions[index] ?? availableSuggestions[0];
-      const currentValue = safeReadTextarea()?.value ?? inputValue;
+      const currentValue = safeReadTextarea(textareaRef)?.value ?? inputValue;
       const nextValue =
         currentValue.slice(0, target.start) +
         suggestion +
@@ -548,13 +493,7 @@ export function InteractiveInput({
 
       setTextareaValue(nextValue, nextCaret);
     },
-    [
-      fileSuggestions,
-      inputValue,
-      safeReadTextarea,
-      selectedSuggestionIndex,
-      setTextareaValue,
-    ],
+    [fileSuggestions, inputValue, selectedSuggestionIndex, setTextareaValue],
   );
 
   const insertCharacterInTextarea = useCallback(
@@ -563,7 +502,7 @@ export function InteractiveInput({
         return;
       }
 
-      const currentValue = safeReadTextarea()?.value ?? inputValue;
+      const currentValue = safeReadTextarea(textareaRef)?.value ?? inputValue;
       const currentCaret = Math.max(
         0,
         Math.min(caretPosition, currentValue.length),
@@ -575,11 +514,11 @@ export function InteractiveInput({
 
       setTextareaValue(nextValue, currentCaret + character.length);
     },
-    [caretPosition, inputValue, safeReadTextarea, setTextareaValue],
+    [caretPosition, inputValue, setTextareaValue],
   );
 
   const handleTextareaSubmit = useCallback(() => {
-    const textareaState = safeReadTextarea();
+    const textareaState = safeReadTextarea(textareaRef);
     const currentValue = textareaState?.value ?? inputValue;
     const currentCaret = textareaState?.caret ?? caretPosition;
     const currentTarget =
@@ -623,150 +562,51 @@ export function InteractiveInput({
     selectedSuggestionIndex,
   ]);
 
-  useKeyboard((key) => {
-    if (isSubmitShortcut(key)) {
-      submitCurrentSelection();
-      return;
-    }
+  const keyboardHandler = useMemo(
+    () =>
+      createKeyboardRouter({
+        mode,
+        hasOptions,
+        predefinedOptions,
+        selectedIndex,
+        setSelectedIndex,
+        fileSuggestions,
+        selectedSuggestionIndex,
+        setSelectedSuggestionIndex,
+        setModeToInput,
+        setModeToOption,
+        submitCurrentSelection,
+        applySelectedSuggestion,
+        insertCharacterInTextarea,
+        handlePastedText,
+        pasteClipboardIntoInput,
+        copyInputToClipboard,
+        onInputActivity,
+      }),
+    [
+      mode,
+      hasOptions,
+      predefinedOptions,
+      selectedIndex,
+      fileSuggestions,
+      selectedSuggestionIndex,
+      setModeToInput,
+      setModeToOption,
+      submitCurrentSelection,
+      applySelectedSuggestion,
+      insertCharacterInTextarea,
+      handlePastedText,
+      pasteClipboardIntoInput,
+      copyInputToClipboard,
+      onInputActivity,
+    ],
+  );
 
-    const pastedText = extractPastedText(key);
-    if (pastedText !== null) {
-      if (mode === 'option' && hasOptions) {
-        setModeToInput();
-      }
-      handlePastedText(pastedText);
-      return;
-    }
-
-    if (isPasteShortcut(key)) {
-      pasteClipboardIntoInput();
-      return;
-    }
-
-    if (isCopyShortcut(key)) {
-      copyInputToClipboard();
-      return;
-    }
-
-    if (hasOptions && (isReverseTabShortcut(key) || key.name === 'tab')) {
-      if (mode === 'option') {
-        setModeToInput();
-      } else {
-        setModeToOption();
-      }
-      return;
-    }
-
-    if (mode === 'option' && hasOptions) {
-      const isOptionSubmitKey =
-        key.name === 'enter' ||
-        key.name === 'return' ||
-        key.sequence === '\r' ||
-        key.sequence === '\n';
-
-      if (isOptionSubmitKey) {
-        submitCurrentSelection();
-        return;
-      }
-
-      if (key.name === 'right') {
-        setModeToInput();
-        return;
-      }
-
-      if (key.name === 'left') {
-        setModeToOption();
-        return;
-      }
-
-      if (key.name === 'up' || key.name.toLowerCase() === 'k') {
-        setSelectedIndex(
-          (previous) =>
-            (previous - 1 + predefinedOptions.length) %
-            predefinedOptions.length,
-        );
-        onInputActivity?.();
-        return;
-      }
-
-      if (key.name === 'down' || key.name.toLowerCase() === 'j') {
-        setSelectedIndex(
-          (previous) => (previous + 1) % predefinedOptions.length,
-        );
-        onInputActivity?.();
-        return;
-      }
-
-      const typedCharacter = isPrintableCharacter(key);
-      if (typedCharacter !== null) {
-        setModeToInput();
-        insertCharacterInTextarea(typedCharacter);
-      }
-      return;
-    }
-
-    if (mode !== 'input' || fileSuggestions.length === 0) {
-      return;
-    }
-
-    if (key.name === 'tab') {
-      applySelectedSuggestion();
-      return;
-    }
-
-    if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'n') {
-      setSelectedSuggestionIndex(
-        (previous) => (previous + 1) % fileSuggestions.length,
-      );
-      onInputActivity?.();
-      return;
-    }
-
-    if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'p') {
-      setSelectedSuggestionIndex((previous) =>
-        previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
-      );
-      onInputActivity?.();
-      return;
-    }
-
-    if (key.name === 'down') {
-      setSelectedSuggestionIndex(
-        (previous) => (previous + 1) % fileSuggestions.length,
-      );
-      onInputActivity?.();
-      return;
-    }
-
-    if (key.name === 'up') {
-      setSelectedSuggestionIndex((previous) =>
-        previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
-      );
-      onInputActivity?.();
-    }
-  });
+  useKeyboard(keyboardHandler);
 
   return (
     <>
-      <box
-        flexDirection="column"
-        marginBottom={0}
-        width="100%"
-        gap={0}
-        border
-        borderStyle="single"
-        borderColor="cyan"
-        backgroundColor="#121212"
-        paddingLeft={1}
-        paddingRight={1}
-        paddingTop={1}
-        paddingBottom={1}
-      >
-        <text fg="cyan">
-          <strong>PROMPT</strong>
-        </text>
-        <MarkdownText content={question} showCodeCopyControls />
-      </box>
+      <QuestionBox question={question} MarkdownTextComponent={MarkdownText} />
 
       <ModeTabs
         mode={mode}
@@ -810,77 +650,32 @@ export function InteractiveInput({
       )}
 
       {mode === 'input' && (
-        <box flexDirection="column" marginBottom={0} width="100%">
-          <text fg="gray" wrapMode="char">
-            {hasSearchRoot
-              ? `#search root: ${searchRoot}`
-              : '#search root: no search root'}
-          </text>
-          <text fg="gray">
-            {isIndexingFiles
-              ? '#search index: indexing...'
-              : `#search index: ${repositoryFiles.length} files indexed`}
-          </text>
-        </box>
+        <SearchStatus
+          isIndexingFiles={isIndexingFiles}
+          repositoryFiles={repositoryFiles}
+          searchRoot={searchRoot}
+          hasSearchRoot={hasSearchRoot}
+        />
       )}
 
-      <box
-        flexDirection={isNarrow ? 'column' : 'row'}
-        justifyContent="space-between"
-        marginBottom={0}
-        gap={isNarrow ? 0 : undefined}
-      >
-        <text fg="gray">
-          {mode === 'input' ? 'Custom input' : 'Option selection'}
-        </text>
-        <text fg="gray">
-          {mode === 'input' && queuedAttachments.length > 0
-            ? `${inputValue.length} chars + ${queuedAttachments.length} queued`
-            : `${inputValue.length} chars`}
-        </text>
-      </box>
+      <InputStatus
+        mode={mode}
+        isNarrow={isNarrow}
+        inputValue={inputValue}
+        queuedAttachments={queuedAttachments}
+      />
 
       {mode === 'input' && clipboardStatus && (
-        <text fg={clipboardStatus.startsWith('Copy failed:') ? 'red' : 'green'}>
-          {clipboardStatus}
-        </text>
+        <ClipboardStatus status={clipboardStatus} />
       )}
 
       {mode === 'input' && queuedAttachments.length > 0 && (
-        <box flexDirection="column" width="100%" gap={0}>
-          <text fg="yellow">
-            <strong>QUEUED ATTACHMENTS</strong> (Delete placeholder text to
-            remove)
-          </text>
-          {queuedAttachments.map((attachment, index) => (
-            <text key={attachment.id} fg="gray" wrapMode="word">
-              [File {index + 1}] {attachment.label}
-            </text>
-          ))}
-        </box>
+        <AttachmentsDisplay queuedAttachments={queuedAttachments} />
       )}
 
-      {mode === 'input' && (
-        <box
-          backgroundColor="cyan"
-          paddingLeft={1}
-          paddingRight={1}
-          alignSelf="flex-start"
-          marginBottom={0}
-        >
-          <text fg="black">
-            <strong>Send</strong> ⌃S
-          </text>
-        </box>
-      )}
+      {mode === 'input' && <SendButton />}
 
-      {mode === 'input' && (
-        <text fg="gray" wrapMode="word">
-          {hasOptions
-            ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'
-            : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'}
-        </text>
-      )}
+      {mode === 'input' && <HelpText hasOptions={hasOptions} />}
     </>
   );
 }
