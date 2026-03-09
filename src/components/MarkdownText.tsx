@@ -348,28 +348,24 @@ export function MarkdownText({
     };
   }, []);
 
-  if (!content) {
-    return null;
-  }
+  const copyWithHint = useCallback(
+    async (value: string, successMessage: string): Promise<void> => {
+      if (!value) {
+        setClipboardHint('Nothing to copy.');
+        return;
+      }
 
-  const copyWithHint = async (
-    value: string,
-    successMessage: string,
-  ): Promise<void> => {
-    if (!value) {
-      setClipboardHint('Nothing to copy.');
-      return;
-    }
-
-    try {
-      await copyTextToClipboard(value);
-      setClipboardHint(successMessage);
-    } catch (error: unknown) {
-      setClipboardHint(
-        `Copy failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-    }
-  };
+      try {
+        await copyTextToClipboard(value);
+        setClipboardHint(successMessage);
+      } catch (error: unknown) {
+        setClipboardHint(
+          `Copy failed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    },
+    [],
+  );
 
   const openLinkWithHint = useCallback(
     async (href: string, target: 'default' | 'vscode' | 'vscode-insiders') => {
@@ -384,6 +380,10 @@ export function MarkdownText({
     },
     [],
   );
+
+  if (!content) {
+    return null;
+  }
 
   return (
     <box flexDirection="column" width="100%" gap={1}>

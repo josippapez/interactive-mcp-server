@@ -108,13 +108,17 @@ const isToolEnabled = (toolName: string): boolean => {
 };
 
 // Initialize MCP server with FILTERED capabilities
-const server = new McpServer({
-  name: 'Interactive MCP',
-  version: '1.0.0',
-  capabilities: {
-    tools: enabledToolCapabilities, // Use the filtered capabilities
+const server = new McpServer(
+  {
+    name: 'Interactive MCP',
+    version: '1.0.0',
   },
-});
+  {
+    capabilities: {
+      tools: enabledToolCapabilities, // Use the filtered capabilities
+    },
+  },
+);
 
 // Conditionally register tools based on command-line arguments
 
@@ -129,7 +133,13 @@ if (isToolEnabled('request_user_input')) {
     requestUserInputTool.schema, // Use schema property
     async (args) => {
       // Use inferred args type
-      const { projectName, message, predefinedOptions, baseDirectory } = args;
+      const { projectName, message, predefinedOptions, baseDirectory } =
+        args as {
+          projectName: string;
+          message: string;
+          predefinedOptions?: string[];
+          baseDirectory: string;
+        };
       try {
         const validatedBaseDirectory =
           await validateRepositoryBaseDirectory(baseDirectory);
@@ -181,7 +191,10 @@ if (isToolEnabled('message_complete_notification')) {
     messageCompleteNotificationTool.schema, // Use schema property
     (args) => {
       // Use inferred args type
-      const { projectName, message } = args;
+      const { projectName, message } = args as {
+        projectName: string;
+        message: string;
+      };
       notifier.notify({ title: projectName, message });
       return {
         content: [
@@ -208,7 +221,10 @@ if (isToolEnabled('start_intensive_chat')) {
     intensiveChatTools.start.schema, // Use schema property
     async (args) => {
       // Use inferred args type
-      const { sessionTitle, baseDirectory } = args;
+      const { sessionTitle, baseDirectory } = args as {
+        sessionTitle: string;
+        baseDirectory: string;
+      };
       try {
         const validatedBaseDirectory =
           await validateRepositoryBaseDirectory(baseDirectory);
@@ -262,7 +278,13 @@ if (isToolEnabled('ask_intensive_chat')) {
     intensiveChatTools.ask.schema, // Use schema property
     async (args) => {
       // Use inferred args type
-      const { sessionId, question, predefinedOptions, baseDirectory } = args;
+      const { sessionId, question, predefinedOptions, baseDirectory } =
+        args as {
+          sessionId: string;
+          question: string;
+          predefinedOptions?: string[];
+          baseDirectory: string;
+        };
       const activeSession = activeChatSessions.get(sessionId);
       if (!activeSession) {
         return {
@@ -348,7 +370,7 @@ if (isToolEnabled('stop_intensive_chat')) {
     intensiveChatTools.stop.schema, // Use schema property
     async (args) => {
       // Use inferred args type
-      const { sessionId } = args;
+      const { sessionId } = args as { sessionId: string };
       const activeSession = activeChatSessions.get(sessionId);
       if (!activeSession) {
         return {

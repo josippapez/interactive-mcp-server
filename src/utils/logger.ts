@@ -4,10 +4,11 @@ import {
   TransportSingleOptions,
   TransportMultiOptions,
   TransportPipelineOptions,
+  LoggerOptions,
 } from 'pino';
-import path from 'path';
-import fs from 'fs';
-import os from 'os';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 
 const logDir = path.resolve(os.tmpdir(), 'interactive-mcp-logs');
 const logFile = path.join(logDir, 'dev.log');
@@ -24,7 +25,7 @@ if (process.env.NODE_ENV === 'development' && !fs.existsSync(logDir)) {
 
 const isDevelopment = process.env.NODE_ENV === 'development';
 
-const loggerOptions: pino.LoggerOptions = {
+const loggerOptions: LoggerOptions = {
   level: isDevelopment ? 'trace' : 'silent', // Default level
 };
 
