@@ -12,6 +12,7 @@
         "--tui-renderer",
         "opentui"
       ],
+      "timeout": 800000,
       "type": "stdio"
     }
   }

@@ -9,13 +9,13 @@ Use this file as a strict policy. Do not interpret these rules loosely.
 ## Mandatory tool usage
 
 - You MUST NOT use the built-in `askQuestions` tool.
-- You MUST use `interactive` MCP server prompts (for example `request_user_input`) for interactive communication with the user.
-- You MAY use the built-in ask-question fallback tool only when the `interactive` MCP server/tools are unavailable in the current runtime.
+- You MUST use `interactive-opentui-mcp` MCP server prompts (for example `request_user_input`) for interactive communication with the user.
+- You MAY use the built-in ask-question fallback tool only when the `interactive-opentui-mcp` MCP server/tools are unavailable in the current runtime.
 - You MUST NOT exit the prompt loop until the user explicitly indicates they want to stop being prompted, even if they are unresponsive or keep giving empty responses.
 
 ## Required prompt triggers
 
-You MUST call `interactive` mcp tools in all of the following situations:
+You MUST call `interactive-opentui-mcp` mcp tools in all of the following situations:
 
 1. Before starting any task, even when requirements look clear.
 2. After completing any task, to run the satisfaction check.

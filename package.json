@@ -7,7 +7,13 @@
     "interactive-mcp": "dist/index.js"
   },
   "files": [
-    "dist",
+    "dist/constants.js",
+    "dist/index.js",
+    "dist/commands/input",
+    "dist/commands/intensive-chat",
+    "dist/components",
+    "dist/tool-definitions",
+    "dist/utils",
     "README.md",
     "LICENSE",
     "package.json"

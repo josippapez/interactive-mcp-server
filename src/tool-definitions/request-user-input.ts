@@ -8,7 +8,7 @@ import {
 // Define capability conforming to ToolCapabilityInfo
 const capabilityInfo: ToolCapabilityInfo = {
   description:
-    'Ask the user a question in an OpenTUI terminal prompt with markdown-friendly rendering and await their reply.',
+    'Ask the user a question in an interactive prompt surface and await their reply.',
   parameters: {
     type: 'object',
     properties: {
@@ -42,7 +42,7 @@ const capabilityInfo: ToolCapabilityInfo = {
 const registrationDescription: ToolRegistrationDescription = (
   globalTimeoutSeconds: number,
 ) => `<description>
-Send a question to the user via the OpenTUI terminal prompt. **Crucial for clarifying requirements, confirming plans, or resolving ambiguity.**
+Send a question to the user via an interactive prompt surface. **Crucial for clarifying requirements, confirming plans, or resolving ambiguity.**
 You should call this tool whenever it has **any** uncertainty or needs clarification or confirmation, even for trivial or silly questions.
 Feel free to ask anything! **Proactive questioning is preferred over making assumptions.**
 </description>
@@ -52,9 +52,15 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - (!important!) Continue to generate existing messages after user answers.
 - (!important!) Provide predefined options for quick selection if applicable.
 - (!important!) **Essential for validating assumptions before proceeding with significant actions (e.g., code edits, running commands).**
+- (!important!) **Do not exit the prompt loop** until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
+- (!important!) Immediately before final/closing handoff, ask exactly: "Are you satisfied with this result, or would you like any changes?"
+- (!important!) If a required prompt times out or response is empty, re-prompt indefinitely and do not proceed with assumptions.
+- (!important!) If the user skips a requested command/script, ask why it was skipped and whether to continue with alternatives or stop.
 </importantNotes>
 
 <whenToUseThisTool>
+- Before starting any task, even if requirements appear clear
+- After completing any task, to run the mandatory satisfaction check
 - When you need clarification on user requirements or preferences
 - When multiple implementation approaches are possible and user input is needed
 - **Before making potentially impactful changes (code edits, file operations, complex commands)**
@@ -64,14 +70,19 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - When facing ambiguous instructions that require clarification
 - When seeking feedback on generated code or solutions
 - When needing permission to modify critical files or functionality
+- When user instructions are conflicting or unclear
+- When the user asks to be prompted, asks a direct question, or asks a reply question
+- When the user skips a command you requested
+- Immediately before any final/closing handoff
 - **Whenever you feel even slightly unsure about the user's intent or the correct next step.**
 </whenToUseThisTool>
 
 <features>
-- OpenTUI prompt with markdown rendering (including code/diff blocks)
+- Interactive prompt UI with markdown rendering (including code/diff blocks)
 - Preserves markdown links, including VS Code file links (for example: "vscode://file/<abs-path>:<line>:<column>") when provided in the prompt text
 - Supports option mode + free-text input mode when predefinedOptions are provided
 - Returns user response or timeout notification (timeout defaults to ${globalTimeoutSeconds} seconds)
+- Backend-agnostic contract: same request/response behavior regardless of the active UI backend
 - Maintains context across user interactions
 - Handles empty responses gracefully
 - Shows project context in the prompt header/title

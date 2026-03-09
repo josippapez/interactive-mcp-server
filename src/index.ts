@@ -4,12 +4,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import notifier from 'node-notifier';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
-import { getCmdWindowInput } from './commands/input/index.js';
 import {
-  startIntensiveChatSession,
   askQuestionInSession,
+  startIntensiveChatSession,
   stopIntensiveChatSession,
 } from './commands/intensive-chat/index.js';
+import { getCmdWindowInput } from './commands/input/index.js';
 import {
   USER_INPUT_TIMEOUT_SECONDS,
   USER_INPUT_TIMEOUT_SENTINEL,
@@ -65,8 +65,12 @@ logger.info(
   'Interactive MCP server configuration loaded.',
 );
 
+interface ActiveIntensiveChatSession {
+  title: string;
+}
+
 // Store active intensive chat sessions
-const activeChatSessions = new Map<string, string>();
+const activeChatSessions = new Map<string, ActiveIntensiveChatSession>();
 
 // --- Filter Capabilities Based on Args ---
 // Helper function to check if a tool is effectively disabled (directly or via group)
@@ -208,7 +212,6 @@ if (isToolEnabled('start_intensive_chat')) {
       try {
         const validatedBaseDirectory =
           await validateRepositoryBaseDirectory(baseDirectory);
-        // Start a new intensive chat session, passing global timeout
         const sessionId = await startIntensiveChatSession(
           sessionTitle,
           validatedBaseDirectory,
@@ -216,7 +219,9 @@ if (isToolEnabled('start_intensive_chat')) {
         );
 
         // Track this session for the client
-        activeChatSessions.set(sessionId, sessionTitle);
+        activeChatSessions.set(sessionId, {
+          title: sessionTitle,
+        });
 
         return {
           content: [
@@ -258,8 +263,8 @@ if (isToolEnabled('ask_intensive_chat')) {
     async (args) => {
       // Use inferred args type
       const { sessionId, question, predefinedOptions, baseDirectory } = args;
-      // Check if session exists
-      if (!activeChatSessions.has(sessionId)) {
+      const activeSession = activeChatSessions.get(sessionId);
+      if (!activeSession) {
         return {
           content: [
             { type: 'text', text: 'Error: Invalid or expired session ID.' },
@@ -270,7 +275,6 @@ if (isToolEnabled('ask_intensive_chat')) {
       try {
         const validatedBaseDirectory =
           await validateRepositoryBaseDirectory(baseDirectory);
-        // Ask the question in the session
         const answer = await askQuestionInSession(
           sessionId,
           question,
@@ -345,8 +349,8 @@ if (isToolEnabled('stop_intensive_chat')) {
     async (args) => {
       // Use inferred args type
       const { sessionId } = args;
-      // Check if session exists
-      if (!activeChatSessions.has(sessionId)) {
+      const activeSession = activeChatSessions.get(sessionId);
+      if (!activeSession) {
         return {
           content: [
             { type: 'text', text: 'Error: Invalid or expired session ID.' },
@@ -355,7 +359,6 @@ if (isToolEnabled('stop_intensive_chat')) {
       }
 
       try {
-        // Stop the session
         const success = await stopIntensiveChatSession(sessionId);
         // Remove session from map if successful
         if (success) {

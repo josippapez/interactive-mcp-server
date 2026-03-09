@@ -10,7 +10,7 @@ import {
 
 const startCapability: ToolCapabilityInfo = {
   description:
-    'Start a persistent OpenTUI intensive chat session for gathering multiple answers quickly with markdown-friendly prompts.',
+    'Start a persistent intensive chat session for gathering multiple answers quickly with markdown-friendly prompts.',
   parameters: {
     type: 'object',
     properties: {
@@ -31,17 +31,18 @@ const startCapability: ToolCapabilityInfo = {
 const startDescription: ToolRegistrationDescription = (
   globalTimeoutSeconds: number,
 ) => `<description>
-Start an intensive chat session (OpenTUI terminal UI) for gathering multiple answers quickly from the user.
+Start an intensive chat session for gathering multiple answers quickly from the user.
 **Highly recommended** for scenarios requiring a sequence of related inputs or confirmations.
 Very useful for gathering multiple answers from the user in a short period of time.
 Especially useful for brainstorming ideas or discussing complex topics with the user.
 </description>
 
 <importantNotes>
-- (!important!) Opens a persistent console window that stays open for multiple questions.
+- (!important!) Opens a persistent interaction session that stays active for multiple questions.
 - (!important!) Returns a session ID that **must** be used for subsequent questions via 'ask_intensive_chat'.
 - (!important!) **Must** be closed with 'stop_intensive_chat' when finished gathering all inputs.
 - (!important!) After starting a session, **immediately** continue asking all necessary questions using 'ask_intensive_chat' within the **same response message**. Do not end the response until the chat is closed with 'stop_intensive_chat'. This creates a seamless conversational flow for the user.
+- (!important!) Continue the prompt loop until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
 </importantNotes>
 
 <whenToUseThisTool>
@@ -54,7 +55,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 </whenToUseThisTool>
 
 <features>
-- Opens a persistent OpenTUI window for continuous interaction
+- Opens a persistent interactive prompt surface for continuous interaction
 - Renders markdown prompts, including code/diff snippets, for richer question context
 - Preserves markdown links, including VS Code file links (for example: "vscode://file/<abs-path>:<line>:<column>") in prompt content
 - Supports option mode + free-text mode while asking follow-up questions
@@ -62,6 +63,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 - Returns a session ID for subsequent interactions
 - Keeps full chat history visible to the user
 - Maintains state between questions
+- Backend-agnostic contract: start/ask/stop behavior is consistent across available UI backends
 - Requires baseDirectory and pins autocomplete/search scope to the repository root
 </features>
 
@@ -105,7 +107,7 @@ const startToolDefinition: ToolDefinition = {
 
 const askCapability: ToolCapabilityInfo = {
   description:
-    'Ask a markdown-friendly question in an active OpenTUI intensive chat session.',
+    'Ask a markdown-friendly question in an active intensive chat session.',
   parameters: {
     type: 'object',
     properties: {
@@ -143,6 +145,8 @@ Ask a new question in an active intensive chat session previously started with '
 - (!important!) Supports predefined options for quick selection.
 - (!important!) Returns the user's answer or indicates if they didn't respond.
 - (!important!) **Use this repeatedly within the same response message** after 'start_intensive_chat' until all questions are asked.
+- (!important!) If response is empty or times out for required input, re-prompt and do not proceed with assumptions.
+- (!important!) Keep the loop active until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
 </importantNotes>
 
 <whenToUseThisTool>
@@ -223,9 +227,10 @@ const stopDescription: ToolRegistrationDescription = `<description>
 </description>
 
 <importantNotes>
-- (!important!) Closes the console window for the intensive chat.
+- (!important!) Closes the active intensive chat session.
 - (!important!) Frees up system resources.
 - (!important!) **Should always be called** as the final step when finished with an intensive chat session, typically at the end of the response message where 'start_intensive_chat' was called.
+- (!important!) Only stop the session when the user explicitly wants to end prompting, such as with "Stop prompting", "End session", or "Don't ask anymore".
 </importantNotes>
 
 <whenToUseThisTool>
@@ -237,7 +242,7 @@ const stopDescription: ToolRegistrationDescription = `<description>
 </whenToUseThisTool>
 
 <features>
-- Gracefully closes the console window
+- Gracefully closes the active session in the current backend
 - Cleans up system resources
 - Marks the session as complete
 </features>

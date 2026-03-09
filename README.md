@@ -131,11 +131,10 @@ This section is primarily for developers looking to modify or contribute to the 
 bun run start
 ```
 
-### Terminal UI backend status
+### UI backend status
 
-`interactive-mcp` now uses OpenTUI (`@opentui/core`, `@opentui/react`) for terminal UI rendering.
-
-OpenTUI is the terminal UI renderer backend.
+`interactive-mcp` currently runs with the OpenTUI terminal backend (`@opentui/core`, `@opentui/react`).
+The VS Code extension and bridge runtime have been removed from the active feature set for now, and may be reconsidered in a future iteration.
 
 #### Command-Line Options
 
@@ -143,7 +142,7 @@ The `interactive-mcp` server accepts the following command-line options. These s
 
 | Option            | Alias | Description                                                                                                                                                                                           |
 | ----------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--timeout`       | `-t`  | Sets the default timeout (in seconds) for user input prompts. Defaults to 30 seconds.                                                                                                                 |
+| `--timeout`       | `-t`  | Sets the default timeout (in seconds) for user input prompts.                                                                                                                                         |
 | `--disable-tools` | `-d`  | Disables specific tools or groups (comma-separated list). Prevents the server from advertising or registering them. Options: `request_user_input`, `message_complete_notification`, `intensive_chat`. |
 
 **Example:** Setting multiple options in the client config `args` array:
