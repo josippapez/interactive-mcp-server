@@ -460,7 +460,12 @@ const App = ({
                       <strong>QUESTION</strong>
                     </text>
                     <box paddingLeft={isNarrow ? 1 : 2}>
-                      <MarkdownText content={msg.text} showCodeCopyControls />
+                      <MarkdownText
+                        content={msg.text}
+                        showContentCopyControl
+                        contentCopyLabel="Copy question"
+                        showCodeCopyControls
+                      />
                     </box>
                   </box>
                 ) : null}
@@ -470,7 +475,12 @@ const App = ({
                       <strong>ANSWER</strong>
                     </text>
                     <box paddingLeft={isNarrow ? 1 : 2}>
-                      <MarkdownText content={msg.answer} showCodeCopyControls />
+                      <MarkdownText
+                        content={msg.answer}
+                        showContentCopyControl
+                        contentCopyLabel="Copy answer"
+                        showCodeCopyControls
+                      />
                     </box>
                   </box>
                 ) : null}

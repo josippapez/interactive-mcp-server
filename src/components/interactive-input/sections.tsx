@@ -140,10 +140,9 @@ export const InputEditor = ({
       borderStyle="single"
       borderColor={hasSuggestions ? 'cyan' : 'gray'}
       backgroundColor="#1f1f1f"
-      width="100%"
       height={textareaContainerHeight}
-      paddingLeft={0}
-      paddingRight={0}
+      paddingLeft={1}
+      paddingRight={1}
       onClick={onFocusRequest}
     >
       <textarea
@@ -257,7 +256,6 @@ export const QuestionBox = ({
   <box
     flexDirection="column"
     marginBottom={0}
-    width="100%"
     gap={0}
     border
     borderStyle="single"
@@ -271,7 +269,11 @@ export const QuestionBox = ({
     <text fg="cyan">
       <strong>PROMPT</strong>
     </text>
-    <MarkdownTextComponent content={question} showCodeCopyControls />
+    <MarkdownTextComponent
+      content={question}
+      showContentCopyControl
+      showCodeCopyControls
+    />
   </box>
 );
 
@@ -380,7 +382,7 @@ interface HelpTextProps {
 export const HelpText = ({ hasOptions }: HelpTextProps) => (
   <text fg="gray" wrapMode="word">
     {hasOptions
-      ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'
-      : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete • Cmd/Ctrl+C copy • Cmd/Ctrl+V paste/attach'}
+      ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo'
+      : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo'}
   </text>
 );

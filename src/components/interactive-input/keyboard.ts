@@ -41,7 +41,7 @@ export const isSubmitShortcut = (key: OpenTuiKeyEvent): boolean =>
 
 export const isCopyShortcut = (key: OpenTuiKeyEvent): boolean =>
   isControlKeyShortcut(key, 'c') ||
-  (key.ctrl && key.shift && key.name.toLowerCase() === 'c');
+  ((key.ctrl || key.meta) && key.shift && key.name.toLowerCase() === 'c');
 
 export const isPasteShortcut = (key: OpenTuiKeyEvent): boolean =>
   isControlKeyShortcut(key, 'v') ||
@@ -94,7 +94,7 @@ export const textareaKeyBindings: Array<{
   meta?: boolean;
   super?: boolean;
   shift?: boolean;
-  action: 'submit' | 'newline' | 'select-all';
+  action: 'submit' | 'newline' | 'select-all' | 'undo' | 'redo';
 }> = [
   { name: 's', ctrl: true, action: 'submit' },
   { name: 's', meta: true, action: 'submit' },
@@ -102,5 +102,12 @@ export const textareaKeyBindings: Array<{
   { name: 'a', ctrl: true, action: 'select-all' },
   { name: 'a', meta: true, action: 'select-all' },
   { name: 'a', super: true, action: 'select-all' },
+  { name: 'z', ctrl: true, action: 'undo' },
+  { name: 'z', meta: true, action: 'undo' },
+  { name: 'z', super: true, action: 'undo' },
+  { name: 'z', ctrl: true, shift: true, action: 'redo' },
+  { name: 'z', meta: true, shift: true, action: 'redo' },
+  { name: 'z', super: true, shift: true, action: 'redo' },
+  { name: 'y', ctrl: true, action: 'redo' },
   { name: 'j', ctrl: true, action: 'newline' },
 ];

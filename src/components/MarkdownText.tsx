@@ -338,15 +338,45 @@ export function MarkdownText({
   const [copiedSnippetIndex, setCopiedSnippetIndex] = useState<number | null>(
     null,
   );
+  const clipboardHintTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const copiedSnippetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     return () => {
+      if (clipboardHintTimeoutRef.current) {
+        clearTimeout(clipboardHintTimeoutRef.current);
+      }
       if (copiedSnippetTimeoutRef.current) {
         clearTimeout(copiedSnippetTimeoutRef.current);
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!clipboardHint) {
+      if (clipboardHintTimeoutRef.current) {
+        clearTimeout(clipboardHintTimeoutRef.current);
+        clipboardHintTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (clipboardHintTimeoutRef.current) {
+      clearTimeout(clipboardHintTimeoutRef.current);
+    }
+
+    clipboardHintTimeoutRef.current = setTimeout(() => {
+      setClipboardHint(null);
+      clipboardHintTimeoutRef.current = null;
+    }, 2000);
+
+    return () => {
+      if (clipboardHintTimeoutRef.current) {
+        clearTimeout(clipboardHintTimeoutRef.current);
+        clipboardHintTimeoutRef.current = null;
+      }
+    };
+  }, [clipboardHint]);
 
   const copyWithHint = useCallback(
     async (value: string, successMessage: string): Promise<void> => {

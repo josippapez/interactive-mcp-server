@@ -124,13 +124,16 @@ const server = new McpServer(
 
 if (isToolEnabled('request_user_input')) {
   // Use properties from the imported tool object
-  server.tool(
+  server.registerTool(
     'request_user_input',
-    // Need to handle description potentially being a function
-    typeof requestUserInputTool.description === 'function'
-      ? requestUserInputTool.description(globalTimeoutSeconds)
-      : requestUserInputTool.description,
-    requestUserInputTool.schema, // Use schema property
+    {
+      // Need to handle description potentially being a function
+      description:
+        typeof requestUserInputTool.description === 'function'
+          ? requestUserInputTool.description(globalTimeoutSeconds)
+          : requestUserInputTool.description,
+      inputSchema: requestUserInputTool.schema, // Use schema property
+    },
     async (args) => {
       // Use inferred args type
       const { projectName, message, predefinedOptions, baseDirectory } =
@@ -182,13 +185,16 @@ if (isToolEnabled('request_user_input')) {
 
 if (isToolEnabled('message_complete_notification')) {
   // Use properties from the imported tool object
-  server.tool(
+  server.registerTool(
     'message_complete_notification',
-    // Description is a string here, but handle consistently
-    typeof messageCompleteNotificationTool.description === 'function'
-      ? messageCompleteNotificationTool.description(globalTimeoutSeconds) // Should not happen based on definition, but safe
-      : messageCompleteNotificationTool.description,
-    messageCompleteNotificationTool.schema, // Use schema property
+    {
+      // Description is a string here, but handle consistently
+      description:
+        typeof messageCompleteNotificationTool.description === 'function'
+          ? messageCompleteNotificationTool.description(globalTimeoutSeconds) // Should not happen based on definition, but safe
+          : messageCompleteNotificationTool.description,
+      inputSchema: messageCompleteNotificationTool.schema, // Use schema property
+    },
     (args) => {
       // Use inferred args type
       const { projectName, message } = args as {
@@ -212,13 +218,16 @@ if (isToolEnabled('message_complete_notification')) {
 // Each tool must be checked individually based on filtered capabilities
 if (isToolEnabled('start_intensive_chat')) {
   // Use properties from the imported intensiveChatTools object
-  server.tool(
+  server.registerTool(
     'start_intensive_chat',
-    // Description is a function here
-    typeof intensiveChatTools.start.description === 'function'
-      ? intensiveChatTools.start.description(globalTimeoutSeconds)
-      : intensiveChatTools.start.description,
-    intensiveChatTools.start.schema, // Use schema property
+    {
+      // Description is a function here
+      description:
+        typeof intensiveChatTools.start.description === 'function'
+          ? intensiveChatTools.start.description(globalTimeoutSeconds)
+          : intensiveChatTools.start.description,
+      inputSchema: intensiveChatTools.start.schema, // Use schema property
+    },
     async (args) => {
       // Use inferred args type
       const { sessionTitle, baseDirectory } = args as {
@@ -269,13 +278,16 @@ if (isToolEnabled('start_intensive_chat')) {
 
 if (isToolEnabled('ask_intensive_chat')) {
   // Use properties from the imported intensiveChatTools object
-  server.tool(
+  server.registerTool(
     'ask_intensive_chat',
-    // Description is a string here
-    typeof intensiveChatTools.ask.description === 'function'
-      ? intensiveChatTools.ask.description(globalTimeoutSeconds) // Should not happen, but safe
-      : intensiveChatTools.ask.description,
-    intensiveChatTools.ask.schema, // Use schema property
+    {
+      // Description is a string here
+      description:
+        typeof intensiveChatTools.ask.description === 'function'
+          ? intensiveChatTools.ask.description(globalTimeoutSeconds) // Should not happen, but safe
+          : intensiveChatTools.ask.description,
+      inputSchema: intensiveChatTools.ask.schema, // Use schema property
+    },
     async (args) => {
       // Use inferred args type
       const { sessionId, question, predefinedOptions, baseDirectory } =
@@ -361,13 +373,16 @@ if (isToolEnabled('ask_intensive_chat')) {
 
 if (isToolEnabled('stop_intensive_chat')) {
   // Use properties from the imported intensiveChatTools object
-  server.tool(
+  server.registerTool(
     'stop_intensive_chat',
-    // Description is a string here
-    typeof intensiveChatTools.stop.description === 'function'
-      ? intensiveChatTools.stop.description(globalTimeoutSeconds) // Should not happen, but safe
-      : intensiveChatTools.stop.description,
-    intensiveChatTools.stop.schema, // Use schema property
+    {
+      // Description is a string here
+      description:
+        typeof intensiveChatTools.stop.description === 'function'
+          ? intensiveChatTools.stop.description(globalTimeoutSeconds) // Should not happen, but safe
+          : intensiveChatTools.stop.description,
+      inputSchema: intensiveChatTools.stop.schema, // Use schema property
+    },
     async (args) => {
       // Use inferred args type
       const { sessionId } = args as { sessionId: string };
