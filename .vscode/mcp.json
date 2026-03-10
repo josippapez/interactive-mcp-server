@@ -14,6 +14,36 @@
       ],
       "timeout": 800000,
       "type": "stdio"
+    },
+    "interactive-mcp-managed": {
+      "command": "bun",
+      "args": [
+        "run",
+        "dist/index.js",
+        "--timeout",
+        "60",
+        "--ui-backend",
+        "vscode",
+        "--vscode-bridge-dir",
+        "/var/folders/77/_cqqbnjn2dj0yzs68hlszmg40000gn/T/interactive-mcp-vscode-bridge"
+      ]
+    }
+  },
+  "mcp": {
+    "servers": {
+      "interactive-mcp-managed": {
+        "command": "bun",
+        "args": [
+          "run",
+          "dist/index.js",
+          "--timeout",
+          "60",
+          "--ui-backend",
+          "vscode",
+          "--vscode-bridge-dir",
+          "/var/folders/77/_cqqbnjn2dj0yzs68hlszmg40000gn/T/interactive-mcp-vscode-bridge"
+        ]
+      }
     }
   }
 }
