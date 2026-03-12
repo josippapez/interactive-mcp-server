@@ -15,8 +15,8 @@ const IGNORED_DIRECTORIES = new Set([
   '.DS_Store',
 ]);
 
-const MAX_REPOSITORY_FILES = 6000;
-const MAX_SUGGESTIONS = 6;
+const MAX_REPOSITORY_ENTRIES = 50000;
+const MAX_SUGGESTIONS_WITH_EMPTY_QUERY = 24;
 
 const toPosixPath = (value: string): string => value.replaceAll(path.sep, '/');
 
@@ -105,7 +105,7 @@ export const rankFileSuggestions = (
   query: string,
 ): string[] => {
   if (query.length === 0) {
-    return files.slice(0, MAX_SUGGESTIONS);
+    return files.slice(0, MAX_SUGGESTIONS_WITH_EMPTY_QUERY);
   }
 
   return files
@@ -118,7 +118,6 @@ export const rankFileSuggestions = (
         typeof entry.score === 'number',
     )
     .sort((a, b) => b.score - a.score || a.filePath.localeCompare(b.filePath))
-    .slice(0, MAX_SUGGESTIONS)
     .map((entry) => entry.filePath);
 };
 
@@ -128,11 +127,11 @@ export const readRepositoryFiles = async (
   const discoveredFiles: string[] = [];
 
   const visitDirectory = async (directoryPath: string): Promise<void> => {
-    if (discoveredFiles.length >= MAX_REPOSITORY_FILES) {
+    if (discoveredFiles.length >= MAX_REPOSITORY_ENTRIES) {
       return;
     }
 
-    let entries: Dirent[] = [];
+    let entries: Dirent[];
     try {
       entries = await fs.readdir(directoryPath, { withFileTypes: true });
     } catch {
@@ -140,7 +139,7 @@ export const readRepositoryFiles = async (
     }
 
     for (const entry of entries) {
-      if (discoveredFiles.length >= MAX_REPOSITORY_FILES) {
+      if (discoveredFiles.length >= MAX_REPOSITORY_ENTRIES) {
         return;
       }
 
@@ -149,16 +148,18 @@ export const readRepositoryFiles = async (
       }
 
       const entryAbsolutePath = path.join(directoryPath, entry.name);
+      const relativePath = path.relative(repoRoot, entryAbsolutePath);
+      if (!relativePath || relativePath.startsWith('..')) {
+        continue;
+      }
+
       if (entry.isDirectory()) {
+        discoveredFiles.push(`${toPosixPath(relativePath)}/`);
         await visitDirectory(entryAbsolutePath);
         continue;
       }
 
       if (entry.isFile()) {
-        const relativePath = path.relative(repoRoot, entryAbsolutePath);
-        if (!relativePath || relativePath.startsWith('..')) {
-          continue;
-        }
         discoveredFiles.push(toPosixPath(relativePath));
       }
     }
