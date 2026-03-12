@@ -75,6 +75,9 @@ export function InteractiveInput({
   >([]);
 
   const textareaRef = useRef<TextareaRenderableLike | null>(null);
+  const suggestionsScrollRef = useRef<{
+    scrollTo?: (position: number | { x: number; y: number }) => void;
+  } | null>(null);
   const latestInputValueRef = useRef(inputValue);
   const latestCaretPositionRef = useRef(caretPosition);
   const autocompleteTargetRef = useRef<AutocompleteTarget | null>(null);
@@ -284,6 +287,18 @@ export function InteractiveInput({
     textareaRenderVersion,
     width,
   ]);
+
+  useEffect(() => {
+    if (fileSuggestions.length === 0) {
+      return;
+    }
+
+    suggestionsScrollRef.current?.scrollTo?.({
+      x: 0,
+      y: selectedSuggestionIndex,
+    });
+    focusTextarea(textareaRef);
+  }, [fileSuggestions.length, selectedSuggestionIndex]);
 
   useEffect(() => {
     if (mode !== 'input' || repositoryFiles.length === 0) {
@@ -646,6 +661,7 @@ export function InteractiveInput({
           selectedSuggestionIndex={selectedSuggestionIndex}
           selectedSuggestionVscodeLink={selectedSuggestionVscodeLink}
           hasSearchRoot={hasSearchRoot}
+          scrollRef={suggestionsScrollRef}
         />
       )}
 

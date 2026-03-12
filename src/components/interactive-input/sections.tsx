@@ -173,6 +173,11 @@ interface SuggestionsPanelProps {
   selectedSuggestionIndex: number;
   selectedSuggestionVscodeLink: string | null;
   hasSearchRoot: boolean;
+  scrollRef: {
+    current: {
+      scrollTo?: (position: number | { x: number; y: number }) => void;
+    } | null;
+  };
 }
 
 export const SuggestionsPanel = ({
@@ -182,6 +187,7 @@ export const SuggestionsPanel = ({
   selectedSuggestionIndex,
   selectedSuggestionVscodeLink,
   hasSearchRoot,
+  scrollRef,
 }: SuggestionsPanelProps) => (
   <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
     <text fg="gray">
@@ -193,17 +199,31 @@ export const SuggestionsPanel = ({
       <text fg="gray">Indexing files...</text>
     ) : fileSuggestions.length > 0 ? (
       <box flexDirection="column" width="100%">
-        {fileSuggestions.map((suggestion, index) => (
-          <box key={suggestion} paddingLeft={0} paddingRight={1} gap={0}>
-            <text
-              fg={index === selectedSuggestionIndex ? 'cyan' : 'gray'}
-              wrapMode="char"
-            >
-              {index === selectedSuggestionIndex ? '› ' : '  '}
-              {suggestion}
-            </text>
+        <text fg="gray">Showing up to 50 results</text>
+        <scrollbox
+          ref={scrollRef}
+          width="100%"
+          height={6}
+          scrollY
+          viewportCulling
+          scrollbarOptions={{
+            showArrows: false,
+          }}
+        >
+          <box flexDirection="column" width="100%">
+            {fileSuggestions.map((suggestion, index) => (
+              <box key={suggestion} paddingLeft={0} paddingRight={1} gap={0}>
+                <text
+                  fg={index === selectedSuggestionIndex ? 'cyan' : 'gray'}
+                  wrapMode="char"
+                >
+                  {index === selectedSuggestionIndex ? '› ' : '  '}
+                  {suggestion}
+                </text>
+              </box>
+            ))}
           </box>
-        ))}
+        </scrollbox>
         {selectedSuggestionVscodeLink && (
           <box flexDirection="column" width="100%">
             <text fg="gray" wrapMode="word">

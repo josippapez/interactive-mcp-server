@@ -8,15 +8,33 @@ const IGNORED_DIRECTORIES = new Set([
   'node_modules',
   'dist',
   'build',
+  'coverage',
+  '.cache',
+  '.bun',
+  '.yarn',
+  '.pnpm',
+  '.pnpm-store',
   '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.vercel',
   '.turbo',
+  '.output',
+  'out',
   '.idea',
   '.vscode',
+  '.history',
+  '.tmp',
+  'tmp',
+  'temp',
+  '.venv',
+  'venv',
+  '.pytest_cache',
   '.DS_Store',
 ]);
 
 const MAX_REPOSITORY_ENTRIES = 50000;
-const MAX_SUGGESTIONS_WITH_EMPTY_QUERY = 24;
+const MAX_VISIBLE_SUGGESTIONS = 50;
 
 const toPosixPath = (value: string): string => value.replaceAll(path.sep, '/');
 
@@ -54,6 +72,53 @@ const getFuzzyScore = (candidate: string, query: string): number | null => {
   }
 
   return score - candidate.length * 0.1;
+};
+
+interface ScoredSuggestion {
+  filePath: string;
+  score: number;
+}
+
+const isHigherRanked = (
+  left: ScoredSuggestion,
+  right: ScoredSuggestion,
+): boolean =>
+  left.score > right.score ||
+  (left.score === right.score &&
+    left.filePath.localeCompare(right.filePath) < 0);
+
+const collectTopRankedSuggestions = (
+  files: string[],
+  query: string,
+  limit: number,
+): ScoredSuggestion[] => {
+  const topRanked: ScoredSuggestion[] = [];
+
+  for (const filePath of files) {
+    const score = getFuzzyScore(filePath, query);
+    if (score === null) {
+      continue;
+    }
+
+    const scoredSuggestion: ScoredSuggestion = { filePath, score };
+    const insertionIndex = topRanked.findIndex((candidate) =>
+      isHigherRanked(scoredSuggestion, candidate),
+    );
+
+    if (insertionIndex === -1) {
+      if (topRanked.length < limit) {
+        topRanked.push(scoredSuggestion);
+      }
+      continue;
+    }
+
+    topRanked.splice(insertionIndex, 0, scoredSuggestion);
+    if (topRanked.length > limit) {
+      topRanked.pop();
+    }
+  }
+
+  return topRanked;
 };
 
 export const getAutocompleteTarget = (
@@ -105,20 +170,12 @@ export const rankFileSuggestions = (
   query: string,
 ): string[] => {
   if (query.length === 0) {
-    return files.slice(0, MAX_SUGGESTIONS_WITH_EMPTY_QUERY);
+    return files.slice(0, MAX_VISIBLE_SUGGESTIONS);
   }
 
-  return files
-    .map((filePath) => ({
-      filePath,
-      score: getFuzzyScore(filePath, query),
-    }))
-    .filter(
-      (entry): entry is { filePath: string; score: number } =>
-        typeof entry.score === 'number',
-    )
-    .sort((a, b) => b.score - a.score || a.filePath.localeCompare(b.filePath))
-    .map((entry) => entry.filePath);
+  return collectTopRankedSuggestions(files, query, MAX_VISIBLE_SUGGESTIONS).map(
+    (entry) => entry.filePath,
+  );
 };
 
 export const readRepositoryFiles = async (
@@ -144,6 +201,10 @@ export const readRepositoryFiles = async (
       }
 
       if (IGNORED_DIRECTORIES.has(entry.name)) {
+        continue;
+      }
+
+      if (entry.isSymbolicLink()) {
         continue;
       }
 
