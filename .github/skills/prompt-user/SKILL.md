@@ -11,14 +11,18 @@ Use this skill whenever user interaction is required. It operationalizes `.githu
 
 1. Use only `request_user_input` for standard prompts.
 2. Do not use built-in `askQuestions`.
-3. If interactive-mcp tools are unavailable in runtime, use built-in ask-question tooling only as a temporary fallback.
-4. Before any coding task, ask at least one scope/confirmation prompt.
-5. Before final handoff, ask exactly:
+3. Before any coding task, ask at least one scope/confirmation prompt.
+4. Before final handoff, ask exactly:
    `Are you satisfied with this result, or would you like any changes?`
-6. Continue prompting until user explicitly says one of:
+5. Continue prompting until user explicitly says one of:
    - `Stop prompting`
    - `End session`
    - `Don't ask anymore`
+   - `Close conversation`
+6. After a satisfaction prompt, any user reply that is not an exact stop phrase MUST be treated as an active session continuation.
+7. For every follow-up where a prompt trigger applies, include the required `request_user_input` prompt in that same user-facing response.
+8. Do not send plain-text-only follow-up/completion replies when a prompt trigger applies.
+9. After each follow-up task completion, ask the mandatory satisfaction prompt again using `request_user_input`.
 
 ## Required trigger cases
 
@@ -27,7 +31,8 @@ Use this skill whenever user interaction is required. It operationalizes `.githu
 - User asks a question that needs preference selection.
 - Conflicting user instructions.
 - User skipped a requested command/script.
-- And any other situation described in the [../../instructions/user-interaction.instructions.md](../../.github/instructions/user-interaction.instructions.md) file.
+- Replies that follow system notifications/background completions and present user-facing task output.
+- And any other situation described in the [../../instructions/user-interaction.instructions.md](../../instructions/user-interaction.instructions.md) file.
 
 ## Prompt quality standard
 
@@ -53,7 +58,3 @@ Use this skill whenever user interaction is required. It operationalizes `.githu
 
 - Never ask for secrets (tokens, passwords, private keys).
 - Do not ask for unnecessary personal data.
-
-## Mapping
-
-- Tool: `request_user_input({ projectName, message, predefinedOptions })`

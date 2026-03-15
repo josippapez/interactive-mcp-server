@@ -498,7 +498,15 @@ export function InteractiveInput({
       }
 
       const index = selectedIndexOverride ?? selectedSuggestionIndex;
-      const suggestion = availableSuggestions[index] ?? availableSuggestions[0];
+      const clampedIndex = Math.max(
+        0,
+        Math.min(index, availableSuggestions.length - 1),
+      );
+      const suggestion = availableSuggestions[clampedIndex];
+
+      if (!suggestion) {
+        return;
+      }
       const currentValue = safeReadTextarea(textareaRef)?.value ?? inputValue;
       const nextValue =
         currentValue.slice(0, target.start) +
