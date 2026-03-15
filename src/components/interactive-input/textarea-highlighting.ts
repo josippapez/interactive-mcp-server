@@ -40,7 +40,7 @@ const { SyntaxStyle, RGBA } = OpenTuiCore as unknown as {
   RGBA?: RgbaLike;
 };
 
-const FENCED_CODE_REGEX = /```[\s\S]*?```/g;
+const FENCED_CODE_REGEX = /```[^`\n]*\n[\s\S]*?\n```(?=\s|$)/g;
 const INLINE_CODE_REGEX = /`[^`\n]+`/g;
 const MARKDOWN_LINK_REGEX = /\[[^\]\n]+\]\((?:https?:\/\/|mailto:)[^)]+?\)/g;
 const URL_REGEX = /\b(?:https?:\/\/|mailto:)[^\s<>()]+/g;

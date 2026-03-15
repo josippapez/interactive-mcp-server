@@ -61,7 +61,7 @@ const LANGUAGE_TO_FILETYPE: Record<string, string> = {
   js: 'javascript',
   jsx: 'javascript',
   ts: 'typescript',
-  tsx: 'tsx',
+  tsx: 'typescript',
   sh: 'bash',
   shell: 'bash',
   zsh: 'bash',

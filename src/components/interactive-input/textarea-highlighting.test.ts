@@ -42,8 +42,42 @@ describe('getTextareaHighlightRanges', () => {
     expect(
       ranges.every(
         (range, index) =>
-          index === 0 || ranges[index - 1]!.end <= ranges[index]!.start,
+          index === 0 ||
+          (ranges[index - 1]?.end ?? 0) <= (ranges[index]?.start ?? 0),
       ),
     ).toBe(true);
+  });
+
+  it('does not keep highlighting after a closed fenced code block', () => {
+    const input = '```\noaskdokasd\n```\nThis text is not code.';
+    const ranges = getTextareaHighlightRanges(input);
+    const codeTexts = ranges
+      .filter((range) => range.kind === 'code')
+      .map((range) => input.slice(range.start, range.end));
+
+    expect(codeTexts).toEqual(['```\noaskdokasd\n```']);
+    expect(
+      ranges.some((range) =>
+        input.slice(range.start, range.end).includes('This text is not code.'),
+      ),
+    ).toBe(false);
+  });
+
+  it('keeps URL highlighting scoped to the URL token', () => {
+    const input =
+      'https://github.com/github/copilot-cli/issues <this is not part of the link>';
+    const ranges = getTextareaHighlightRanges(input);
+    const linkTexts = ranges
+      .filter((range) => range.kind === 'link')
+      .map((range) => input.slice(range.start, range.end));
+
+    expect(linkTexts).toEqual(['https://github.com/github/copilot-cli/issues']);
+    expect(
+      ranges.some((range) =>
+        input
+          .slice(range.start, range.end)
+          .includes('<this is not part of the link>'),
+      ),
+    ).toBe(false);
   });
 });
