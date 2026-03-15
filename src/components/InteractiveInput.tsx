@@ -1,5 +1,12 @@
 import * as OpenTuiReact from '@opentui/react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SetStateAction,
+} from 'react';
 import path from 'node:path';
 import {
   getAutocompleteTarget,
@@ -40,6 +47,11 @@ import {
 } from './interactive-input/textarea-operations.js';
 import { createSubmitHandler } from './interactive-input/submit-handler.js';
 import { createKeyboardRouter } from './interactive-input/keyboard-router.js';
+import { resolveSuggestionSelection } from './interactive-input/suggestion-selection.js';
+import {
+  applyTextareaHighlights,
+  createTextareaSyntaxHighlighting,
+} from './interactive-input/textarea-highlighting.js';
 
 const { useKeyboard } = OpenTuiReact as unknown as {
   useKeyboard: (handler: (key: OpenTuiKeyEvent) => void) => void;
@@ -81,6 +93,19 @@ export function InteractiveInput({
   const latestInputValueRef = useRef(inputValue);
   const latestCaretPositionRef = useRef(caretPosition);
   const autocompleteTargetRef = useRef<AutocompleteTarget | null>(null);
+  const selectedSuggestionIndexRef = useRef(0);
+
+  const updateSelectedSuggestionIndex = useCallback(
+    (nextValue: SetStateAction<number>) => {
+      setSelectedSuggestionIndex((previous) => {
+        const resolvedValue =
+          typeof nextValue === 'function' ? nextValue(previous) : nextValue;
+        selectedSuggestionIndexRef.current = resolvedValue;
+        return resolvedValue;
+      });
+    },
+    [],
+  );
 
   const { width, height } = useTerminalDimensions();
   const isNarrow = width < 90;
@@ -125,6 +150,10 @@ export function InteractiveInput({
   }, [hasActiveSearchSuggestions, textareaBaseKeyBindings]);
 
   const selectedSuggestion = fileSuggestions[selectedSuggestionIndex];
+  const textareaSyntaxHighlighting = useMemo(
+    () => createTextareaSyntaxHighlighting(),
+    [],
+  );
 
   const selectedSuggestionVscodeLink = useMemo(() => {
     if (!searchRoot || !selectedSuggestion) {
@@ -199,7 +228,7 @@ export function InteractiveInput({
 
     autocompleteTargetRef.current = null;
     setFileSuggestions([]);
-    setSelectedSuggestionIndex(0);
+    updateSelectedSuggestionIndex(0);
 
     if (!repositoryRoot) {
       setRepositoryFiles([]);
@@ -243,7 +272,7 @@ export function InteractiveInput({
     return () => {
       active = false;
     };
-  }, [searchRoot]);
+  }, [searchRoot, updateSelectedSuggestionIndex]);
 
   useEffect(() => {
     setMode(predefinedOptions.length > 0 ? 'option' : 'input');
@@ -254,10 +283,10 @@ export function InteractiveInput({
     latestInputValueRef.current = '';
     latestCaretPositionRef.current = 0;
     setFileSuggestions([]);
-    setSelectedSuggestionIndex(0);
+    updateSelectedSuggestionIndex(0);
 
     safeWriteTextarea(textareaRef, '', 0);
-  }, [predefinedOptions.length, questionId]);
+  }, [predefinedOptions.length, questionId, updateSelectedSuggestionIndex]);
 
   useEffect(() => {
     if (mode !== 'input') {
@@ -276,6 +305,12 @@ export function InteractiveInput({
       return;
     }
 
+    applyTextareaHighlights({
+      textarea: textareaRef.current,
+      value: nextValue,
+      styleIds: textareaSyntaxHighlighting?.styleIds,
+    });
+
     if (!focusTextarea(textareaRef)) {
       setTextareaRenderVersion((previous) => previous + 1);
     }
@@ -285,6 +320,7 @@ export function InteractiveInput({
     mode,
     questionId,
     textareaRenderVersion,
+    textareaSyntaxHighlighting?.styleIds,
     width,
   ]);
 
@@ -304,7 +340,7 @@ export function InteractiveInput({
     if (mode !== 'input' || repositoryFiles.length === 0) {
       autocompleteTargetRef.current = null;
       setFileSuggestions([]);
-      setSelectedSuggestionIndex(0);
+      updateSelectedSuggestionIndex(0);
       return;
     }
 
@@ -313,18 +349,24 @@ export function InteractiveInput({
 
     if (!target) {
       setFileSuggestions([]);
-      setSelectedSuggestionIndex(0);
+      updateSelectedSuggestionIndex(0);
       return;
     }
 
     const nextSuggestions = rankFileSuggestions(repositoryFiles, target.query);
     setFileSuggestions(nextSuggestions);
-    setSelectedSuggestionIndex((previous) =>
+    updateSelectedSuggestionIndex((previous) =>
       nextSuggestions.length === 0
         ? 0
         : Math.min(previous, nextSuggestions.length - 1),
     );
-  }, [caretPosition, inputValue, mode, repositoryFiles]);
+  }, [
+    caretPosition,
+    inputValue,
+    mode,
+    repositoryFiles,
+    updateSelectedSuggestionIndex,
+  ]);
 
   const syncInputStateFromTextarea = useCallback(() => {
     const textareaState = safeReadTextarea(textareaRef);
@@ -344,10 +386,15 @@ export function InteractiveInput({
 
     latestInputValueRef.current = nextValue;
     latestCaretPositionRef.current = nextCaret;
+    applyTextareaHighlights({
+      textarea: textareaRef.current,
+      value: nextValue,
+      styleIds: textareaSyntaxHighlighting?.styleIds,
+    });
     setInputValue(nextValue);
     setCaretPosition(nextCaret);
     onInputActivity?.();
-  }, [onInputActivity]);
+  }, [onInputActivity, textareaSyntaxHighlighting?.styleIds]);
 
   const setTextareaValue = useCallback(
     (nextValue: string, nextCaretPosition: number) => {
@@ -357,13 +404,18 @@ export function InteractiveInput({
       );
 
       safeWriteTextarea(textareaRef, nextValue, clampedCaret);
+      applyTextareaHighlights({
+        textarea: textareaRef.current,
+        value: nextValue,
+        styleIds: textareaSyntaxHighlighting?.styleIds,
+      });
       latestInputValueRef.current = nextValue;
       latestCaretPositionRef.current = clampedCaret;
       setInputValue(nextValue);
       setCaretPosition(clampedCaret);
       onInputActivity?.();
     },
-    [onInputActivity],
+    [onInputActivity, textareaSyntaxHighlighting?.styleIds],
   );
 
   const setModeToInput = useCallback(() => {
@@ -384,7 +436,7 @@ export function InteractiveInput({
   );
 
   const recoverInputFocusFromClick = useCallback(() => {
-    requestInputFocus();
+    requestInputFocus(false);
   }, [requestInputFocus]);
 
   const setModeToOption = useCallback(() => {
@@ -497,16 +549,17 @@ export function InteractiveInput({
         return;
       }
 
-      const index = selectedIndexOverride ?? selectedSuggestionIndex;
-      const clampedIndex = Math.max(
-        0,
-        Math.min(index, availableSuggestions.length - 1),
-      );
-      const suggestion = availableSuggestions[clampedIndex];
-
-      if (!suggestion) {
+      const resolvedSelection = resolveSuggestionSelection({
+        suggestions: availableSuggestions,
+        selectedSuggestionIndex:
+          selectedIndexOverride ?? selectedSuggestionIndex,
+        latestHighlightedSuggestionIndex: selectedSuggestionIndexRef.current,
+      });
+      if (!resolvedSelection) {
         return;
       }
+      const { index: resolvedIndex, suggestion } = resolvedSelection;
+      updateSelectedSuggestionIndex(resolvedIndex);
       const currentValue = safeReadTextarea(textareaRef)?.value ?? inputValue;
       const nextValue =
         currentValue.slice(0, target.start) +
@@ -516,7 +569,13 @@ export function InteractiveInput({
 
       setTextareaValue(nextValue, nextCaret);
     },
-    [fileSuggestions, inputValue, selectedSuggestionIndex, setTextareaValue],
+    [
+      fileSuggestions,
+      inputValue,
+      selectedSuggestionIndex,
+      setTextareaValue,
+      updateSelectedSuggestionIndex,
+    ],
   );
 
   const insertCharacterInTextarea = useCallback(
@@ -557,17 +616,19 @@ export function InteractiveInput({
 
       if (nextSuggestions.length > 0) {
         autocompleteTargetRef.current = currentTarget;
-        const clampedSelectedSuggestionIndex = Math.min(
+        const resolvedSelection = resolveSuggestionSelection({
+          suggestions: nextSuggestions,
           selectedSuggestionIndex,
-          nextSuggestions.length - 1,
-        );
+          latestHighlightedSuggestionIndex: selectedSuggestionIndexRef.current,
+        });
+        const nextSelectedSuggestionIndex = resolvedSelection?.index ?? 0;
 
         setFileSuggestions(nextSuggestions);
-        setSelectedSuggestionIndex(clampedSelectedSuggestionIndex);
+        updateSelectedSuggestionIndex(nextSelectedSuggestionIndex);
         applySelectedSuggestion(
           currentTarget,
           nextSuggestions,
-          clampedSelectedSuggestionIndex,
+          nextSelectedSuggestionIndex,
         );
         return;
       }
@@ -581,8 +642,8 @@ export function InteractiveInput({
     insertCharacterInTextarea,
     mode,
     repositoryFiles,
-    safeReadTextarea,
     selectedSuggestionIndex,
+    updateSelectedSuggestionIndex,
   ]);
 
   const keyboardHandler = useMemo(
@@ -595,7 +656,7 @@ export function InteractiveInput({
         setSelectedIndex,
         fileSuggestions,
         selectedSuggestionIndex,
-        setSelectedSuggestionIndex,
+        setSelectedSuggestionIndex: updateSelectedSuggestionIndex,
         setModeToInput,
         setModeToOption,
         submitCurrentSelection,
@@ -613,6 +674,7 @@ export function InteractiveInput({
       selectedIndex,
       fileSuggestions,
       selectedSuggestionIndex,
+      updateSelectedSuggestionIndex,
       setModeToInput,
       setModeToOption,
       submitCurrentSelection,
@@ -651,6 +713,7 @@ export function InteractiveInput({
           questionId={questionId}
           textareaRenderVersion={textareaRenderVersion}
           textareaRef={textareaRef}
+          textareaSyntaxStyle={textareaSyntaxHighlighting?.syntaxStyle}
           textareaContainerHeight={textareaContainerHeight}
           textareaRows={textareaRows}
           hasSuggestions={fileSuggestions.length > 0}
@@ -658,6 +721,7 @@ export function InteractiveInput({
           onFocusRequest={recoverInputFocusFromClick}
           onContentSync={syncInputStateFromTextarea}
           onSubmitFromTextarea={handleTextareaSubmit}
+          focused
         />
       )}
 

@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "postToolUse": [
+      {
+        "type": "command",
+        "bash": "node ./scripts/format-lint-edited-files.mjs",
+        "powershell": "node ./scripts/format-lint-edited-files.mjs",
+        "cwd": ".",
+        "env": {
+          "COPILOT_HOOK_VERBOSE": "1"
+        },
+        "timeoutSec": 180
+      }
+    ]
+  }
+}

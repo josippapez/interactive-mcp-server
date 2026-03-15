@@ -1,7 +1,6 @@
 const NARROW_TERMINAL_MIN_ROWS = 4;
 const WIDE_TERMINAL_MIN_ROWS = 5;
-const NARROW_TERMINAL_MAX_ROWS = 8;
-const WIDE_TERMINAL_MAX_ROWS = 12;
+const TEXTAREA_MAX_ROWS = 50;
 
 interface TextareaHeightOptions {
   value: string;
@@ -47,19 +46,15 @@ export const getTextareaDimensions = ({
   isNarrow,
 }: TextareaHeightOptions): TextareaDimensions => {
   const minRows = isNarrow ? NARROW_TERMINAL_MIN_ROWS : WIDE_TERMINAL_MIN_ROWS;
-  const maxRows = isNarrow ? NARROW_TERMINAL_MAX_ROWS : WIDE_TERMINAL_MAX_ROWS;
-
   const reservedChromeRows = isNarrow ? 24 : 20;
   const maxContainerHeight = Math.max(6, terminalHeight - reservedChromeRows);
-  const terminalSafeMaxRows = Math.max(
-    minRows,
-    Math.min(maxRows, maxContainerHeight - 2),
-  );
+  const terminalSafeMaxRows = Math.max(minRows, maxContainerHeight - 2);
+  const maxRows = Math.min(TEXTAREA_MAX_ROWS, terminalSafeMaxRows);
 
   const estimatedPadding = isNarrow ? 14 : 18;
   const availableColumns = Math.max(14, width - estimatedPadding);
   const estimatedRows = estimateWrappedRows(value, availableColumns);
-  const rows = clamp(estimatedRows, minRows, terminalSafeMaxRows);
+  const rows = clamp(estimatedRows, minRows, maxRows);
 
   return {
     rows,

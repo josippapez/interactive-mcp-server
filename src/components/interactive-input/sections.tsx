@@ -1,6 +1,10 @@
 import type React from 'react';
 import type { TextareaRenderableLike } from './types.js';
 import { openExternalLink } from '@/utils/open-external-link.js';
+import {
+  routeTextareaMouseScroll,
+  type MouseScrollEventLike,
+} from './scroll-routing.js';
 
 interface ModeTabsProps {
   mode: 'option' | 'input';
@@ -112,6 +116,7 @@ interface InputEditorProps {
   questionId: string;
   textareaRenderVersion: number;
   textareaRef: { current: TextareaRenderableLike | null };
+  textareaSyntaxStyle?: unknown;
   textareaContainerHeight: number;
   textareaRows: number;
   hasSuggestions: boolean;
@@ -119,12 +124,14 @@ interface InputEditorProps {
   onFocusRequest: () => void;
   onContentSync: () => void;
   onSubmitFromTextarea: () => void;
+  focused?: boolean;
 }
 
 export const InputEditor = ({
   questionId,
   textareaRenderVersion,
   textareaRef,
+  textareaSyntaxStyle,
   textareaContainerHeight,
   textareaRows,
   hasSuggestions,
@@ -132,6 +139,7 @@ export const InputEditor = ({
   onFocusRequest,
   onContentSync,
   onSubmitFromTextarea,
+  focused = true,
 }: InputEditorProps) => (
   <box flexDirection="column" marginBottom={0} width="100%">
     <text fg="gray">Input</text>
@@ -148,7 +156,7 @@ export const InputEditor = ({
       <textarea
         ref={textareaRef}
         key={`textarea-${questionId}-${textareaRenderVersion}`}
-        focused
+        focused={focused}
         height={textareaRows}
         wrapMode="word"
         backgroundColor="#1f1f1f"
@@ -157,9 +165,13 @@ export const InputEditor = ({
         focusedTextColor="white"
         placeholderColor="gray"
         placeholder="Type your answer..."
+        syntaxStyle={textareaSyntaxStyle as never}
         keyBindings={keyBindings}
         onContentChange={onContentSync}
         onCursorChange={onContentSync}
+        onMouseScroll={(event: MouseScrollEventLike) =>
+          routeTextareaMouseScroll(event, textareaRef.current)
+        }
         onSubmit={onSubmitFromTextarea}
       />
     </box>

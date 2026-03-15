@@ -1,7 +1,7 @@
 ---
 applyTo: '**'
 name: user-interaction-instructions
-description: Instructions for interacting, general communication, and asking questions and providing suggestions to the user using interactive MCP tools.
+description: Instructions for interacting, prompting general communication, and asking questions and providing suggestions to the user using interactive MCP tools.
 ---
 
 Use this file as a strict policy. Do not interpret these rules loosely.

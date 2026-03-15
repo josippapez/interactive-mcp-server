@@ -25,8 +25,18 @@ export interface OpenTuiKeyEvent {
 export interface TextareaRenderableLike {
   plainText: string;
   cursorOffset: number;
+  scrollY?: number;
+  lineCount?: number;
+  virtualLineCount?: number;
+  height?: number;
   setText: (value: string) => void;
   replaceText?: (value: string) => void;
   hasSelection?: () => boolean;
   getSelectedText?: () => string;
+  clearAllHighlights?: () => void;
+  addHighlightByCharRange?: (highlight: {
+    start: number;
+    end: number;
+    styleId: number;
+  }) => void;
 }
