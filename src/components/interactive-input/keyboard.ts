@@ -52,6 +52,12 @@ export const isReverseTabShortcut = (key: OpenTuiKeyEvent): boolean =>
   (key.name === 'tab' && key.shift) ||
   key.sequence === '\u001b[Z';
 
+export const isEnterKey = (key: OpenTuiKeyEvent): boolean =>
+  key.name === 'enter' ||
+  key.name === 'return' ||
+  key.sequence === '\r' ||
+  key.sequence === '\n';
+
 export const isPrintableCharacter = (key: OpenTuiKeyEvent): string | null => {
   if (key.ctrl || key.meta || key.option || key.name === 'tab') {
     return null;

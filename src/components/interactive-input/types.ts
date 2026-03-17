@@ -20,6 +20,8 @@ export interface OpenTuiKeyEvent {
   shift: boolean;
   meta: boolean;
   option: boolean;
+  preventDefault?: () => void;
+  stopPropagation?: () => void;
 }
 
 export interface TextareaRenderableLike {

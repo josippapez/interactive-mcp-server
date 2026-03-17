@@ -1,6 +1,7 @@
 import type { OpenTuiKeyEvent } from './types.js';
 import {
   extractPastedText,
+  isEnterKey,
   isPrintableCharacter,
   isCopyShortcut,
   isPasteShortcut,
@@ -62,6 +63,11 @@ export function createKeyboardRouter(
     onInputActivity,
   } = deps;
 
+  const consumeHandledKey = (key: OpenTuiKeyEvent) => {
+    key.preventDefault?.();
+    key.stopPropagation?.();
+  };
+
   return (key: OpenTuiKeyEvent) => {
     // Global shortcuts (work in any mode)
     if (isSubmitShortcut(key)) {
@@ -88,6 +94,54 @@ export function createKeyboardRouter(
       return;
     }
 
+    // Input mode with suggestions handling
+    if (mode === 'input' && fileSuggestions.length > 0) {
+      const isForwardTabShortcut =
+        key.name === 'tab' && !isReverseTabShortcut(key);
+
+      if (isForwardTabShortcut || isEnterKey(key)) {
+        consumeHandledKey(key);
+        applySelectedSuggestion();
+        return;
+      }
+
+      if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'n') {
+        consumeHandledKey(key);
+        setSelectedSuggestionIndex(
+          (previous) => (previous + 1) % fileSuggestions.length,
+        );
+        onInputActivity?.();
+        return;
+      }
+
+      if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'p') {
+        consumeHandledKey(key);
+        setSelectedSuggestionIndex((previous) =>
+          previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
+        );
+        onInputActivity?.();
+        return;
+      }
+
+      if (key.name === 'down') {
+        consumeHandledKey(key);
+        setSelectedSuggestionIndex(
+          (previous) => (previous + 1) % fileSuggestions.length,
+        );
+        onInputActivity?.();
+        return;
+      }
+
+      if (key.name === 'up') {
+        consumeHandledKey(key);
+        setSelectedSuggestionIndex((previous) =>
+          previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
+        );
+        onInputActivity?.();
+        return;
+      }
+    }
+
     // Tab/Shift+Tab for mode switching
     if (hasOptions && (isReverseTabShortcut(key) || key.name === 'tab')) {
       if (mode === 'option') {
@@ -100,13 +154,7 @@ export function createKeyboardRouter(
 
     // Option mode handling
     if (mode === 'option' && hasOptions) {
-      const isOptionSubmitKey =
-        key.name === 'enter' ||
-        key.name === 'return' ||
-        key.sequence === '\r' ||
-        key.sequence === '\n';
-
-      if (isOptionSubmitKey) {
+      if (isEnterKey(key)) {
         submitCurrentSelection();
         return;
       }
@@ -145,47 +193,6 @@ export function createKeyboardRouter(
         insertCharacterInTextarea(typedCharacter);
       }
       return;
-    }
-
-    // Input mode with suggestions handling
-    if (mode !== 'input' || fileSuggestions.length === 0) {
-      return;
-    }
-
-    if (key.name === 'tab') {
-      applySelectedSuggestion();
-      return;
-    }
-
-    if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'n') {
-      setSelectedSuggestionIndex(
-        (previous) => (previous + 1) % fileSuggestions.length,
-      );
-      onInputActivity?.();
-      return;
-    }
-
-    if ((key.ctrl || key.meta) && key.name.toLowerCase() === 'p') {
-      setSelectedSuggestionIndex((previous) =>
-        previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
-      );
-      onInputActivity?.();
-      return;
-    }
-
-    if (key.name === 'down') {
-      setSelectedSuggestionIndex(
-        (previous) => (previous + 1) % fileSuggestions.length,
-      );
-      onInputActivity?.();
-      return;
-    }
-
-    if (key.name === 'up') {
-      setSelectedSuggestionIndex((previous) =>
-        previous <= 0 ? fileSuggestions.length - 1 : previous - 1,
-      );
-      onInputActivity?.();
     }
   };
 }

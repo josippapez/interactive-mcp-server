@@ -204,7 +204,7 @@ export const SuggestionsPanel = ({
   <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
     <text fg="gray">
       {hasOptions
-        ? 'Path suggestions (files + folders) • ↑/↓ or Ctrl+N/P navigate • Enter apply'
+        ? 'Path suggestions (files + folders) • ↑/↓ or Ctrl+N/P navigate • Enter/Tab apply'
         : 'Path suggestions (files + folders) • ↑/↓ or Ctrl+N/P navigate • Enter/Tab apply'}
     </text>
     {isIndexingFiles ? (
@@ -414,7 +414,7 @@ interface HelpTextProps {
 export const HelpText = ({ hasOptions }: HelpTextProps) => (
   <text fg="gray" wrapMode="word">
     {hasOptions
-      ? 'Enter/Ctrl+J newline (or #search apply) • #search nav: ↑/↓ or Ctrl+N/P • Tab mode switch • #path for repo file/folder autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo'
+      ? 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • Tab mode switch (when #search suggestions are hidden) • #path for repo file/folder autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo'
       : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file/folder autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo'}
   </text>
 );
