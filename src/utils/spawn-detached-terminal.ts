@@ -1,6 +1,9 @@
 import { ChildProcess, spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { createRequire } from 'node:module';
 import logger from './logger.js';
 
 interface SpawnDetachedTerminalOptions {
@@ -12,12 +15,149 @@ interface SpawnDetachedTerminalOptions {
   env?: NodeJS.ProcessEnv;
 }
 
+const require = createRequire(import.meta.url);
+
+function isCurrentRuntimeBun(): boolean {
+  return typeof process.versions.bun === 'string';
+}
+
+function isExecutablePath(filePath: string): boolean {
+  if (!fsSync.existsSync(filePath)) {
+    return false;
+  }
+
+  if (process.platform === 'win32') {
+    return true;
+  }
+
+  try {
+    fsSync.accessSync(filePath, fsSync.constants.X_OK);
+    return true;
+  } catch {
+    // Not executable or not accessible.
+    return false;
+  }
+}
+
+function resolveExecutableFromPath(binaryName: string): string | undefined {
+  const pathValue = process.env.PATH;
+  if (!pathValue) {
+    return undefined;
+  }
+
+  const pathEntries = pathValue.split(path.delimiter).filter(Boolean);
+  const extensions =
+    process.platform === 'win32'
+      ? (process.env.PATHEXT?.split(';').filter(Boolean) ?? [
+          '.EXE',
+          '.CMD',
+          '.BAT',
+          '.COM',
+        ])
+      : [''];
+
+  for (const entry of pathEntries) {
+    for (const extension of extensions) {
+      const candidate =
+        process.platform === 'win32'
+          ? path.join(entry, `${binaryName}${extension}`)
+          : path.join(entry, binaryName);
+      if (isExecutablePath(candidate)) {
+        return candidate;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function resolveLocalNpmBunBinary(): string | undefined {
+  try {
+    const bunPackageJson = require.resolve('bun/package.json');
+    const bunPackageDir = path.dirname(bunPackageJson);
+    const bunManifestRaw = fsSync.readFileSync(bunPackageJson, 'utf8');
+    const bunManifest = JSON.parse(bunManifestRaw) as {
+      bin?: string | Record<string, string>;
+    };
+
+    let relativeBinPath: string | undefined;
+    if (typeof bunManifest.bin === 'string') {
+      relativeBinPath = bunManifest.bin;
+    } else if (
+      typeof bunManifest.bin === 'object' &&
+      bunManifest.bin !== null &&
+      typeof bunManifest.bin.bun === 'string'
+    ) {
+      relativeBinPath = bunManifest.bin.bun;
+    }
+
+    if (!relativeBinPath) {
+      logger.warn(
+        { bunPackageJson },
+        'Resolved bun package without a usable "bin" entry.',
+      );
+      return undefined;
+    }
+
+    const bunBinFile = path.resolve(bunPackageDir, relativeBinPath);
+
+    if (isExecutablePath(bunBinFile)) {
+      return bunBinFile;
+    }
+
+    logger.warn(
+      { bunBinFile },
+      'Found bun package but binary is missing or not executable.',
+    );
+  } catch (error) {
+    const moduleResolutionError = error as NodeJS.ErrnoException;
+    if (moduleResolutionError.code !== 'MODULE_NOT_FOUND') {
+      logger.warn(
+        { error: moduleResolutionError },
+        'Failed to resolve local bun npm package.',
+      );
+    }
+  }
+
+  return undefined;
+}
+
 function resolveRuntimeExecutable(): string {
-  if (process.versions.bun) {
+  // If an explicit override is set, honour it (supports both old and new env var names).
+  const envOverride =
+    process.env.INTERACTIVE_MCP_RUNTIME || process.env.INTERACTIVE_MCP_BUN_PATH;
+  if (envOverride) {
+    return envOverride;
+  }
+
+  // If we are already running under Bun, use current runtime.
+  if (isCurrentRuntimeBun()) {
     return process.execPath;
   }
 
-  return process.env.INTERACTIVE_MCP_BUN_PATH || 'bun';
+  // Prefer Bun from PATH for OpenTUI scripts.
+  const bunFromPath = resolveExecutableFromPath('bun');
+  if (bunFromPath) {
+    return bunFromPath;
+  }
+
+  // Fallback to the npm-installed bun package binary if present.
+  const localNpmBun = resolveLocalNpmBunBinary();
+  if (localNpmBun) {
+    logger.warn(
+      { localNpmBun },
+      'Using local npm-installed Bun fallback for interactive prompt runtime.',
+    );
+    return localNpmBun;
+  }
+
+  logger.warn(
+    { processExecPath: process.execPath },
+    'Bun runtime was not resolved from override, current runtime, PATH, or local npm package; falling back to current process runtime. OpenTUI prompt scripts may fail under Node.',
+  );
+
+  // Final fallback to whatever runtime is currently executing this process.
+  return process.execPath;
 }
 
 function createEscapedRuntimeCommand(

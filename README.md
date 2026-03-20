@@ -112,8 +112,20 @@ This section is primarily for developers looking to modify or contribute to the 
 
 ### Prerequisites
 
-- **Bun:** Required for runtime execution and dependency management.
-- **Node.js:** Required for TypeScript tooling and Node APIs used by the server.
+- **Node.js:** Required for runtime execution, TypeScript tooling, and Node APIs used by the server.
+- **Bun (optional):** Can be used as an alternative runtime or package manager. If you prefer Bun, set `INTERACTIVE_MCP_RUNTIME=<path-to-bun>` or use `INTERACTIVE_MCP_BUN_PATH` (legacy alias) to point the server's terminal spawner at your Bun binary.
+
+#### Prompt UI runtime fallback (important for npm users)
+
+Interactive prompt UIs (OpenTUI) prefer Bun at runtime. When the MCP server is started with Node, terminal launch runtime is resolved in this order:
+
+1. `INTERACTIVE_MCP_RUNTIME` (or legacy `INTERACTIVE_MCP_BUN_PATH`) if set.
+2. Current process runtime if the server is already running on Bun.
+3. `bun` found on system `PATH`.
+4. Bundled local Bun binary from npm package `bun` (installed with this package).
+5. Final fallback to current process runtime (`process.execPath`) with a warning.
+
+This means npm users without a globally installed Bun can still launch prompt UIs via the bundled local Bun fallback.
 
 ### Installation (Developers)
 
@@ -127,13 +139,19 @@ This section is primarily for developers looking to modify or contribute to the 
 2. Install dependencies:
 
    ```bash
-   bun install
+   npm install
    ```
 
 ### Running the Application (Developers)
 
 ```bash
-bun run start
+npm run start
+```
+
+Or directly with Node:
+
+```bash
+node dist/index.js
 ```
 
 ### UI backend status
@@ -163,9 +181,10 @@ The `interactive-mcp` server accepts the following command-line options. These s
 
 ## Development Commands
 
-- **Build:** `bun run build`
-- **Lint:** `bun run lint`
-- **Format:** `bun run format`
+- **Build:** `npm run build`
+- **Lint:** `npm run lint`
+- **Format:** `npm run format`
+- **Tests:** `bun test` — unit tests currently use the `bun:test` runner and require Bun as a dev tool.
 
 ## Release & Publishing Workflow
 
@@ -176,12 +195,11 @@ Package releases are handled by **GitHub Actions** in `.github/workflows/publish
   - `rc` → releases from `next`
 - The workflow uses:
   - **Node.js 24** (`actions/setup-node`)
-  - **Bun** (`oven-sh/setup-bun`)
 - For semantic-release + trusted publishing, keep `actions/setup-node` without `registry-url` to avoid npm auth conflicts (`EINVALIDNPMTOKEN`).
 - Release pipeline commands:
-  - `bun install --frozen-lockfile`
-  - `bun run build`
-  - `bunx semantic-release`
+  - `npm ci`
+  - `npm run build`
+  - `npx semantic-release`
 - npm publishing uses **trusted publishing (OIDC)** via GitHub Actions (`id-token: write`), not a long-lived npm token.
 
 ## Guiding Principles for Interaction

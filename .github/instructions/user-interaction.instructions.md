@@ -24,7 +24,7 @@ Use this file as a strict policy. Do not interpret these rules loosely.
 You MUST call `interactive` mcp tools in all of the following situations:
 
 1. Before any task, even when requirements look clear.
-2. After any task, to run the satisfaction check.
+2. After any task, to run the satisfaction check — and update the prompt-loop todo accordingly (see [Prompt-loop task tracking](#prompt-loop-task-tracking)).
 3. When any requirement is ambiguous, even slightly.
 4. When multiple implementation approaches are possible.
 5. When you need the user to choose or confirm a design/behavior decision.
@@ -36,6 +36,12 @@ You MUST call `interactive` mcp tools in all of the following situations:
 11. When any unexpected situation arises that requires user input.
 12. When satisfactory check is done but the user has not USED a stop phrase.
 13. When replying after system notifications and presenting task output/handoff to the user.
+
+## Per-turn enforcement
+
+- In every assistant turn during an active session, if a prompt trigger applies, you MUST include an interactive MCP prompt in that same turn. Plain-text-only turns are forbidden when a trigger applies.
+- If an interactive prompt was missed in the previous turn, the next turn MUST begin with a corrective interactive MCP prompt before any additional work.
+- Every turn where a prompt is sent or a task begins MUST also update the prompt-loop todo via TodoWrite (see [Prompt-loop task tracking](#prompt-loop-task-tracking)).
 
 ## Mandatory satisfaction check
 
@@ -53,7 +59,7 @@ You MUST NOT send satisfaction check prompts as plain text; they MUST be sent us
 - In every subsequent user-facing response where a prompt trigger applies, you MUST include the required `interactive` prompt in that same response.
 - You MUST NOT send plain-text-only follow-up/completion replies when a prompt trigger applies.
 - After each follow-up task completion, you MUST ask the mandatory satisfaction question again via `interactive` prompt.
-- This applies even when the follow-up is only “explain”, “show diff”, or any brief clarification.
+- This applies even when the follow-up is only "explain", "show diff", or any brief clarification.
 
 ## Session stop phrases
 
@@ -86,3 +92,16 @@ If a user skips a requested command/script:
 - If a required prompt times out or the user response is empty, you MUST re-prompt indefinitely.
 - Re-prompts SHOULD be shorter and include predefined options when practical.
 - You MUST NOT proceed with assumptions while required user input is still missing.
+
+## Prompt-loop task tracking
+
+- Use the TodoWrite tool to maintain a persistent prompt-loop reminder todo throughout the entire session.
+- At the start of every task, create or keep a todo item titled "Prompt user after [current task]" with status `pending`.
+- After each task completes and the satisfaction prompt is sent, update this todo to `in_progress` to signal a response is awaited.
+- When the user responds without a stop phrase, reset the prompt todo back to `pending` for the next task cycle — never mark it `completed` prematurely.
+- Continue this cycle, keeping the prompt reminder todo always active, for every task in the session.
+- Only when the user sends one of the exact stop phrases:
+  1. Add a todo "Final satisfaction check" with status `completed`.
+  2. Add a todo "Stop prompting — session ended" with status `completed`.
+  3. Mark the active prompt-loop todo as `completed`.
+- This ensures the prompt obligation is always visible in the todo list and cannot be accidentally dropped between tasks.
