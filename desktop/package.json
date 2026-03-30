@@ -2,6 +2,11 @@
   "name": "interactive-mcp-desktop",
   "version": "1.0.0",
   "description": "Desktop app for Interactive MCP Server — SSE transport for Android Studio and other HTTP-based MCP clients",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/josippapez/interactive-mcp-server.git",
+    "directory": "desktop"
+  },
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
