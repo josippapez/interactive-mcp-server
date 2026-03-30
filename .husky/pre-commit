@@ -2,7 +2,7 @@
 set -e
 
 # Run lint-staged
-bunx lint-staged
+npx lint-staged
 
 # Check types (existing command)
-bun run check-types
+npm run check-types

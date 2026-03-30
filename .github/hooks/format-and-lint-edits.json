@@ -4,13 +4,38 @@
     "postToolUse": [
       {
         "type": "command",
-        "bash": "node ./scripts/format-lint-edited-files.mjs",
-        "powershell": "node ./scripts/format-lint-edited-files.mjs",
+        "bash": "node ./.github/hooks/scripts/format-lint-edited-files.mjs",
+        "powershell": "node ./.github/hooks/scripts/format-lint-edited-files.mjs",
         "cwd": ".",
         "env": {
           "COPILOT_HOOK_VERBOSE": "1"
         },
         "timeoutSec": 180
+      },
+      {
+        "type": "command",
+        "bash": "node ./.github/hooks/scripts/prompt-loop-reminder.mjs",
+        "powershell": "node ./.github/hooks/scripts/prompt-loop-reminder.mjs",
+        "cwd": ".",
+        "timeoutSec": 30
+      }
+    ],
+    "sessionStart": [
+      {
+        "type": "command",
+        "bash": "node ./.github/hooks/scripts/prompt-loop-reminder.mjs",
+        "powershell": "node ./.github/hooks/scripts/prompt-loop-reminder.mjs",
+        "cwd": ".",
+        "timeoutSec": 30
+      }
+    ],
+    "userPromptSubmitted": [
+      {
+        "type": "command",
+        "bash": "node ./.github/hooks/scripts/prompt-loop-reminder.mjs",
+        "powershell": "node ./.github/hooks/scripts/prompt-loop-reminder.mjs",
+        "cwd": ".",
+        "timeoutSec": 30
       }
     ]
   }

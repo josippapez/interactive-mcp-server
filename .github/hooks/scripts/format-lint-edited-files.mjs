@@ -44,7 +44,7 @@ const parseJson = (value) => {
 const normalizeToolName = (toolName) => {
   if (typeof toolName !== 'string') return '';
   const segments = toolName.split(/[./:]/).filter(Boolean);
-  return segments.length > 0 ? segments[segments.length - 1] : toolName;
+  return segments.length > 0 ? segments.at(-1) : toolName;
 };
 
 const extractFilesFromPatch = (patchText) => {
