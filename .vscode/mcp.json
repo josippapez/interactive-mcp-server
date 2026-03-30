@@ -14,6 +14,11 @@
       ],
       "timeout": 800000,
       "type": "stdio"
+    },
+    "interactive-desktop": {
+      "url": "http://localhost:3100/sse",
+      "type": "sse",
+      "timeout": 1210000
     }
   }
 }

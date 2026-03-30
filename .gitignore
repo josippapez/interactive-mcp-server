@@ -8,3 +8,6 @@ localtestscript/
 
 # Log files
 logs/
+
+out/
+release/
