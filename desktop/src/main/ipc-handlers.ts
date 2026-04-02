@@ -10,6 +10,7 @@ import {
   getSessionChannelHistory,
   clearSessionChannelMessages,
   deleteSessionChannel,
+  deleteRegisteredConnection,
 } from './database';
 import {
   startMcpServer,
@@ -19,6 +20,7 @@ import {
 } from './mcp-server';
 import { indexFiles, rankFileSuggestions } from './file-indexer';
 import { forceTerminateChat } from './ipc-prompt';
+import { markConnectionDeleted } from './tools/connection-guard';
 
 export interface IpcHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -197,6 +199,8 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     forceTerminateChat(sessionId);
     void closeSessionByConnectionId(sessionId);
     deleteSessionChannel(sessionId);
+    deleteRegisteredConnection(sessionId);
+    markConnectionDeleted(sessionId);
     deps.getMainWindow()?.webContents.send('connection-closed', {
       connectionId: sessionId,
     });

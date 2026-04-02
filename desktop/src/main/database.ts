@@ -1,7 +1,8 @@
 import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
 import { app } from 'electron';
 import { join } from 'path';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
+import { tmpdir } from 'os';
 
 let db: SqlJsDatabase | null = null;
 let dbPath = '';
@@ -23,6 +24,16 @@ export interface SessionChannelMessageRecord {
   messageText: string;
   attachments: string | null;
   createdAt: string;
+}
+
+export interface RegisteredConnection {
+  connectionId: string;
+  agentName: string;
+  projectName: string;
+  baseDirectory: string | null;
+  idFilePath: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 function persist(): void {
@@ -88,6 +99,19 @@ export async function initDatabase(): Promise<void> {
       message_text TEXT NOT NULL,
       attachments TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Registered connections — named agent registrations with ID file tracking
+  db.run(`
+    CREATE TABLE IF NOT EXISTS registered_connections (
+      connection_id TEXT PRIMARY KEY,
+      agent_name TEXT NOT NULL,
+      project_name TEXT NOT NULL,
+      base_directory TEXT,
+      id_file_path TEXT NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
 
@@ -295,4 +319,132 @@ export function getActiveSessionChannels(): {
     label: row[1] as string | null,
     createdAt: row[2] as string,
   }));
+}
+
+// ─── Registered connections ───
+
+/** Path for a per-agent connection ID file in /tmp. */
+export function agentIdFilePath(agentName: string): string {
+  const safe = agentName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  return join(tmpdir(), `imcp-agent-${safe}.json`);
+}
+
+/**
+ * Upsert a registered connection. Writes the ID file to /tmp and persists
+ * the record to the database.
+ */
+export function upsertRegisteredConnection(data: {
+  connectionId: string;
+  agentName: string;
+  projectName: string;
+  baseDirectory?: string;
+}): string {
+  const idFilePath = agentIdFilePath(data.agentName);
+
+  // Write ID file so agents can read their connectionId back on restart
+  try {
+    writeFileSync(
+      idFilePath,
+      JSON.stringify({
+        connectionId: data.connectionId,
+        agentName: data.agentName,
+        projectName: data.projectName,
+        baseDirectory: data.baseDirectory ?? null,
+      }),
+      'utf-8',
+    );
+  } catch {
+    // non-critical — DB is the source of truth
+  }
+
+  if (db) {
+    db.run(
+      `INSERT INTO registered_connections
+         (connection_id, agent_name, project_name, base_directory, id_file_path, updated_at)
+       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(connection_id) DO UPDATE SET
+         agent_name = excluded.agent_name,
+         project_name = excluded.project_name,
+         base_directory = excluded.base_directory,
+         id_file_path = excluded.id_file_path,
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        data.connectionId,
+        data.agentName,
+        data.projectName,
+        data.baseDirectory ?? null,
+        idFilePath,
+      ],
+    );
+    persist();
+  }
+
+  return idFilePath;
+}
+
+/** Look up a registered connection by connectionId. */
+export function getRegisteredConnection(
+  connectionId: string,
+): RegisteredConnection | null {
+  if (!db) return null;
+  const results = db.exec(
+    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, created_at, updated_at
+     FROM registered_connections WHERE connection_id = ?`,
+    [connectionId],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return null;
+  const row = results[0].values[0];
+  return {
+    connectionId: row[0] as string,
+    agentName: row[1] as string,
+    projectName: row[2] as string,
+    baseDirectory: row[3] as string | null,
+    idFilePath: row[4] as string,
+    createdAt: row[5] as string,
+    updatedAt: row[6] as string,
+  };
+}
+
+/** Look up a registered connection by agent name. */
+export function getRegisteredConnectionByName(
+  agentName: string,
+): RegisteredConnection | null {
+  if (!db) return null;
+  const results = db.exec(
+    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, created_at, updated_at
+     FROM registered_connections WHERE agent_name = ?
+     ORDER BY updated_at DESC LIMIT 1`,
+    [agentName],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return null;
+  const row = results[0].values[0];
+  return {
+    connectionId: row[0] as string,
+    agentName: row[1] as string,
+    projectName: row[2] as string,
+    baseDirectory: row[3] as string | null,
+    idFilePath: row[4] as string,
+    createdAt: row[5] as string,
+    updatedAt: row[6] as string,
+  };
+}
+
+/**
+ * Delete a registered connection from the DB and remove the ID file from disk.
+ * Called when the user removes a session from the UI.
+ */
+export function deleteRegisteredConnection(connectionId: string): void {
+  if (!db) return;
+  const rec = getRegisteredConnection(connectionId);
+  if (rec) {
+    try {
+      unlinkSync(rec.idFilePath);
+    } catch {
+      // file may already be gone
+    }
+  }
+  db.run(`DELETE FROM registered_connections WHERE connection_id = ?`, [
+    connectionId,
+  ]);
+  persist();
 }

@@ -20,6 +20,7 @@ import {
 import { registerRequestUserInput } from './tools/request-user-input';
 import { registerIntensiveChatTools } from './tools/intensive-chat';
 import { registerSessionChannelTools } from './tools/session-channel';
+import { registerConnectionTool } from './tools/register-connection';
 import {
   createSessionChannel,
   getUnsentMessages,
@@ -89,6 +90,7 @@ function createMcpServerWithTools(
     connectionName,
   );
   registerSessionChannelTools(server, getWindow, connectionId);
+  registerConnectionTool(server, getWindow, connectionId);
   return server;
 }
 

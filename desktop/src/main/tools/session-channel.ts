@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
+import { staleConnectionError } from './connection-guard';
 
 export function registerSessionChannelTools(
   server: McpServer,
@@ -67,6 +68,9 @@ Push a non-blocking status update to the UI. Returns immediately. Use to keep th
       },
     },
     async ({ status, type = 'info' }): Promise<CallToolResult> => {
+      const staleErr = staleConnectionError(connectionId);
+      if (staleErr) return staleErr;
+
       getWindow()?.webContents.send('session-status-update', {
         connectionId,
         status,

@@ -5,6 +5,7 @@ import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
 import type { PromptData, PromptResponse } from '../ipc-prompt';
 import { getPromptTimeoutSeconds } from '../ipc-prompt';
+import { staleConnectionError } from './connection-guard';
 
 type PromptUserFn = (
   win: BrowserWindow | null,
@@ -143,6 +144,9 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
       baseDirectory,
       clientInfo,
     }): Promise<CallToolResult> => {
+      const staleErr = staleConnectionError(connectionId);
+      if (staleErr) return staleErr;
+
       const promptId = randomUUID();
       const result = await promptFn(getWindow(), {
         id: promptId,

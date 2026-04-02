@@ -5,6 +5,7 @@ import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
 import type { PromptData, PromptResponse } from '../ipc-prompt';
 import { getPromptTimeoutSeconds } from '../ipc-prompt';
+import { staleConnectionError } from './connection-guard';
 
 type PromptUserFn = (
   win: BrowserWindow | null,
@@ -100,6 +101,9 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
       },
     },
     async ({ sessionTitle, baseDirectory }): Promise<CallToolResult> => {
+      const staleErr = staleConnectionError(connectionId);
+      if (staleErr) return staleErr;
+
       const sessionId = randomUUID();
       activeChatSessions.set(sessionId, { title: sessionTitle, baseDirectory });
       getWindow()?.webContents.send('intensive-chat-start', {
