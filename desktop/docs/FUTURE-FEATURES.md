@@ -92,3 +92,50 @@ After the desktop app restarts:
 | `desktop/src/main/database.ts`                  | `upsertRegisteredConnection`, `deleteRegisteredConnection`, `getRegisteredConnection` |
 | `desktop/src/main/ipc-handlers.ts`              | `remove-session-channel` handler wires everything together                            |
 | `desktop/src/main/mcp-server.ts`                | Registers the tool via `registerConnectionTool` in `createMcpServerWithTools`         |
+
+---
+
+## Remaining work
+
+The following items are not yet implemented and should be completed before
+the feature is considered fully shipped.
+
+### 1. UI: React to `connection-registered` IPC event (user-visible)
+
+**Problem:** When an agent calls `register_connection`, the server sends a
+`connection-registered` IPC event with `{ connectionId, agentName, label }`.
+The renderer does not currently listen for this event, so the sidebar continues
+to show the old auto-generated `Agent N` name until the app is restarted.
+
+**What to do:** In `desktop/src/renderer/src/hooks/useConnections.ts` (or
+wherever `connection-opened` is handled), add a listener for
+`connection-registered` that updates the channel label in local React state.
+
+### 2. UI: Sidebar delete button must call `remove-session-channel` (user-visible)
+
+**Problem:** The IPC handler `remove-session-channel` is fully wired on the
+main-process side, but it is only useful if the renderer actually calls it when
+the user confirms a channel deletion. Without this call the cleanup logic
+(DB record, ID file, in-memory guard) never runs.
+
+**What to do:**
+
+- Confirm that `removeSessionChannel` is exposed through the preload API in
+  `desktop/src/preload/index.ts`.
+- In the channel sidebar component (`ChannelSidebar.tsx` or equivalent), wire
+  the delete confirmation action to call `window.api.removeSessionChannel(sessionId)`.
+
+### 3. Unit tests
+
+No automated tests exist yet for:
+
+- `register_connection` tool: DB upsert, ID file creation, UI event emission.
+- `deleteRegisteredConnection`: ID file deletion + DB record removal.
+- `staleConnectionError`: returns an error after `markConnectionDeleted` is called,
+  returns `null` before.
+
+### 4. Health endpoint — add `register_connection` to tool list (cosmetic)
+
+The `/health` endpoint at `desktop/src/main/mcp-server.ts` returns a hardcoded
+`tools` array that does not include `register_connection`. Update the array to
+keep it consistent with the actual registered tools.
