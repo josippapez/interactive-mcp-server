@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import notifier from 'node-notifier';
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import {
@@ -19,7 +18,6 @@ import { validateRepositoryBaseDirectory } from './utils/base-directory.js';
 
 // Import tool definitions using the new structure
 import { requestUserInputTool } from './tool-definitions/request-user-input.js';
-import { messageCompleteNotificationTool } from './tool-definitions/message-complete-notification.js';
 import { intensiveChatTools } from './tool-definitions/intensive-chat.js';
 // Import the types for better type checking
 import { ToolCapabilityInfo } from './tool-definitions/types.js';
@@ -28,7 +26,6 @@ type ToolCapabilitiesStructure = Record<string, ToolCapabilityInfo>;
 
 const allToolCapabilities = {
   request_user_input: requestUserInputTool.capability,
-  message_complete_notification: messageCompleteNotificationTool.capability,
   start_intensive_chat: intensiveChatTools.start.capability,
   ask_intensive_chat: intensiveChatTools.ask.capability,
   stop_intensive_chat: intensiveChatTools.stop.capability,
@@ -44,7 +41,7 @@ const argv = yargs(hideBin(process.argv))
     alias: 'd',
     type: 'string',
     description:
-      'Comma-separated list of tool names to disable. Available options: request_user_input, message_complete_notification, intensive_chat (disables all intensive chat tools).',
+      'Comma-separated list of tool names to disable. Available options: request_user_input, intensive_chat (disables all intensive chat tools).',
     default: '',
   })
   .help()
@@ -179,37 +176,6 @@ if (isToolEnabled('request_user_input')) {
             : 'Failed to request user input: unknown error.';
         return { content: [{ type: 'text', text: errorMessage }] };
       }
-    },
-  );
-}
-
-if (isToolEnabled('message_complete_notification')) {
-  // Use properties from the imported tool object
-  server.registerTool(
-    'message_complete_notification',
-    {
-      // Description is a string here, but handle consistently
-      description:
-        typeof messageCompleteNotificationTool.description === 'function'
-          ? messageCompleteNotificationTool.description(globalTimeoutSeconds) // Should not happen based on definition, but safe
-          : messageCompleteNotificationTool.description,
-      inputSchema: messageCompleteNotificationTool.schema, // Use schema property
-    },
-    (args) => {
-      // Use inferred args type
-      const { projectName, message } = args as {
-        projectName: string;
-        message: string;
-      };
-      notifier.notify({ title: projectName, message });
-      return {
-        content: [
-          {
-            type: 'text',
-            text: 'Notification sent. You can now wait for user input.',
-          },
-        ],
-      };
     },
   );
 }

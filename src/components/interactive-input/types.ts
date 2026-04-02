@@ -1,9 +1,13 @@
+import type { ThemeColors } from '@/theme.js';
+
 export interface InteractiveInputProps {
   question: string;
   questionId: string;
   predefinedOptions?: string[];
+  theme: ThemeColors;
   onSubmit: (questionId: string, value: string) => void;
   onInputActivity?: () => void;
+  onThemeToggle?: () => void;
   searchRoot?: string;
 }
 

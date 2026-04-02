@@ -12,6 +12,7 @@ Create separate skills/instructions if the user requests different behaviors or 
 - The user asks for a new workflow/pattern that is not clearly covered by existing skills.
 - The user asks to change how the agent should behave in a repeatable way.
 - Existing skill guidance is ambiguous, stale, or missing required steps.
+- The request includes coordinated docs + skills + instructions behavior changes (use with `self-improve` workflow).
 
 ## Definition of done
 
@@ -36,3 +37,4 @@ This skill is considered correctly used only when all applicable steps are compl
 
 - docs/standards/patterns
 - docs/guides (update the specific guide before adjusting skills)
+- [../self-improve/SKILL.md](../self-improve/SKILL.md)

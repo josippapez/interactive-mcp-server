@@ -56,6 +56,8 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - (!important!) Immediately before final/closing handoff, ask exactly: "Are you satisfied with this result, or would you like any changes?"
 - (!important!) If a required prompt times out or response is empty, re-prompt indefinitely and do not proceed with assumptions.
 - (!important!) If the user skips a requested command/script, ask why it was skipped and whether to continue with alternatives or stop.
+- (!important!) **NEVER use plain-text replies when a prompt trigger applies — always use this tool instead.**
+- (!important!) After any task completion, you MUST call this tool to run the mandatory satisfaction check before closing the session.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -74,6 +76,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - When the user asks to be prompted, asks a direct question, or asks a reply question
 - When the user skips a command you requested
 - Immediately before any final/closing handoff
+- When replying after system notifications and presenting task output/handoff to the user
 - **Whenever you feel even slightly unsure about the user's intent or the correct next step.**
 </whenToUseThisTool>
 

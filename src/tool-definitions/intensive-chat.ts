@@ -43,6 +43,8 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 - (!important!) **Must** be closed with 'stop_intensive_chat' when finished gathering all inputs.
 - (!important!) After starting a session, **immediately** continue asking all necessary questions using 'ask_intensive_chat' within the **same response message**. Do not end the response until the chat is closed with 'stop_intensive_chat'. This creates a seamless conversational flow for the user.
 - (!important!) Continue the prompt loop until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
+- (!important!) **NEVER use plain-text replies when a prompt trigger applies — use ask_intensive_chat to continue the session.**
+- (!important!) After all questions in the session are asked, close with stop_intensive_chat and then run the mandatory satisfaction check via request_user_input.
 </importantNotes>
 
 <whenToUseThisTool>

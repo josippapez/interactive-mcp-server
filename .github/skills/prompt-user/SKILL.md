@@ -1,67 +1,53 @@
 ---
 name: prompt-user
-description: Interactive prompts to request confirmations, choices, and configuration from users during any work.
+description: Run user-facing prompt loops with request_user_input for scope confirmation, decision collection, and mandatory post-delivery satisfaction checks.
 ---
 
 # prompt-user
 
-Use this skill whenever user interaction is required. It operationalizes `.github/instructions/user-interaction.instructions.md`.
+Use this skill for any user-facing prompt workflow.
 
-## Hard rules
+- [../../instructions/interactive-prompt-loop.instructions.md](../../instructions/interactive-prompt-loop.instructions.md)
 
-1. Use only `request_user_input` for standard prompts.
+## Required behavior
+
+1. Use `request_user_input` for prompts.
 2. Do not use built-in `askQuestions`.
-3. Before any coding task, ask at least one scope/confirmation prompt.
-4. After final handoff, ask exactly:
+3. Before starting each newly requested task in an active session, ask at least one scope/confirmation prompt.
+4. After any task output/delivery, ask exactly:
    `Are you satisfied with this result, or would you like any changes?`
-5. Maintain a persistent prompt-loop todo via TodoWrite for every task in the session — update it at each prompt trigger and only close it on an exact stop phrase (see [user-interaction.instructions.md](../../instructions/user-interaction.instructions.md#prompt-loop-task-tracking)).
-6. Continue prompting until user explicitly says one of:
+5. Prompting MUST stop only on these exact phrases:
    - `Stop prompting`
    - `End session`
    - `Don't ask anymore`
    - `Close conversation`
+6. Any non-stop outcome MUST continue the active loop and trigger re-prompting:
+   - non-stop user replies (including acknowledgements and new task requests)
+   - prompt timeout or empty response
+   - prompt decline/cancel/dismiss
+   - prompt tool failure
+7. Tool-failure fallback: retry `request_user_input` indefinitely; MUST NOT fall back to plain text or any non-interactive-MCP tool per `user-interaction.instructions.md`.
+8. Interactive timeout hardening: when interactive MCP calls fail with timeout signals (for example `request timed out`, `-32001`, or equivalent), you MUST keep prompting indefinitely with interactive prompt tools and MUST NOT complete via plain text.
+9. Plain-text completion fallback is forbidden for interactive timeout/tool failures.
+10. Plain-text prompts are never an acceptable fallback.
+11. If implementation is still pending (report/diff checkpoint only), ask whether to implement next and keep prompting.
+12. After system-notification-driven outputs, include the mandatory satisfaction prompt again.
+13. Maintain one persistent prompt-loop todo titled `Interactively Prompt user after [current task]`; keep it active across task cycles and only complete it on an exact stop phrase.
 
-## Required trigger cases
+## Trigger cases
 
-- Requirement ambiguity.
-- Competing implementation options.
-- User asks a question that needs preference selection.
-- Conflicting user instructions.
-- User skipped a requested command/script.
-- After system-notification-driven outputs.
-- Any other situation described in [../../instructions/user-interaction.instructions.md](../../instructions/user-interaction.instructions.md).
+- Task start, ambiguity, competing options, conflicts, skipped commands, and post-notification outputs.
+- Any situation defined in [../../instructions/interactive-prompt-loop.instructions.md](../../instructions/interactive-prompt-loop.instructions.md).
 
-## Tool failure fallback
-
-- If `request_user_input` fails, retry it once.
-- If it fails again, fall back to `ask_user`.
-- If all prompt tools fail, keep retrying — plain-text prompts are never an acceptable fallback.
-
-## Prompt quality standard
+## Prompt quality
 
 - Keep prompts concise and action-oriented.
-- Include `predefinedOptions` whenever practical.
-- State why input is needed when choices have tradeoffs.
+- Include predefined options whenever practical.
+- Never ask for secrets or unnecessary personal data.
 
-## Advanced flow support
+## Prompt-loop todo pattern
 
-- For multi-step configuration (2+ related inputs), you MAY use intensive chat flow tools.
-- Intensive chat mapping:
-  - `start_intensive_chat`
-  - `ask_intensive_chat`
-  - `stop_intensive_chat`
-
-## Timeout handling
-
-- If a prompt times out or receives an empty response, re-ask with shorter wording and clearer options.
-- Continue re-prompting indefinitely until the user provides a non-empty response or an explicit stop phrase.
-- Do not silently continue while required user input is missing.
-
-## Forbidden prompt content
-
-- Never ask for secrets (tokens, passwords, private keys).
-- Do not ask for unnecessary personal data.
-
-## Mapping
-
-- Tool: `request_user_input({ projectName, message, predefinedOptions })`
+- At task start: create/keep `Interactively Prompt user after [current task]` as `pending`.
+- After sending the satisfaction prompt: set it to `in_progress`.
+- On any non-stop user reply: reset it to `pending` for the next task.
+- On exact stop phrase only: mark it `completed`.

@@ -6,18 +6,31 @@
         "run",
         "dist/index.js",
         "-t",
-        "800",
+        "200",
         "--disable-tools",
         "message_complete_notification",
         "--tui-renderer",
         "opentui"
       ],
-      "timeout": 800000,
+      "timeout": 200000,
       "type": "stdio"
     },
     "interactive-desktop": {
-      "url": "http://localhost:3100/sse",
-      "type": "sse",
+      "url": "http://localhost:3100/mcp",
+      "type": "http",
+      "timeout": 1210000
+    },
+    "interactive": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@rawwee/interactive-mcp",
+        "-t",
+        "1200",
+        "--disable-tools",
+        "message_complete_notification"
+      ],
+      "type": "stdio",
       "timeout": 1210000
     }
   }

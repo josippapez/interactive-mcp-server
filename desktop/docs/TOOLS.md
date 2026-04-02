@@ -1,0 +1,452 @@
+# Interactive MCP Desktop — Tool Reference
+
+This document is the authoritative reference for all five MCP tools registered by the Interactive MCP Desktop app. Each tool is registered once per MCP connection and is scoped to that connection's `connectionId` and `connectionName`.
+
+---
+
+## Overview
+
+| Tool                                            | Purpose                                         | Blocking                            |
+| ----------------------------------------------- | ----------------------------------------------- | ----------------------------------- |
+| [`request_user_input`](#request_user_input)     | Ask the user a question; await their reply      | Yes — awaits user response          |
+| [`start_intensive_chat`](#start_intensive_chat) | Open a named multi-turn chat session            | No — returns session ID immediately |
+| [`ask_intensive_chat`](#ask_intensive_chat)     | Ask a question inside an intensive chat session | Yes — awaits user response          |
+| [`stop_intensive_chat`](#stop_intensive_chat)   | Close an active intensive chat session          | No — returns immediately            |
+| [`push_session_status`](#push_session_status)   | Display a live status indicator in the UI       | No — returns immediately            |
+
+---
+
+## API Reference
+
+---
+
+### `request_user_input`
+
+**File:** `desktop/src/main/tools/request-user-input.ts`
+
+**Description:** Send a question to the user via an interactive prompt surface. Crucial for clarifying requirements, confirming plans, or resolving ambiguity. Use whenever there is any uncertainty or a need for clarification or confirmation. Proactive questioning is preferred over making assumptions.
+
+#### Parameters
+
+| Parameter           | Type                                | Required | Description                                                                                                                                                                                                  |
+| ------------------- | ----------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `projectName`       | `string`                            | Yes      | Identifies the context/project making the request (shown in prompt header/title context).                                                                                                                    |
+| `message`           | `string`                            | Yes      | The specific question for the user (prompt body text).                                                                                                                                                       |
+| `predefinedOptions` | `string[]`                          | No       | Predefined options for the user to choose from. When provided, the UI renders these as clickable choices in addition to free-text input.                                                                     |
+| `baseDirectory`     | `string`                            | Yes      | Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope).                                                                                     |
+| `clientInfo`        | `{ model?: string; mode?: string }` | No       | Optional metadata about the MCP client. `model` is the model name (e.g. `"Claude Opus 4.6"`); `mode` is the agent mode (e.g. `"Plan"`, `"Code"`). Desktop-specific parameter not present in the TUI version. |
+
+#### Return Value
+
+The tool always returns an MCP `content` array.
+
+| Scenario                      | Content                                                                   |
+| ----------------------------- | ------------------------------------------------------------------------- |
+| User replied with text        | `[{ type: 'text', text: 'User replied: <answer>' }, ...attachments]`      |
+| User replied with empty input | `[{ type: 'text', text: 'User replied with empty input.' }]`              |
+| Prompt timed out              | `[{ type: 'text', text: 'User did not reply: Timeout occurred.' }]`       |
+| Prompt superseded             | `[{ type: 'text', text: 'Error: Prompt superseded by a newer prompt.' }]` |
+| Window unavailable            | `[{ type: 'text', text: 'Error: Application window is not available.' }]` |
+
+Attachments are appended to the content array after the text reply (see [Attachments](#attachments)).
+
+#### Behavior
+
+1. A UUID `promptId` is generated via `crypto.randomUUID()`.
+2. `promptUser()` is called with the full `PromptData` payload, including the `connectionId` and `connectionName` bound at registration time.
+3. Inside `promptUser()`:
+   - Any existing active prompt for the same `connectionId` is cancelled and superseded (see [Prompt Lifecycle](#prompt-lifecycle)).
+   - The app window is brought to the foreground (`win.show()` + `win.focus()`).
+   - A beep notification is played via `shell.beep()`, subject to the 2-second cooldown (see [Prompt Lifecycle](#prompt-lifecycle)).
+   - A `prompt-request` IPC event is sent to the renderer with the full `PromptData` payload.
+   - The question is recorded in `session_channel_history` as a `question` message.
+4. The tool suspends and awaits a `prompt-response` IPC reply from the renderer matching the `promptId`.
+5. On reply:
+   - The answer and any attachments are saved to the `conversations` table.
+   - The answer is appended to `session_channel_history` as an `answer` message.
+   - The content array is assembled and returned to the MCP caller.
+6. On timeout (default 800 s): the promise resolves with the timeout error text.
+
+#### When to use
+
+- Before starting any task, even if requirements appear clear
+- After completing any task, to run the mandatory satisfaction check — ask exactly: "Are you satisfied with this result, or would you like any changes?"
+- When any requirement is ambiguous
+- When multiple implementation approaches are possible and user input is needed
+- Before making potentially impactful changes (code edits, file operations, complex commands)
+- When you need to confirm assumptions before proceeding
+- When the user asks a direct question or reply question
+- When replying after system notifications and presenting task output/handoff
+- Immediately before any final/closing handoff
+- **Whenever you feel even slightly unsure about the user's intent or the correct next step**
+
+> **Important:** Do NOT use plain-text replies when a prompt trigger applies. NEVER exit the prompt loop until the user explicitly says "Stop prompting", "End session", "Don't ask anymore", or "Close conversation". If a prompt times out or the user gives an empty response, re-prompt indefinitely.
+
+#### Example (pseudocode)
+
+```ts
+const result = await mcp.callTool('request_user_input', {
+  projectName: 'my-app',
+  message: 'Which database should I use?',
+  predefinedOptions: ['PostgreSQL', 'SQLite', 'MongoDB'],
+  baseDirectory: '/workspace/my-app',
+  clientInfo: { model: 'Claude Opus 4.6', mode: 'Code' },
+});
+// result.content[0].text => "User replied: PostgreSQL"
+```
+
+---
+
+### `start_intensive_chat`
+
+**File:** `desktop/src/main/tools/intensive-chat.ts`
+
+**Description:** Start an intensive chat session for gathering multiple answers quickly from the user. Highly recommended for scenarios requiring a sequence of related inputs or confirmations. Especially useful for brainstorming ideas or discussing complex topics with the user.
+
+#### Parameters
+
+| Parameter       | Type     | Required | Description                                                                                                                                                                                                                                             |
+| --------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionTitle`  | `string` | Yes      | Title for the intensive chat session (appears at the top of the console). Used as `projectName` for all prompts within the session.                                                                                                                     |
+| `baseDirectory` | `string` | Yes      | Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session). Acts as the default `baseDirectory` for all `ask_intensive_chat` calls in this session unless overridden per-call. |
+
+#### Return Value
+
+| Scenario | Content                                                                                       |
+| -------- | --------------------------------------------------------------------------------------------- |
+| Always   | `[{ type: 'text', text: 'Intensive chat session started successfully. Session ID: <uuid>' }]` |
+
+#### Behavior
+
+1. A UUID `sessionId` is generated via `crypto.randomUUID()`.
+2. The session `{ title, baseDirectory }` is stored in the module-level `activeChatSessions` Map under the `sessionId` key.
+3. An `intensive-chat-start` IPC event is sent to the renderer with `{ sessionId, title, connectionId }`.
+4. The session ID is returned to the caller immediately — no user interaction occurs at this step.
+
+The session remains active until `stop_intensive_chat` is called or the session ID becomes invalid.
+
+#### When to use
+
+- When you need to collect a series of quick answers from the user (more than 2–3 questions)
+- When setting up a project with multiple configuration options
+- When guiding a user through a multi-step process requiring input at each stage
+- When gathering sequential user preferences
+- When you want to maintain context between multiple related questions efficiently
+- When brainstorming ideas with the user interactively
+
+#### Example (pseudocode)
+
+```ts
+const result = await mcp.callTool('start_intensive_chat', {
+  sessionTitle: 'Project Setup',
+  baseDirectory: '/workspace/my-app',
+});
+const sessionId = result.content[0].text.split('Session ID: ')[1];
+// sessionId => "<uuid>"
+```
+
+---
+
+### `ask_intensive_chat`
+
+**File:** `desktop/src/main/tools/intensive-chat.ts`
+
+**Description:** Ask a new question in an active intensive chat session previously started with `start_intensive_chat`.
+
+#### Parameters
+
+| Parameter           | Type       | Required | Description                                                                                                                                                                                                              |
+| ------------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `sessionId`         | `string`   | Yes      | ID of the intensive chat session (from `start_intensive_chat`).                                                                                                                                                          |
+| `question`          | `string`   | Yes      | Question to ask the user.                                                                                                                                                                                                |
+| `predefinedOptions` | `string[]` | No       | Predefined options for the user to choose from.                                                                                                                                                                          |
+| `baseDirectory`     | `string`   | Yes      | Required absolute path to the current repository root (must be a git repo root; autocomplete/search scope for this question). If provided, overrides the `baseDirectory` stored on the session for this specific prompt. |
+
+#### Return Value
+
+| Scenario                      | Content                                                                                           |
+| ----------------------------- | ------------------------------------------------------------------------------------------------- |
+| User replied with text        | `[{ type: 'text', text: 'User replied: <answer>' }, ...attachments]`                              |
+| User replied with empty input | `[{ type: 'text', text: 'User replied with empty input in intensive chat.' }]`                    |
+| Prompt timed out              | `[{ type: 'text', text: 'User did not reply to question in intensive chat: Timeout occurred.' }]` |
+| Invalid or expired session ID | `[{ type: 'text', text: 'Error: Invalid or expired session ID.' }]`                               |
+
+Attachments are appended to the content array after the text reply (see [Attachments](#attachments)).
+
+#### Behavior
+
+1. `activeChatSessions.get(sessionId)` is called. If the session does not exist, the error response is returned immediately without any prompt.
+2. A UUID `promptId` is generated.
+3. `promptUser()` is called with:
+   - `projectName` set to `session.title`
+   - `baseDirectory` set to the call-level `baseDirectory` if provided, otherwise falling back to `session.baseDirectory`
+   - `sessionId` included in the `PromptData` payload
+4. The full prompt flow (window focus, beep, IPC, persistence) is identical to `request_user_input` — see [Prompt Lifecycle](#prompt-lifecycle).
+5. The content array (text + attachments) is assembled and returned identically to `request_user_input`.
+
+#### When to use
+
+- When continuing a series of questions in an intensive chat session
+- When you need the next piece of information in a multi-step process initiated via `start_intensive_chat`
+- When offering multiple choice options to the user within the session
+- When gathering sequential information from the user within the session
+
+#### Example (pseudocode)
+
+```ts
+const result = await mcp.callTool('ask_intensive_chat', {
+  sessionId,
+  question: 'Which framework should I use?',
+  predefinedOptions: ['React', 'Vue', 'Svelte'],
+  baseDirectory: '/workspace/my-app',
+});
+// result.content[0].text => "User replied: React"
+```
+
+---
+
+### `stop_intensive_chat`
+
+**File:** `desktop/src/main/tools/intensive-chat.ts`
+
+**Description:** Stop and close an active intensive chat session. Must be called after all questions have been asked using `ask_intensive_chat`.
+
+#### Parameters
+
+| Parameter   | Type     | Required | Description                               |
+| ----------- | -------- | -------- | ----------------------------------------- |
+| `sessionId` | `string` | Yes      | ID of the intensive chat session to stop. |
+
+#### Return Value
+
+| Scenario                      | Content                                                             |
+| ----------------------------- | ------------------------------------------------------------------- |
+| Session stopped               | `[{ type: 'text', text: 'Session stopped successfully.' }]`         |
+| Invalid or expired session ID | `[{ type: 'text', text: 'Error: Invalid or expired session ID.' }]` |
+
+#### Behavior
+
+1. `activeChatSessions.get(sessionId)` is called. If the session does not exist, the error response is returned immediately.
+2. The session is removed from `activeChatSessions` via `.delete(sessionId)`.
+3. An `intensive-chat-stop` IPC event is sent to the renderer with `{ sessionId, connectionId }`.
+4. The success response is returned immediately — no user interaction occurs.
+
+> **Note:** `stop_intensive_chat` does **not** cancel any in-flight `ask_intensive_chat` prompt. If a prompt is actively awaiting a user reply when `stop_intensive_chat` is called, that prompt will continue to run until it resolves or times out. The session entry is simply removed from the registry; subsequent `ask_intensive_chat` calls with the same `sessionId` will receive the invalid-session error.
+
+#### When to use
+
+- When you've completed gathering all needed information via `ask_intensive_chat`
+- When the multi-step process requiring intensive chat is complete
+- When you're ready to move on to processing the collected information
+- When the user indicates they want to end the session
+- As the final action related to the intensive chat flow within a single response message
+
+#### Example (pseudocode)
+
+```ts
+await mcp.callTool('stop_intensive_chat', { sessionId });
+// renderer receives 'intensive-chat-stop', UI closes the session view
+```
+
+---
+
+### `push_session_status`
+
+**File:** `desktop/src/main/tools/session-channel.ts`
+
+**Description:** Push a status update to the UI. Non-blocking — returns immediately. Use to show the user what the agent is currently doing.
+
+#### Parameters
+
+| Parameter | Type                                          | Required | Description                                                                               |
+| --------- | --------------------------------------------- | -------- | ----------------------------------------------------------------------------------------- |
+| `status`  | `string`                                      | Yes      | Status message to display in the UI.                                                      |
+| `type`    | `'info' \| 'working' \| 'success' \| 'error'` | No       | Visual indicator type. Controls the icon/color of the status badge. Defaults to `'info'`. |
+
+#### Return Value
+
+| Scenario | Content                                   |
+| -------- | ----------------------------------------- |
+| Always   | `[{ type: 'text', text: '{"ok":true}' }]` |
+
+#### Behavior
+
+- Sends a `session-status-update` IPC event to the renderer with `{ connectionId, status, type }`.
+- Returns `{"ok":true}` immediately without awaiting any response.
+- Does **not** interact with the prompt system.
+- Does **not** trigger a beep, record to history, or affect the active prompt state.
+- This tool is safe to call at any frequency and from any agent state (e.g. while a prompt is pending).
+
+#### `type` values
+
+| Value       | Intended Use                                      |
+| ----------- | ------------------------------------------------- |
+| `'info'`    | General informational messages (default).         |
+| `'working'` | Agent is actively processing or executing a task. |
+| `'success'` | A task or step completed successfully.            |
+| `'error'`   | A task or step failed.                            |
+
+#### Example (pseudocode)
+
+```ts
+await mcp.callTool('push_session_status', {
+  status: 'Running unit tests…',
+  type: 'working',
+});
+// UI immediately updates the status badge; tool returns without blocking
+```
+
+---
+
+## Prompt Lifecycle
+
+All blocking tools (`request_user_input`, `ask_intensive_chat`) share the same underlying `promptUser()` function defined in `desktop/src/main/ipc-prompt.ts`. This section documents the complete lifecycle.
+
+### Prompt data flow
+
+```
+MCP caller
+  │
+  ▼
+promptUser(win, PromptData)
+  │  1. Cancel any existing active prompt for connectionId (supersede)
+  │  2. win.show() + win.focus()
+  │  3. Beep (if enabled and cooldown elapsed)
+  │  4. IPC → renderer: 'prompt-request' with PromptData
+  │  5. DB: append 'question' to session_channel_history
+  │  6. Register in activePrompts Map
+  │  7. Set timeout timer
+  │
+  ▼  (wait)
+IPC ← renderer: 'prompt-response' with { id, answer, attachments? }
+  │  8. Match promptId
+  │  9. DB: save to conversations table
+  │  10. DB: append 'answer' to session_channel_history
+  │  11. Resolve promise with { answer, attachments }
+  │
+  ▼
+Tool returns content array to MCP caller
+```
+
+### Prompt supersession
+
+Only one prompt per `connectionId` can be active at a time. This is enforced by the `activePrompts` Map keyed on `connectionId`.
+
+When `promptUser()` is called for a `connectionId` that already has an active prompt:
+
+1. The existing prompt's `cancel()` function is invoked.
+2. The existing promise resolves immediately with `'Error: Prompt superseded by a newer prompt.'`
+3. The new prompt is registered as the active prompt.
+
+This means the MCP caller that issued the original prompt will receive a supersession error, and the new prompt takes over.
+
+### Timeout
+
+- Default timeout: **800 seconds** (configurable via `setPromptTimeout(fn)`).
+- If the timer fires before the user responds and the prompt has not already settled, the promise resolves with `'Error: Prompt timed out — no response received.'`
+- The tool returns this as `'User did not reply: Timeout occurred.'` (or the intensive-chat variant).
+- Timeout can be disabled by setting the timeout to `0` or a negative value.
+
+### Beep cooldown
+
+- A beep is played via `shell.beep()` when a new prompt is shown, provided sound is enabled.
+- Beeps are rate-limited to at most one per **2000 ms** across all connections. Rapid sequential calls (e.g. an agent looping quickly) will only trigger one beep per 2-second window.
+
+### Force termination
+
+The `forceTerminateChat(connectionId)` function (internal, not an MCP tool) can be called by the application to immediately resolve any active prompt for a connection with:
+
+```
+USER_FORCE_TERMINATED: The user has force-terminated this conversation.
+Stop all current work and acknowledge the termination.
+```
+
+This is used when the user explicitly closes or terminates a chat session from the UI.
+
+### Connection cleanup
+
+When a connection drops, `cancelActivePrompt(connectionId)` is called to cancel and clean up any pending prompt, preventing listener leaks on the `ipcMain` event emitter.
+
+---
+
+## Attachments
+
+Users can attach files to any prompt response. Attachments flow through the system as follows:
+
+### Data shape
+
+Attachments are carried in the `PromptResponse` type:
+
+```ts
+interface PromptResponse {
+  answer: string;
+  attachments?: {
+    data: string; // base64-encoded content (images) or raw text content
+    mimeType: string; // MIME type, e.g. "image/png", "text/plain"
+    name: string; // original filename
+    size: number; // file size in bytes
+  }[];
+}
+```
+
+### Persistence
+
+Attachments are saved alongside the conversation in the `conversations` table and appended to `session_channel_history` as part of the `answer` record.
+
+### MCP content encoding
+
+When the tool constructs its return value, attachments are appended to the content array after the primary text reply:
+
+| Attachment MIME type | MCP content block                                         |
+| -------------------- | --------------------------------------------------------- |
+| `image/*`            | `{ type: 'image', data: <base64>, mimeType: <mimeType> }` |
+| Any other type       | `{ type: 'text', text: '--- File: <name> ---\n<data>' }`  |
+
+The `data` field for non-image attachments is the raw string content of the file (not base64). For image attachments, `data` is the base64-encoded binary content.
+
+### Example content array (text + image attachment)
+
+```json
+[
+  { "type": "text", "text": "User replied: Here is the screenshot" },
+  { "type": "image", "data": "<base64>", "mimeType": "image/png" }
+]
+```
+
+### Example content array (text + file attachment)
+
+```json
+[
+  { "type": "text", "text": "User replied: See the log file" },
+  {
+    "type": "text",
+    "text": "--- File: build.log ---\nError: module not found\n..."
+  }
+]
+```
+
+Attachments are supported by both `request_user_input` and `ask_intensive_chat`. They are not applicable to `start_intensive_chat`, `stop_intensive_chat`, or `push_session_status`.
+
+---
+
+## Internal IPC Events
+
+These Electron IPC events are used internally between the main process and the renderer. They are not part of the MCP tool surface but are documented here for completeness.
+
+| Channel                 | Direction       | Payload                              | Triggered by                               |
+| ----------------------- | --------------- | ------------------------------------ | ------------------------------------------ |
+| `prompt-request`        | main → renderer | `PromptData`                         | `request_user_input`, `ask_intensive_chat` |
+| `prompt-response`       | renderer → main | `{ id, answer, attachments? }`       | User submits a prompt reply                |
+| `intensive-chat-start`  | main → renderer | `{ sessionId, title, connectionId }` | `start_intensive_chat`                     |
+| `intensive-chat-stop`   | main → renderer | `{ sessionId, connectionId }`        | `stop_intensive_chat`                      |
+| `session-status-update` | main → renderer | `{ connectionId, status, type }`     | `push_session_status`                      |
+
+---
+
+## Connection Scope
+
+All tools operate within the scope of a single MCP connection. The `connectionId` (a UUID assigned at connection time) and `connectionName` (the human-readable name of the connected client) are bound at tool registration time via closure and are not exposed as tool parameters.
+
+- `request_user_input`: uses `connectionId` + `connectionName` for prompt tracking and persistence.
+- `start_intensive_chat` / `ask_intensive_chat` / `stop_intensive_chat`: use `connectionId` + `connectionName` for prompt tracking; `activeChatSessions` is a module-level Map shared across all connections.
+- `push_session_status`: uses `connectionId` to route the status update to the correct UI channel.

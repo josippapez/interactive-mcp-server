@@ -13,6 +13,7 @@ import {
 } from '@/constants.js';
 import logger from '../../utils/logger.js';
 import { resolveSearchRoot } from '../../utils/search-root.js';
+import { type Theme, THEMES } from '@/theme.js';
 
 interface ChatMessage {
   text: string;
@@ -169,10 +170,20 @@ const App = ({
   >(undefined);
   const [timeLeft, setTimeLeft] = useState<number | null>(null);
   const [followInput, setFollowInput] = useState(false);
+  const [theme, setTheme] = useState<Theme>(
+    process.argv.includes('--light') ? 'light' : 'dark',
+  );
   const timerRef = useRef<NodeJS.Timeout | null>(null);
   const scrollRef = useRef<ScrollBoxLike | null>(null);
   const { width, height } = useTerminalDimensions();
   const isNarrow = width < 90;
+
+  const toggleTheme = useCallback(
+    () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+    [],
+  );
+
+  const activeTheme = THEMES[theme];
 
   const keepInputVisible = useCallback(() => {
     setFollowInput(true);
@@ -410,7 +421,7 @@ const App = ({
       flexDirection="column"
       width="100%"
       height="100%"
-      backgroundColor="black"
+      backgroundColor={activeTheme.bgOuter}
       paddingLeft={isNarrow ? 0 : 1}
       paddingRight={isNarrow ? 0 : 1}
     >
@@ -462,6 +473,7 @@ const App = ({
                     <box paddingLeft={isNarrow ? 1 : 2}>
                       <MarkdownText
                         content={msg.text}
+                        theme={activeTheme}
                         showContentCopyControl
                         contentCopyLabel="Copy question"
                         showCodeCopyControls
@@ -477,6 +489,7 @@ const App = ({
                     <box paddingLeft={isNarrow ? 1 : 2}>
                       <MarkdownText
                         content={msg.answer}
+                        theme={activeTheme}
                         showContentCopyControl
                         contentCopyLabel="Copy answer"
                         showCodeCopyControls
@@ -506,9 +519,11 @@ const App = ({
                 }
                 questionId={currentQuestionId}
                 predefinedOptions={currentPredefinedOptions}
+                theme={activeTheme}
                 searchRoot={currentSearchRoot}
                 onSubmit={handleSubmit}
                 onInputActivity={keepInputVisible}
+                onThemeToggle={toggleTheme}
               />
             </box>
           )}
@@ -521,6 +536,7 @@ const App = ({
             value={percentage}
             timeLeftSeconds={timeLeft}
             critical={timeLeft <= 10}
+            theme={activeTheme}
           />
         </box>
       )}

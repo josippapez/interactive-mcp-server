@@ -1,5 +1,6 @@
 import type React from 'react';
 import type { TextareaRenderableLike } from './types.js';
+import type { ThemeColors } from '@/theme.js';
 import { openExternalLink } from '@/utils/open-external-link.js';
 import {
   routeTextareaMouseScroll,
@@ -9,6 +10,7 @@ import {
 interface ModeTabsProps {
   mode: 'option' | 'input';
   hasOptions: boolean;
+  theme: ThemeColors;
   onSelectOptionMode: () => void;
   onSelectInputMode: () => void;
 }
@@ -16,18 +18,19 @@ interface ModeTabsProps {
 export const ModeTabs = ({
   mode,
   hasOptions,
+  theme,
   onSelectOptionMode,
   onSelectInputMode,
 }: ModeTabsProps) => (
   <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
-    <text fg="gray">Mode</text>
+    <text fg={theme.textMuted}>Mode</text>
     <box
       flexDirection="row"
       alignSelf="flex-start"
       border
       borderStyle="single"
-      borderColor="orange"
-      backgroundColor="#151515"
+      borderColor={theme.borderMode}
+      backgroundColor={theme.bgModeTabs}
       paddingLeft={0}
       paddingRight={0}
     >
@@ -37,22 +40,38 @@ export const ModeTabs = ({
           paddingLeft={0}
           paddingRight={0}
           onClick={onSelectOptionMode}
-          backgroundColor={mode === 'option' ? 'orange' : '#151515'}
+          backgroundColor={
+            mode === 'option' ? theme.modeTabActiveBg : theme.bgModeTabs
+          }
         >
-          <text fg={mode === 'option' ? 'black' : 'gray'}>
+          <text
+            fg={
+              mode === 'option'
+                ? theme.modeTabActiveText
+                : theme.modeTabInactiveText
+            }
+          >
             {mode === 'option' ? 'Option' : 'option'}
           </text>
         </box>
       )}
-      {hasOptions && <text fg="#3a3a3a">│</text>}
+      {hasOptions && <text fg={theme.separator}>│</text>}
       <box
         justifyContent="center"
         paddingLeft={0}
         paddingRight={0}
         onClick={onSelectInputMode}
-        backgroundColor={mode === 'input' ? 'orange' : '#151515'}
+        backgroundColor={
+          mode === 'input' ? theme.modeTabActiveBg : theme.bgModeTabs
+        }
       >
-        <text fg={mode === 'input' ? 'black' : 'gray'}>
+        <text
+          fg={
+            mode === 'input'
+              ? theme.modeTabActiveText
+              : theme.modeTabInactiveText
+          }
+        >
           {mode === 'input' ? 'Input' : 'input'}
         </text>
       </box>
@@ -64,6 +83,7 @@ interface OptionListProps {
   mode: 'option' | 'input';
   options: string[];
   selectedIndex: number;
+  theme: ThemeColors;
   onSelectOption: (index: number) => void;
   onActivateOptionMode: () => void;
 }
@@ -72,6 +92,7 @@ export const OptionList = ({
   mode,
   options,
   selectedIndex,
+  theme,
   onSelectOption,
   onActivateOptionMode,
 }: OptionListProps) => {
@@ -81,7 +102,7 @@ export const OptionList = ({
 
   return (
     <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
-      <text fg="gray" wrapMode="word">
+      <text fg={theme.textMuted} wrapMode="word">
         Option mode: ↑/↓ or j/k choose • Enter select • Tab switch mode
       </text>
       <box flexDirection="column" width="100%" gap={0}>
@@ -99,7 +120,9 @@ export const OptionList = ({
             <text
               wrapMode="char"
               fg={
-                index === selectedIndex && mode === 'option' ? 'cyan' : 'gray'
+                index === selectedIndex && mode === 'option'
+                  ? theme.textAccent
+                  : theme.textMuted
               }
             >
               {index === selectedIndex && mode === 'option' ? '› ' : '  '}
@@ -120,6 +143,7 @@ interface InputEditorProps {
   textareaContainerHeight: number;
   textareaRows: number;
   hasSuggestions: boolean;
+  theme: ThemeColors;
   keyBindings: Array<Record<string, unknown>>;
   onFocusRequest: () => void;
   onContentSync: () => void;
@@ -135,6 +159,7 @@ export const InputEditor = ({
   textareaContainerHeight,
   textareaRows,
   hasSuggestions,
+  theme,
   keyBindings,
   onFocusRequest,
   onContentSync,
@@ -142,12 +167,14 @@ export const InputEditor = ({
   focused = true,
 }: InputEditorProps) => (
   <box flexDirection="column" marginBottom={0} width="100%">
-    <text fg="gray">Input</text>
+    <text fg={theme.textMuted}>Input</text>
     <box
       border
       borderStyle="single"
-      borderColor={hasSuggestions ? 'cyan' : 'gray'}
-      backgroundColor="#1f1f1f"
+      borderColor={
+        hasSuggestions ? theme.borderInputSuggestions : theme.borderInputDefault
+      }
+      backgroundColor={theme.bgInput}
       height={textareaContainerHeight}
       paddingLeft={1}
       paddingRight={1}
@@ -159,11 +186,11 @@ export const InputEditor = ({
         focused={focused}
         height={textareaRows}
         wrapMode="word"
-        backgroundColor="#1f1f1f"
-        focusedBackgroundColor="#1f1f1f"
-        textColor="white"
-        focusedTextColor="white"
-        placeholderColor="gray"
+        backgroundColor={theme.bgInput}
+        focusedBackgroundColor={theme.bgInput}
+        textColor={theme.textPrimary}
+        focusedTextColor={theme.textPrimary}
+        placeholderColor={theme.textMuted}
         placeholder="Type your answer..."
         syntaxStyle={textareaSyntaxStyle as never}
         keyBindings={keyBindings}
@@ -185,6 +212,7 @@ interface SuggestionsPanelProps {
   selectedSuggestionIndex: number;
   selectedSuggestionVscodeLink: string | null;
   hasSearchRoot: boolean;
+  theme: ThemeColors;
   scrollRef: {
     current: {
       scrollTo?: (position: number | { x: number; y: number }) => void;
@@ -199,19 +227,20 @@ export const SuggestionsPanel = ({
   selectedSuggestionIndex,
   selectedSuggestionVscodeLink,
   hasSearchRoot,
+  theme,
   scrollRef,
 }: SuggestionsPanelProps) => (
   <box flexDirection="column" marginBottom={0} width="100%" gap={0}>
-    <text fg="gray">
+    <text fg={theme.textMuted}>
       {hasOptions
         ? 'Path suggestions (files + folders) • ↑/↓ or Ctrl+N/P navigate • Enter/Tab apply'
         : 'Path suggestions (files + folders) • ↑/↓ or Ctrl+N/P navigate • Enter/Tab apply'}
     </text>
     {isIndexingFiles ? (
-      <text fg="gray">Indexing files...</text>
+      <text fg={theme.textMuted}>Indexing files...</text>
     ) : fileSuggestions.length > 0 ? (
       <box flexDirection="column" width="100%">
-        <text fg="gray">Showing up to 50 results</text>
+        <text fg={theme.textMuted}>Showing up to 50 results</text>
         <scrollbox
           ref={scrollRef}
           width="100%"
@@ -226,7 +255,11 @@ export const SuggestionsPanel = ({
             {fileSuggestions.map((suggestion, index) => (
               <box key={suggestion} paddingLeft={0} paddingRight={1} gap={0}>
                 <text
-                  fg={index === selectedSuggestionIndex ? 'cyan' : 'gray'}
+                  fg={
+                    index === selectedSuggestionIndex
+                      ? theme.textAccent
+                      : theme.textMuted
+                  }
                   wrapMode="char"
                 >
                   {index === selectedSuggestionIndex ? '› ' : '  '}
@@ -238,11 +271,11 @@ export const SuggestionsPanel = ({
         </scrollbox>
         {selectedSuggestionVscodeLink && (
           <box flexDirection="column" width="100%">
-            <text fg="gray" wrapMode="word">
+            <text fg={theme.textMuted} wrapMode="word">
               open file with:
             </text>
             <text
-              fg="cyan"
+              fg={theme.textAccent}
               wrapMode="word"
               onMouseUp={() => {
                 void openExternalLink(selectedSuggestionVscodeLink, 'vscode');
@@ -251,7 +284,7 @@ export const SuggestionsPanel = ({
               • VS Code
             </text>
             <text
-              fg="cyan"
+              fg={theme.textAccent}
               wrapMode="word"
               onMouseUp={() => {
                 void openExternalLink(
@@ -266,7 +299,7 @@ export const SuggestionsPanel = ({
         )}
       </box>
     ) : (
-      <text fg="gray">
+      <text fg={theme.textMuted}>
         {hasSearchRoot
           ? '#search: no matches'
           : '#search: no search root configured'}
@@ -277,12 +310,14 @@ export const SuggestionsPanel = ({
 
 interface QuestionBoxProps {
   question: string;
+  theme: ThemeColors;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   MarkdownTextComponent: any;
 }
 
 export const QuestionBox = ({
   question,
+  theme,
   MarkdownTextComponent,
 }: QuestionBoxProps) => (
   <box
@@ -291,18 +326,19 @@ export const QuestionBox = ({
     gap={0}
     border
     borderStyle="single"
-    borderColor="cyan"
-    backgroundColor="#121212"
+    borderColor={theme.borderPrompt}
+    backgroundColor={theme.bgPromptBox}
     paddingLeft={1}
     paddingRight={1}
     paddingTop={1}
     paddingBottom={1}
   >
-    <text fg="cyan">
+    <text fg={theme.textAccent}>
       <strong>PROMPT</strong>
     </text>
     <MarkdownTextComponent
       content={question}
+      theme={theme}
       showContentCopyControl
       showCodeCopyControls
     />
@@ -314,6 +350,7 @@ interface SearchStatusProps {
   repositoryFiles: string[];
   searchRoot?: string;
   hasSearchRoot: boolean;
+  theme: ThemeColors;
 }
 
 export const SearchStatus = ({
@@ -321,14 +358,15 @@ export const SearchStatus = ({
   repositoryFiles,
   searchRoot,
   hasSearchRoot,
+  theme,
 }: SearchStatusProps) => (
   <box flexDirection="column" marginBottom={0} width="100%">
-    <text fg="gray" wrapMode="char">
+    <text fg={theme.textMuted} wrapMode="char">
       {hasSearchRoot
         ? `#search root: ${searchRoot}`
         : '#search root: no search root'}
     </text>
-    <text fg="gray">
+    <text fg={theme.textMuted}>
       {isIndexingFiles
         ? '#search index: indexing...'
         : `#search index: ${repositoryFiles.length} paths indexed`}
@@ -340,6 +378,7 @@ interface InputStatusProps {
   mode: 'option' | 'input';
   isNarrow: boolean;
   inputValue: string;
+  theme: ThemeColors;
   queuedAttachments: Array<{ id: string }>;
 }
 
@@ -347,6 +386,7 @@ export const InputStatus = ({
   mode,
   isNarrow,
   inputValue,
+  theme,
   queuedAttachments,
 }: InputStatusProps) => (
   <box
@@ -355,10 +395,10 @@ export const InputStatus = ({
     marginBottom={0}
     gap={isNarrow ? 0 : undefined}
   >
-    <text fg="gray">
+    <text fg={theme.textMuted}>
       {mode === 'input' ? 'Custom input' : 'Option selection'}
     </text>
-    <text fg="gray">
+    <text fg={theme.textMuted}>
       {mode === 'input' && queuedAttachments.length > 0
         ? `${inputValue.length} chars + ${queuedAttachments.length} queued`
         : `${inputValue.length} chars`}
@@ -368,40 +408,55 @@ export const InputStatus = ({
 
 interface ClipboardStatusProps {
   status: string;
+  theme: ThemeColors;
 }
 
-export const ClipboardStatus = ({ status }: ClipboardStatusProps) => (
-  <text fg={status.startsWith('Copy failed:') ? 'red' : 'green'}>{status}</text>
+export const ClipboardStatus = ({ status, theme }: ClipboardStatusProps) => (
+  <text
+    fg={
+      status.startsWith('Copy failed:')
+        ? theme.clipboardError
+        : theme.clipboardSuccess
+    }
+  >
+    {status}
+  </text>
 );
 
 interface AttachmentsDisplayProps {
   queuedAttachments: Array<{ id: string; label: string }>;
+  theme: ThemeColors;
 }
 
 export const AttachmentsDisplay = ({
   queuedAttachments,
+  theme,
 }: AttachmentsDisplayProps) => (
   <box flexDirection="column" width="100%" gap={0}>
-    <text fg="yellow">
+    <text fg={theme.attachmentLabel}>
       <strong>QUEUED ATTACHMENTS</strong> (Delete placeholder text to remove)
     </text>
     {queuedAttachments.map((attachment, index) => (
-      <text key={attachment.id} fg="gray" wrapMode="word">
+      <text key={attachment.id} fg={theme.textMuted} wrapMode="word">
         [File {index + 1}] {attachment.label}
       </text>
     ))}
   </box>
 );
 
-export const SendButton = () => (
+interface SendButtonProps {
+  theme: ThemeColors;
+}
+
+export const SendButton = ({ theme }: SendButtonProps) => (
   <box
-    backgroundColor="cyan"
+    backgroundColor={theme.sendBg}
     paddingLeft={1}
     paddingRight={1}
     alignSelf="flex-start"
     marginBottom={0}
   >
-    <text fg="black">
+    <text fg={theme.sendText}>
       <strong>Send</strong> ⌃S
     </text>
   </box>
@@ -409,12 +464,13 @@ export const SendButton = () => (
 
 interface HelpTextProps {
   hasOptions: boolean;
+  theme: ThemeColors;
 }
 
-export const HelpText = ({ hasOptions }: HelpTextProps) => (
-  <text fg="gray" wrapMode="word">
+export const HelpText = ({ hasOptions, theme }: HelpTextProps) => (
+  <text fg={theme.textMuted} wrapMode="word">
     {hasOptions
-      ? 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • Tab mode switch (when #search suggestions are hidden) • #path for repo file/folder autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo'
-      : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file/folder autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo'}
+      ? 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • Tab mode switch (when #search suggestions are hidden) • #path for repo file/folder autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo • Ctrl+T toggle theme'
+      : 'Enter/Ctrl+J newline • #search nav: ↑/↓ or Ctrl+N/P • Enter/Tab #search apply • #path for repo file/folder autocomplete • Cmd/Ctrl+C copy input • Cmd/Ctrl+V paste/attach • Cmd/Ctrl+Z undo • Cmd/Ctrl+Shift+Z redo • Ctrl+T toggle theme'}
   </text>
 );

@@ -1,0 +1,952 @@
+# Renderer — Interactive MCP Desktop
+
+The renderer is a React 19 single-page application bootstrapped with Vite and served inside the Electron `BrowserWindow`. Its source root is `desktop/src/renderer/src/`.
+
+---
+
+## Table of Contents
+
+1. [App Structure Overview](#1-app-structure-overview)
+2. [Component Tree](#2-component-tree)
+3. [Entry Point](#3-entry-point)
+4. [Theme System](#4-theme-system)
+5. [Hooks Reference](#5-hooks-reference)
+   - [useConnections](#51-useconnections)
+   - [useGlobalShortcuts](#52-useglobalshortcuts)
+   - [useTheme](#53-usetheme)
+6. [Components](#6-components)
+   - [App](#61-app)
+   - [PromptView](#62-promptview)
+   - [ChannelSidebar](#63-channelsidebar)
+   - [ChannelHeader](#64-channelheader)
+   - [ChannelComposer](#65-channelcomposer)
+   - [ChatHistoryView](#66-chathistoryview)
+   - [PromptMessage](#67-promptmessage)
+   - [SessionChannelBar](#68-sessionchannelbar)
+   - [AutocompleteDropdown](#69-autocompletedropdown)
+   - [AttachmentPreview](#610-attachmentpreview)
+   - [HistoryView](#611-historyview)
+   - [SettingsView](#612-settingsview)
+   - [StatusBar](#613-statusbar)
+   - [MarkdownContent](#614-markdowncontent)
+   - [CollapsibleSection](#615-collapsiblesection)
+   - [ShortcutHelpModal](#616-shortcuthelpmodal)
+7. [Type Definitions](#7-type-definitions)
+8. [Data Flow: Prompt Lifecycle](#8-data-flow-prompt-lifecycle)
+
+---
+
+## 1. App Structure Overview
+
+The renderer is a tab-based UI with three views: **Prompts**, **History**, and **Settings**. All MCP connection state lives in the `useConnections` hook and is threaded downward as props. The Prompts tab is always mounted (hidden with CSS when inactive) to avoid tearing live IPC state; the other two tabs are conditionally rendered.
+
+Theme preference is stored in `localStorage` and applied globally to `document.documentElement` via a `data-theme` attribute. All color tokens are CSS custom properties resolved at runtime against the current theme.
+
+Global keyboard shortcuts are managed by `useGlobalShortcuts`, which registers a single `keydown` listener on `document` and delegates to stable refs to avoid stale closures.
+
+---
+
+## 2. Component Tree
+
+```
+React.StrictMode
+└── ThemeProvider                          (ThemeContext.tsx)
+    └── App                                (App.tsx)
+        ├── <header> titlebar
+        │   └── TabButton × 3             (inline in App.tsx)
+        ├── <main>
+        │   ├── PromptView                 (always mounted, visibility via CSS)
+        │   │   ├── ChannelSidebar
+        │   │   ├── ChannelHeader
+        │   │   ├── [intensive-chat banner] (inline JSX)
+        │   │   ├── ChatHistoryView
+        │   │   │   └── MarkdownContent ×n
+        │   │   ├── PromptMessage          (when prompt && !activeSession)
+        │   │   │   ├── MarkdownContent
+        │   │   │   └── CollapsibleSection (when message > 10 lines)
+        │   │   ├── [awaiting reconnection state] (inline JSX)
+        │   │   ├── [idle state]           (inline JSX)
+        │   │   ├── SessionChannelBar      (when sessionChannel present)
+        │   │   ├── ChannelComposer
+        │   │   │   ├── AutocompleteDropdown (when suggestions active)
+        │   │   │   └── AttachmentPreview    (when attachments present)
+        │   │   └── [predefined option buttons] (inline JSX)
+        │   ├── HistoryView                (conditional — tab === 'history')
+        │   │   └── CollapsibleSection ×n
+        │   │       └── MarkdownContent ×n
+        │   └── SettingsView               (conditional — tab === 'settings')
+        ├── StatusBar                      (always visible)
+        └── ShortcutHelpModal              (overlaid when showShortcuts === true)
+```
+
+---
+
+## 3. Entry Point
+
+**File:** `main.tsx`
+
+```tsx
+ReactDOM.createRoot(document.getElementById('root')!).render(
+  <React.StrictMode>
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
+  </React.StrictMode>,
+);
+```
+
+Mounts the root into `#root`, wrapping the application in `React.StrictMode` and the `ThemeProvider` context.
+
+---
+
+## 4. Theme System
+
+**File:** `ThemeContext.tsx`
+
+The theme system provides a single `'dark' | 'light'` toggle that is persisted across sessions.
+
+### Persistence
+
+- On mount, `ThemeProvider` reads `localStorage.getItem('imcp-theme')`. Any value other than `'light'` defaults to `'dark'`.
+- On every theme change, the value is written back to `localStorage` and `document.documentElement.setAttribute('data-theme', theme)` is called synchronously via `useEffect`.
+
+### Application
+
+CSS custom properties (e.g. `--color-bg`, `--color-agent`, `--color-text-muted`) are defined in the global stylesheet scoped to `[data-theme="dark"]` and `[data-theme="light"]` selectors. All components reference these tokens directly in Tailwind `var(...)` expressions.
+
+### API
+
+| Export          | Type                                         | Description                                                     |
+| --------------- | -------------------------------------------- | --------------------------------------------------------------- |
+| `ThemeProvider` | `React.FC<{ children }>`                     | Context provider. Must wrap the entire app.                     |
+| `useTheme`      | `() => { theme: Theme; toggle: () => void }` | Consumes theme context. Throws if used outside `ThemeProvider`. |
+| `Theme`         | `'dark' \| 'light'`                          | Union type for valid theme values.                              |
+
+---
+
+## 5. Hooks Reference
+
+### 5.1 `useConnections`
+
+**File:** `hooks/useConnections.ts`
+
+Central state manager for all MCP connections. Owns the `Map<string, ConnectionState>` and all IPC event subscriptions. Called once at the `App` level.
+
+#### Parameters
+
+| Parameter             | Type         | Description                                                                                                     |
+| --------------------- | ------------ | --------------------------------------------------------------------------------------------------------------- |
+| `onActivatePromptTab` | `() => void` | Callback invoked when an inbound event requires switching to the Prompts tab (e.g. new prompt, new connection). |
+
+#### Returned values
+
+| Value                        | Type                                                   | Description                                                                                                                                    |
+| ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connections`                | `Map<string, ConnectionState>`                         | All known connections/channels, keyed by connection ID.                                                                                        |
+| `activeConnectionId`         | `string \| null`                                       | ID of the currently selected connection in the sidebar.                                                                                        |
+| `setActiveConnectionId`      | `Dispatch<SetStateAction<string \| null>>`             | Setter for the active connection.                                                                                                              |
+| `activeConn`                 | `ConnectionState \| null`                              | Derived: `connections.get(activeConnectionId)` or `null`.                                                                                      |
+| `clientInfo`                 | `{ model?: string; mode?: string } \| undefined`       | Most recently received client info from a prompt request.                                                                                      |
+| `handleSubmit`               | `(answer: string, attachments?: Attachment[]) => void` | Submits an answer for the active connection's pending prompt.                                                                                  |
+| `handleSelectOption`         | `(option: string) => void`                             | Submits a predefined option as the answer for the active prompt.                                                                               |
+| `handleDismissStatus`        | `(connectionId: string, timestamp: Date) => void`      | Removes a `SessionStatus` entry by timestamp.                                                                                                  |
+| `handleDismissSession`       | `(connectionId: string) => void`                       | Calls `window.api.dismissSession` to close the tab in the UI without removing the session channel.                                             |
+| `handleQueueSessionMessage`  | `(sessionId: string, message: string) => void`         | Queues a message for the session via `window.api.queueSessionMessage` and optimistically appends an `'outbound'` message to `channelMessages`. |
+| `handleClearChannelMessages` | `(sessionId: string) => void`                          | Calls `window.api.clearSessionChannelMessages` to clear DB history for the session.                                                            |
+| `handleRemoveSession`        | `(sessionId: string) => void`                          | Calls `window.api.removeSessionChannel` to delete the session channel entirely.                                                                |
+
+#### Internal design
+
+**Listener registration guard:** IPC listeners are registered inside a `useEffect` that runs once. The `listenersRegistered` ref prevents double-registration in `React.StrictMode`.
+
+**Stable refs pattern:** `onActivatePromptTab` and `activeConnectionId` are mirrored to refs (`activateRef`, `activeConnectionRef`) so that event callbacks registered at mount time always access the latest values without needing to re-register.
+
+**`withConnection` helper:** All state mutations go through `withConnection(connectionId, updater)`, which performs a safe `Map` clone and applies the updater only if the connection exists.
+
+#### IPC events handled
+
+| Event                             | Effect                                                                                                                                      |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onConnectionOpened`              | Adds or updates the connection entry; clears any matching `isRestored` entry; loads channel history; activates prompt tab.                  |
+| `onConnectionClosed`              | Removes the connection entry; selects the next available connection if it was active.                                                       |
+| `onPromptRequest`                 | Sets `prompt` and `hasPendingPrompt` on the connection; appends a `'question'` channel message; updates `clientInfo`; activates prompt tab. |
+| `onIntensiveChatStart`            | Sets `activeSession` (`{ id, title }`) on the connection; activates prompt tab.                                                             |
+| `onIntensiveChatStop`             | Clears `activeSession` to `null`.                                                                                                           |
+| `onSessionStatusUpdate`           | Appends a new `SessionStatus` to `sessionStatuses`.                                                                                         |
+| `onSessionChannelCreated`         | Associates a `sessionChannel` with an existing connection or creates a new connection entry; loads channel history; activates prompt tab.   |
+| `onSessionChannelDeleted`         | Removes the connection entry; clears active selection if it matched.                                                                        |
+| `onSessionChannelMessagesCleared` | Resets `channelMessages` and `unreadCount` to empty/zero.                                                                                   |
+
+#### Startup restore flow
+
+On mount, the hook reads `settings.autoRestoreSessions`. If enabled it calls `window.api.getPersistedSessionChannels()` and creates `ConnectionState` entries with `isRestored: true` for each persisted channel not already present. These entries display an "Awaiting agent reconnection" state in `PromptView`. When the agent reconnects (`onConnectionOpened`), the restored entry is replaced with a live one matched by `name`.
+
+#### Unread count logic
+
+When a `pushMessage` call targets a connection that is **not** the currently active one (`activeConnectionRef.current !== connectionId`), `unreadCount` is incremented. It resets to `0` whenever that connection becomes active (watched via a `useEffect` on `activeConnectionId`).
+
+---
+
+### 5.2 `useGlobalShortcuts`
+
+**File:** `hooks/useGlobalShortcuts.ts`
+
+Registers a single `keydown` listener on `document` for application-wide keyboard shortcuts. Uses refs to keep `showShortcuts` state and `onSwitchTab` stable inside the handler.
+
+#### Parameters
+
+| Parameter     | Type                         | Description                                         |
+| ------------- | ---------------------------- | --------------------------------------------------- |
+| `onSwitchTab` | `(tab: 1 \| 2 \| 3) => void` | Callback to switch the active tab by 1-based index. |
+
+#### Returned values
+
+| Value            | Type         | Description                                 |
+| ---------------- | ------------ | ------------------------------------------- |
+| `showShortcuts`  | `boolean`    | Whether the `ShortcutHelpModal` is visible. |
+| `openShortcuts`  | `() => void` | Sets `showShortcuts` to `true`.             |
+| `closeShortcuts` | `() => void` | Sets `showShortcuts` to `false`.            |
+
+#### Shortcut bindings
+
+| Key combo       | Condition                                  | Action                     |
+| --------------- | ------------------------------------------ | -------------------------- |
+| `⌘1` / `Ctrl+1` | —                                          | Switch to Prompts tab      |
+| `⌘2` / `Ctrl+2` | —                                          | Switch to History tab      |
+| `⌘3` / `Ctrl+3` | —                                          | Switch to Settings tab     |
+| `⌘/` / `Ctrl+/` | —                                          | Toggle shortcut help modal |
+| `?`             | Target is not `<textarea>` or `<input>`    | Toggle shortcut help modal |
+| `Escape`        | Modal is open (`showRef.current === true`) | Close shortcut help modal  |
+
+---
+
+### 5.3 `useTheme`
+
+**File:** `ThemeContext.tsx`
+
+```ts
+function useTheme(): { theme: Theme; toggle: () => void };
+```
+
+Thin wrapper around `useContext(ThemeContext)`. Returns the current theme and a stable `toggle` callback (memoized with `useCallback`). Must be called within a component tree wrapped by `ThemeProvider`.
+
+---
+
+## 6. Components
+
+### 6.1 `App`
+
+**File:** `App.tsx`
+
+The root component. Owns tab state and orchestrates the top-level layout.
+
+#### State
+
+| State       | Type                                  | Initial    | Description            |
+| ----------- | ------------------------------------- | ---------- | ---------------------- |
+| `activeTab` | `'prompt' \| 'history' \| 'settings'` | `'prompt'` | Currently visible tab. |
+
+#### Key behaviors
+
+- Calls `useConnections(switchToPrompt)` where `switchToPrompt` is a stable `useCallback` that sets `activeTab` to `'prompt'`.
+- Calls `useGlobalShortcuts({ onSwitchTab: switchTab })` to wire keyboard shortcuts.
+- Derives `hasAnyPrompt` by scanning `connections.values()` for any entry where `hasPendingPrompt === true`.
+- Renders the Prompts tab wrapped in a div that uses `className="hidden"` when inactive rather than unmounting, preserving all hook and IPC state.
+- `HistoryView` and `SettingsView` are conditionally rendered (`{activeTab === 'history' && <HistoryView />}`), so they mount/unmount on tab switch.
+- Shows a pulsing badge on the Prompts `TabButton` when `hasAnyPrompt && activeTab !== 'prompt'`.
+
+#### Internal: `TabButton`
+
+A co-located internal component (not exported). Props:
+
+| Prop       | Type                   | Description                                                       |
+| ---------- | ---------------------- | ----------------------------------------------------------------- |
+| `active`   | `boolean`              | Controls active styling (colored bottom border).                  |
+| `onClick`  | `() => void`           | Tab switch handler.                                               |
+| `children` | `React.ReactNode`      | Tab label.                                                        |
+| `badge`    | `boolean \| undefined` | If true, renders an animated pulsing dot in the top-right corner. |
+| `shortcut` | `string \| undefined`  | Shortcut hint rendered in a smaller span next to the label.       |
+
+---
+
+### 6.2 `PromptView`
+
+**File:** `components/PromptView.tsx`
+
+The main prompt interaction view. Renders the two-column layout: a fixed-width sidebar on the left and a flexible content area on the right.
+
+#### Props
+
+| Prop                    | Type                                            | Description                                                           |
+| ----------------------- | ----------------------------------------------- | --------------------------------------------------------------------- |
+| `connections`           | `Map<string, ConnectionState>`                  | All connections, forwarded to `ChannelSidebar`.                       |
+| `activeConnectionId`    | `string \| null`                                | Currently selected connection.                                        |
+| `onSelectConnection`    | `(id: string) => void`                          | Sidebar selection callback.                                           |
+| `prompt`                | `PromptData \| null`                            | Active unanswered prompt for the current connection.                  |
+| `activeSession`         | `{ id: string; title: string } \| null`         | Active intensive-chat session metadata.                               |
+| `channelMessages`       | `ChannelMessage[]`                              | Full message history for the current connection.                      |
+| `connectionId`          | `string \| null`                                | Same as `activeConnectionId`; used for `forceTerminateChat` call.     |
+| `sessionChannel`        | `{ sessionId: string; label?: string } \| null` | Session channel metadata if one is attached.                          |
+| `sessionStatuses`       | `SessionStatus[]`                               | Status updates for the `SessionChannelBar`.                           |
+| `isRestored`            | `boolean`                                       | Whether this connection was restored from DB (no live transport yet). |
+| `onSubmit`              | `(answer, attachments?) => void`                | Forward to `handleSubmit` from `useConnections`.                      |
+| `onSelectOption`        | `(option) => void`                              | Forward to `handleSelectOption`.                                      |
+| `onDismissStatus`       | `(connectionId, timestamp) => void`             | Forward to `handleDismissStatus`.                                     |
+| `onDismissSession`      | `(connectionId) => void`                        | Forward to `handleDismissSession`.                                    |
+| `onQueueSessionMessage` | `(sessionId, message) => void`                  | Forward to `handleQueueSessionMessage`.                               |
+| `onClearMessages`       | `(sessionId) => void`                           | Forward to `handleClearChannelMessages`.                              |
+| `onRemoveSession`       | `(sessionId) => void`                           | Forward to `handleRemoveSession`.                                     |
+
+#### State
+
+| State        | Type                        | Description                                                                                                   |
+| ------------ | --------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `chatEndRef` | `RefObject<HTMLDivElement>` | Ref attached to the bottom sentinel div. Scrolled into view on each `channelMessages` change via `useEffect`. |
+
+#### Content area render logic (mutually exclusive states)
+
+1. **No active connection** → "No channels yet." empty state.
+2. **Active connection present**:
+   - Intensive-chat banner shown when `activeSession !== null` (includes a "✕ Terminate" button that calls `window.api.forceTerminateChat`).
+   - `ChatHistoryView` shown when `channelMessages.length > 0`.
+   - `PromptMessage` shown when `prompt && !activeSession`.
+   - "Awaiting agent reconnection" state shown when `isRestored && !prompt && !activeSession`.
+   - Idle state ("Waiting for prompt from MCP client…") shown when `!prompt && !activeSession && channelMessages.length === 0` (`idle === true`).
+   - `SessionChannelBar` shown when `sessionChannel !== null`.
+   - `ChannelComposer` always rendered: enabled with prompt-submit behavior when `prompt` is set; enabled for session queuing when `sessionChannel` is set; otherwise disabled.
+   - Predefined option buttons rendered below the composer when `prompt.predefinedOptions` is non-empty.
+
+---
+
+### 6.3 `ChannelSidebar`
+
+**File:** `components/prompt/ChannelSidebar.tsx`
+
+Lists all active connections as clickable channel buttons. Wrapped in `React.memo`.
+
+#### Props
+
+| Prop                 | Type                           | Description                              |
+| -------------------- | ------------------------------ | ---------------------------------------- |
+| `connections`        | `Map<string, ConnectionState>` | All connections.                         |
+| `activeConnectionId` | `string \| null`               | Currently selected connection.           |
+| `onSelect`           | `(id: string) => void`         | Called when a channel button is clicked. |
+
+#### Key behaviors
+
+- Iterates `connections.values()` to build the list.
+- Each button label is `conn.sessionChannel?.label ?? conn.name`.
+- Active channel receives `bg-[var(--color-agent)]/15 text-[var(--color-agent)]` styling.
+- Pulsing dot badge (colored `var(--color-user)`) shown when `conn.hasPendingPrompt === true`.
+- Numeric unread count badge shown when `!conn.hasPendingPrompt && conn.unreadCount > 0`.
+- Each button is prefixed with a `#` glyph.
+
+---
+
+### 6.4 `ChannelHeader`
+
+**File:** `components/prompt/ChannelHeader.tsx`
+
+Displays the active channel label and action buttons at the top of the content area.
+
+#### Props
+
+| Prop               | Type         | Description                                              |
+| ------------------ | ------------ | -------------------------------------------------------- |
+| `label`            | `string`     | Channel label (session label or connection ID).          |
+| `promptActive`     | `boolean`    | If true, shows a "pending prompt" badge.                 |
+| `onClearMessages`  | `() => void` | Clears Q/A history and queued messages.                  |
+| `onRemoveSession`  | `() => void` | Removes session channel and terminates it if active.     |
+| `onDismissSession` | `() => void` | Closes the tab from the UI without removing the session. |
+
+#### Buttons
+
+| Button         | Style                | Tooltip                                          |
+| -------------- | -------------------- | ------------------------------------------------ |
+| Clear messages | Default border       | "Clear Q/A history and unsent queued messages"   |
+| Close tab      | Default border       | "Close tab from UI"                              |
+| Remove session | Error-colored border | "Remove session channel and terminate if active" |
+
+---
+
+### 6.5 `ChannelComposer`
+
+**File:** `components/prompt/ChannelComposer.tsx`
+
+The text input and file attachment area at the bottom of the content pane. Handles text entry, file autocomplete, image paste, and file picker.
+
+#### Props
+
+| Prop            | Type                                                 | Description                                                                      |
+| --------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------- |
+| `enabled`       | `boolean`                                            | When `false`, the textarea is disabled and submit/paste/file-picker are blocked. |
+| `baseDirectory` | `string \| undefined`                                | Root directory for file search. If absent, autocomplete is disabled.             |
+| `placeholder`   | `string`                                             | Placeholder text for the textarea.                                               |
+| `onSubmit`      | `(text: string, attachments?: Attachment[]) => void` | Called on send (⌘+Enter or Send button click).                                   |
+
+#### Internal state
+
+| State           | Type                                                    | Description                                      |
+| --------------- | ------------------------------------------------------- | ------------------------------------------------ |
+| `value`         | `string`                                                | Current textarea content.                        |
+| `attachments`   | `Attachment[]`                                          | Pending attachments to be sent with the message. |
+| `suggestions`   | `string[]`                                              | File paths returned by `window.api.searchFiles`. |
+| `selectedIndex` | `number`                                                | Currently highlighted suggestion index.          |
+| `target`        | `{ start: number; end: number; query: string } \| null` | Cursor span of the active `#`/`@` trigger token. |
+| `loading`       | `boolean`                                               | True while awaiting `searchFiles` response.      |
+
+#### Autocomplete
+
+- Activated when the user types `#` or `@` anywhere on the current line (not preceded by a newline since the trigger).
+- On each keypress that advances the cursor, `detectAutocomplete` scans backward from the cursor to find the nearest `#` or `@` on the current line and extracts the query substring.
+- A 150 ms debounced call to `window.api.searchFiles(baseDirectory, query)` populates `suggestions`.
+- `applySuggestion(filePath)` replaces the range `[target.start, target.end)` in the textarea value with the selected file path, then restores the cursor position via a `requestAnimationFrame` callback.
+
+#### Image paste
+
+- `handlePaste` intercepts `ClipboardEvent` items whose `type` starts with `image/`.
+- Each image file is read with `FileReader.readAsDataURL`, the `base64` data portion (after the comma) is extracted, and a new `Attachment` is appended to state.
+
+#### File picker
+
+- `handleFilePicker` calls `window.api.openFileDialog()` to open a native file dialog.
+- Each selected path is passed to `window.api.readFileForAttachment(path)`, which returns `{ data, mimeType, name, size }`.
+
+#### Submit
+
+- `submit` trims the value and returns early if `!enabled || (!text && attachments.length === 0)`.
+- On success, calls `onSubmit`, then clears `value`, `attachments`, `target`, and `suggestions`.
+- Keyboard shortcut: `⌘+Enter` (or `Ctrl+Enter`) triggers `submit`.
+
+#### Keyboard navigation in autocomplete
+
+| Key              | Action                             |
+| ---------------- | ---------------------------------- |
+| `ArrowDown`      | Move selection down (wraps to 0).  |
+| `ArrowUp`        | Move selection up (wraps to last). |
+| `Enter` or `Tab` | Apply selected suggestion.         |
+| `Escape`         | Dismiss dropdown.                  |
+
+---
+
+### 6.6 `ChatHistoryView`
+
+**File:** `components/prompt/ChatHistoryView.tsx`
+
+Scrollable list of all `ChannelMessage` entries for the current connection.
+
+#### Props
+
+| Prop         | Type                                | Description                            |
+| ------------ | ----------------------------------- | -------------------------------------- |
+| `messages`   | `ChannelMessage[]`                  | Messages to render.                    |
+| `chatEndRef` | `RefObject<HTMLDivElement \| null>` | Ref for the scroll-to-bottom sentinel. |
+
+#### Message rendering
+
+| `kind`       | Role label | CSS class   |
+| ------------ | ---------- | ----------- |
+| `'question'` | `Agent`    | `msg-agent` |
+| `'answer'`   | `You`      | `msg-user`  |
+| `'outbound'` | `Queued`   | `msg-user`  |
+
+Each message shows:
+
+- Role label + timestamp (`HH:MM` via `toLocaleTimeString`).
+- Message text rendered through `MarkdownContent`.
+- Attachment name badges (📎 prefix) if `msg.attachments` is non-empty.
+
+---
+
+### 6.7 `PromptMessage`
+
+**File:** `components/prompt/PromptMessage.tsx`
+
+Renders an active unanswered prompt from the agent. Wrapped in `React.memo`.
+
+#### Props
+
+| Prop          | Type             | Description                                                                     |
+| ------------- | ---------------- | ------------------------------------------------------------------------------- |
+| `prompt`      | `PromptData`     | The prompt data to display.                                                     |
+| `secondsLeft` | `number \| null` | Remaining seconds for the timeout countdown. `null` disables the timer display. |
+
+#### Key behaviors
+
+- If `prompt.projectName` is truthy, a styled badge is shown above the message.
+- If `secondsLeft !== null`, a countdown timer is shown: normal style when `> 60s`, warning style at `≤ 60s`, error style at `0`.
+- If `prompt.message` has **more than 10 lines** (split on `\n`), the message is wrapped in a `CollapsibleSection` (title: "Full message", `defaultOpen: true`, `borderColor: "#5599dd"`).
+- Otherwise the message is rendered directly with `msg-agent` CSS class.
+- Message text is always rendered via `MarkdownContent`.
+
+---
+
+### 6.8 `SessionChannelBar`
+
+**File:** `components/prompt/SessionChannelBar.tsx`
+
+A compact bar rendered above the composer when a session channel is attached. Displays the session label and the latest status update.
+
+#### Props
+
+| Prop              | Type                                              | Description                                      |
+| ----------------- | ------------------------------------------------- | ------------------------------------------------ |
+| `sessionChannel`  | `{ sessionId: string; label?: string }`           | Session channel metadata.                        |
+| `sessionStatuses` | `SessionStatus[]`                                 | All status updates for this session.             |
+| `connectionId`    | `string`                                          | Used as the first argument to `onDismissStatus`. |
+| `onDismissStatus` | `(connectionId: string, timestamp: Date) => void` | Dismisses a status entry by timestamp.           |
+
+#### Status display
+
+Only the **last** status in `sessionStatuses` (`sessionStatuses.at(-1)`) is shown. Color and icon are selected from fixed lookup maps:
+
+| `type`    | Color CSS var                 | Icon |
+| --------- | ----------------------------- | ---- |
+| `info`    | `--color-agent` (`#5599dd`)   | `ℹ`  |
+| `working` | `--color-user` (`#cc7700`)    | `⚙`  |
+| `success` | `--color-success` (`#22c55e`) | `✓`  |
+| `error`   | `--color-error` (`#cc3333`)   | `✕`  |
+
+A dismiss button (`×`) calls `onDismissStatus(connectionId, latestStatus.timestamp)`.
+
+---
+
+### 6.9 `AutocompleteDropdown`
+
+**File:** `components/prompt/AutocompleteDropdown.tsx`
+
+Absolutely positioned dropdown rendered above `ChannelComposer` when autocomplete is active.
+
+#### Props
+
+| Prop            | Type                      | Description                                                                      |
+| --------------- | ------------------------- | -------------------------------------------------------------------------------- |
+| `suggestions`   | `string[]`                | File paths to display.                                                           |
+| `selectedIndex` | `number`                  | Index of the currently highlighted item.                                         |
+| `isLoading`     | `boolean`                 | When true and `suggestions` is empty, shows "Indexing…" placeholder.             |
+| `triggerChar`   | `'#' \| '@'`              | Controls the header label: `'@'` → "📎 File reference", `'#'` → "# File search". |
+| `onSelect`      | `(path: string) => void`  | Called on click or Enter/Tab.                                                    |
+| `onHoverIndex`  | `(index: number) => void` | Called on `mouseenter` to sync keyboard selection state.                         |
+
+#### Key behaviors
+
+- Uses `useEffect` on `selectedIndex` to scroll the highlighted item into view (`scrollIntoView({ block: 'nearest' })`).
+- Renders at most 50 suggestions (`suggestions.slice(0, 50)`).
+- Each suggestion splits the path on `/` to display the filename bold and the directory path muted.
+- Uses `onMouseDown` (not `onClick`) to prevent the textarea from losing focus before selection is applied.
+- Positioned with `bottom-full mb-1` so it opens upward above the composer.
+
+---
+
+### 6.10 `AttachmentPreview`
+
+**File:** `components/prompt/AttachmentPreview.tsx`
+
+Grid of attachment thumbnails shown above the textarea when the composer has pending attachments. Wrapped in `React.memo`.
+
+#### Props
+
+| Prop          | Type                                                 | Description                                                                                             |
+| ------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `attachments` | `Attachment[]`                                       | Attachments to display.                                                                                 |
+| `onRemove`    | `(index: number) => void`                            | Called when the `×` button on a thumbnail is clicked.                                                   |
+| `onExpand`    | `((src: string, name: string) => void) \| undefined` | Optional callback for expanding an image. Currently passed as `() => undefined` from `ChannelComposer`. |
+
+#### Key behaviors
+
+- Images (`att.mimeType.startsWith('image/')`) render as 64×64 `<img>` thumbnails with `object-cover`. Clicking calls `onExpand` with the `data:` URI.
+- Non-image files render as a 64×64 box with a 📄 icon and a truncated filename.
+- File size is displayed at the bottom of each cell, formatted by the internal `formatFileSize` function (B / KB / MB).
+- The remove `×` button is opacity-0 by default and becomes visible on `group-hover`.
+
+---
+
+### 6.11 `HistoryView`
+
+**File:** `components/HistoryView.tsx`
+
+Displays persisted prompt/response history loaded from the main process.
+
+#### State
+
+| State     | Type             | Description                                    |
+| --------- | ---------------- | ---------------------------------------------- |
+| `history` | `Conversation[]` | Records loaded from `window.api.getHistory()`. |
+| `loading` | `boolean`        | True while the initial fetch is in-flight.     |
+
+#### `Conversation` type (local to this file)
+
+```ts
+type Conversation = {
+  id: number;
+  promptMessage: string;
+  projectName: string;
+  userResponse: string;
+  predefinedOptions: string | null;
+  attachments: string | null; // JSON-serialized Attachment[]
+  createdAt: string;
+};
+```
+
+#### Key behaviors
+
+- Calls `window.api.getHistory()` on mount; shows a loading placeholder during fetch.
+- Renders each conversation as a `CollapsibleSection` titled `"${projectName} — ${new Date(createdAt).toLocaleString()}"`.
+- The **first** item (`index === 0`) has `defaultOpen: true`; all others default closed.
+- Inside each section, the agent message uses `msg-agent` CSS class and the user response uses `msg-user`, both rendered via `MarkdownContent`.
+- If `attachments` is non-null, it is `JSON.parse`d and image attachments are shown as 56×56 thumbnails.
+- "Clear all" button calls `window.api.clearHistory()` and sets `history` to `[]`.
+
+---
+
+### 6.12 `SettingsView`
+
+**File:** `components/SettingsView.tsx`
+
+Form for viewing and saving application settings.
+
+#### State
+
+| State             | Type          | Description                                                              |
+| ----------------- | ------------- | ------------------------------------------------------------------------ |
+| `settings`        | `AppSettings` | Current in-memory settings object (includes toggle states).              |
+| `initialSettings` | `AppSettings` | Snapshot from the last save/load, used for dirty detection.              |
+| `portInput`       | `string`      | Raw string value of the port input field.                                |
+| `timeoutInput`    | `string`      | Raw string value of the timeout input field.                             |
+| `saved`           | `boolean`     | True for 2 seconds after a successful save, used for "✓ Saved" feedback. |
+
+#### `AppSettings` type (local to this file)
+
+```ts
+type AppSettings = {
+  port: number;
+  soundEnabled: boolean;
+  launchAtLogin: boolean;
+  promptTimeoutSeconds: number;
+  autoRestoreSessions: boolean;
+};
+```
+
+#### Validation rules
+
+| Field                  | Rule                                         |
+| ---------------------- | -------------------------------------------- |
+| `port`                 | Must be an integer in range `[1024, 65535]`. |
+| `promptTimeoutSeconds` | Must be an integer `≥ 0`.                    |
+
+The Save button is disabled when `!isFormValid || !isDirty`.
+
+#### Toggle switches
+
+Three boolean settings are controlled by `role="switch"` / `aria-checked` buttons: `soundEnabled`, `launchAtLogin`, `autoRestoreSessions`.
+
+#### MCP config URL
+
+A read-only code element at the bottom shows `http://localhost:{settings.port}/mcp`.
+
+---
+
+### 6.13 `StatusBar`
+
+**File:** `components/StatusBar.tsx`
+
+Persistent footer bar visible across all tabs.
+
+#### Props
+
+| Prop              | Type                                             | Description                                                 |
+| ----------------- | ------------------------------------------------ | ----------------------------------------------------------- |
+| `connectionCount` | `number`                                         | Total number of active connections from `connections.size`. |
+| `clientInfo`      | `{ model?: string; mode?: string } \| undefined` | Latest client info, forwarded from `useConnections`.        |
+| `onShowShortcuts` | `(() => void) \| undefined`                      | Opens the `ShortcutHelpModal`.                              |
+
+#### State
+
+| State          | Type                                         | Description                                                             |
+| -------------- | -------------------------------------------- | ----------------------------------------------------------------------- |
+| `status`       | `{ running: boolean; port: number } \| null` | Server status polled every 5 seconds.                                   |
+| `restarting`   | `boolean`                                    | True while `window.api.restartMcpServer()` is in-flight.                |
+| `reconnecting` | `boolean`                                    | True for 1.5 seconds after `window.api.reconnectMcpServer()` is called. |
+
+#### Left section content
+
+- Status dot: green (`bg-emerald-500`) when `status.running`, red (`bg-[var(--color-error)]`) otherwise.
+- Label: "Restarting…" / "MCP :{port}" / "Server stopped".
+- `↺` restart button: calls `restartMcpServer()` then re-polls `getServerStatus()`. Spins (`animate-spin`) while `restarting`.
+- `⚡` force-reconnect button: calls `reconnectMcpServer()`. Becomes `⟳` while `reconnecting`. Colored `text-yellow-500`.
+- Client count badge when `connectionCount > 0`.
+- `clientInfo.model` when present (colored `--color-agent`).
+- `clientInfo.mode` when present (colored `--color-user`).
+
+#### Right section content
+
+- Version string: "Interactive MCP v1.0.0 — 5 tools".
+- Theme toggle button: shows `☀️` in dark mode (to switch to light), `🌙` in light mode (to switch to dark).
+- Shortcuts button with `⌨️` icon (only if `onShowShortcuts` is defined).
+
+---
+
+### 6.14 `MarkdownContent`
+
+**File:** `components/MarkdownContent.tsx`
+
+Renders a markdown string using `react-markdown` with GitHub Flavored Markdown and syntax highlighting.
+
+#### Props
+
+| Prop      | Type     | Description                    |
+| --------- | -------- | ------------------------------ |
+| `content` | `string` | Raw markdown string to render. |
+
+#### Key behaviors
+
+- Uses `remarkGfm` plugin for tables, strikethrough, task lists, etc.
+- Fenced code blocks with a language identifier are rendered via `react-syntax-highlighter` (`Prism`).
+  - Theme: `oneDark` in dark mode, `oneLight` in light mode (determined via `useTheme()`).
+  - Background override: `#111111` (dark) / `#f8fafc` (light).
+- Inline `<code>` elements use standard Tailwind prose classes.
+- All prose color tokens (`prose-headings`, `prose-p`, `prose-a`, etc.) are resolved through `var(--color-*)` CSS custom properties.
+
+---
+
+### 6.15 `CollapsibleSection`
+
+**File:** `components/CollapsibleSection.tsx`
+
+An animated expand/collapse container with a left-border accent.
+
+#### Props
+
+| Prop          | Type              | Default     | Description                           |
+| ------------- | ----------------- | ----------- | ------------------------------------- |
+| `title`       | `string`          | —           | Header label.                         |
+| `defaultOpen` | `boolean`         | `false`     | Initial expanded state.               |
+| `children`    | `React.ReactNode` | —           | Content rendered inside.              |
+| `borderColor` | `string`          | `'#445566'` | CSS color for the left accent border. |
+
+#### Animation
+
+Uses CSS `max-height` transition (`duration-200 ease-in-out`). On open: `scrollHeight` → `undefined` (after 200 ms, so content can resize freely). On close: reads `scrollHeight`, then uses a double `requestAnimationFrame` to ensure the browser paints the initial height before animating to `0`.
+
+The toggle button chevron (`▶`) rotates 90° when open via a CSS `transition-transform`.
+
+---
+
+### 6.16 `ShortcutHelpModal`
+
+**File:** `components/ShortcutHelpModal.tsx`
+
+Modal overlay listing all keyboard shortcuts. Returns `null` when `open === false`.
+
+#### Props
+
+| Prop      | Type         | Description                                   |
+| --------- | ------------ | --------------------------------------------- |
+| `open`    | `boolean`    | Controls visibility.                          |
+| `onClose` | `() => void` | Called on backdrop click or ESC button click. |
+
+#### Shortcuts listed
+
+| Keys          | Description                  |
+| ------------- | ---------------------------- |
+| `⌘ + Enter`   | Submit response              |
+| `⌘ + 1`       | Prompts tab                  |
+| `⌘ + 2`       | History tab                  |
+| `⌘ + 3`       | Settings tab                 |
+| `⌘ + /`       | Toggle this help             |
+| `⌘ + V`       | Paste image                  |
+| `Esc`         | Close autocomplete / overlay |
+| `↑ ↓`         | Navigate autocomplete        |
+| `Tab / Enter` | Apply autocomplete           |
+| `#`           | File search                  |
+
+Clicking the backdrop calls `onClose`; clicking inside the modal card stops propagation.
+
+---
+
+## 7. Type Definitions
+
+**File:** `types.ts`
+
+### `Attachment`
+
+```ts
+type Attachment = {
+  data: string; // base64-encoded file content (no data URL prefix)
+  mimeType: string;
+  name: string;
+  size: number; // bytes
+};
+```
+
+### `PromptData`
+
+```ts
+type PromptData = {
+  id: string;
+  message: string;
+  projectName: string;
+  predefinedOptions?: string[];
+  sessionId?: string;
+  connectionId: string;
+  connectionName: string;
+  timeoutSeconds: number;
+  baseDirectory?: string;
+  clientInfo?: { model?: string; mode?: string };
+};
+```
+
+### `MessageKind`
+
+```ts
+type MessageKind = 'question' | 'answer' | 'outbound';
+```
+
+| Value        | Meaning                                                                  |
+| ------------ | ------------------------------------------------------------------------ |
+| `'question'` | Message sent from the agent/MCP tool to the user.                        |
+| `'answer'`   | User's direct reply to a prompt.                                         |
+| `'outbound'` | User-initiated message queued for a session (not a direct prompt reply). |
+
+### `ChannelMessage`
+
+```ts
+type ChannelMessage = {
+  id: string;
+  kind: MessageKind;
+  text: string;
+  timestamp: Date;
+  attachments?: Attachment[];
+};
+```
+
+IDs are prefixed to indicate origin:
+
+- `db-{n}` — loaded from the database by `loadChannelHistory`.
+- `live-{timestamp}-{random}` — created by the `pushMessage` closure inside `useConnections`.
+- `local-answer-{timestamp}-{random}` — optimistic answer appended by `appendAnswerMessage`.
+- `local-outbound-{timestamp}-{random}` — optimistic outbound appended by `handleQueueSessionMessage`.
+
+### `SessionStatus`
+
+```ts
+type SessionStatus = {
+  status: string;
+  type: 'info' | 'working' | 'success' | 'error';
+  timestamp: Date;
+};
+```
+
+### `ConnectionState`
+
+```ts
+type ConnectionState = {
+  id: string;
+  name: string;
+  prompt: PromptData | null;
+  activeSession: { id: string; title: string } | null;
+  baseDirectory?: string;
+  channelMessages: ChannelMessage[];
+  unreadCount: number;
+  hasPendingPrompt: boolean;
+  sessionChannel: { sessionId: string; label?: string } | null;
+  sessionStatuses: SessionStatus[];
+  isRestored?: boolean;
+};
+```
+
+| Field              | Description                                                                         |
+| ------------------ | ----------------------------------------------------------------------------------- |
+| `id`               | Unique connection identifier (from the main process).                               |
+| `name`             | Human-readable connection name.                                                     |
+| `prompt`           | The currently pending `PromptData`, or `null` when idle.                            |
+| `activeSession`    | Non-null while an intensive-chat session is in progress.                            |
+| `baseDirectory`    | Working directory for file autocomplete, set from the first prompt that carries it. |
+| `channelMessages`  | Ordered list of all messages in the channel.                                        |
+| `unreadCount`      | Messages received while this connection was not the active selection.               |
+| `hasPendingPrompt` | Derived indicator used for sidebar badge and tab badge logic.                       |
+| `sessionChannel`   | Non-null when a named session channel is attached.                                  |
+| `sessionStatuses`  | Ordered list of status push updates for `SessionChannelBar`.                        |
+| `isRestored`       | `true` for sessions rehydrated from the DB on startup before the agent reconnects.  |
+
+---
+
+## 8. Data Flow: Prompt Lifecycle
+
+This section traces the path of a single `request_user_input` tool call from the MCP client through to the user's response.
+
+```
+MCP Client
+  │
+  │  (tool call: request_user_input)
+  ▼
+Main Process (IPC)
+  │  window.api.onPromptRequest(handler)
+  ▼
+useConnections — onPromptRequest handler
+  ├─ setClientInfo(data.clientInfo)
+  ├─ withConnection(data.connectionId, conn => ({
+  │    ...conn,
+  │    prompt: data,          // PromptData stored
+  │    hasPendingPrompt: true,
+  │    baseDirectory: data.baseDirectory ?? conn.baseDirectory
+  │  }))
+  ├─ pushMessage(data.connectionId, { kind: 'question', text: data.message, timestamp: new Date() })
+  │    └─ withConnection → appends ChannelMessage to channelMessages
+  │       (increments unreadCount if not the active connection)
+  ├─ setActiveConnectionId(prev => prev ?? data.connectionId)
+  └─ activateRef.current()   // switches App to 'prompt' tab
+           │
+           ▼
+  App re-renders → PromptView receives updated props:
+    prompt = PromptData
+    hasPendingPrompt = true (→ pulsing badge on sidebar / tab)
+    channelMessages += new 'question' message
+           │
+           ▼
+  PromptView renders:
+    ├─ ChatHistoryView shows the question message
+    ├─ PromptMessage renders prompt.message (markdown)
+    │   └─ CollapsibleSection if message > 10 lines
+    ├─ ChannelComposer enabled, placeholder = "Type your answer…"
+    └─ Predefined option buttons if prompt.predefinedOptions is set
+           │
+           │  User types and presses ⌘+Enter (or clicks Send)
+           ▼
+  ChannelComposer.submit()
+    └─ onSubmit(text, attachments)
+           │
+           ▼
+  App.handleSubmit (from useConnections)
+    ├─ appendAnswerMessage(activeConn.id, answer, attachments)
+    │    └─ withConnection → appends 'answer' ChannelMessage
+    │                      → sets prompt: null, hasPendingPrompt: false
+    └─ window.api.sendPromptResponse({ id: prompt.id, answer, attachments })
+           │
+           ▼
+  Main Process resolves the pending MCP tool call
+  and returns the answer to the MCP client.
+```
+
+### Predefined option path
+
+When the user clicks a predefined option button in `PromptView`:
+
+```
+PromptView → onSelectOption(option)
+  └─ handleSelectOption(option)
+       ├─ appendAnswerMessage(activeConn.id, option)
+       └─ window.api.sendPromptResponse({ id: prompt.id, answer: option })
+```
+
+### Session channel message path
+
+When the user sends a message via the composer while no prompt is pending but a session channel is active:
+
+```
+ChannelComposer.submit()
+  └─ onSubmit(text)  [no attachments in this path]
+       └─ onQueueSessionMessage(sessionChannel.sessionId, text)
+            ├─ window.api.queueSessionMessage(sessionId, message)
+            └─ withConnection → appends 'outbound' ChannelMessage (optimistic)
+```

@@ -1,67 +1,68 @@
 ---
 name: agent-orchestration
-description: Route tasks to the repository's starter custom agents based on task type and scope. Main agent acts as orchestrator and user-interaction loop owner throughout.
+description: Route tasks to the repository's starter custom agents based on task type and scope. Main agent acts as orchestrator and prompting loop owner throughout.
 ---
 
 # agent-orchestration
 
-Use this skill to decide when the main agent should delegate to a custom agent under `.github/agents`.
+Use this skill to decide when and how to delegate to custom agents under
+`.github/agents`.
 
-## Main agent role
+## Core rules
 
-The main agent is **always the orchestrator and user-interaction loop owner**. This means:
+1. The main agent MUST remain the orchestrator and prompt-loop owner; custom
+   agents never talk to the user directly.
+2. For mapped domains, the main agent MUST delegate unless the change is truly
+   trivial.
+3. Custom-agent launches MUST set an explicit high-tier reasoning model by
+   default (`gpt-5.3-codex`, `claude-sonnet-4.6`, or `claude-opus-4.6`).
+4. Fast/cheap models (`*-mini`, `*-haiku`) MAY be used only when the user
+   explicitly prefers speed/cost over depth.
+5. Delegation prompts MUST include a full context pack in one message:
+   objective, scope, constraints, validation commands, and handoff format.
+6. For empty/partial output on the same unresolved objective, the main agent
+   MUST follow up with the same agent first (for example `read_agent` /
+   `write_agent`) before launching a new agent.
+7. After follow-up, the main agent MAY relaunch at most one new agent for that
+   same unresolved objective.
+8. The main agent MUST NOT create recursive new-agent spawning loops for the
+   same unresolved objective.
+9. If no meaningful progress remains after allowed attempts, the main agent
+   MUST stop delegating, execute directly, validate, and report why.
 
-1. The main agent uses `prompt-user` skill (via `request_user_input`) to communicate with the user before, during, and after delegation — custom agents never talk to the user directly.
-2. Before delegating, the main agent must confirm scope/approach with the user if there is any ambiguity (see `prompt-user` skill).
-3. While a delegated agent works, the main agent may surface progress or intermediate questions to the user if the agent's output reveals ambiguity or a blocking decision.
-4. After delegation, the main agent reviews, validates, and presents results to the user — then runs the mandatory satisfaction check from the `prompt-user` skill.
+## Context forwarding
 
-## Triggers
+Sub-agents run in separate sessions and do NOT inherit the main agent's CLI
+extensions (`docs-recommender`, `test-reminder`, `prompt-loop`). Therefore:
 
-- `tooling-work`: MCP tool schema/capability updates, tool registration, CLI option behavior.
-- `terminal-ui-work`: OpenTUI-based prompt UX, keyboard interaction, and terminal display flows.
-- `lifecycle-work`: detached process behavior, heartbeat monitoring, temp-file IPC, cleanup reliability.
-- `docs-sync`: docs updates caused by code/workflow behavior changes.
-- `mixed-work`: request contains independent subtasks that map to different specialists.
+1. The main agent MUST include any doc paths received via `docs-recommender`
+   `additionalContext` in the delegation prompt's context section.
+2. The main agent MUST include `npx nx test <project>` commands received via
+   `test-reminder` context in the delegation prompt's validation commands
+   section.
 
 ## Agent mapping
 
-- `interactive-mcp-tooling-specialist` for MCP tool definitions, capabilities, and registration tasks.
-- `ink-terminal-ui-specialist` for OpenTUI/React terminal UI and prompt interaction work.
-- `session-process-reliability-specialist` for process lifecycle and IPC reliability tasks.
-- `docs-maintainer` for documentation synchronization tasks.
+- `hcp-frontend-specialist` → frontend implementation/refactors.
+- `nx-test-specialist` → test creation/refactoring.
+- `docs-maintainer` → docs synchronization.
+- `fe-guardrails-auditor` → FE guardrails remediation.
+- `wcag-a11y-aa-specialist` → WCAG 2.2 A/AA audits/fixes.
+- `figma-layout-token-analyst` → Figma analysis and token mapping.
+- `dockerfile-specialist` → Dockerfile hardening and verification.
+- `self-improve-specialist` → behavior/workflow changes (skills, instructions, docs).
 
-## Decision rules
+## References
 
-1. **Single domain**: delegate to the one matching specialist. Do not implement it yourself.
-2. **Mixed domains**: split into independent subtasks. Delegate each to its matching agent. Parallelize when subtasks do not depend on each other.
-3. **No mapping matches**: fall back to normal main-agent workflow. Explicitly state why no specialist was used.
-4. **Trivial change** (e.g. 1-line fix that takes under 30 seconds): the main agent may execute it directly; delegation overhead is not justified for trivial edits.
-5. **Anti-recursion**: do not re-delegate the same unresolved objective more than one retry cycle.
-6. **Anti-stall fallback**: if delegation stalls (timeouts, no meaningful progress, or repeated partial outputs), stop delegating and execute directly.
-7. **Large-task decomposition**: break large requests into bounded subtasks with explicit completion criteria before delegation.
-
-## Delegation prompt requirements
-
-Every handoff prompt to a custom agent MUST include:
-
-- **Objective**: one-sentence goal.
-- **Scope**: files/projects/directories in scope.
-- **Constraints**: files to avoid, ordering requirements, existing decisions to honour.
-- **Validation expected**: what the agent must run/verify before reporting back (lint, build, tests, Trivy, etc.).
-- **Handoff format**: what structured output is expected (e.g. findings table, diff summary, test results).
-
-## After delegation
-
-1. Read the agent's output fully before acting.
-2. Run any additional verifications the agent did not cover (e.g. `docker compose up`, `curl /health`).
-3. If the output reveals a new ambiguity or a blocking decision, surface it to the user via `prompt-user` skill **before** proceeding.
-4. If the agent reported failure, retry once with a refined prompt. If it fails again, take over and execute directly, noting why.
-5. If the retry still lacks meaningful progress, do not delegate again for that same objective; execute directly.
-6. Own the final handoff quality: present a concise summary to the user, then run the mandatory satisfaction check.
-
-## Best practices
-
-- Include concrete scope in handoff prompts — vague prompts produce vague results.
-- Never skip the post-delegation user satisfaction check (see `prompt-user` skill).
-- When parallel delegation is used, collect all results before presenting to the user.
+- docs/guides/agent-files.md#custom-agent-orchestration-starter-set
+- .github/skills/prompt-user/SKILL.md
+- .github/instructions/interactive-prompt-loop.instructions.md
+- .github/instructions/agent-orchestration.instructions.md
+- .github/agents/hcp-frontend-specialist.agent.md
+- .github/agents/nx-test-specialist.agent.md
+- .github/agents/docs-maintainer.agent.md
+- .github/agents/fe-guardrails-auditor.agent.md
+- .github/agents/wcag-a11y-aa-specialist.agent.md
+- .github/agents/figma-layout-token-analyst.agent.md
+- .github/agents/dockerfile-specialist.agent.md
+- .github/agents/self-improve-specialist.agent.md

@@ -7,6 +7,7 @@ import {
   isPasteShortcut,
   isReverseTabShortcut,
   isSubmitShortcut,
+  isThemeToggleShortcut,
 } from './keyboard.js';
 
 export interface KeyboardRouterDeps {
@@ -36,6 +37,7 @@ export interface KeyboardRouterDeps {
 
   // Callbacks
   onInputActivity?: () => void;
+  onThemeToggle?: () => void;
 }
 
 /**
@@ -61,6 +63,7 @@ export function createKeyboardRouter(
     pasteClipboardIntoInput,
     copyInputToClipboard,
     onInputActivity,
+    onThemeToggle,
   } = deps;
 
   const consumeHandledKey = (key: OpenTuiKeyEvent) => {
@@ -70,6 +73,11 @@ export function createKeyboardRouter(
 
   return (key: OpenTuiKeyEvent) => {
     // Global shortcuts (work in any mode)
+    if (isThemeToggleShortcut(key)) {
+      onThemeToggle?.();
+      return;
+    }
+
     if (isSubmitShortcut(key)) {
       submitCurrentSelection();
       return;

@@ -1,8 +1,11 @@
+import type { ThemeColors } from '@/theme.js';
+
 interface TextProgressBarProps {
   value: number;
   width?: number;
   timeLeftSeconds?: number;
   critical?: boolean;
+  theme: ThemeColors;
 }
 
 export function TextProgressBar({
@@ -10,6 +13,7 @@ export function TextProgressBar({
   width = 28,
   timeLeftSeconds,
   critical = false,
+  theme,
 }: TextProgressBarProps) {
   const clamped = Number.isFinite(value)
     ? Math.max(0, Math.min(100, value))
@@ -20,7 +24,7 @@ export function TextProgressBar({
     typeof timeLeftSeconds === 'number' ? ` • ${timeLeftSeconds}s left` : '';
 
   return (
-    <text fg={critical ? 'red' : 'yellow'}>
+    <text fg={critical ? theme.progressCritical : theme.progressNormal}>
       {`[${bar}] ${Math.round(clamped)}%${suffix}`}
     </text>
   );

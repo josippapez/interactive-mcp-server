@@ -65,8 +65,10 @@ export function InteractiveInput({
   question,
   questionId,
   predefinedOptions = [],
+  theme,
   onSubmit,
   onInputActivity,
+  onThemeToggle,
   searchRoot,
 }: InteractiveInputProps) {
   const [mode, setMode] = useState<'option' | 'input'>(
@@ -666,6 +668,7 @@ export function InteractiveInput({
         pasteClipboardIntoInput,
         copyInputToClipboard,
         onInputActivity,
+        onThemeToggle,
       }),
     [
       mode,
@@ -684,6 +687,7 @@ export function InteractiveInput({
       pasteClipboardIntoInput,
       copyInputToClipboard,
       onInputActivity,
+      onThemeToggle,
     ],
   );
 
@@ -691,11 +695,16 @@ export function InteractiveInput({
 
   return (
     <>
-      <QuestionBox question={question} MarkdownTextComponent={MarkdownText} />
+      <QuestionBox
+        question={question}
+        theme={theme}
+        MarkdownTextComponent={MarkdownText}
+      />
 
       <ModeTabs
         mode={mode}
         hasOptions={hasOptions}
+        theme={theme}
         onSelectOptionMode={setModeToOption}
         onSelectInputMode={recoverInputFocusFromClick}
       />
@@ -704,6 +713,7 @@ export function InteractiveInput({
         mode={mode}
         options={predefinedOptions}
         selectedIndex={selectedIndex}
+        theme={theme}
         onSelectOption={setSelectedIndex}
         onActivateOptionMode={setModeToOption}
       />
@@ -717,6 +727,7 @@ export function InteractiveInput({
           textareaContainerHeight={textareaContainerHeight}
           textareaRows={textareaRows}
           hasSuggestions={fileSuggestions.length > 0}
+          theme={theme}
           keyBindings={textareaBindings as Array<Record<string, unknown>>}
           onFocusRequest={recoverInputFocusFromClick}
           onContentSync={syncInputStateFromTextarea}
@@ -733,6 +744,7 @@ export function InteractiveInput({
           selectedSuggestionIndex={selectedSuggestionIndex}
           selectedSuggestionVscodeLink={selectedSuggestionVscodeLink}
           hasSearchRoot={hasSearchRoot}
+          theme={theme}
           scrollRef={suggestionsScrollRef}
         />
       )}
@@ -743,6 +755,7 @@ export function InteractiveInput({
           repositoryFiles={repositoryFiles}
           searchRoot={searchRoot}
           hasSearchRoot={hasSearchRoot}
+          theme={theme}
         />
       )}
 
@@ -750,20 +763,24 @@ export function InteractiveInput({
         mode={mode}
         isNarrow={isNarrow}
         inputValue={inputValue}
+        theme={theme}
         queuedAttachments={queuedAttachments}
       />
 
       {mode === 'input' && clipboardStatus && (
-        <ClipboardStatus status={clipboardStatus} />
+        <ClipboardStatus status={clipboardStatus} theme={theme} />
       )}
 
       {mode === 'input' && queuedAttachments.length > 0 && (
-        <AttachmentsDisplay queuedAttachments={queuedAttachments} />
+        <AttachmentsDisplay
+          queuedAttachments={queuedAttachments}
+          theme={theme}
+        />
       )}
 
-      {mode === 'input' && <SendButton />}
+      {mode === 'input' && <SendButton theme={theme} />}
 
-      {mode === 'input' && <HelpText hasOptions={hasOptions} />}
+      {mode === 'input' && <HelpText hasOptions={hasOptions} theme={theme} />}
     </>
   );
 }

@@ -1,0 +1,31 @@
+{
+  "mcp": {
+    // interactive MCP for prompting the user for context with extended timeout
+    "interactive": {
+      "command": [
+        "npx",
+        "-y",
+        "@rawwee/interactive-mcp",
+        "-t",
+        "1200",
+        "--disable-tools",
+        "message_complete_notification",
+      ],
+      "type": "local",
+    },
+    "repo-docs-libs": {
+      "type": "local",
+      "command": ["node", "tools/mcp/repo-docs-libs-server.cjs"],
+    },
+    // no need for nx-mcp server since NX vscode plugin has it built in already
+  },
+  "agent": {
+    "compaction": {
+      "model": "github-copilot/gpt-5-mini",
+      "mode": "all",
+    },
+  },
+  "$schema": "https://opencode.ai/config.json",
+  "autoupdate": true,
+  // Custom plugins — each path is relative to this opencode.jsonc file
+}

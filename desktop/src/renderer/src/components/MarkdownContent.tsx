@@ -1,53 +1,67 @@
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import {
+  oneDark,
+  oneLight,
+} from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useTheme } from '../ThemeContext';
 
 export default function MarkdownContent({
   content,
 }: {
   content: string;
-}): JSX.Element {
+}): React.ReactElement {
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
+
   return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      className="prose prose-invert prose-sm max-w-none
-        prose-headings:text-gray-200 prose-p:text-gray-300
-        prose-a:text-violet-400 prose-strong:text-gray-200
-        prose-code:text-violet-300 prose-code:bg-gray-800 prose-code:px-1 prose-code:py-0.5 prose-code:rounded
+    <div
+      className={`prose prose-sm max-w-none
+        ${isDark ? 'prose-invert' : ''}
+        prose-headings:text-[var(--color-text)]
+        prose-p:text-[var(--color-text)]
+        prose-a:text-[var(--color-agent)]
+        prose-strong:text-[var(--color-text)]
+        prose-code:text-[var(--color-agent)] prose-code:bg-[var(--color-surface)] prose-code:px-1 prose-code:py-0.5 prose-code:rounded-sm
         prose-pre:bg-transparent prose-pre:p-0
-        prose-li:text-gray-300
-        prose-th:text-gray-300 prose-td:text-gray-400
-        prose-blockquote:border-violet-500 prose-blockquote:text-gray-400"
-      components={{
-        code({ className, children, ...props }) {
-          const match = /language-(\w+)/.exec(className || '');
-          const codeString = String(children).replace(/\n$/, '');
-          if (match) {
-            return (
-              <SyntaxHighlighter
-                style={oneDark}
-                language={match[1]}
-                PreTag="div"
-                customStyle={{
-                  margin: 0,
-                  borderRadius: '0.5rem',
-                  fontSize: '0.8rem',
-                }}
-              >
-                {codeString}
-              </SyntaxHighlighter>
-            );
-          }
-          return (
-            <code className={className} {...props}>
-              {children}
-            </code>
-          );
-        },
-      }}
+        prose-li:text-[var(--color-text)]
+        prose-th:text-[var(--color-text)] prose-td:text-[var(--color-text-muted)]
+        prose-blockquote:border-[var(--color-tool)] prose-blockquote:text-[var(--color-text-muted)]`}
     >
-      {content}
-    </ReactMarkdown>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          code({ className, children, ...props }) {
+            const match = /language-(\w+)/.exec(className || '');
+            const codeString = String(children).replace(/\n$/, '');
+            if (match) {
+              return (
+                <SyntaxHighlighter
+                  style={isDark ? oneDark : oneLight}
+                  language={match[1]}
+                  PreTag="div"
+                  customStyle={{
+                    margin: 0,
+                    borderRadius: '0.25rem',
+                    fontSize: '0.8rem',
+                    background: isDark ? '#111111' : '#f8fafc',
+                  }}
+                >
+                  {codeString}
+                </SyntaxHighlighter>
+              );
+            }
+            return (
+              <code className={className} {...props}>
+                {children}
+              </code>
+            );
+          },
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
   );
 }

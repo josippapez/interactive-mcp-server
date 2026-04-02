@@ -9,6 +9,7 @@ import { InteractiveInput } from '../../components/InteractiveInput.js';
 import { PromptStatus } from '../../components/PromptStatus.js';
 import { USER_INPUT_TIMEOUT_SENTINEL } from '@/constants.js';
 import { resolveSearchRoot } from '../../utils/search-root.js';
+import { type Theme, THEMES } from '@/theme.js';
 
 interface CmdOptions {
   projectName?: string;
@@ -179,10 +180,20 @@ const App = ({ options: appOptions, onExit }: AppProps) => {
 
   const [timeLeft, setTimeLeft] = useState(timeout);
   const [followInput, setFollowInput] = useState(false);
+  const [theme, setTheme] = useState<Theme>(
+    process.argv.includes('--light') ? 'light' : 'dark',
+  );
   const hasCompletedRef = useRef(false);
   const scrollRef = useRef<ScrollBoxLike | null>(null);
   const { width, height } = useTerminalDimensions();
   const isNarrow = width < 90;
+
+  const toggleTheme = useCallback(
+    () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
+    [],
+  );
+
+  const activeTheme = THEMES[theme];
 
   const keepInputVisible = useCallback(() => {
     setFollowInput(true);
@@ -285,7 +296,7 @@ const App = ({ options: appOptions, onExit }: AppProps) => {
       flexDirection="column"
       width="100%"
       height="100%"
-      backgroundColor="black"
+      backgroundColor={activeTheme.bgOuter}
       paddingLeft={isNarrow ? 0 : 1}
       paddingRight={isNarrow ? 0 : 1}
     >
@@ -307,9 +318,11 @@ const App = ({ options: appOptions, onExit }: AppProps) => {
               question={prompt}
               questionId={prompt}
               predefinedOptions={predefinedOptions}
+              theme={activeTheme}
               searchRoot={searchRoot}
               onSubmit={handleInputSubmit}
               onInputActivity={keepInputVisible}
+              onThemeToggle={toggleTheme}
             />
           </box>
         </box>
@@ -321,6 +334,7 @@ const App = ({ options: appOptions, onExit }: AppProps) => {
             value={progressValue}
             timeLeftSeconds={timeLeft}
             critical={timeLeft <= 10}
+            theme={activeTheme}
           />
         </box>
       )}

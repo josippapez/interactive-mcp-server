@@ -1,3 +1,10 @@
+export type Attachment = {
+  data: string; // base64 data (no data URL prefix)
+  mimeType: string;
+  name: string;
+  size: number; // bytes
+};
+
 export type PromptData = {
   id: string;
   message: string;
@@ -8,11 +15,22 @@ export type PromptData = {
   connectionName: string;
   timeoutSeconds: number;
   baseDirectory?: string;
+  clientInfo?: { model?: string; mode?: string };
 };
 
-export type ChatMessage = {
-  type: 'question' | 'answer';
+export type MessageKind = 'question' | 'answer' | 'outbound';
+
+export type ChannelMessage = {
+  id: string;
+  kind: MessageKind;
   text: string;
+  timestamp: Date;
+  attachments?: Attachment[];
+};
+
+export type SessionStatus = {
+  status: string;
+  type: 'info' | 'working' | 'success' | 'error';
   timestamp: Date;
 };
 
@@ -21,5 +39,12 @@ export type ConnectionState = {
   name: string;
   prompt: PromptData | null;
   activeSession: { id: string; title: string } | null;
-  chatHistory: ChatMessage[];
+  baseDirectory?: string;
+  channelMessages: ChannelMessage[];
+  unreadCount: number;
+  hasPendingPrompt: boolean;
+  sessionChannel: { sessionId: string; label?: string } | null;
+  sessionStatuses: SessionStatus[];
+  /** True for sessions restored from DB on app startup (no active MCP transport yet) */
+  isRestored?: boolean;
 };

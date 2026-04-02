@@ -55,7 +55,8 @@
       "target": [
         "dmg",
         "zip"
-      ]
+      ],
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
@@ -73,7 +74,8 @@
             "arm64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -99,7 +101,8 @@
             "arm64"
           ]
         }
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "directories": {
       "output": "release"

@@ -7,6 +7,7 @@ export interface AppSettings {
   soundEnabled: boolean;
   launchAtLogin: boolean;
   promptTimeoutSeconds: number;
+  autoRestoreSessions: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -14,6 +15,7 @@ export const defaultSettings: AppSettings = {
   soundEnabled: true,
   launchAtLogin: false,
   promptTimeoutSeconds: 800,
+  autoRestoreSessions: false,
 };
 
 export function getSettingsPath(): string {

@@ -1,14 +1,31 @@
-import { BrowserWindow, shell } from 'electron';
+import { BrowserWindow, shell, nativeImage } from 'electron';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
 
-export function createWindow(isQuitting: () => boolean): BrowserWindow {
+export interface CreateWindowOptions {
+  startHidden?: boolean;
+}
+
+export function createWindow(
+  isQuitting: () => boolean,
+  options?: CreateWindowOptions,
+): BrowserWindow {
+  // Load app icon from resources (works cross-platform)
+  const iconPath = join(__dirname, '../../resources/icon.png');
+  let icon: Electron.NativeImage | undefined;
+  try {
+    icon = nativeImage.createFromPath(iconPath);
+  } catch {
+    // fallback: no custom icon
+  }
+
   const window = new BrowserWindow({
     width: 900,
     height: 700,
     minWidth: 600,
     minHeight: 500,
     show: false,
+    icon,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 15, y: 15 },
     autoHideMenuBar: true,
@@ -19,7 +36,9 @@ export function createWindow(isQuitting: () => boolean): BrowserWindow {
   });
 
   window.on('ready-to-show', () => {
-    window.show();
+    if (!options?.startHidden) {
+      window.show();
+    }
   });
 
   window.on('close', (event) => {

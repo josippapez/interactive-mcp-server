@@ -179,6 +179,53 @@ The `interactive-mcp` server accepts the following command-line options. These s
 ]
 ```
 
+## Copilot CLI Hook & Extension
+
+The `hooks/` and `extensions/` directories contain a pair of Copilot CLI scripts that integrate the Interactive MCP Desktop app's **session channel** with the GitHub Copilot CLI agent lifecycle. Together they let you queue messages in the desktop app and have them automatically injected into the agent's context before the next tool call.
+
+### What they do
+
+| File                              | Role                                                                                                                        |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `hooks/session-lifecycle.mjs`     | **Lifecycle hook** — creates a session channel on session start, cleans it up on session end.                               |
+| `extensions/session-messages.mjs` | **Extension** — drains queued messages from the desktop app before every tool call and injects them as `additionalContext`. |
+
+**Session file:** `/tmp/imcp-session.json`  
+Contains `{ sessionId, port }` written by the hook and read by the extension. It is created on `onSessionStart` and deleted on `onSessionEnd` (or on SIGTERM / SIGINT).
+
+**Desktop app REST API used:**
+
+| Method   | Endpoint                     | Purpose                                        |
+| -------- | ---------------------------- | ---------------------------------------------- |
+| `POST`   | `/api/sessions`              | Register a new session channel                 |
+| `GET`    | `/api/sessions/:id/messages` | Fetch unsent queued messages (marks them sent) |
+| `DELETE` | `/api/sessions/:id`          | Delete the session and all its messages        |
+
+### Requirements
+
+- The **Interactive MCP Desktop app** must be running on `localhost:3100`.
+- The hook and extension work as a pair. If only the extension is installed, it will fail silently because `/tmp/imcp-session.json` won't be written.
+
+### Installation (Copilot CLI)
+
+Copy both files into the `.github/` directories of any repository you want them active in:
+
+```bash
+# Hook — runs at session start/end
+cp hooks/session-lifecycle.mjs  /path/to/your-repo/.github/hooks/session-lifecycle.mjs
+
+# Extension — injects queued messages before tool calls
+mkdir -p /path/to/your-repo/.github/extensions/session-messages
+cp extensions/session-messages.mjs  /path/to/your-repo/.github/extensions/session-messages/extension.mjs
+```
+
+The Copilot CLI automatically discovers and loads:
+
+- `.github/hooks/*.mjs` scripts as lifecycle hooks
+- `.github/extensions/*/extension.mjs` scripts as extensions
+
+Both files are ESM (`import`/`export`) and require Node.js 18+.
+
 ## Development Commands
 
 - **Build:** `npm run build`

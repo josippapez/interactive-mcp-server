@@ -90,18 +90,19 @@ If a user skips a requested command/script:
 ## Empty response and timeout policy
 
 - If a required prompt times out or the user response is empty, you MUST re-prompt indefinitely.
+- If interactive MCP prompting returns timeout failures (for example `request timed out`, `-32001`, or equivalent timeout errors), you MUST keep prompting indefinitely with interactive prompt tools and MUST NOT fall back to plain-text completion.
 - Re-prompts SHOULD be shorter and include predefined options when practical.
-- You MUST NOT proceed with assumptions while required user input is still missing.
+- You MUST NOT proceed with assumptions while required user input is still missing, including when interactive MCP calls return timeout errors (for example `request timed out` or `-32001`).
 
 ## Prompt-loop task tracking
 
-- Use the TodoWrite tool to maintain a persistent prompt-loop reminder todo throughout the entire session.
-- At the start of every task, create or keep a todo item titled "Prompt user after [current task]" with status `pending`.
+- Use the TodoWrite tool to maintain a persistent interactive prompt-loop reminder todo throughout the entire session.
+- At the start of every task, create or keep a todo item titled "Interactively Prompt user after [current task]" with status `pending`.
 - After each task completes and the satisfaction prompt is sent, update this todo to `in_progress` to signal a response is awaited.
-- When the user responds without a stop phrase, reset the prompt todo back to `pending` for the next task cycle — never mark it `completed` prematurely.
-- Continue this cycle, keeping the prompt reminder todo always active, for every task in the session.
+- When the user responds without a stop phrase, reset the interactive prompt todo back to `pending` for the next task cycle — never mark it `completed` prematurely.
+- Continue this cycle, keeping the interactive prompt reminder todo always active, for every task in the session.
 - Only when the user sends one of the exact stop phrases:
   1. Add a todo "Final satisfaction check" with status `completed`.
   2. Add a todo "Stop prompting — session ended" with status `completed`.
-  3. Mark the active prompt-loop todo as `completed`.
-- This ensures the prompt obligation is always visible in the todo list and cannot be accidentally dropped between tasks.
+  3. Mark the active interactive prompt-loop todo as `completed`.
+- This ensures the interactive prompt obligation is always visible in the todo list and cannot be accidentally dropped between tasks.

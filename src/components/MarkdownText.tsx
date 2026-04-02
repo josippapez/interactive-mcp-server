@@ -7,11 +7,13 @@ import {
   useRef,
   useState,
 } from 'react';
+import { LIGHT_THEME, type ThemeColors } from '@/theme.js';
 import { copyTextToClipboard } from '@/utils/clipboard.js';
 import { openExternalLink } from '@/utils/open-external-link.js';
 
 interface MarkdownTextProps {
   content: string;
+  theme?: ThemeColors;
   streaming?: boolean;
   showContentCopyControl?: boolean;
   contentCopyLabel?: string;
@@ -303,27 +305,56 @@ function isVscodeFileLink(href: string): boolean {
 
 export function MarkdownText({
   content,
+  theme,
   streaming = false,
   showContentCopyControl = false,
   contentCopyLabel = 'Copy text',
   showCodeCopyControls = false,
   codeBlockMaxVisibleLines,
 }: MarkdownTextProps) {
+  const isLightTheme = theme?.textPrimary === LIGHT_THEME.textPrimary;
+  const textPrimary = theme?.textPrimary;
+  const textMuted = theme?.textMuted ?? 'gray';
+  const textAccent = theme?.textAccent ?? 'cyan';
   const syntaxStyle = useMemo(() => {
     const toColor = (hex: string): unknown =>
       typeof RGBA?.fromHex === 'function' ? RGBA.fromHex(hex) : hex;
 
+    const palette = isLightTheme
+      ? {
+          keyword: '#A626A4',
+          string: '#50A14F',
+          comment: '#6A737D',
+          number: '#986801',
+          function: '#4078F2',
+          type: '#C18401',
+          operator: '#A626A4',
+          property: '#005CC5',
+          default: '#111111',
+        }
+      : {
+          keyword: '#FF7B72',
+          string: '#A5D6FF',
+          comment: '#8B949E',
+          number: '#79C0FF',
+          function: '#D2A8FF',
+          type: '#FFA657',
+          operator: '#FF7B72',
+          property: '#79C0FF',
+          default: '#E6EDF3',
+        };
+
     if (typeof SyntaxStyle.fromStyles === 'function') {
       return SyntaxStyle.fromStyles({
-        keyword: { fg: toColor('#FF7B72'), bold: true },
-        string: { fg: toColor('#A5D6FF') },
-        comment: { fg: toColor('#8B949E'), italic: true },
-        number: { fg: toColor('#79C0FF') },
-        function: { fg: toColor('#D2A8FF') },
-        type: { fg: toColor('#FFA657') },
-        operator: { fg: toColor('#FF7B72') },
-        property: { fg: toColor('#79C0FF') },
-        default: { fg: toColor('#E6EDF3') },
+        keyword: { fg: toColor(palette.keyword), bold: true },
+        string: { fg: toColor(palette.string) },
+        comment: { fg: toColor(palette.comment), italic: true },
+        number: { fg: toColor(palette.number) },
+        function: { fg: toColor(palette.function) },
+        type: { fg: toColor(palette.type) },
+        operator: { fg: toColor(palette.operator) },
+        property: { fg: toColor(palette.property) },
+        default: { fg: toColor(textPrimary ?? palette.default) },
       });
     }
 
@@ -332,7 +363,7 @@ export function MarkdownText({
     }
 
     return undefined;
-  }, []);
+  }, [isLightTheme, textPrimary]);
   const segments = useMemo(() => splitMarkdownSegments(content), [content]);
   const [clipboardHint, setClipboardHint] = useState<string | null>(null);
   const [copiedSnippetIndex, setCopiedSnippetIndex] = useState<number | null>(
@@ -420,7 +451,7 @@ export function MarkdownText({
       {showContentCopyControl && (
         <box width="100%" justifyContent="flex-end">
           <text
-            fg="cyan"
+            fg={textAccent}
             onMouseUp={() => {
               void copyWithHint(content, 'Prompt copied to clipboard.');
             }}
@@ -473,7 +504,11 @@ export function MarkdownText({
                             !inlineSegment.href
                           ) {
                             return (
-                              <text key={baseKey} wrapMode="word">
+                              <text
+                                key={baseKey}
+                                fg={textPrimary}
+                                wrapMode="word"
+                              >
                                 {inlineSegment.value}
                               </text>
                             );
@@ -483,7 +518,7 @@ export function MarkdownText({
                             return (
                               <text
                                 key={baseKey}
-                                fg="cyan"
+                                fg={textAccent}
                                 wrapMode="char"
                                 onMouseUp={() => {
                                   void openLinkWithHint(
@@ -498,19 +533,23 @@ export function MarkdownText({
                           }
 
                           return [
-                            <text key={`${baseKey}-label`} wrapMode="word">
+                            <text
+                              key={`${baseKey}-label`}
+                              fg={textPrimary}
+                              wrapMode="word"
+                            >
                               {inlineSegment.value}
                             </text>,
                             <text
                               key={`${baseKey}-open-paren`}
-                              fg="gray"
+                              fg={textMuted}
                               wrapMode="word"
                             >
                               {' ('}
                             </text>,
                             <text
                               key={`${baseKey}-vscode`}
-                              fg="cyan"
+                              fg={textAccent}
                               wrapMode="word"
                               onMouseUp={() => {
                                 void openLinkWithHint(
@@ -523,14 +562,14 @@ export function MarkdownText({
                             </text>,
                             <text
                               key={`${baseKey}-separator`}
-                              fg="gray"
+                              fg={textMuted}
                               wrapMode="word"
                             >
                               {' | '}
                             </text>,
                             <text
                               key={`${baseKey}-insiders`}
-                              fg="cyan"
+                              fg={textAccent}
                               wrapMode="word"
                               onMouseUp={() => {
                                 void openLinkWithHint(
@@ -543,7 +582,7 @@ export function MarkdownText({
                             </text>,
                             <text
                               key={`${baseKey}-close-paren`}
-                              fg="gray"
+                              fg={textMuted}
                               wrapMode="word"
                             >
                               {')'}
@@ -629,9 +668,9 @@ export function MarkdownText({
           <box key={`segment-${index}`} flexDirection="column" width="100%">
             {showCodeCopyControls && (
               <box width="100%" justifyContent="space-between">
-                <text fg="gray">{codeDescription}</text>
+                <text fg={textMuted}>{codeDescription}</text>
                 <text
-                  fg="cyan"
+                  fg={textAccent}
                   onMouseUp={() => {
                     setCopiedSnippetIndex(index);
                     if (copiedSnippetTimeoutRef.current) {
@@ -656,7 +695,7 @@ export function MarkdownText({
               width="100%"
               border
               borderStyle="single"
-              borderColor="gray"
+              borderColor={textMuted}
               paddingLeft={1}
               marginLeft={1}
             >
@@ -680,7 +719,7 @@ export function MarkdownText({
         );
       })}
 
-      {clipboardHint && <text fg="gray">{clipboardHint}</text>}
+      {clipboardHint && <text fg={textMuted}>{clipboardHint}</text>}
     </box>
   );
 }

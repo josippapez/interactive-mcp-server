@@ -1,6 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { ipcMain, shell } from 'electron';
-import { saveConversation } from './database';
+import { saveConversation, appendSessionChannelMessage } from './database';
 
 let _getSoundEnabled: () => boolean = () => true;
 let _getPromptTimeoutMs: () => number = () => 800_000;
@@ -27,12 +27,13 @@ export interface PromptData {
   connectionName: string;
   timeoutSeconds: number;
   baseDirectory?: string;
+  clientInfo?: { model?: string; mode?: string };
 }
 
 // Per-connection tracking to prevent duplicate/overlapping prompts
 const activePrompts = new Map<
   string,
-  { promptId: string; cancel: () => void }
+  { promptId: string; cancel: () => void; terminate: () => void }
 >();
 
 // Beep throttle to prevent rapid-fire notification sounds
@@ -50,13 +51,34 @@ export function cancelActivePrompt(connectionId: string): void {
   }
 }
 
+/**
+ * Force-terminate a chat for a connection. Resolves any pending prompt
+ * with a termination message so the agent knows the user closed the chat.
+ */
+export function forceTerminateChat(connectionId: string): void {
+  const existing = activePrompts.get(connectionId);
+  if (existing) {
+    existing.terminate();
+  }
+}
+
+export interface PromptResponse {
+  answer: string;
+  attachments?: {
+    data: string;
+    mimeType: string;
+    name: string;
+    size: number;
+  }[];
+}
+
 export function promptUser(
   win: BrowserWindow | null,
   data: PromptData,
-): Promise<string> {
+): Promise<PromptResponse> {
   return new Promise((resolve) => {
     if (!win || win.isDestroyed()) {
-      resolve('Error: Application window is not available.');
+      resolve({ answer: 'Error: Application window is not available.' });
       return;
     }
 
@@ -77,6 +99,11 @@ export function promptUser(
     }
 
     win.webContents.send('prompt-request', data);
+    appendSessionChannelMessage({
+      sessionId: data.connectionId,
+      messageType: 'question',
+      messageText: data.message,
+    });
 
     let settled = false;
 
@@ -93,7 +120,16 @@ export function promptUser(
 
     const handler = (
       _event: Electron.IpcMainEvent,
-      response: { id: string; answer: string },
+      response: {
+        id: string;
+        answer: string;
+        attachments?: {
+          data: string;
+          mimeType: string;
+          name: string;
+          size: number;
+        }[];
+      },
     ): void => {
       if (response.id === data.id) {
         cleanup();
@@ -102,8 +138,15 @@ export function promptUser(
           projectName: data.projectName,
           userResponse: response.answer,
           predefinedOptions: data.predefinedOptions,
+          attachments: response.attachments,
         });
-        resolve(response.answer);
+        appendSessionChannelMessage({
+          sessionId: data.connectionId,
+          messageType: 'answer',
+          messageText: response.answer,
+          attachments: response.attachments,
+        });
+        resolve({ answer: response.answer, attachments: response.attachments });
       }
     };
     ipcMain.on('prompt-response', handler);
@@ -113,7 +156,14 @@ export function promptUser(
       promptId: data.id,
       cancel: () => {
         cleanup();
-        resolve('Error: Prompt superseded by a newer prompt.');
+        resolve({ answer: 'Error: Prompt superseded by a newer prompt.' });
+      },
+      terminate: () => {
+        cleanup();
+        resolve({
+          answer:
+            'USER_FORCE_TERMINATED: The user has force-terminated this conversation. Stop all current work and acknowledge the termination.',
+        });
       },
     });
 
@@ -122,7 +172,7 @@ export function promptUser(
       setTimeout(() => {
         if (settled) return;
         cleanup();
-        resolve('Error: Prompt timed out — no response received.');
+        resolve({ answer: 'Error: Prompt timed out — no response received.' });
       }, timeoutMs);
     }
   });

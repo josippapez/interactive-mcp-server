@@ -8,6 +8,7 @@ import { createTray } from './tray';
 import { registerIpcHandlers } from './ipc-handlers';
 
 let mainWindow: BrowserWindow | null = null;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let tray: Tray | null = null;
 let isQuitting = false;
 let currentSettings: AppSettings = defaultSettings;
@@ -22,6 +23,10 @@ app.whenReady().then(async () => {
   // Initialize database and load settings
   await initDatabase();
   currentSettings = loadSettings();
+  app.setLoginItemSettings({
+    openAtLogin: currentSettings.launchAtLogin,
+    openAsHidden: currentSettings.launchAtLogin,
+  });
 
   // Register IPC handlers
   registerIpcHandlers({
@@ -40,7 +45,10 @@ app.whenReady().then(async () => {
     () => currentSettings.promptTimeoutSeconds * 1000,
   );
 
-  mainWindow = createWindow(() => isQuitting);
+  const openedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
+  mainWindow = createWindow(() => isQuitting, {
+    startHidden: openedAtLogin,
+  });
   tray = createTray(
     () => mainWindow,
     () => {

@@ -3,8 +3,7 @@
   "compilerOptions": {
     "outDir": "./out/renderer",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
-    "jsx": "react-jsx",
-    "types": ["node"]
+    "jsx": "react-jsx"
   },
   "include": ["src/renderer/src/**/*"]
 }

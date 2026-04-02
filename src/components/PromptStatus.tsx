@@ -1,10 +1,12 @@
 import * as OpenTuiReact from '@opentui/react';
+import type { ThemeColors } from '@/theme.js';
 import { TextProgressBar } from './TextProgressBar.js';
 
 interface PromptStatusProps {
   value: number;
   timeLeftSeconds: number;
   critical: boolean;
+  theme: ThemeColors;
 }
 
 interface TerminalDimensions {
@@ -20,6 +22,7 @@ export function PromptStatus({
   value,
   timeLeftSeconds,
   critical,
+  theme,
 }: PromptStatusProps) {
   const { width } = useTerminalDimensions();
 
@@ -33,7 +36,7 @@ export function PromptStatus({
 
   return (
     <box flexDirection="column" alignItems="flex-start" width="100%">
-      <text fg="gray" wrapMode="word">
+      <text fg={theme.textMuted} wrapMode="word">
         {shortcutHint}
       </text>
       <TextProgressBar
@@ -41,6 +44,7 @@ export function PromptStatus({
         width={barWidth}
         timeLeftSeconds={timeLeftSeconds}
         critical={critical}
+        theme={theme}
       />
     </box>
   );

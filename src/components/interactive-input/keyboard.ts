@@ -52,6 +52,9 @@ export const isReverseTabShortcut = (key: OpenTuiKeyEvent): boolean =>
   (key.name === 'tab' && key.shift) ||
   key.sequence === '\u001b[Z';
 
+export const isThemeToggleShortcut = (key: OpenTuiKeyEvent): boolean =>
+  isControlKeyShortcut(key, 't');
+
 export const isEnterKey = (key: OpenTuiKeyEvent): boolean =>
   key.name === 'enter' ||
   key.name === 'return' ||
