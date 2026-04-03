@@ -6,17 +6,28 @@ import { upsertRegisteredConnection, createSessionChannel } from '../database';
 
 async function autoDetectOpenCodeSession(
   openCodePort: number,
+  baseDirectory?: string,
 ): Promise<string | null> {
   try {
-    const res = await fetch(
-      `http://localhost:${openCodePort}/session?directory=${encodeURIComponent(process.cwd())}`,
-      { signal: AbortSignal.timeout(2000) },
-    );
+    const dir = baseDirectory ?? process.cwd();
+    const url = `http://localhost:${openCodePort}/session?directory=${encodeURIComponent(dir)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
     if (!res.ok) return null;
-    const sessions = (await res.json()) as Array<{
+    let sessions = (await res.json()) as Array<{
       id: string;
       time?: { updated?: number };
     }>;
+    // If directory-scoped query returned nothing, fall back to all sessions
+    if (!Array.isArray(sessions) || sessions.length === 0) {
+      const fallback = await fetch(`http://localhost:${openCodePort}/session`, {
+        signal: AbortSignal.timeout(2000),
+      });
+      if (!fallback.ok) return null;
+      sessions = (await fallback.json()) as Array<{
+        id: string;
+        time?: { updated?: number };
+      }>;
+    }
     if (!Array.isArray(sessions) || sessions.length === 0) return null;
     // Sort by most recently updated and take the first
     const sorted = [...sessions].sort(
@@ -93,8 +104,10 @@ After registration, your channel will appear in the app's sidebar with the given
       baseDirectory,
     }): Promise<CallToolResult> => {
       // Auto-detect the active OpenCode session (non-blocking, best-effort)
-      const openCodeSessionId =
-        await autoDetectOpenCodeSession(getOpenCodePort());
+      const openCodeSessionId = await autoDetectOpenCodeSession(
+        getOpenCodePort(),
+        baseDirectory,
+      );
 
       // Persist registration: upsert DB record + write /tmp ID file
       const idFilePath = upsertRegisteredConnection({
