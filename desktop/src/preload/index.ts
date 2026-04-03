@@ -121,6 +121,10 @@ const api = {
   // App version
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('get-app-version'),
 
+  // Detect the active OpenCode session on demand (best-effort)
+  detectOpenCodeSession: (baseDirectory?: string): Promise<string | null> =>
+    ipcRenderer.invoke('detect-opencode-session', baseDirectory),
+
   // File search for autocomplete
   searchFiles: (baseDirectory: string, query: string): Promise<string[]> =>
     ipcRenderer.invoke('search-files', baseDirectory, query),

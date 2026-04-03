@@ -4,6 +4,7 @@ import { basename, join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { AppSettings, saveSettings } from './settings';
+import { autoDetectOpenCodeSession } from './opencode-session';
 import {
   getConversationHistory,
   clearHistory,
@@ -43,6 +44,17 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   });
 
   ipcMain.handle('get-app-version', () => app.getVersion());
+
+  // Detect the active OpenCode session on demand (best-effort, used for lazy injection)
+  ipcMain.handle(
+    'detect-opencode-session',
+    async (_event, baseDirectory?: string): Promise<string | null> => {
+      return autoDetectOpenCodeSession(
+        deps.getSettings().openCodePort,
+        baseDirectory,
+      );
+    },
+  );
 
   ipcMain.handle('get-settings', () => deps.getSettings());
 

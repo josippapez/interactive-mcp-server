@@ -3,41 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { upsertRegisteredConnection, createSessionChannel } from '../database';
-
-async function autoDetectOpenCodeSession(
-  openCodePort: number,
-  baseDirectory?: string,
-): Promise<string | null> {
-  try {
-    const dir = baseDirectory ?? process.cwd();
-    const url = `http://localhost:${openCodePort}/session?directory=${encodeURIComponent(dir)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
-    if (!res.ok) return null;
-    let sessions = (await res.json()) as Array<{
-      id: string;
-      time?: { updated?: number };
-    }>;
-    // If directory-scoped query returned nothing, fall back to all sessions
-    if (!Array.isArray(sessions) || sessions.length === 0) {
-      const fallback = await fetch(`http://localhost:${openCodePort}/session`, {
-        signal: AbortSignal.timeout(2000),
-      });
-      if (!fallback.ok) return null;
-      sessions = (await fallback.json()) as Array<{
-        id: string;
-        time?: { updated?: number };
-      }>;
-    }
-    if (!Array.isArray(sessions) || sessions.length === 0) return null;
-    // Sort by most recently updated and take the first
-    const sorted = [...sessions].sort(
-      (a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0),
-    );
-    return sorted[0].id ?? null;
-  } catch {
-    return null;
-  }
-}
+import { autoDetectOpenCodeSession } from '../opencode-session';
 
 export function registerConnectionTool(
   server: McpServer,

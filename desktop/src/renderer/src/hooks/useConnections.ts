@@ -436,24 +436,45 @@ export function useConnections(onActivatePromptTab: () => void) {
         ],
       }));
 
-      // Also inject into OpenCode session if registered
+      // Resolve OpenCode session: use cached value or detect on demand.
       const conn = connections.get(sessionId);
-      if (!conn?.openCodeSessionId) {
-        // No OpenCode session — SQLite queue is the delivery mechanism.
-        // Mark as sent immediately so the UI doesn't show "Queued" forever.
-        withConnection(sessionId, (c) => ({
-          ...c,
-          channelMessages: c.channelMessages.map((m) =>
-            m.id === outboundId ? { ...m, sent: true } : m,
-          ),
-        }));
-        return;
-      }
-      const openCodeSessionId = conn.openCodeSessionId;
-      void window.api
-        .injectOpenCodeMessage?.(openCodeSessionId, message, attachments)
-        .then((result) => {
-          if (result.ok) {
+      const baseDirectory = conn?.baseDirectory;
+
+      const resolveAndInject = async (): Promise<void> => {
+        let openCodeSessionId = conn?.openCodeSessionId ?? null;
+
+        // Lazy detection: if no cached session ID, try to detect now.
+        if (!openCodeSessionId) {
+          openCodeSessionId =
+            (await window.api.detectOpenCodeSession?.(baseDirectory)) ?? null;
+          if (openCodeSessionId) {
+            // Cache the detected session ID so subsequent sends are instant.
+            withConnection(sessionId, (c) => ({
+              ...c,
+              openCodeSessionId,
+            }));
+          }
+        }
+
+        if (!openCodeSessionId) {
+          // No OpenCode session available — SQLite queue is the delivery mechanism.
+          // Mark as sent immediately so the UI doesn't show "Queued" forever.
+          withConnection(sessionId, (c) => ({
+            ...c,
+            channelMessages: c.channelMessages.map((m) =>
+              m.id === outboundId ? { ...m, sent: true } : m,
+            ),
+          }));
+          return;
+        }
+
+        try {
+          const result = await window.api.injectOpenCodeMessage?.(
+            openCodeSessionId,
+            message,
+            attachments,
+          );
+          if (result?.ok) {
             withConnection(sessionId, (c) => ({
               ...c,
               channelMessages: c.channelMessages.map((m) =>
@@ -467,14 +488,13 @@ export function useConnections(onActivatePromptTab: () => void) {
             sessionStatuses: [
               ...c.sessionStatuses,
               {
-                status: `OpenCode inject failed: ${result.error ?? 'unknown error'}`,
+                status: `OpenCode inject failed: ${result?.error ?? 'unknown error'}`,
                 type: 'error' as const,
                 timestamp: new Date(),
               },
             ],
           }));
-        })
-        .catch((err: unknown) => {
+        } catch (err: unknown) {
           const msg = err instanceof Error ? err.message : String(err);
           withConnection(sessionId, (c) => ({
             ...c,
@@ -487,7 +507,10 @@ export function useConnections(onActivatePromptTab: () => void) {
               },
             ],
           }));
-        });
+        }
+      };
+
+      void resolveAndInject();
     },
     [connections, withConnection],
   );
