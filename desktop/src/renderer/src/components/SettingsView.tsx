@@ -6,6 +6,7 @@ type AppSettings = {
   launchAtLogin: boolean;
   promptTimeoutSeconds: number;
   autoRestoreSessions: boolean;
+  openCodePort: number;
 };
 
 export default function SettingsView(): React.ReactElement {
@@ -15,6 +16,7 @@ export default function SettingsView(): React.ReactElement {
     launchAtLogin: false,
     promptTimeoutSeconds: 800,
     autoRestoreSessions: false,
+    openCodePort: 4096,
   });
   const [initialSettings, setInitialSettings] = useState<AppSettings>({
     port: 3100,
@@ -22,10 +24,12 @@ export default function SettingsView(): React.ReactElement {
     launchAtLogin: false,
     promptTimeoutSeconds: 800,
     autoRestoreSessions: false,
+    openCodePort: 4096,
   });
   const [saved, setSaved] = useState(false);
   const [portInput, setPortInput] = useState('3100');
   const [timeoutInput, setTimeoutInput] = useState('800');
+  const [openCodePortInput, setOpenCodePortInput] = useState('4096');
 
   useEffect(() => {
     window.api.getSettings().then((s) => {
@@ -33,6 +37,7 @@ export default function SettingsView(): React.ReactElement {
       setInitialSettings(s);
       setPortInput(String(s.port));
       setTimeoutInput(String(s.promptTimeoutSeconds));
+      setOpenCodePortInput(String(s.openCodePort ?? 4096));
     });
   }, []);
 
@@ -41,8 +46,16 @@ export default function SettingsView(): React.ReactElement {
     if (isNaN(port) || port < 1024 || port > 65535) return;
     const timeout = parseInt(timeoutInput, 10);
     if (isNaN(timeout) || timeout < 0) return;
+    const openCodePort = parseInt(openCodePortInput, 10);
+    if (isNaN(openCodePort) || openCodePort < 1024 || openCodePort > 65535)
+      return;
 
-    const updated = { ...settings, port, promptTimeoutSeconds: timeout };
+    const updated = {
+      ...settings,
+      port,
+      promptTimeoutSeconds: timeout,
+      openCodePort,
+    };
     await window.api.saveSettings(updated);
     setSettings(updated);
     setInitialSettings(updated);
@@ -52,12 +65,16 @@ export default function SettingsView(): React.ReactElement {
 
   const port = parseInt(portInput, 10);
   const timeout = parseInt(timeoutInput, 10);
+  const openCodePort = parseInt(openCodePortInput, 10);
   const isPortValid = !isNaN(port) && port >= 1024 && port <= 65535;
   const isTimeoutValid = !isNaN(timeout) && timeout >= 0;
-  const isFormValid = isPortValid && isTimeoutValid;
+  const isOpenCodePortValid =
+    !isNaN(openCodePort) && openCodePort >= 1024 && openCodePort <= 65535;
+  const isFormValid = isPortValid && isTimeoutValid && isOpenCodePortValid;
   const isDirty =
     portInput !== String(initialSettings.port) ||
     timeoutInput !== String(initialSettings.promptTimeoutSeconds) ||
+    openCodePortInput !== String(initialSettings.openCodePort) ||
     settings.soundEnabled !== initialSettings.soundEnabled ||
     settings.launchAtLogin !== initialSettings.launchAtLogin ||
     settings.autoRestoreSessions !== initialSettings.autoRestoreSessions;
@@ -129,6 +146,38 @@ export default function SettingsView(): React.ReactElement {
           {!isTimeoutValid && (
             <p className="text-xs text-[var(--color-error)] mt-1">
               Timeout must be 0 or greater.
+            </p>
+          )}
+        </div>
+
+        {/* OpenCode API Port */}
+        <div>
+          <label
+            htmlFor="settings-opencode-port"
+            className="block text-sm text-[var(--color-text-muted)] mb-1"
+          >
+            OpenCode API Port
+          </label>
+          <input
+            id="settings-opencode-port"
+            type="number"
+            value={openCodePortInput}
+            onChange={(e) => setOpenCodePortInput(e.target.value)}
+            min={1024}
+            max={65535}
+            aria-invalid={!isOpenCodePortValid}
+            aria-describedby="settings-opencode-port-help"
+            className="w-32 bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-tool)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-agent)]"
+          />
+          <p
+            id="settings-opencode-port-help"
+            className="text-xs text-[var(--color-text-faint)] mt-1"
+          >
+            Port used to inject context into OpenCode sessions (default: 4096).
+          </p>
+          {!isOpenCodePortValid && (
+            <p className="text-xs text-[var(--color-error)] mt-1">
+              Enter a valid port between 1024 and 65535.
             </p>
           )}
         </div>

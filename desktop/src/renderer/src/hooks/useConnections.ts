@@ -208,6 +208,14 @@ export function useConnections(onActivatePromptTab: () => void) {
       activateRef.current();
     });
 
+    window.api.onConnectionRegistered?.((data) => {
+      withConnection(data.connectionId, (conn) => ({
+        ...conn,
+        name: data.agentName,
+        openCodeSessionId: data.openCodeSessionId,
+      }));
+    });
+
     window.api.onConnectionClosed?.((data) => {
       let remainingIds: string[] = [];
       setConnections((prev) => {
@@ -394,6 +402,7 @@ export function useConnections(onActivatePromptTab: () => void) {
 
   const handleQueueSessionMessage = useCallback(
     (sessionId: string, message: string) => {
+      // Always queue in SQLite for VS Code extension polling
       window.api.queueSessionMessage(sessionId, message);
       withConnection(sessionId, (conn) => ({
         ...conn,
@@ -407,8 +416,43 @@ export function useConnections(onActivatePromptTab: () => void) {
           },
         ],
       }));
+
+      // Also inject into OpenCode session if registered
+      const conn = connections.get(sessionId);
+      if (!conn?.openCodeSessionId) return;
+      const openCodeSessionId = conn.openCodeSessionId;
+      void window.api
+        .injectOpenCodeMessage?.(openCodeSessionId, message)
+        .then((result) => {
+          if (result.ok) return;
+          withConnection(sessionId, (c) => ({
+            ...c,
+            sessionStatuses: [
+              ...c.sessionStatuses,
+              {
+                status: `OpenCode inject failed: ${result.error ?? 'unknown error'}`,
+                type: 'error' as const,
+                timestamp: new Date(),
+              },
+            ],
+          }));
+        })
+        .catch((err: unknown) => {
+          const msg = err instanceof Error ? err.message : String(err);
+          withConnection(sessionId, (c) => ({
+            ...c,
+            sessionStatuses: [
+              ...c.sessionStatuses,
+              {
+                status: `OpenCode inject error: ${msg}`,
+                type: 'error' as const,
+                timestamp: new Date(),
+              },
+            ],
+          }));
+        });
     },
-    [withConnection],
+    [connections, withConnection],
   );
 
   const handleClearChannelMessages = useCallback((sessionId: string) => {

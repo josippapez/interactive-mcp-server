@@ -217,4 +217,37 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       queueSessionMessage(data.sessionId, data.message);
     },
   );
+
+  // Inject a noReply context message into an OpenCode session via its HTTP API
+  ipcMain.handle(
+    'inject-opencode-message',
+    async (
+      _event,
+      data: { openCodeSessionId: string; message: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const port = deps.getSettings().openCodePort;
+      const url = `http://localhost:${port}/session/${encodeURIComponent(data.openCodeSessionId)}/message`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            noReply: true,
+            parts: [{ type: 'text', text: data.message }],
+          }),
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          return {
+            ok: false,
+            error: `OpenCode API returned ${res.status}: ${body}`,
+          };
+        }
+        return { ok: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: msg };
+      }
+    },
+  );
 }

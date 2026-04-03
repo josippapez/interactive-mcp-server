@@ -8,6 +8,7 @@ export interface AppSettings {
   launchAtLogin: boolean;
   promptTimeoutSeconds: number;
   autoRestoreSessions: boolean;
+  openCodePort: number;
 }
 
 export const defaultSettings: AppSettings = {
@@ -16,6 +17,7 @@ export const defaultSettings: AppSettings = {
   launchAtLogin: false,
   promptTimeoutSeconds: 800,
   autoRestoreSessions: false,
+  openCodePort: 4096,
 };
 
 export function getSettingsPath(): string {

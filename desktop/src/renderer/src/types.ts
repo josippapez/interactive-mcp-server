@@ -47,4 +47,6 @@ export type ConnectionState = {
   sessionStatuses: SessionStatus[];
   /** True for sessions restored from DB on app startup (no active MCP transport yet) */
   isRestored?: boolean;
+  /** OpenCode session ID — when set, messages are also injected via OpenCode's noReply HTTP API */
+  openCodeSessionId?: string | null;
 };

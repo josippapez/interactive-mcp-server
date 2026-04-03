@@ -32,6 +32,7 @@ export interface RegisteredConnection {
   projectName: string;
   baseDirectory: string | null;
   idFilePath: string;
+  openCodeSessionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -114,6 +115,15 @@ export async function initDatabase(): Promise<void> {
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Migration: add open_code_session_id column if missing (existing databases)
+  try {
+    db.exec('SELECT open_code_session_id FROM registered_connections LIMIT 0');
+  } catch {
+    db.run(
+      'ALTER TABLE registered_connections ADD COLUMN open_code_session_id TEXT',
+    );
+  }
 
   persist();
 }
@@ -338,6 +348,7 @@ export function upsertRegisteredConnection(data: {
   agentName: string;
   projectName: string;
   baseDirectory?: string;
+  openCodeSessionId?: string;
 }): string {
   const idFilePath = agentIdFilePath(data.agentName);
 
@@ -350,6 +361,7 @@ export function upsertRegisteredConnection(data: {
         agentName: data.agentName,
         projectName: data.projectName,
         baseDirectory: data.baseDirectory ?? null,
+        openCodeSessionId: data.openCodeSessionId ?? null,
       }),
       'utf-8',
     );
@@ -360,13 +372,14 @@ export function upsertRegisteredConnection(data: {
   if (db) {
     db.run(
       `INSERT INTO registered_connections
-         (connection_id, agent_name, project_name, base_directory, id_file_path, updated_at)
-       VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         (connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(connection_id) DO UPDATE SET
          agent_name = excluded.agent_name,
          project_name = excluded.project_name,
          base_directory = excluded.base_directory,
          id_file_path = excluded.id_file_path,
+         open_code_session_id = excluded.open_code_session_id,
          updated_at = CURRENT_TIMESTAMP`,
       [
         data.connectionId,
@@ -374,6 +387,7 @@ export function upsertRegisteredConnection(data: {
         data.projectName,
         data.baseDirectory ?? null,
         idFilePath,
+        data.openCodeSessionId ?? null,
       ],
     );
     persist();
@@ -388,7 +402,7 @@ export function getRegisteredConnection(
 ): RegisteredConnection | null {
   if (!db) return null;
   const results = db.exec(
-    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, created_at, updated_at
+    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, created_at, updated_at
      FROM registered_connections WHERE connection_id = ?`,
     [connectionId],
   );
@@ -400,8 +414,9 @@ export function getRegisteredConnection(
     projectName: row[2] as string,
     baseDirectory: row[3] as string | null,
     idFilePath: row[4] as string,
-    createdAt: row[5] as string,
-    updatedAt: row[6] as string,
+    openCodeSessionId: row[5] as string | null,
+    createdAt: row[6] as string,
+    updatedAt: row[7] as string,
   };
 }
 
@@ -411,7 +426,7 @@ export function getRegisteredConnectionByName(
 ): RegisteredConnection | null {
   if (!db) return null;
   const results = db.exec(
-    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, created_at, updated_at
+    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, created_at, updated_at
      FROM registered_connections WHERE agent_name = ?
      ORDER BY updated_at DESC LIMIT 1`,
     [agentName],
@@ -424,8 +439,9 @@ export function getRegisteredConnectionByName(
     projectName: row[2] as string,
     baseDirectory: row[3] as string | null,
     idFilePath: row[4] as string,
-    createdAt: row[5] as string,
-    updatedAt: row[6] as string,
+    openCodeSessionId: row[5] as string | null,
+    createdAt: row[6] as string,
+    updatedAt: row[7] as string,
   };
 }
 

@@ -45,6 +45,7 @@ export type AppSettings = {
   launchAtLogin: boolean;
   promptTimeoutSeconds: number;
   autoRestoreSessions: boolean;
+  openCodePort: number;
 };
 
 const api = {
@@ -89,6 +90,18 @@ const api = {
   },
   onConnectionClosed: (callback: (data: { connectionId: string }) => void) => {
     ipcRenderer.on('connection-closed', (_event, data) => callback(data));
+  },
+  onConnectionRegistered: (
+    callback: (data: {
+      connectionId: string;
+      agentName: string;
+      projectName: string;
+      baseDirectory: string | null;
+      label: string;
+      openCodeSessionId: string | null;
+    }) => void,
+  ) => {
+    ipcRenderer.on('connection-registered', (_event, data) => callback(data));
   },
 
   // History
@@ -147,6 +160,16 @@ const api = {
   queueSessionMessage: (sessionId: string, message: string): void => {
     ipcRenderer.send('queue-session-message', { sessionId, message });
   },
+
+  // Inject a noReply context message into an OpenCode session
+  injectOpenCodeMessage: (
+    openCodeSessionId: string,
+    message: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('inject-opencode-message', {
+      openCodeSessionId,
+      message,
+    }),
 
   // Fired when POST /api/sessions creates a new channel
   onSessionChannelCreated: (
