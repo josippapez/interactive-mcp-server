@@ -438,7 +438,17 @@ export function useConnections(onActivatePromptTab: () => void) {
 
       // Also inject into OpenCode session if registered
       const conn = connections.get(sessionId);
-      if (!conn?.openCodeSessionId) return;
+      if (!conn?.openCodeSessionId) {
+        // No OpenCode session — SQLite queue is the delivery mechanism.
+        // Mark as sent immediately so the UI doesn't show "Queued" forever.
+        withConnection(sessionId, (c) => ({
+          ...c,
+          channelMessages: c.channelMessages.map((m) =>
+            m.id === outboundId ? { ...m, sent: true } : m,
+          ),
+        }));
+        return;
+      }
       const openCodeSessionId = conn.openCodeSessionId;
       void window.api
         .injectOpenCodeMessage?.(openCodeSessionId, message, attachments)
