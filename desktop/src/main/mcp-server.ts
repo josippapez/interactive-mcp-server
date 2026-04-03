@@ -38,6 +38,7 @@ let _startParams: {
   getWindow: () => BrowserWindow | null;
   getSoundEnabled: () => boolean;
   getPromptTimeoutMs: () => number;
+  getOpenCodePort: () => number;
 } | null = null;
 
 const SESSION_FILE = join(tmpdir(), 'imcp-session.json');
@@ -70,6 +71,7 @@ function createMcpServerWithTools(
   getWindow: () => BrowserWindow | null,
   connectionId: string,
   connectionName: string,
+  getOpenCodePort: () => number,
 ): McpServer {
   const server = new McpServer(
     { name: 'Interactive MCP Desktop', version: '1.0.0' },
@@ -90,7 +92,7 @@ function createMcpServerWithTools(
     connectionName,
   );
   registerSessionChannelTools(server, getWindow, connectionId);
-  registerConnectionTool(server, getWindow, connectionId);
+  registerConnectionTool(server, getWindow, connectionId, getOpenCodePort);
   return server;
 }
 
@@ -99,8 +101,15 @@ export async function startMcpServer(
   getWindow: () => BrowserWindow | null,
   getSoundEnabled: () => boolean = () => true,
   getPromptTimeoutMs: () => number = () => 800_000,
+  getOpenCodePort: () => number = () => 4096,
 ): Promise<void> {
-  _startParams = { port, getWindow, getSoundEnabled, getPromptTimeoutMs };
+  _startParams = {
+    port,
+    getWindow,
+    getSoundEnabled,
+    getPromptTimeoutMs,
+    getOpenCodePort,
+  };
   setSoundEnabled(getSoundEnabled);
   setPromptTimeout(getPromptTimeoutMs);
   const app = express();
@@ -158,6 +167,7 @@ export async function startMcpServer(
       getWindow,
       connectionId,
       connectionName,
+      getOpenCodePort,
     );
 
     // Create transport and wait for onsessioninitialized to fire.
@@ -336,6 +346,7 @@ export async function startMcpServer(
         getWindow,
         connectionId,
         connectionName,
+        getOpenCodePort,
       );
 
       const transport = new StreamableHTTPServerTransport({
@@ -525,6 +536,7 @@ export async function restartMcpServer(): Promise<void> {
     _startParams.getWindow,
     _startParams.getSoundEnabled,
     _startParams.getPromptTimeoutMs,
+    _startParams.getOpenCodePort,
   );
 }
 

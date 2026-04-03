@@ -4,10 +4,35 @@ import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { upsertRegisteredConnection, createSessionChannel } from '../database';
 
+async function autoDetectOpenCodeSession(
+  openCodePort: number,
+): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `http://localhost:${openCodePort}/session?directory=${encodeURIComponent(process.cwd())}`,
+      { signal: AbortSignal.timeout(2000) },
+    );
+    if (!res.ok) return null;
+    const sessions = (await res.json()) as Array<{
+      id: string;
+      time?: { updated?: number };
+    }>;
+    if (!Array.isArray(sessions) || sessions.length === 0) return null;
+    // Sort by most recently updated and take the first
+    const sorted = [...sessions].sort(
+      (a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0),
+    );
+    return sorted[0].id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export function registerConnectionTool(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
   connectionId: string,
+  getOpenCodePort: () => number,
 ): void {
   server.registerTool(
     'register_connection',
@@ -23,7 +48,7 @@ After registration, your channel will appear in the app's sidebar with the given
 - (!important!) If a user deletes your session from the app, call this tool again to re-establish the connection.
 - (!important!) Other tools will return an error with instructions to call register_connection if your session has been removed.
 - (!important!) The connectionId returned by this tool is automatically used by all other tools.
-- (!important!) If you are OpenCode, pass your current session ID as openCodeSessionId so the desktop app can inject context messages directly into your session using noReply:true (zero LLM cost).
+- (!important!) If you are OpenCode, the desktop app will automatically detect your active session to enable noReply context injection — no extra parameters needed.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -36,13 +61,11 @@ After registration, your channel will appear in the app's sidebar with the given
 - agentName: Human-readable name for this agent (e.g. "Claude Code - my-project"). Shown in the channel sidebar.
 - projectName: Name of the project or workspace this agent is working in.
 - baseDirectory: Absolute path to the working directory / repository root (optional but recommended for file autocomplete).
-- openCodeSessionId: OpenCode session ID (optional). Pass this if you are running inside OpenCode so the desktop app can inject context messages into your session via the OpenCode HTTP API using noReply:true, which appends context to the conversation without triggering an additional LLM call.
 </parameters>
 
 <examples>
 - { "agentName": "Claude Code", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project" }
 - { "agentName": "Research Agent", "projectName": "literature-review" }
-- { "agentName": "OpenCode", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project", "openCodeSessionId": "ses_abc123" }
 </examples>`,
       title: 'Register this agent as a named connection',
       inputSchema: {
@@ -62,27 +85,24 @@ After registration, your channel will appear in the app's sidebar with the given
           .describe(
             'Absolute path to the working directory / repository root (optional)',
           ),
-        openCodeSessionId: z
-          .string()
-          .optional()
-          .describe(
-            'OpenCode session ID — pass this when running inside OpenCode to enable noReply context injection',
-          ),
       },
     },
     async ({
       agentName,
       projectName,
       baseDirectory,
-      openCodeSessionId,
     }): Promise<CallToolResult> => {
+      // Auto-detect the active OpenCode session (non-blocking, best-effort)
+      const openCodeSessionId =
+        await autoDetectOpenCodeSession(getOpenCodePort());
+
       // Persist registration: upsert DB record + write /tmp ID file
       const idFilePath = upsertRegisteredConnection({
         connectionId,
         agentName,
         projectName,
         baseDirectory,
-        openCodeSessionId,
+        openCodeSessionId: openCodeSessionId ?? undefined,
       });
 
       // Update the channel label in the DB
@@ -115,7 +135,7 @@ After registration, your channel will appear in the app's sidebar with the given
                 `Interactive MCP Desktop app. Use your connectionId (${connectionId}) with other tools. ` +
                 `Your connection ID is also saved to ${idFilePath} for recovery after restarts.` +
                 (openCodeSessionId
-                  ? ` OpenCode session ID "${openCodeSessionId}" registered — context messages from the desktop app will be injected directly into your session.`
+                  ? ` OpenCode session "${openCodeSessionId}" auto-detected — context messages from the desktop app will be injected directly into your session.`
                   : ''),
             }),
           },

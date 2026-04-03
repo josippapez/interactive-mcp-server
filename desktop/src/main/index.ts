@@ -43,6 +43,7 @@ app.whenReady().then(async () => {
     () => mainWindow,
     () => currentSettings.soundEnabled,
     () => currentSettings.promptTimeoutSeconds * 1000,
+    () => currentSettings.openCodePort,
   );
 
   const openedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
