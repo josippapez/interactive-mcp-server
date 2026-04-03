@@ -43,7 +43,7 @@ export default function ChatHistoryView({
         return (
           <div
             key={msg.id}
-            className={`pl-3 py-2 text-sm ${messageClass(msg.kind)} ${
+            className={`pl-3 py-2 text-sm msg-enter ${messageClass(msg.kind)} ${
               isActive
                 ? 'border-l-2 border-[var(--color-agent)] bg-[var(--color-agent)]/5'
                 : ''

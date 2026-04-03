@@ -42,6 +42,8 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     return { running: true, port: deps.getSettings().port };
   });
 
+  ipcMain.handle('get-app-version', () => app.getVersion());
+
   ipcMain.handle('get-settings', () => deps.getSettings());
 
   ipcMain.handle('save-settings', (_event, settings: AppSettings) => {

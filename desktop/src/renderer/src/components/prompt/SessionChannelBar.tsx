@@ -8,19 +8,27 @@ const STATUS_COLORS: Record<string, string> = {
   error: 'var(--color-error, #cc3333)',
 };
 
-const STATUS_ICONS: Record<string, string> = {
-  info: 'ℹ',
-  working: '⚙',
-  success: '✓',
-  error: '✕',
-};
-
 type Props = {
   sessionChannel: { sessionId: string; label?: string };
   sessionStatuses: SessionStatus[];
   connectionId: string;
   onDismissStatus: (connectionId: string, timestamp: Date) => void;
 };
+
+function StatusDot({ type }: { type: string }): React.ReactElement {
+  const colorMap: Record<string, string> = {
+    info: 'bg-[var(--color-agent)]',
+    working: 'bg-[var(--color-user)]',
+    success: 'bg-[var(--color-success)]',
+    error: 'bg-[var(--color-error)]',
+  };
+  const color = colorMap[type] ?? colorMap.info;
+  return (
+    <span
+      className={`w-1.5 h-1.5 rounded-full shrink-0 ${color} ${type === 'working' ? 'animate-pulse' : ''}`}
+    />
+  );
+}
 
 export default function SessionChannelBar({
   sessionChannel,
@@ -33,12 +41,7 @@ export default function SessionChannelBar({
   return (
     <div className="border-t shrink-0 border-[var(--color-border)] bg-[var(--color-surface-alt)]">
       <div className="flex items-center gap-1.5 px-3 py-1">
-        <span
-          className="text-[10px]"
-          style={{ color: 'var(--color-agent, #5599dd)' }}
-        >
-          💬
-        </span>
+        <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-agent)] shrink-0" />
         <span className="text-[10px] font-medium text-[var(--color-text-muted)]">
           {sessionChannel.label ?? sessionChannel.sessionId}
         </span>
@@ -52,7 +55,7 @@ export default function SessionChannelBar({
           }}
         >
           <span className="flex items-center gap-1.5 truncate">
-            <span>{STATUS_ICONS[latestStatus.type] ?? 'ℹ'}</span>
+            <StatusDot type={latestStatus.type} />
             <span className="truncate">{latestStatus.status}</span>
           </span>
           <button

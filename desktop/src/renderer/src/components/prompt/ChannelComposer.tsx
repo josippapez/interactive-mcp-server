@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback } from 'react';
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import type { Attachment } from '../../types';
 import AttachmentPreview from './AttachmentPreview';
 import AutocompleteDropdown from './AutocompleteDropdown';
@@ -7,6 +7,7 @@ type Props = {
   enabled: boolean;
   baseDirectory?: string;
   placeholder: string;
+  submitLabel?: string;
   onSubmit: (text: string, attachments?: Attachment[]) => void;
 };
 
@@ -16,6 +17,7 @@ export default function ChannelComposer({
   enabled,
   baseDirectory,
   placeholder,
+  submitLabel = 'Send',
   onSubmit,
 }: Props): React.ReactElement {
   const [value, setValue] = useState('');
@@ -161,6 +163,14 @@ export default function ChannelComposer({
     [enabled, value, attachments.length],
   );
 
+  // Auto-grow textarea
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = 'auto';
+    ta.style.height = `${ta.scrollHeight}px`;
+  }, [value]);
+
   return (
     <div className="border-t border-[var(--color-border)]">
       <div className="relative flex items-end gap-2 p-3">
@@ -229,8 +239,8 @@ export default function ChannelComposer({
               }
             }}
             placeholder={placeholder}
-            className="w-full bg-[var(--color-surface-alt)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:border-[var(--color-tool)] focus:outline-none resize-y min-h-[4rem] max-h-[40vh] disabled:opacity-60"
-            rows={3}
+            className="w-full bg-[var(--color-surface-alt)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:border-[var(--color-tool)] focus:outline-none resize-none overflow-hidden min-h-[4rem] max-h-[40vh] disabled:opacity-60"
+            rows={1}
           />
         </div>
         <div className="flex flex-col gap-1 self-end">
@@ -247,7 +257,7 @@ export default function ChannelComposer({
             disabled={disabled}
             className="px-3 py-2 rounded-sm bg-[var(--color-agent)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
-            Send
+            {submitLabel}
           </button>
         </div>
       </div>

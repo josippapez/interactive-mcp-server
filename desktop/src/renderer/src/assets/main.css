@@ -120,6 +120,21 @@ textarea::placeholder {
   animation: blink 1.2s step-end infinite;
 }
 
+/* Message entry animation */
+@keyframes msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.msg-enter {
+  animation: msg-in 0.18s ease-out both;
+}
+
 /* Left-border message styles */
 .msg-user {
   border-left: 3px solid var(--color-user);

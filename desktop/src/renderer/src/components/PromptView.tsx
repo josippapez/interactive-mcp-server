@@ -194,6 +194,7 @@ export default function PromptView({
             ) : (
               <ChannelComposer
                 enabled={Boolean(sessionChannel)}
+                submitLabel="Queue"
                 baseDirectory={
                   activeConnectionId
                     ? connections.get(activeConnectionId)?.baseDirectory

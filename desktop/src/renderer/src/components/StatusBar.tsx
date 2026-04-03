@@ -16,6 +16,7 @@ export default function StatusBar({
     port: number;
   } | null>(null);
   const [restarting, setRestarting] = useState(false);
+  const [appVersion, setAppVersion] = useState<string>('');
 
   useEffect(() => {
     window.api.getServerStatus().then(setStatus);
@@ -23,6 +24,10 @@ export default function StatusBar({
       window.api.getServerStatus().then(setStatus);
     }, 5000);
     return () => clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    window.api.getAppVersion?.().then(setAppVersion);
   }, []);
 
   const [reconnecting, setReconnecting] = useState(false);
@@ -103,14 +108,18 @@ export default function StatusBar({
         )}
       </div>
       <div className="flex items-center gap-3">
-        <span>Interactive MCP v1.0.0 — 5 tools</span>
+        {appVersion && (
+          <span className="text-[var(--color-text-faint)]">
+            Interactive MCP v{appVersion}
+          </span>
+        )}
         <span className="text-[var(--color-text-faint)]">│</span>
         <button
           onClick={toggle}
           className="flex items-center gap-1 hover:text-[var(--color-text)] transition-colors cursor-pointer"
           title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
         >
-          <span>{theme === 'dark' ? '☀️' : '🌙'}</span>
+          <span>{theme === 'dark' ? '☀' : '☾'}</span>
         </button>
         {onShowShortcuts && (
           <>
@@ -120,7 +129,7 @@ export default function StatusBar({
               className="flex items-center gap-1 hover:text-[var(--color-text)] transition-colors cursor-pointer"
               title="Keyboard shortcuts (⌘/)"
             >
-              <span>⌨️</span>
+              <span>⌨</span>
               <span>Shortcuts</span>
             </button>
           </>

@@ -118,6 +118,9 @@ const api = {
   getServerStatus: (): Promise<{ running: boolean; port: number }> =>
     ipcRenderer.invoke('get-server-status'),
 
+  // App version
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('get-app-version'),
+
   // File search for autocomplete
   searchFiles: (baseDirectory: string, query: string): Promise<string[]> =>
     ipcRenderer.invoke('search-files', baseDirectory, query),
