@@ -217,23 +217,42 @@ export async function startMcpServer(
         };
 
         // No-op response object — the synthetic initialize response is discarded.
+        // Must include writeHead, removeHeader, getHeaders, flushHeaders, and
+        // destroy so @hono/node-server (used internally by StreamableHTTPServerTransport)
+        // does not throw when handling the synthetic request.
         const noopRes = {
-          setHeader() {},
+          setHeader() {
+            return noopRes;
+          },
           getHeader() {
             return undefined;
           },
+          getHeaders() {
+            return {};
+          },
+          removeHeader() {},
+          writeHead() {
+            return noopRes;
+          },
+          flushHeaders() {},
           status() {
             return noopRes;
           },
           json() {},
-          end() {},
+          end() {
+            return noopRes;
+          },
           write() {
             return true;
           },
+          destroy() {},
           on() {
             return noopRes;
           },
           once() {
+            return noopRes;
+          },
+          off() {
             return noopRes;
           },
           emit() {
@@ -241,6 +260,7 @@ export async function startMcpServer(
           },
           headersSent: false,
           writableEnded: false,
+          writableFinished: false,
         };
 
         // Synthetic initialize request body.
@@ -255,10 +275,25 @@ export async function startMcpServer(
           },
         };
 
+        // Minimal fake request — must satisfy @hono/node-server's newRequest()
+        // requirements: rawHeaders array, url, socket stub, and event emitter methods.
         const fakeReq = {
           method: 'POST',
+          url: '/mcp',
           headers: { 'content-type': 'application/json' },
+          rawHeaders: ['content-type', 'application/json'],
+          socket: { encrypted: false, remoteAddress: '127.0.0.1' },
           body: initBody,
+          on() {
+            return fakeReq;
+          },
+          once() {
+            return fakeReq;
+          },
+          off() {
+            return fakeReq;
+          },
+          resume() {},
         };
 
         server
@@ -274,23 +309,40 @@ export async function startMcpServer(
     );
 
     // Complete the MCP handshake with notifications/initialized.
+    // Re-use the same noop shape as the first stub — same @hono/node-server requirements.
     const noopRes2 = {
-      setHeader() {},
+      setHeader() {
+        return noopRes2;
+      },
       getHeader() {
         return undefined;
       },
+      getHeaders() {
+        return {};
+      },
+      removeHeader() {},
+      writeHead() {
+        return noopRes2;
+      },
+      flushHeaders() {},
       status() {
         return noopRes2;
       },
       json() {},
-      end() {},
+      end() {
+        return noopRes2;
+      },
       write() {
         return true;
       },
+      destroy() {},
       on() {
         return noopRes2;
       },
       once() {
+        return noopRes2;
+      },
+      off() {
         return noopRes2;
       },
       emit() {
@@ -298,6 +350,7 @@ export async function startMcpServer(
       },
       headersSent: false,
       writableEnded: false,
+      writableFinished: false,
     };
 
     const initializedNotification = {
@@ -307,11 +360,29 @@ export async function startMcpServer(
 
     const fakeNotifReq = {
       method: 'POST',
+      url: '/mcp',
       headers: {
         'content-type': 'application/json',
         'mcp-session-id': newSessionId,
       },
+      rawHeaders: [
+        'content-type',
+        'application/json',
+        'mcp-session-id',
+        newSessionId ?? '',
+      ],
+      socket: { encrypted: false, remoteAddress: '127.0.0.1' },
       body: initializedNotification,
+      on() {
+        return fakeNotifReq;
+      },
+      once() {
+        return fakeNotifReq;
+      },
+      off() {
+        return fakeNotifReq;
+      },
+      resume() {},
     };
 
     await transport.handleRequest(

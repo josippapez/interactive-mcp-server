@@ -231,6 +231,29 @@ Attachments are encoded as plain-text references appended to the single `text` p
 
 Injection is only attempted when an `openCodeSessionId` is stored on the registered connection (set during `register_connection` — see [`TOOLS.md`](./TOOLS.md#opencode-auto-detection)). If no session was detected at registration time, only the queue path runs.
 
+### Subagent awareness
+
+When a subagent is spawned via OpenCode's Task tool and calls `register_connection` with its own `openCodeSessionId`, the desktop app resolves the `parentID` field from the OpenCode API and stores it as `parentSessionId` on the connection. The renderer's `ChannelSidebar` uses this to display the subagent's channel indented under its parent:
+
+```
+# Claude Code (parent)
+  ↳ # Subagent - fe-specialist
+```
+
+A `parentSessionId` on connection A links it as a child of connection B when B's `openCodeSessionId` matches A's `parentSessionId`. Connections with no matching parent are shown at the top level.
+
+#### Session-tree poller (placeholder entries)
+
+The main process runs a background poller every 4 seconds that queries the OpenCode API for all active sessions and identifies descendant sessions that haven't yet registered a connection in the app. For each such session, it fires a `child-sessions-detected` IPC event to the renderer with `{ openCodeSessionId, parentOpenCodeSessionId }`.
+
+The renderer creates a **placeholder** sidebar entry immediately so the parent-child tree is visible even before the subagent calls `register_connection`. Placeholder entries show:
+
+- Name: `"Subagent (connecting…)"` (italic, muted)
+- A grey pulsing dot instead of the unread-count badge
+- The `↳` child prefix under the parent entry
+
+When the subagent subsequently calls `register_connection`, the placeholder is replaced by the real connection entry and the pulsing dot disappears.
+
 ### Failure handling
 
 If the `injectOpenCodeMessage` IPC call fails (e.g. OpenCode is no longer running, network error), `SessionChannelBar` displays an error status badge. The message is still persisted to the queue path regardless of injection success or failure.

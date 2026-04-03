@@ -4,7 +4,7 @@ import { basename, join } from 'path';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { AppSettings, saveSettings } from './settings';
-import { autoDetectOpenCodeSession } from './opencode-session';
+import { autoDetectOpenCodeSessionId } from './opencode-session';
 import {
   getConversationHistory,
   clearHistory,
@@ -49,7 +49,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'detect-opencode-session',
     async (_event, baseDirectory?: string): Promise<string | null> => {
-      return autoDetectOpenCodeSession(
+      return autoDetectOpenCodeSessionId(
         deps.getSettings().openCodePort,
         baseDirectory,
       );

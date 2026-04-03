@@ -51,4 +51,16 @@ export type ConnectionState = {
   isRestored?: boolean;
   /** OpenCode session ID — when set, messages are also injected via OpenCode's noReply HTTP API */
   openCodeSessionId?: string | null;
+  /**
+   * OpenCode session ID of the parent session that spawned this subagent.
+   * Set when this connection was registered from inside a Task-tool subagent.
+   * Used to nest the subagent under its parent in the sidebar.
+   */
+  parentSessionId?: string | null;
+  /**
+   * True for auto-detected subagent sessions that have not yet called
+   * `register_connection`. The entry is pre-created by the session-tree poller
+   * and will be upgraded to a real connection once the agent registers.
+   */
+  isPlaceholder?: boolean;
 };

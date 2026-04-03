@@ -173,31 +173,46 @@ CREATE TABLE IF NOT EXISTS session_channel_history (
 Persists named agent connections registered via the `register_connection` MCP tool. One row per registered agent. Rows survive app restarts and are used to restore channel identity when an agent reconnects.
 
 ```sql
+-- Base DDL (v1)
 CREATE TABLE IF NOT EXISTS registered_connections (
-  connection_id        TEXT     PRIMARY KEY,
-  agent_name           TEXT     NOT NULL,
-  project_name         TEXT     NOT NULL,
-  base_directory       TEXT,
-  open_code_session_id TEXT,
-  created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+  connection_id TEXT     PRIMARY KEY,
+  agent_name    TEXT     NOT NULL,
+  project_name  TEXT     NOT NULL,
+  base_directory TEXT,
+  id_file_path  TEXT     NOT NULL,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
 );
+-- Migration v2: open_code_session_id
+ALTER TABLE registered_connections ADD COLUMN open_code_session_id TEXT;
+-- Migration v3: parent_session_id
+ALTER TABLE registered_connections ADD COLUMN parent_session_id TEXT;
 ```
 
-| Column                 | Type     | Nullable | Description                                                                                                                                                                                  |
-| ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connection_id`        | TEXT     | No       | The `connectionId` UUID for the MCP session (primary key).                                                                                                                                   |
-| `agent_name`           | TEXT     | No       | Human-readable agent name supplied to `register_connection` (e.g. `"Claude Code - my-project"`).                                                                                             |
-| `project_name`         | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                              |
-| `base_directory`       | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied.                                                                                                                   |
-| `open_code_session_id` | TEXT     | Yes      | The OpenCode ACP session ID auto-detected at registration time. Used by `inject-opencode-message` to route noReply injections. `NULL` if OpenCode was not reachable or returned no sessions. |
-| `created_at`           | DATETIME | No       | Row creation timestamp.                                                                                                                                                                      |
+| Column                 | Type     | Nullable | Description                                                                                                                                                                                                                                   |
+| ---------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connection_id`        | TEXT     | No       | The `connectionId` UUID for the MCP session (primary key).                                                                                                                                                                                    |
+| `agent_name`           | TEXT     | No       | Human-readable agent name supplied to `register_connection` (e.g. `"Claude Code - my-project"`).                                                                                                                                              |
+| `project_name`         | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                                                                               |
+| `base_directory`       | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied.                                                                                                                                                                    |
+| `id_file_path`         | TEXT     | No       | Absolute path to the `/tmp/imcp-agent-<name>.json` ID file written at registration time. Used for recovery after restarts.                                                                                                                    |
+| `open_code_session_id` | TEXT     | Yes      | The OpenCode ACP session ID auto-detected at registration time. Used by `inject-opencode-message` to route noReply injections. `NULL` if OpenCode was not reachable or returned no sessions.                                                  |
+| `parent_session_id`    | TEXT     | Yes      | The OpenCode session ID of the parent session that spawned this agent (i.e. the `parentID` field returned by the OpenCode API for this session). Used to nest the subagent channel under its parent in the sidebar. `NULL` if not a subagent. |
+| `created_at`           | DATETIME | No       | Row creation timestamp.                                                                                                                                                                                                                       |
+| `updated_at`           | DATETIME | No       | Last upsert timestamp (updated on every `register_connection` call for this connection).                                                                                                                                                      |
 
 #### `open_code_session_id` lifecycle
 
-- **Set** during `register_connection`: `autoDetectOpenCodeSession(openCodePort, baseDirectory)` queries `GET /session?directory={baseDirectory}` (with fallback to `GET /session`) and stores the most recently updated session ID.
+- **Set** during `register_connection`: `autoDetectOpenCodeSession(openCodePort, baseDirectory)` queries `GET /session?directory={baseDirectory}` (with fallback to `GET /session`) and stores the most recently created session ID (sorted by `time.created` DESC, not `time.updated`).
 - **Cleared** (`NULL`) when the OpenCode API is unreachable (2-second timeout) or returns no sessions.
 - **Used** by the `inject-opencode-message` IPC handler whenever the user sends a message from `ChannelComposer`.
 - **Not automatically refreshed** — if the OpenCode session ID changes after registration, the agent should call `register_connection` again.
+
+#### `parent_session_id` lifecycle
+
+- **Set** during `register_connection`: after `open_code_session_id` is resolved (whether explicitly provided or auto-detected), the tool fetches `GET /session` and reads the `parentID` field of the matched session.
+- **`NULL`** for top-level agents that were not spawned by another OpenCode session (i.e. `parentID` is absent or `null` in the API response).
+- **Used** by the renderer's `ChannelSidebar` to build the parent-child tree view: a connection whose `parentSessionId` matches another connection's `openCodeSessionId` is displayed as a child entry indented under its parent.
 
 ---
 
@@ -242,6 +257,23 @@ probe.
 
 New databases created after this change already include the column via the
 `CREATE TABLE IF NOT EXISTS` statement, so the migration is a no-op for them.
+
+#### `parent_session_id` column (v2 → v3)
+
+The `parent_session_id` column was added to the `registered_connections` table to
+support the sidebar parent-child tree view for subagent sessions. Existing databases
+without this column are upgraded at startup using the same probe pattern:
+
+```
+try {
+  db.exec("SELECT parent_session_id FROM registered_connections LIMIT 0");
+} catch {
+  db.run("ALTER TABLE registered_connections ADD COLUMN parent_session_id TEXT");
+}
+```
+
+New databases include the column via the `CREATE TABLE IF NOT EXISTS` DDL, making the
+migration a no-op for them.
 
 ---
 
@@ -679,6 +711,8 @@ Electron app 'ready' event
         ├─ CREATE TABLE IF NOT EXISTS session_channels
         ├─ CREATE TABLE IF NOT EXISTS session_messages
         ├─ CREATE TABLE IF NOT EXISTS session_channel_history
+        ├─ CREATE TABLE IF NOT EXISTS registered_connections
+        ├─ Migration: probe parent_session_id column → ALTER TABLE if missing
         └─ persist()
 ```
 

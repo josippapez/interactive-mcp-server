@@ -99,9 +99,23 @@ const api = {
       baseDirectory: string | null;
       label: string;
       openCodeSessionId: string | null;
+      parentSessionId: string | null;
     }) => void,
   ) => {
     ipcRenderer.on('connection-registered', (_event, data) => callback(data));
+  },
+
+  // Fired by the session-tree poller when new OpenCode child sessions are
+  // detected that don't yet have a registered connection in the app.
+  onChildSessionsDetected: (
+    callback: (
+      children: {
+        openCodeSessionId: string;
+        parentOpenCodeSessionId: string;
+      }[],
+    ) => void,
+  ) => {
+    ipcRenderer.on('child-sessions-detected', (_event, data) => callback(data));
   },
 
   // History
@@ -152,7 +166,13 @@ const api = {
       r.json(),
     ),
   getPersistedSessionChannels: (): Promise<
-    { sessionId: string; label: string | null; createdAt: string }[]
+    {
+      sessionId: string;
+      label: string | null;
+      createdAt: string;
+      openCodeSessionId: string | null;
+      parentSessionId: string | null;
+    }[]
   > => ipcRenderer.invoke('get-persisted-session-channels'),
   getSessionChannelHistory: (
     sessionId: string,

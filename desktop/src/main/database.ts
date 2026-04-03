@@ -33,6 +33,7 @@ export interface RegisteredConnection {
   baseDirectory: string | null;
   idFilePath: string;
   openCodeSessionId: string | null;
+  parentSessionId: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -124,6 +125,69 @@ export async function initDatabase(): Promise<void> {
       'ALTER TABLE registered_connections ADD COLUMN open_code_session_id TEXT',
     );
   }
+
+  // Migration: add parent_session_id column if missing (existing databases)
+  try {
+    db.exec('SELECT parent_session_id FROM registered_connections LIMIT 0');
+  } catch {
+    db.run(
+      'ALTER TABLE registered_connections ADD COLUMN parent_session_id TEXT',
+    );
+  }
+
+  // Migration: clear open_code_session_id for connections that have no
+  // base_directory. These were registered without a project context and likely
+  // received a stale auto-detected session ID from a different agent, causing
+  // messages typed in their channel to be injected into the wrong session.
+  // With the updated register_connection logic, such channels will no longer
+  // auto-detect at all — this migration retroactively fixes existing records.
+  db.run(
+    `UPDATE registered_connections
+     SET open_code_session_id = NULL, parent_session_id = NULL
+     WHERE (base_directory IS NULL OR base_directory = '')
+       AND open_code_session_id IS NOT NULL`,
+  );
+
+  // Migration: deduplicate registered_connections by agent_name.
+  // Each restart previously created a new row (new transport UUID → new PK).
+  // Keep the most-recently-updated row per agent_name; delete older duplicates
+  // and their corresponding session_channels / session_channel_history rows.
+  db.run(
+    `DELETE FROM registered_connections
+     WHERE connection_id NOT IN (
+       SELECT connection_id FROM registered_connections rc2
+       WHERE rc2.agent_name = registered_connections.agent_name
+       ORDER BY rc2.updated_at DESC
+       LIMIT 1
+     )`,
+  );
+
+  // Migration: remove orphaned session_channels rows.
+  // These are channels created during handleTransparentReinit (labelled "Agent N")
+  // that were never claimed by a register_connection call, so they have no
+  // matching registered_connections entry and appear as ghost top-level channels.
+  db.run(
+    `DELETE FROM session_channel_history
+     WHERE session_id IN (
+       SELECT sc.session_id FROM session_channels sc
+       LEFT JOIN registered_connections rc ON rc.connection_id = sc.session_id
+       WHERE rc.connection_id IS NULL
+     )`,
+  );
+  db.run(
+    `DELETE FROM session_messages
+     WHERE session_id IN (
+       SELECT sc.session_id FROM session_channels sc
+       LEFT JOIN registered_connections rc ON rc.connection_id = sc.session_id
+       WHERE rc.connection_id IS NULL
+     )`,
+  );
+  db.run(
+    `DELETE FROM session_channels
+     WHERE session_id NOT IN (
+       SELECT connection_id FROM registered_connections
+     )`,
+  );
 
   persist();
 }
@@ -318,16 +382,24 @@ export function getActiveSessionChannels(): {
   sessionId: string;
   label: string | null;
   createdAt: string;
+  openCodeSessionId: string | null;
+  parentSessionId: string | null;
 }[] {
   if (!db) return [];
   const results = db.exec(
-    `SELECT session_id, label, created_at FROM session_channels ORDER BY created_at ASC`,
+    `SELECT sc.session_id, sc.label, sc.created_at,
+            rc.open_code_session_id, rc.parent_session_id
+     FROM session_channels sc
+     LEFT JOIN registered_connections rc ON rc.connection_id = sc.session_id
+     ORDER BY sc.created_at ASC`,
   );
   if (results.length === 0) return [];
   return results[0].values.map((row) => ({
     sessionId: row[0] as string,
     label: row[1] as string | null,
     createdAt: row[2] as string,
+    openCodeSessionId: (row[3] as string | null) ?? null,
+    parentSessionId: (row[4] as string | null) ?? null,
   }));
 }
 
@@ -349,6 +421,7 @@ export function upsertRegisteredConnection(data: {
   projectName: string;
   baseDirectory?: string;
   openCodeSessionId?: string;
+  parentSessionId?: string;
 }): string {
   const idFilePath = agentIdFilePath(data.agentName);
 
@@ -362,6 +435,7 @@ export function upsertRegisteredConnection(data: {
         projectName: data.projectName,
         baseDirectory: data.baseDirectory ?? null,
         openCodeSessionId: data.openCodeSessionId ?? null,
+        parentSessionId: data.parentSessionId ?? null,
       }),
       'utf-8',
     );
@@ -370,16 +444,53 @@ export function upsertRegisteredConnection(data: {
   }
 
   if (db) {
+    // Remove any existing rows for this agent_name that use a different
+    // connection_id. This prevents duplicate sidebar entries across restarts
+    // (each restart generates a new transport UUID, which would otherwise
+    // create a new row since connection_id is the PK).
+    // We also clean up the associated session_channels rows so the UI stays
+    // in sync — history rows are left intact for audit purposes.
+    db.run(
+      `DELETE FROM session_channel_history
+       WHERE session_id IN (
+         SELECT connection_id FROM registered_connections
+         WHERE agent_name = ? AND connection_id != ?
+       )`,
+      [data.agentName, data.connectionId],
+    );
+    db.run(
+      `DELETE FROM session_messages
+       WHERE session_id IN (
+         SELECT connection_id FROM registered_connections
+         WHERE agent_name = ? AND connection_id != ?
+       )`,
+      [data.agentName, data.connectionId],
+    );
+    db.run(
+      `DELETE FROM session_channels
+       WHERE session_id IN (
+         SELECT connection_id FROM registered_connections
+         WHERE agent_name = ? AND connection_id != ?
+       )`,
+      [data.agentName, data.connectionId],
+    );
+    db.run(
+      `DELETE FROM registered_connections
+       WHERE agent_name = ? AND connection_id != ?`,
+      [data.agentName, data.connectionId],
+    );
+
     db.run(
       `INSERT INTO registered_connections
-         (connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+         (connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
        ON CONFLICT(connection_id) DO UPDATE SET
          agent_name = excluded.agent_name,
          project_name = excluded.project_name,
          base_directory = excluded.base_directory,
          id_file_path = excluded.id_file_path,
          open_code_session_id = excluded.open_code_session_id,
+         parent_session_id = excluded.parent_session_id,
          updated_at = CURRENT_TIMESTAMP`,
       [
         data.connectionId,
@@ -388,6 +499,7 @@ export function upsertRegisteredConnection(data: {
         data.baseDirectory ?? null,
         idFilePath,
         data.openCodeSessionId ?? null,
+        data.parentSessionId ?? null,
       ],
     );
     persist();
@@ -396,13 +508,34 @@ export function upsertRegisteredConnection(data: {
   return idFilePath;
 }
 
+/** Return all registered connections (used by the session-tree poller). */
+export function getAllRegisteredConnections(): RegisteredConnection[] {
+  if (!db) return [];
+  const results = db.exec(
+    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, created_at, updated_at
+     FROM registered_connections ORDER BY created_at ASC`,
+  );
+  if (results.length === 0) return [];
+  return results[0].values.map((row) => ({
+    connectionId: row[0] as string,
+    agentName: row[1] as string,
+    projectName: row[2] as string,
+    baseDirectory: row[3] as string | null,
+    idFilePath: row[4] as string,
+    openCodeSessionId: row[5] as string | null,
+    parentSessionId: row[6] as string | null,
+    createdAt: row[7] as string,
+    updatedAt: row[8] as string,
+  }));
+}
+
 /** Look up a registered connection by connectionId. */
 export function getRegisteredConnection(
   connectionId: string,
 ): RegisteredConnection | null {
   if (!db) return null;
   const results = db.exec(
-    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, created_at, updated_at
+    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, created_at, updated_at
      FROM registered_connections WHERE connection_id = ?`,
     [connectionId],
   );
@@ -415,8 +548,9 @@ export function getRegisteredConnection(
     baseDirectory: row[3] as string | null,
     idFilePath: row[4] as string,
     openCodeSessionId: row[5] as string | null,
-    createdAt: row[6] as string,
-    updatedAt: row[7] as string,
+    parentSessionId: row[6] as string | null,
+    createdAt: row[7] as string,
+    updatedAt: row[8] as string,
   };
 }
 
@@ -426,7 +560,7 @@ export function getRegisteredConnectionByName(
 ): RegisteredConnection | null {
   if (!db) return null;
   const results = db.exec(
-    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, created_at, updated_at
+    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, created_at, updated_at
      FROM registered_connections WHERE agent_name = ?
      ORDER BY updated_at DESC LIMIT 1`,
     [agentName],
@@ -440,8 +574,9 @@ export function getRegisteredConnectionByName(
     baseDirectory: row[3] as string | null,
     idFilePath: row[4] as string,
     openCodeSessionId: row[5] as string | null,
-    createdAt: row[6] as string,
-    updatedAt: row[7] as string,
+    parentSessionId: row[6] as string | null,
+    createdAt: row[7] as string,
+    updatedAt: row[8] as string,
   };
 }
 

@@ -145,7 +145,7 @@ export default function PromptView({
                 />
               )}
 
-              {isRestored && !prompt && !activeSession && (
+              {isRestored && !prompt && !activeSession && !hasHistory && (
                 <div className="flex flex-col items-center justify-center flex-1 gap-2 text-[var(--color-text-muted)]">
                   <div className="flex items-center gap-2">
                     <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />

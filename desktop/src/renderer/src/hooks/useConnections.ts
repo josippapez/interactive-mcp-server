@@ -8,6 +8,8 @@ function createBaseConnection(
   name: string,
   sessionChannel: { sessionId: string; label?: string } | null,
   isRestored = false,
+  openCodeSessionId?: string | null,
+  parentSessionId?: string | null,
 ): ConnectionState {
   return {
     id,
@@ -20,6 +22,8 @@ function createBaseConnection(
     sessionChannel,
     sessionStatuses: [],
     isRestored,
+    openCodeSessionId: openCodeSessionId ?? undefined,
+    parentSessionId: parentSessionId ?? undefined,
   };
 }
 
@@ -82,6 +86,16 @@ export function useConnections(onActivatePromptTab: () => void) {
   activateRef.current = onActivatePromptTab;
   const activeConnectionRef = useRef<string | null>(null);
   activeConnectionRef.current = activeConnectionId;
+  const pendingRegistrations = useRef(
+    new Map<
+      string,
+      {
+        agentName: string;
+        openCodeSessionId: string | null;
+        parentSessionId: string | null;
+      }
+    >(),
+  );
 
   const withConnection = useCallback(
     (
@@ -170,6 +184,8 @@ export function useConnections(onActivatePromptTab: () => void) {
                   ch.label ?? 'Restored session',
                   { sessionId: ch.sessionId, label: ch.label ?? undefined },
                   true,
+                  ch.openCodeSessionId,
+                  ch.parentSessionId,
                 ),
               );
             }
@@ -187,14 +203,19 @@ export function useConnections(onActivatePromptTab: () => void) {
     window.api.onConnectionOpened?.((data) => {
       setConnections((prev) => {
         const next = new Map(prev);
+        // Find and remove any restored entry with the same name.
+        // Capture its data so we can carry over openCodeSessionId / parentSessionId.
+        let restoredBase: ConnectionState | undefined;
         for (const [id, conn] of next) {
           if (conn.isRestored && conn.name === data.name) {
+            restoredBase = conn;
             next.delete(id);
           }
         }
         const existing = next.get(data.connectionId);
-        next.set(data.connectionId, {
+        const base: ConnectionState = {
           ...(existing ??
+            restoredBase ??
             createBaseConnection(
               data.connectionId,
               data.name,
@@ -207,8 +228,24 @@ export function useConnections(onActivatePromptTab: () => void) {
           isRestored: false,
           sessionChannel: data.sessionId
             ? { sessionId: data.sessionId, label: data.label }
-            : (existing?.sessionChannel ?? null),
-        });
+            : (existing?.sessionChannel ??
+              restoredBase?.sessionChannel ??
+              null),
+        };
+        // Apply any registration data that arrived before connection-opened
+        const pending = pendingRegistrations.current.get(data.connectionId);
+        if (pending) {
+          pendingRegistrations.current.delete(data.connectionId);
+          next.set(data.connectionId, {
+            ...base,
+            name: pending.agentName,
+            openCodeSessionId:
+              pending.openCodeSessionId ?? base.openCodeSessionId,
+            parentSessionId: pending.parentSessionId ?? base.parentSessionId,
+          });
+        } else {
+          next.set(data.connectionId, base);
+        }
         return next;
       });
       setActiveConnectionId((prev) => prev ?? data.connectionId);
@@ -217,11 +254,65 @@ export function useConnections(onActivatePromptTab: () => void) {
     });
 
     window.api.onConnectionRegistered?.((data) => {
-      withConnection(data.connectionId, (conn) => ({
-        ...conn,
-        name: data.agentName,
-        openCodeSessionId: data.openCodeSessionId,
-      }));
+      // Check if connection is already in the map before attempting update.
+      // We read connections via setConnections to avoid stale closure, but we
+      // also need to decide whether to stash for pending-registration. Use a
+      // ref-backed flag that is set inside the updater so it survives StrictMode
+      // double-invocations (the last call wins, which is correct).
+      const appliedRef = { value: false };
+      setConnections((prev) => {
+        const conn = prev.get(data.connectionId);
+        const next = new Map(prev);
+
+        // Remove any placeholder entry whose id matches this openCodeSessionId.
+        // The poller pre-created it; now the real connection has registered.
+        if (data.openCodeSessionId && next.has(data.openCodeSessionId)) {
+          const placeholder = next.get(data.openCodeSessionId);
+          if (placeholder?.isPlaceholder) {
+            next.delete(data.openCodeSessionId);
+          }
+        }
+
+        // If a restored connection with the same name exists, clear its
+        // isRestored flag — the agent has reconnected via register_connection
+        // (which only fires connection-registered, not connection-opened).
+        for (const [id, restoredConn] of next) {
+          if (restoredConn.isRestored && restoredConn.name === data.agentName) {
+            next.set(id, {
+              ...restoredConn,
+              isRestored: false,
+              openCodeSessionId:
+                data.openCodeSessionId ?? restoredConn.openCodeSessionId,
+              parentSessionId:
+                data.parentSessionId ?? restoredConn.parentSessionId,
+            });
+            appliedRef.value = true;
+            return next;
+          }
+        }
+
+        if (!conn) {
+          appliedRef.value = false;
+          return next.size !== prev.size ? next : prev;
+        }
+        appliedRef.value = true;
+        next.set(data.connectionId, {
+          ...conn,
+          name: data.agentName,
+          openCodeSessionId: data.openCodeSessionId,
+          parentSessionId: data.parentSessionId,
+        });
+        return next;
+      });
+      // If connection isn't in the map yet (race: registered before opened),
+      // stash it so onConnectionOpened can apply it when the connection arrives.
+      if (!appliedRef.value) {
+        pendingRegistrations.current.set(data.connectionId, {
+          agentName: data.agentName,
+          openCodeSessionId: data.openCodeSessionId,
+          parentSessionId: data.parentSessionId,
+        });
+      }
     });
 
     window.api.onConnectionClosed?.((data) => {
@@ -333,6 +424,47 @@ export function useConnections(onActivatePromptTab: () => void) {
         channelMessages: [],
         unreadCount: 0,
       }));
+    });
+
+    // Pre-create placeholder sidebar entries for subagent sessions detected by
+    // the session-tree poller before the agent calls register_connection.
+    window.api.onChildSessionsDetected?.((children) => {
+      setConnections((prev) => {
+        // Build a lookup: openCodeSessionId → connectionId for existing entries
+        const byOpenCodeId = new Map<string, string>();
+        for (const conn of prev.values()) {
+          if (conn.openCodeSessionId) {
+            byOpenCodeId.set(conn.openCodeSessionId, conn.id);
+          }
+        }
+
+        let changed = false;
+        const next = new Map(prev);
+
+        for (const child of children) {
+          // Skip if already tracked (either as real connection or placeholder)
+          if (byOpenCodeId.has(child.openCodeSessionId)) continue;
+
+          changed = true;
+          const placeholderId = child.openCodeSessionId;
+          next.set(placeholderId, {
+            id: placeholderId,
+            name: 'Subagent (connecting\u2026)',
+            prompt: null,
+            activeSession: null,
+            channelMessages: [],
+            unreadCount: 0,
+            hasPendingPrompt: false,
+            sessionChannel: null,
+            sessionStatuses: [],
+            openCodeSessionId: child.openCodeSessionId,
+            parentSessionId: child.parentOpenCodeSessionId,
+            isPlaceholder: true,
+          });
+        }
+
+        return changed ? next : prev;
+      });
     });
 
     window.api.onAgentMessage?.((data) => {

@@ -12,3 +12,5 @@ logs/
 out/
 release/
 **/.doc-embeddings.json
+
+**/.imcp-session

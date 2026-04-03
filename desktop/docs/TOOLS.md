@@ -30,13 +30,12 @@ This document is the authoritative reference for all six MCP tools registered by
 
 #### Parameters
 
-| Parameter       | Type     | Required | Description                                                                                                                   |
-| --------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| `agentName`     | `string` | Yes      | Human-readable name for this agent (e.g. `"Claude Code - my-project"`). Shown in the channel sidebar.                         |
-| `projectName`   | `string` | Yes      | Name of the project or workspace this agent is working in.                                                                    |
-| `baseDirectory` | `string` | No       | Absolute path to the working directory / repository root. Used for file autocomplete and for OpenCode session auto-detection. |
-
-> **Note:** There is no `openCodeSessionId` parameter. The desktop app auto-detects the correct OpenCode session at registration time (see [OpenCode auto-detection](#opencode-auto-detection)).
+| Parameter           | Type     | Required | Description                                                                                                                                                                                                                         |
+| ------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agentName`         | `string` | Yes      | Human-readable name for this agent (e.g. `"Claude Code - my-project"`). Shown in the channel sidebar.                                                                                                                               |
+| `projectName`       | `string` | Yes      | Name of the project or workspace this agent is working in.                                                                                                                                                                          |
+| `baseDirectory`     | `string` | No       | Absolute path to the working directory / repository root. Used for file autocomplete and for OpenCode session auto-detection.                                                                                                       |
+| `openCodeSessionId` | `string` | No       | Explicit OpenCode ACP session ID for this agent. When provided, takes precedence over auto-detection entirely. Subagents spawned via the Task tool should pass their own session ID explicitly to ensure correct context injection. |
 
 #### Return Value
 
@@ -44,26 +43,30 @@ This document is the authoritative reference for all six MCP tools registered by
 | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Always   | `[{ type: 'text', text: '<JSON result string>' }]` where the JSON object contains at least `{ ok, connectionId, agentName, projectName, baseDirectory, idFilePath, message }` |
 
-The JSON also includes `openCodeSessionId` when an OpenCode session was successfully detected.
+The JSON also includes `openCodeSessionId` when an OpenCode session was successfully detected or explicitly provided, and `parentSessionId` when the OpenCode API returned a parent session for this connection.
 
 #### Behavior
 
-1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `agentName`, `projectName`, `baseDirectory`, and the detected `openCodeSessionId` (or `null`).
+1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `agentName`, `projectName`, `baseDirectory`, the detected `openCodeSessionId` (or `null`), and `parentSessionId` (or `null`).
 2. Writes a JSON ID file to `/tmp/imcp-agent-<safe-name>.json` so the agent can recover its `connectionId` after a restart without re-registering.
 3. Renames the active channel in the `session_channels` table to `agentName`.
 4. Sends a `connection-registered` IPC event to the renderer so the sidebar updates immediately.
-5. Calls `autoDetectOpenCodeSession(openCodePort, baseDirectory)` to locate the active OpenCode session (see [OpenCode auto-detection](#opencode-auto-detection)).
-6. Returns `{ ok: true, connectionId, agentName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId? }`.
+5. Resolves `openCodeSessionId`: if `openCodeSessionId` was passed explicitly it is used directly; otherwise `autoDetectOpenCodeSession(openCodePort, baseDirectory)` is called, which returns a `DetectedSession | null` object with `{ id: string; parentId: string | null }` (see [OpenCode auto-detection](#opencode-auto-detection)).
+6. Resolves `parentSessionId`: after the `openCodeSessionId` is known (whether explicit or auto-detected), the tool fetches `GET /session` and inspects the matched session's `parentID` field to identify the parent OpenCode session, if any.
+7. Returns `{ ok: true, connectionId, agentName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId?, parentSessionId? }`.
 
 #### OpenCode auto-detection
 
-When `register_connection` is called, the tool queries the local OpenCode ACP HTTP API to locate the most recently updated session:
+When `register_connection` is called without an explicit `openCodeSessionId`, the tool queries the local OpenCode ACP HTTP API to locate the most relevant session:
 
 1. `GET http://localhost:{openCodePort}/session?directory={baseDirectory}` — returns sessions scoped to `baseDirectory`.
 2. If the response is empty, falls back to `GET http://localhost:{openCodePort}/session` (all sessions).
-3. Picks the session with the highest `time.updated` value.
-4. Stores the detected `openCodeSessionId` in the `registered_connections` table.
-5. If the OpenCode API is unreachable (2-second timeout) or returns no sessions, `openCodeSessionId` is `null` and registration succeeds silently.
+3. Picks the session with the highest `time.created` value (not `time.updated`), so freshly-spawned subagent sessions are preferred over the longer-running parent session.
+4. Returns a `DetectedSession` object: `{ id: string; parentId: string | null }` — `parentId` is the `parentID` field on the session as reported by the OpenCode API.
+5. Stores the detected `openCodeSessionId` and `parentSessionId` in the `registered_connections` table.
+6. If the OpenCode API is unreachable (2-second timeout) or returns no sessions, both values are `null` and registration succeeds silently.
+
+When `openCodeSessionId` is provided explicitly, auto-detection is skipped entirely. The tool still fetches `GET /session` to resolve `parentSessionId` from the matched session's `parentID` field.
 
 The `openCodePort` is configurable in Settings (default `4096`). See [`SETTINGS-CONFIG.md`](./SETTINGS-CONFIG.md) for details.
 
@@ -74,7 +77,8 @@ The `openCodePort` is configurable in Settings (default `4096`). See [`SETTINGS-
   "connectionId": "<uuid>",
   "agentName": "Claude Code",
   "projectName": "my-project",
-  "baseDirectory": "/Users/me/projects/my-project"
+  "baseDirectory": "/Users/me/projects/my-project",
+  "parentSessionId": "<opencode-parent-session-id-or-null>"
 }
 ```
 
@@ -86,7 +90,18 @@ const result = await mcp.callTool('register_connection', {
   projectName: 'my-project',
   baseDirectory: '/Users/me/projects/my-project',
 });
-// result.content[0].text contains JSON with { ok: true, connectionId, ... }
+// result.content[0].text contains JSON, e.g.:
+// {
+//   "ok": true,
+//   "connectionId": "<uuid>",
+//   "agentName": "Claude Code - my-project",
+//   "projectName": "my-project",
+//   "baseDirectory": "/Users/me/projects/my-project",
+//   "openCodeSessionId": "ses_abc123",
+//   "parentSessionId": "ses_xyz456",   // null if not a subagent
+//   "idFilePath": "/tmp/imcp-agent-claude-code-my-project.json",
+//   "message": "Connection registered successfully. ..."
+// }
 ```
 
 ---
@@ -549,16 +564,17 @@ Attachments are supported by both `request_user_input` and `ask_intensive_chat`.
 
 These Electron IPC events are used internally between the main process and the renderer. They are not part of the MCP tool surface but are documented here for completeness.
 
-| Channel                   | Direction       | Payload                                                     | Triggered by                                                    |
-| ------------------------- | --------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
-| `prompt-request`          | main → renderer | `PromptData`                                                | `request_user_input`, `ask_intensive_chat`                      |
-| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                              | User submits a prompt reply                                     |
-| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                        | `start_intensive_chat`                                          |
-| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                               | `stop_intensive_chat`                                           |
-| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                            | `push_session_status`                                           |
-| `agent-message`           | main → renderer | `{ connectionId, message }`                                 | `send_message`                                                  |
-| `connection-registered`   | main → renderer | `{ connectionId, agentName, label }`                        | `register_connection`                                           |
-| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string)` (IPC invoke) | `ChannelComposer` message send when OpenCode session is present |
+| Channel                   | Direction       | Payload                                                                                              | Triggered by                                                    |
+| ------------------------- | --------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `prompt-request`          | main → renderer | `PromptData`                                                                                         | `request_user_input`, `ask_intensive_chat`                      |
+| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                                                                       | User submits a prompt reply                                     |
+| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                                                                 | `start_intensive_chat`                                          |
+| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                                                                        | `stop_intensive_chat`                                           |
+| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                                                                     | `push_session_status`                                           |
+| `agent-message`           | main → renderer | `{ connectionId, message }`                                                                          | `send_message`                                                  |
+| `connection-registered`   | main → renderer | `{ connectionId, agentName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                           |
+| `child-sessions-detected` | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                   | Session-tree poller (every 4 s) detects unregistered subagents  |
+| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string)` (IPC invoke)                                          | `ChannelComposer` message send when OpenCode session is present |
 
 ---
 
