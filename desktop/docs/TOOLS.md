@@ -1,22 +1,93 @@
 # Interactive MCP Desktop — Tool Reference
 
-This document is the authoritative reference for all five MCP tools registered by the Interactive MCP Desktop app. Each tool is registered once per MCP connection and is scoped to that connection's `connectionId` and `connectionName`.
+This document is the authoritative reference for all six MCP tools registered by the Interactive MCP Desktop app. Each tool is registered once per MCP connection and is scoped to that connection's `connectionId` and `connectionName`.
 
 ---
 
 ## Overview
 
-| Tool                                            | Purpose                                         | Blocking                            |
-| ----------------------------------------------- | ----------------------------------------------- | ----------------------------------- |
-| [`request_user_input`](#request_user_input)     | Ask the user a question; await their reply      | Yes — awaits user response          |
-| [`start_intensive_chat`](#start_intensive_chat) | Open a named multi-turn chat session            | No — returns session ID immediately |
-| [`ask_intensive_chat`](#ask_intensive_chat)     | Ask a question inside an intensive chat session | Yes — awaits user response          |
-| [`stop_intensive_chat`](#stop_intensive_chat)   | Close an active intensive chat session          | No — returns immediately            |
-| [`push_session_status`](#push_session_status)   | Display a live status indicator in the UI       | No — returns immediately            |
+| Tool                                            | Purpose                                                    | Blocking                            |
+| ----------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
+| [`register_connection`](#register_connection)   | Establish a named, persistent agent channel in the sidebar | No — returns immediately            |
+| [`request_user_input`](#request_user_input)     | Ask the user a question; await their reply                 | Yes — awaits user response          |
+| [`start_intensive_chat`](#start_intensive_chat) | Open a named multi-turn chat session                       | No — returns session ID immediately |
+| [`ask_intensive_chat`](#ask_intensive_chat)     | Ask a question inside an intensive chat session            | Yes — awaits user response          |
+| [`stop_intensive_chat`](#stop_intensive_chat)   | Close an active intensive chat session                     | No — returns immediately            |
+| [`push_session_status`](#push_session_status)   | Display a live status indicator in the UI                  | No — returns immediately            |
+| [`send_message`](#send_message)                 | Send a persistent informational message into the channel   | No — returns immediately            |
 
 ---
 
 ## API Reference
+
+---
+
+### `register_connection`
+
+**File:** `desktop/src/main/tools/register-connection.ts`
+
+**Description:** Register this agent as a named connection in the Interactive MCP Desktop app. Call once at the start of every session to establish a persistent, human-readable channel. After registration the channel appears in the app sidebar with the given name. The tool also auto-detects the active OpenCode session (if OpenCode is running) so that messages sent from the desktop app are injected directly into that session via the OpenCode ACP API.
+
+#### Parameters
+
+| Parameter       | Type     | Required | Description                                                                                                                   |
+| --------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| `agentName`     | `string` | Yes      | Human-readable name for this agent (e.g. `"Claude Code - my-project"`). Shown in the channel sidebar.                         |
+| `projectName`   | `string` | Yes      | Name of the project or workspace this agent is working in.                                                                    |
+| `baseDirectory` | `string` | No       | Absolute path to the working directory / repository root. Used for file autocomplete and for OpenCode session auto-detection. |
+
+> **Note:** There is no `openCodeSessionId` parameter. The desktop app auto-detects the correct OpenCode session at registration time (see [OpenCode auto-detection](#opencode-auto-detection)).
+
+#### Return Value
+
+| Scenario | Content                                                                                                                                                                       |
+| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Always   | `[{ type: 'text', text: '<JSON result string>' }]` where the JSON object contains at least `{ ok, connectionId, agentName, projectName, baseDirectory, idFilePath, message }` |
+
+The JSON also includes `openCodeSessionId` when an OpenCode session was successfully detected.
+
+#### Behavior
+
+1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `agentName`, `projectName`, `baseDirectory`, and the detected `openCodeSessionId` (or `null`).
+2. Writes a JSON ID file to `/tmp/imcp-agent-<safe-name>.json` so the agent can recover its `connectionId` after a restart without re-registering.
+3. Renames the active channel in the `session_channels` table to `agentName`.
+4. Sends a `connection-registered` IPC event to the renderer so the sidebar updates immediately.
+5. Calls `autoDetectOpenCodeSession(openCodePort, baseDirectory)` to locate the active OpenCode session (see [OpenCode auto-detection](#opencode-auto-detection)).
+6. Returns `{ ok: true, connectionId, agentName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId? }`.
+
+#### OpenCode auto-detection
+
+When `register_connection` is called, the tool queries the local OpenCode ACP HTTP API to locate the most recently updated session:
+
+1. `GET http://localhost:{openCodePort}/session?directory={baseDirectory}` — returns sessions scoped to `baseDirectory`.
+2. If the response is empty, falls back to `GET http://localhost:{openCodePort}/session` (all sessions).
+3. Picks the session with the highest `time.updated` value.
+4. Stores the detected `openCodeSessionId` in the `registered_connections` table.
+5. If the OpenCode API is unreachable (2-second timeout) or returns no sessions, `openCodeSessionId` is `null` and registration succeeds silently.
+
+The `openCodePort` is configurable in Settings (default `4096`). See [`SETTINGS-CONFIG.md`](./SETTINGS-CONFIG.md) for details.
+
+#### ID file format
+
+```json
+{
+  "connectionId": "<uuid>",
+  "agentName": "Claude Code",
+  "projectName": "my-project",
+  "baseDirectory": "/Users/me/projects/my-project"
+}
+```
+
+#### Example (pseudocode)
+
+```ts
+const result = await mcp.callTool('register_connection', {
+  agentName: 'Claude Code - my-project',
+  projectName: 'my-project',
+  baseDirectory: '/Users/me/projects/my-project',
+});
+// result.content[0].text contains JSON with { ok: true, connectionId, ... }
+```
 
 ---
 
@@ -298,6 +369,51 @@ await mcp.callTool('push_session_status', {
 
 ---
 
+### `send_message`
+
+**File:** `desktop/src/main/tools/session-channel.ts`
+
+**Description:** Send a visible, persistent message directly into the desktop app channel history. Non-blocking — returns immediately. Use to communicate information to the user without requiring a response. Unlike `push_session_status` (which shows a transient badge), messages sent via `send_message` are persisted in SQLite and survive app restarts.
+
+#### Parameters
+
+| Parameter | Type     | Required | Description                                         |
+| --------- | -------- | -------- | --------------------------------------------------- |
+| `message` | `string` | Yes      | The message text to display. Markdown is supported. |
+
+#### Return Value
+
+| Scenario | Content                                   |
+| -------- | ----------------------------------------- |
+| Always   | `[{ type: 'text', text: '{"ok":true}' }]` |
+
+#### Behavior
+
+- Appends an `agent_message` row to `session_channel_history` in SQLite (persisted across restarts).
+- Fires an `agent-message` IPC event to the renderer with `{ connectionId, message }`.
+- The renderer renders the message with a distinct teal left-border (`msg-agent-info` CSS class) to distinguish it from blocking prompts (`msg-agent`).
+- Returns `{"ok":true}` immediately without awaiting any response.
+- Does **not** interact with the prompt system or trigger a beep.
+- Safe to call at any frequency and from any agent state.
+
+#### Visual style
+
+| CSS class         | Border color                          | Usage                        |
+| ----------------- | ------------------------------------- | ---------------------------- |
+| `.msg-agent`      | `--color-agent` (blue)                | `request_user_input` prompts |
+| `.msg-agent-info` | `--color-agent-info` (teal `#2dd4bf`) | `send_message` messages      |
+
+#### Example (pseudocode)
+
+```ts
+await mcp.callTool('send_message', {
+  message: '## Build complete\n- 3 files changed\n- All tests passed',
+});
+// UI immediately shows the message in channel history; tool returns without blocking
+```
+
+---
+
 ## Prompt Lifecycle
 
 All blocking tools (`request_user_input`, `ask_intensive_chat`) share the same underlying `promptUser()` function defined in `desktop/src/main/ipc-prompt.ts`. This section documents the complete lifecycle.
@@ -425,7 +541,7 @@ The `data` field for non-image attachments is the raw string content of the file
 ]
 ```
 
-Attachments are supported by both `request_user_input` and `ask_intensive_chat`. They are not applicable to `start_intensive_chat`, `stop_intensive_chat`, or `push_session_status`.
+Attachments are supported by both `request_user_input` and `ask_intensive_chat`. They are not applicable to `start_intensive_chat`, `stop_intensive_chat`, `push_session_status`, or `send_message`.
 
 ---
 
@@ -433,13 +549,16 @@ Attachments are supported by both `request_user_input` and `ask_intensive_chat`.
 
 These Electron IPC events are used internally between the main process and the renderer. They are not part of the MCP tool surface but are documented here for completeness.
 
-| Channel                 | Direction       | Payload                              | Triggered by                               |
-| ----------------------- | --------------- | ------------------------------------ | ------------------------------------------ |
-| `prompt-request`        | main → renderer | `PromptData`                         | `request_user_input`, `ask_intensive_chat` |
-| `prompt-response`       | renderer → main | `{ id, answer, attachments? }`       | User submits a prompt reply                |
-| `intensive-chat-start`  | main → renderer | `{ sessionId, title, connectionId }` | `start_intensive_chat`                     |
-| `intensive-chat-stop`   | main → renderer | `{ sessionId, connectionId }`        | `stop_intensive_chat`                      |
-| `session-status-update` | main → renderer | `{ connectionId, status, type }`     | `push_session_status`                      |
+| Channel                   | Direction       | Payload                                                     | Triggered by                                                    |
+| ------------------------- | --------------- | ----------------------------------------------------------- | --------------------------------------------------------------- |
+| `prompt-request`          | main → renderer | `PromptData`                                                | `request_user_input`, `ask_intensive_chat`                      |
+| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                              | User submits a prompt reply                                     |
+| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                        | `start_intensive_chat`                                          |
+| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                               | `stop_intensive_chat`                                           |
+| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                            | `push_session_status`                                           |
+| `agent-message`           | main → renderer | `{ connectionId, message }`                                 | `send_message`                                                  |
+| `connection-registered`   | main → renderer | `{ connectionId, agentName, label }`                        | `register_connection`                                           |
+| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string)` (IPC invoke) | `ChannelComposer` message send when OpenCode session is present |
 
 ---
 

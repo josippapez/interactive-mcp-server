@@ -20,7 +20,7 @@ export default function MarkdownContent({
       className={`prose prose-sm max-w-none
         ${isDark ? 'prose-invert' : ''}
         prose-headings:text-[var(--color-text)]
-        prose-p:text-[var(--color-text)]
+        prose-p:text-[var(--color-text)] prose-p:my-1
         prose-a:text-[var(--color-agent)]
         prose-strong:text-[var(--color-text)]
         prose-code:text-[var(--color-agent)] prose-code:bg-[var(--color-surface)] prose-code:px-1 prose-code:py-0.5 prose-code:rounded-sm

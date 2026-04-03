@@ -48,27 +48,30 @@ Stores outbound messages queued by the user for the agent to consume.
 
 ### `session_channel_history`
 
-Full chronological log of all messages exchanged on a channel. All message types — questions from the agent, answers from the user, and outbound messages queued by the user — are written here.
+Full chronological log of all messages exchanged on a channel. All message types — questions from the agent, answers from the user, outbound messages queued by the user, and agent informational messages — are written here.
 
-| Column       | Type    | Description                                                                   |
-| ------------ | ------- | ----------------------------------------------------------------------------- |
-| `id`         | INTEGER | Auto-increment primary key                                                    |
-| `session_id` | TEXT    | Foreign key → `session_channels.session_id`                                   |
-| `type`       | TEXT    | One of `question`, `answer`, `outbound` (see [Message Types](#message-types)) |
-| `message`    | TEXT    | Message content                                                               |
-| `created_at` | TEXT    | ISO 8601 creation timestamp                                                   |
+| Column       | Type    | Description                                                                                    |
+| ------------ | ------- | ---------------------------------------------------------------------------------------------- |
+| `id`         | INTEGER | Auto-increment primary key                                                                     |
+| `session_id` | TEXT    | Foreign key → `session_channels.session_id`                                                    |
+| `type`       | TEXT    | One of `question`, `answer`, `outbound`, `agent_message` (see [Message Types](#message-types)) |
+| `message`    | TEXT    | Message content                                                                                |
+| `created_at` | TEXT    | ISO 8601 creation timestamp                                                                    |
 
 ---
 
 ## Message Types
 
-| Type       | Written by         | Description                                                                                |
-| ---------- | ------------------ | ------------------------------------------------------------------------------------------ |
-| `question` | MCP server / agent | A prompt sent to the user via `request_user_input`                                         |
-| `answer`   | User (renderer)    | The user's response to a `request_user_input` prompt                                       |
-| `outbound` | User (renderer)    | A message queued by the user for the agent to pick up via `GET /api/sessions/:id/messages` |
+| Type            | Written by         | Description                                                                                |
+| --------------- | ------------------ | ------------------------------------------------------------------------------------------ |
+| `question`      | MCP server / agent | A prompt sent to the user via `request_user_input`                                         |
+| `answer`        | User (renderer)    | The user's response to a `request_user_input` prompt                                       |
+| `outbound`      | User (renderer)    | A message queued by the user for the agent to pick up via `GET /api/sessions/:id/messages` |
+| `agent_message` | MCP server / agent | An informational message pushed by the agent via `send_message` (persisted, teal style)    |
 
 `outbound` messages are written to **both** `session_messages` (with `sent=0`) and `session_channel_history` at the same time. When the agent drains the queue, the rows in `session_messages` are marked `sent=1`, but the history record is never modified — the history is an immutable append-only log.
+
+`agent_message` rows are written **only** to `session_channel_history` — they are not enqueued for polling.
 
 ---
 
@@ -189,6 +192,52 @@ The `push_session_status` MCP tool allows the agent to post a non-blocking statu
 | `type`         | string | Visual indicator type (e.g., `info`, `working`, `success`, `error`) |
 
 Each new `session-status-update` for a given `connectionId` replaces the previous status — only the most recent status is shown.
+
+---
+
+## noReply OpenCode Injection
+
+When the user sends a message via `ChannelComposer`, the desktop app delivers it through **two parallel paths**:
+
+1. **Queue path** — `window.api.queueSessionMessage(sessionId, message)` persists the message to SQLite (`session_messages`, `sent=0`) so VS Code extension polling clients can drain it via `GET /api/sessions/:id/messages`.
+
+2. **OpenCode injection path** — `window.api.injectOpenCodeMessage(openCodeSessionId, message, attachments?)` POSTs to the OpenCode ACP HTTP API, injecting the message directly into the agent's active session without triggering a new agent response.
+
+### OpenCode ACP call
+
+```
+POST http://localhost:{openCodePort}/session/{openCodeSessionId}/message
+Content-Type: application/json
+
+{
+  "noReply": true,
+  "parts": [
+    {
+      "type": "text",
+      "text": "<message>\n\n[Image file: /tmp/imcp-attachment-<uuid>.png]\n\n--- File: notes.txt ---\n<file content>"
+    }
+  ]
+}
+```
+
+The `noReply: true` flag tells OpenCode to inject the text as **context only** — the agent receives it in its next context window but does not generate a response immediately.
+
+Attachments are encoded as plain-text references appended to the single `text` part, mirroring the TUI approach:
+
+- **Image attachments** — the main process writes the base64 image data to a temp file (e.g. `/tmp/imcp-attachment-<uuid>.png`) and appends `[Image file: /tmp/...]` to the message. The agent reads the image from disk.
+- **Text file attachments** — the file content is inlined as `--- File: <name> ---\n<content>`.
+
+### When injection is available
+
+Injection is only attempted when an `openCodeSessionId` is stored on the registered connection (set during `register_connection` — see [`TOOLS.md`](./TOOLS.md#opencode-auto-detection)). If no session was detected at registration time, only the queue path runs.
+
+### Failure handling
+
+If the `injectOpenCodeMessage` IPC call fails (e.g. OpenCode is no longer running, network error), `SessionChannelBar` displays an error status badge. The message is still persisted to the queue path regardless of injection success or failure.
+
+### IPC handler
+
+The injection is handled by the `inject-opencode-message` IPC handler in `ipc-handlers.ts`. See [`IPC-API.md`](./IPC-API.md#opencode-injection) for the full API reference.
 
 ---
 

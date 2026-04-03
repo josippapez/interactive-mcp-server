@@ -20,7 +20,7 @@ export interface ConversationRecord {
 export interface SessionChannelMessageRecord {
   id: number;
   sessionId: string;
-  messageType: 'question' | 'answer' | 'outbound';
+  messageType: 'question' | 'answer' | 'outbound' | 'agent_message';
   messageText: string;
   attachments: string | null;
   createdAt: string;
@@ -248,7 +248,7 @@ export function queueSessionMessage(sessionId: string, message: string): void {
 
 export function appendSessionChannelMessage(data: {
   sessionId: string;
-  messageType: 'question' | 'answer' | 'outbound';
+  messageType: 'question' | 'answer' | 'outbound' | 'agent_message';
   messageText: string;
   attachments?: {
     data: string;
@@ -288,7 +288,7 @@ export function getSessionChannelHistory(
   return results[0].values.map((row) => ({
     id: row[0] as number,
     sessionId: row[1] as string,
-    messageType: row[2] as 'question' | 'answer' | 'outbound',
+    messageType: row[2] as 'question' | 'answer' | 'outbound' | 'agent_message',
     messageText: row[3] as string,
     attachments: row[4] as string | null,
     createdAt: row[5] as string,

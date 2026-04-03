@@ -44,11 +44,13 @@ Interactive MCP Desktop is an Electron application that acts as a desktop UI for
 │                           │ one McpServer per connection          │
 │  ┌────────────────────────▼────────────────────────────────┐     │
 │  │  McpServer + tools (per-connection)                     │     │
+│  │   • register_connection                                 │     │
 │  │   • request_user_input                                  │     │
 │  │   • message_complete_notification                       │     │
 │  │   • start_intensive_chat / ask_intensive_chat           │     │
 │  │     stop_intensive_chat                                 │     │
 │  │   • push_session_status                                 │     │
+│  │   • send_message                                        │     │
 │  └──────────────┬──────────────────────────────────────────┘     │
 │                 │ promptUser()                                    │
 │  ┌──────────────▼──────────────────────────────────────────┐     │
@@ -143,23 +145,24 @@ On resolution, `promptUser` saves the conversation to the `conversations` table 
 
 Registers all `ipcMain.handle` (request/response) and `ipcMain.on` (fire-and-forget) channels that `window.api` calls from the renderer. Key handlers:
 
-| IPC channel                      | Action                                                            |
-| -------------------------------- | ----------------------------------------------------------------- |
-| `get-history`                    | Query `conversations` table (last 100 rows)                       |
-| `clear-history`                  | Delete all rows from `conversations`                              |
-| `get-settings` / `save-settings` | Read/write `settings.json`; restart server if port changed        |
-| `get-server-status`              | Return `{ running: true, port }`                                  |
-| `search-files`                   | Run `indexFiles` + `rankFileSuggestions` for autocomplete         |
-| `open-file-dialog`               | Open native Electron file picker                                  |
-| `read-file-for-attachment`       | Read a file from disk; return base64 (images) or UTF-8 text       |
-| `force-terminate-chat`           | Call `forceTerminateChat(connectionId)` to unblock pending prompt |
-| `dismiss-session`                | Terminate prompt + send `connection-closed` to renderer           |
-| `restart-mcp-server`             | Delegate to `restartMcpServer()`                                  |
-| `get-persisted-session-channels` | Return active session rows from SQLite                            |
-| `get-session-channel-history`    | Return `session_channel_history` for a session                    |
-| `clear-session-channel-messages` | Delete messages; notify renderer                                  |
-| `remove-session-channel`         | Terminate + close session; delete from DB; notify renderer        |
-| `queue-session-message` (on)     | Persist a user-typed outbound message to `session_messages`       |
+| IPC channel                      | Action                                                                                      |
+| -------------------------------- | ------------------------------------------------------------------------------------------- |
+| `get-history`                    | Query `conversations` table (last 100 rows)                                                 |
+| `clear-history`                  | Delete all rows from `conversations`                                                        |
+| `get-settings` / `save-settings` | Read/write `settings.json`; restart server if port changed                                  |
+| `get-server-status`              | Return `{ running: true, port }`                                                            |
+| `search-files`                   | Run `indexFiles` + `rankFileSuggestions` for autocomplete                                   |
+| `open-file-dialog`               | Open native Electron file picker                                                            |
+| `read-file-for-attachment`       | Read a file from disk; return base64 (images) or UTF-8 text                                 |
+| `force-terminate-chat`           | Call `forceTerminateChat(connectionId)` to unblock pending prompt                           |
+| `dismiss-session`                | Terminate prompt + send `connection-closed` to renderer                                     |
+| `restart-mcp-server`             | Delegate to `restartMcpServer()`                                                            |
+| `get-persisted-session-channels` | Return active session rows from SQLite                                                      |
+| `get-session-channel-history`    | Return `session_channel_history` for a session                                              |
+| `clear-session-channel-messages` | Delete messages; notify renderer                                                            |
+| `remove-session-channel`         | Terminate + close session; delete from DB; notify renderer                                  |
+| `queue-session-message` (on)     | Persist a user-typed outbound message to `session_messages`                                 |
+| `inject-opencode-message`        | POST noReply message to OpenCode ACP `http://localhost:{openCodePort}/session/{id}/message` |
 
 #### `database.ts`
 
@@ -200,6 +203,15 @@ session_channel_history (
   attachments  TEXT,                -- JSON array or NULL
   created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 )
+
+registered_connections (
+  connection_id        TEXT PRIMARY KEY,
+  agent_name           TEXT NOT NULL,
+  project_name         TEXT NOT NULL,
+  base_directory       TEXT,        -- NULL if not supplied
+  open_code_session_id TEXT,        -- auto-detected OpenCode session ID, or NULL
+  created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+)
 ```
 
 #### `settings.ts`
@@ -213,6 +225,7 @@ Persists `AppSettings` as a JSON file at `<userData>/settings.json`. Defaults:
 | `launchAtLogin`        | `false` |
 | `promptTimeoutSeconds` | `800`   |
 | `autoRestoreSessions`  | `false` |
+| `openCodePort`         | `4096`  |
 
 #### `file-indexer.ts`
 
@@ -235,12 +248,13 @@ Creates a system tray icon using a 16×16 chat-bubble PNG encoded as a data URL.
 
 Each file exports one `register*` function called during `createMcpServerWithTools`. Tools are registered on the per-connection `McpServer` instance.
 
-| File                    | Tool(s) registered                                                  | Description                                                                                                                                                                                                                                                                                                 |
-| ----------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `request-user-input.ts` | `request_user_input`                                                | Sends a prompt to the user and waits for the typed response. Supports predefined option chips, file attachments, and `baseDirectory` for autocomplete.                                                                                                                                                      |
-| `notification.ts`       | `message_complete_notification`                                     | Fires a native OS notification (Electron `Notification` API). Non-blocking.                                                                                                                                                                                                                                 |
-| `intensive-chat.ts`     | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` | A three-tool lifecycle for persistent multi-question sessions. `start_intensive_chat` generates a UUID session ID and sends `intensive-chat-start` to the renderer. `ask_intensive_chat` routes through `promptUser` like a normal prompt. `stop_intensive_chat` cleans up and sends `intensive-chat-stop`. |
-| `session-channel.ts`    | `push_session_status`                                               | Sends a non-blocking status update (with a visual type of `info`, `working`, `success`, or `error`) to the renderer via `webContents.send('session-status-update', ...)`. Returns immediately without waiting for user input.                                                                               |
+| File                     | Tool(s) registered                                                  | Description                                                                                                                                                                                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `register-connection.ts` | `register_connection`                                               | Registers a named agent channel. Upserts `registered_connections` in SQLite, writes a `/tmp` ID file, renames the session channel, and auto-detects the active OpenCode session via `autoDetectOpenCodeSession()`. Sends `connection-registered` IPC to the renderer.                                       |
+| `request-user-input.ts`  | `request_user_input`                                                | Sends a prompt to the user and waits for the typed response. Supports predefined option chips, file attachments, and `baseDirectory` for autocomplete.                                                                                                                                                      |
+| `notification.ts`        | `message_complete_notification`                                     | Fires a native OS notification (Electron `Notification` API). Non-blocking.                                                                                                                                                                                                                                 |
+| `intensive-chat.ts`      | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` | A three-tool lifecycle for persistent multi-question sessions. `start_intensive_chat` generates a UUID session ID and sends `intensive-chat-start` to the renderer. `ask_intensive_chat` routes through `promptUser` like a normal prompt. `stop_intensive_chat` cleans up and sends `intensive-chat-stop`. |
+| `session-channel.ts`     | `push_session_status`, `send_message`                               | `push_session_status`: sends a non-blocking status badge update to the renderer via `webContents.send('session-status-update', ...)`. `send_message`: persists an `agent_message` row to `session_channel_history` and fires `agent-message` IPC to the renderer for live display. Both return immediately. |
 
 ---
 
@@ -252,39 +266,44 @@ The preload script runs in a Node.js context with access to `ipcRenderer`, but i
 
 **Event listeners** (`ipcRenderer.on` wrappers) — the renderer registers callbacks once; the main process fires events at any time:
 
-| Channel                            | Direction       | Purpose                                      |
-| ---------------------------------- | --------------- | -------------------------------------------- |
-| `prompt-request`                   | main → renderer | Deliver a new prompt to display              |
-| `intensive-chat-start`             | main → renderer | Signal an intensive chat session has started |
-| `intensive-chat-stop`              | main → renderer | Signal an intensive chat session has ended   |
-| `connection-opened`                | main → renderer | A new MCP session was established            |
-| `connection-closed`                | main → renderer | An MCP session was torn down                 |
-| `session-channel-created`          | main → renderer | A session channel was created via REST API   |
-| `session-channel-deleted`          | main → renderer | A session channel was deleted                |
-| `session-channel-messages-cleared` | main → renderer | Messages for a session were cleared          |
-| `session-status-update`            | main → renderer | Agent pushed a status badge update           |
+| Channel                            | Direction       | Purpose                                                                                                                            |
+| ---------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt-request`                   | main → renderer | Deliver a new prompt to display                                                                                                    |
+| `intensive-chat-start`             | main → renderer | Signal an intensive chat session has started                                                                                       |
+| `intensive-chat-stop`              | main → renderer | Signal an intensive chat session has ended                                                                                         |
+| `connection-opened`                | main → renderer | A new MCP session was established                                                                                                  |
+| `connection-closed`                | main → renderer | An MCP session was torn down                                                                                                       |
+| `session-channel-created`          | main → renderer | A session channel was created via REST API                                                                                         |
+| `session-channel-deleted`          | main → renderer | A session channel was deleted                                                                                                      |
+| `session-channel-messages-cleared` | main → renderer | Messages for a session were cleared                                                                                                |
+| `session-status-update`            | main → renderer | Agent pushed a status badge update                                                                                                 |
+| `connection-registered`            | main → renderer | `register_connection` completed; carries `connectionId`, `agentName`, `projectName`, `baseDirectory`, `label`, `openCodeSessionId` |
+| `agent-message`                    | main → renderer | `send_message` called; carries `{ connectionId, message }` for live render and persistence                                         |
 
 **IPC invocations and sends** (`ipcRenderer.invoke` / `ipcRenderer.send` wrappers) — the renderer initiates these calls:
 
-| Method                         | IPC mechanism                        | Purpose                                                |
-| ------------------------------ | ------------------------------------ | ------------------------------------------------------ |
-| `sendPromptResponse`           | `send('prompt-response')`            | Deliver the user's typed answer back to `promptUser()` |
-| `queueSessionMessage`          | `send('queue-session-message')`      | Persist an outbound message for the agent              |
-| `getHistory`                   | `invoke('get-history')`              | Fetch conversation history                             |
-| `clearHistory`                 | `invoke('clear-history')`            | Delete all history                                     |
-| `getSettings` / `saveSettings` | `invoke`                             | Read/write settings                                    |
-| `getServerStatus`              | `invoke('get-server-status')`        | Check if server is running and on which port           |
-| `searchFiles`                  | `invoke('search-files')`             | File autocomplete query                                |
-| `openFileDialog`               | `invoke('open-file-dialog')`         | Open native file picker                                |
-| `readFileForAttachment`        | `invoke('read-file-for-attachment')` | Read file contents for attachment                      |
-| `forceTerminateChat`           | `invoke('force-terminate-chat')`     | Terminate a connection's pending prompt                |
-| `dismissSession`               | `invoke('dismiss-session')`          | Terminate + remove a session from the UI               |
-| `restartMcpServer`             | `invoke('restart-mcp-server')`       | Restart the HTTP server                                |
-| `reconnectMcpServer`           | `fetch('/api/reconnect')`            | Direct HTTP call (not IPC)                             |
-| `getPersistedSessionChannels`  | `invoke`                             | Restore sessions on startup                            |
-| `getSessionChannelHistory`     | `invoke`                             | Load per-session message history                       |
-| `clearSessionChannelMessages`  | `invoke`                             | Clear messages for a session                           |
-| `removeSessionChannel`         | `invoke`                             | Remove session channel entirely                        |
+| Method                         | IPC mechanism                        | Purpose                                                                        |
+| ------------------------------ | ------------------------------------ | ------------------------------------------------------------------------------ |
+| `sendPromptResponse`           | `send('prompt-response')`            | Deliver the user's typed answer back to `promptUser()`                         |
+| `queueSessionMessage`          | `send('queue-session-message')`      | Persist an outbound message for the agent                                      |
+| `getHistory`                   | `invoke('get-history')`              | Fetch conversation history                                                     |
+| `clearHistory`                 | `invoke('clear-history')`            | Delete all history                                                             |
+| `getSettings` / `saveSettings` | `invoke`                             | Read/write settings                                                            |
+| `getServerStatus`              | `invoke('get-server-status')`        | Check if server is running and on which port                                   |
+| `searchFiles`                  | `invoke('search-files')`             | File autocomplete query                                                        |
+| `openFileDialog`               | `invoke('open-file-dialog')`         | Open native file picker                                                        |
+| `readFileForAttachment`        | `invoke('read-file-for-attachment')` | Read file contents for attachment                                              |
+| `forceTerminateChat`           | `invoke('force-terminate-chat')`     | Terminate a connection's pending prompt                                        |
+| `dismissSession`               | `invoke('dismiss-session')`          | Terminate + remove a session from the UI                                       |
+| `restartMcpServer`             | `invoke('restart-mcp-server')`       | Restart the HTTP server                                                        |
+| `reconnectMcpServer`           | `fetch('/api/reconnect')`            | Direct HTTP call (not IPC)                                                     |
+| `getPersistedSessionChannels`  | `invoke`                             | Restore sessions on startup                                                    |
+| `getSessionChannelHistory`     | `invoke`                             | Load per-session message history                                               |
+| `clearSessionChannelMessages`  | `invoke`                             | Clear messages for a session                                                   |
+| `removeSessionChannel`         | `invoke`                             | Remove session channel entirely                                                |
+| `injectOpenCodeMessage`        | `invoke('inject-opencode-message')`  | POST a noReply context message to OpenCode ACP endpoint                        |
+| `onConnectionRegistered`       | `ipcRenderer.on` wrapper             | Listen for `connection-registered` fired after `register_connection` completes |
+| `onAgentMessage`               | `ipcRenderer.on` wrapper             | Listen for `agent-message` fired when an agent calls `send_message`            |
 
 ---
 
@@ -412,6 +431,7 @@ index.ts
  │   ├─ database.ts      (createSessionChannel, getUnsentMessages,
  │   │                    getUnsentCount, markMessagesSent, deleteSessionChannel)
  │   └─ tools/
+ │       ├─ register-connection.ts  (registerConnectionTool)
  │       ├─ request-user-input.ts  (registerRequestUserInput)
  │       ├─ notification.ts        (registerNotificationTool)
  │       ├─ intensive-chat.ts      (registerIntensiveChatTools)

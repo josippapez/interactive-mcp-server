@@ -6,13 +6,14 @@ Reference documentation for the Interactive MCP Desktop application settings sys
 
 ## Settings Reference
 
-| Key                    | Type      | Default | UI Label                         | Description                                                                                  |
-| ---------------------- | --------- | ------- | -------------------------------- | -------------------------------------------------------------------------------------------- |
-| `port`                 | `number`  | `3100`  | MCP Server Port                  | TCP port the embedded MCP HTTP server listens on.                                            |
-| `soundEnabled`         | `boolean` | `true`  | Notification Sound               | Whether to play a system beep when a prompt arrives.                                         |
-| `launchAtLogin`        | `boolean` | `false` | Launch at Login                  | Whether the app registers itself as a login item.                                            |
-| `promptTimeoutSeconds` | `number`  | `800`   | Prompt Timeout (seconds)         | Seconds before an unanswered prompt resolves with a timeout error. `0` disables the timeout. |
-| `autoRestoreSessions`  | `boolean` | `false` | Auto-restore unfinished sessions | Whether the renderer reopens persisted session tabs on startup.                              |
+| Key                    | Type      | Default | UI Label                         | Description                                                                                                                                                                                                 |
+| ---------------------- | --------- | ------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `port`                 | `number`  | `3100`  | MCP Server Port                  | TCP port the embedded MCP HTTP server listens on.                                                                                                                                                           |
+| `soundEnabled`         | `boolean` | `true`  | Notification Sound               | Whether to play a system beep when a prompt arrives.                                                                                                                                                        |
+| `launchAtLogin`        | `boolean` | `false` | Launch at Login                  | Whether the app registers itself as a login item.                                                                                                                                                           |
+| `promptTimeoutSeconds` | `number`  | `800`   | Prompt Timeout (seconds)         | Seconds before an unanswered prompt resolves with a timeout error. `0` disables the timeout.                                                                                                                |
+| `autoRestoreSessions`  | `boolean` | `false` | Auto-restore unfinished sessions | Whether the renderer reopens persisted session tabs on startup.                                                                                                                                             |
+| `openCodePort`         | `number`  | `4096`  | OpenCode Port                    | Port the local OpenCode ACP HTTP server listens on. Used by `register_connection` to auto-detect the active OpenCode session, and by the `inject-opencode-message` IPC handler to deliver noReply messages. |
 
 ---
 
@@ -33,7 +34,8 @@ Settings are stored as pretty-printed JSON. The file is created automatically on
   "soundEnabled": true,
   "launchAtLogin": false,
   "promptTimeoutSeconds": 800,
-  "autoRestoreSessions": false
+  "autoRestoreSessions": false,
+  "openCodePort": 4096
 }
 ```
 
@@ -85,6 +87,15 @@ Error: Prompt timed out — no response received.
 
 Read by the renderer process on startup via `window.api.getSettings()`. If `true`, the renderer calls `getPersistedSessionChannels()` (IPC: `get-persisted-session-channels`) and creates a connection tab for each returned session. If `false`, persisted sessions are not reopened automatically and the UI starts with no tabs.
 
+### `openCodePort`
+
+Used in two places:
+
+1. **`register_connection` tool** — `autoDetectOpenCodeSession(openCodePort, baseDirectory)` queries `GET http://localhost:{openCodePort}/session` to find the most recently updated OpenCode session. Called at agent registration time.
+2. **`inject-opencode-message` IPC handler** — reads `currentSettings.openCodePort` at call time to construct the injection URL `http://localhost:{openCodePort}/session/{openCodeSessionId}/message`. The live value is used, so changing the port in Settings takes effect immediately without an app restart.
+
+If OpenCode is not running on the configured port, both operations fail silently: `register_connection` stores `null` for `openCodeSessionId`, and `inject-opencode-message` rejects its promise (which `ChannelComposer` handles by showing an error status badge).
+
 ---
 
 ## Validation Rules
@@ -95,6 +106,7 @@ These rules are enforced in `SettingsView.tsx` before the save function is invok
 | ---------------------- | ------------------------------ | -------------------------------------------- |
 | `port`                 | Integer, `1024 ≤ port ≤ 65535` | "Enter a valid port between 1024 and 65535." |
 | `promptTimeoutSeconds` | Integer, `timeout ≥ 0`         | "Timeout must be 0 or greater."              |
+| `openCodePort`         | Integer, `1024 ≤ port ≤ 65535` | "Enter a valid port between 1024 and 65535." |
 
 Toggle fields (`soundEnabled`, `launchAtLogin`, `autoRestoreSessions`) have no validation; they are boolean and cannot be invalid.
 

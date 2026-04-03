@@ -3,6 +3,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { staleConnectionError } from './connection-guard';
+import { appendSessionChannelMessage } from '../database';
 
 export function registerSessionChannelTools(
   server: McpServer,
@@ -75,6 +76,81 @@ Push a non-blocking status update to the UI. Returns immediately. Use to keep th
         connectionId,
         status,
         type,
+      });
+
+      return {
+        content: [
+          {
+            type: 'text' as const,
+            text: JSON.stringify({ ok: true }),
+          },
+        ],
+      };
+    },
+  );
+}
+
+export function registerSendMessageTool(
+  server: McpServer,
+  getWindow: () => BrowserWindow | null,
+  connectionId: string,
+): void {
+  // ─── Tool: send_message ───
+  server.registerTool(
+    'send_message',
+    {
+      description: `<description>
+Send a visible, persistent message directly into the desktop app channel history. Non-blocking — returns immediately. Use to communicate information to the user without requiring a response.
+</description>
+
+<importantNotes>
+- (!important!) Non-blocking — returns immediately without waiting for user input.
+- (!important!) The message is persisted in channel history and survives app restarts.
+- (!important!) Use this for informational updates that the user should see but doesn't need to reply to.
+- (!important!) For status badges (transient, not persisted), use push_session_status instead.
+</importantNotes>
+
+<whenToUseThisTool>
+- When you want to share a result, summary, or update that the user should read but doesn't need to answer
+- When completing a task and want to send a final summary message
+- When you need to communicate something important mid-task without interrupting the workflow
+</whenToUseThisTool>
+
+<features>
+- Persisted in channel history with a distinct teal/informational visual style
+- Markdown supported
+- Non-blocking: agent continues immediately after the call
+- Scoped to the current connection/session
+</features>
+
+<parameters>
+- message: The message text to display. Markdown is supported.
+</parameters>
+
+<examples>
+- { "message": "Build completed successfully. 3 files changed." }
+- { "message": "## Summary\\n- Fixed 2 bugs\\n- Updated tests" }
+</examples>`,
+      title: 'Send a persistent message to the channel',
+      inputSchema: {
+        message: z
+          .string()
+          .describe('The message text to display. Markdown is supported.'),
+      },
+    },
+    async ({ message }): Promise<CallToolResult> => {
+      const staleErr = staleConnectionError(connectionId);
+      if (staleErr) return staleErr;
+
+      appendSessionChannelMessage({
+        sessionId: connectionId,
+        messageType: 'agent_message',
+        messageText: message,
+      });
+
+      getWindow()?.webContents.send('agent-message', {
+        connectionId,
+        message,
       });
 
       return {

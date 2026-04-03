@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   PromptData,
   ChannelMessage,
@@ -28,7 +28,11 @@ type Props = {
   onSelectOption: (option: string) => void;
   onDismissStatus: (connectionId: string, timestamp: Date) => void;
   onDismissSession: (connectionId: string) => void;
-  onQueueSessionMessage: (sessionId: string, message: string) => void;
+  onQueueSessionMessage: (
+    sessionId: string,
+    message: string,
+    attachments?: Attachment[],
+  ) => void;
   onClearMessages: (sessionId: string) => void;
   onRemoveSession: (sessionId: string) => void;
 };
@@ -55,6 +59,30 @@ export default function PromptView({
   const chatEndRef = useRef<HTMLDivElement>(null);
   const hasHistory = channelMessages.length > 0;
   const idle = !prompt && !activeSession && !hasHistory;
+
+  // Countdown timer — resets whenever a new prompt arrives
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!prompt) {
+      setSecondsLeft(null);
+      return;
+    }
+    setSecondsLeft(prompt.timeoutSeconds);
+    const interval = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev === null || prev <= 0) return 0;
+        return prev - 1;
+      });
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [prompt?.id]); // re-run only when prompt identity changes
+
+  // ID of the last question message that is still awaiting a response
+  const activePromptId = prompt
+    ? ([...channelMessages].reverse().find((m) => m.kind === 'question')?.id ??
+      null)
+    : null;
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -103,15 +131,18 @@ export default function PromptView({
                 </div>
               )}
 
-              {hasHistory && (
+              {prompt && !activeSession && (
+                <PromptMessage prompt={prompt} secondsLeft={secondsLeft} />
+              )}
+
+              {!idle && (
                 <ChatHistoryView
                   messages={channelMessages}
                   chatEndRef={chatEndRef}
+                  activePromptId={activePromptId}
+                  predefinedOptions={prompt?.predefinedOptions}
+                  onSelectOption={onSelectOption}
                 />
-              )}
-
-              {prompt && !activeSession && (
-                <PromptMessage prompt={prompt} secondsLeft={null} />
               )}
 
               {isRestored && !prompt && !activeSession && (
@@ -169,27 +200,16 @@ export default function PromptView({
                     : undefined
                 }
                 placeholder="Message the agent… (⌘+Enter to queue)"
-                onSubmit={(text) => {
+                onSubmit={(text, attachments) => {
                   if (sessionChannel)
-                    onQueueSessionMessage(sessionChannel.sessionId, text);
+                    onQueueSessionMessage(
+                      sessionChannel.sessionId,
+                      text,
+                      attachments,
+                    );
                 }}
               />
             )}
-
-            {prompt?.predefinedOptions &&
-              prompt.predefinedOptions.length > 0 && (
-                <div className="flex flex-wrap gap-1.5 px-4 py-2 border-t border-[var(--color-border)]">
-                  {prompt.predefinedOptions.map((option) => (
-                    <button
-                      key={option}
-                      onClick={() => onSelectOption(option)}
-                      className="px-2.5 py-1 rounded-sm border border-[var(--color-border)] text-xs text-[var(--color-text-muted)] hover:border-[var(--color-user)] hover:text-[var(--color-user)] transition-colors"
-                    >
-                      {option}
-                    </button>
-                  ))}
-                </div>
-              )}
           </>
         ) : (
           <div className="flex-1 flex items-center justify-center text-[var(--color-text-muted)]">

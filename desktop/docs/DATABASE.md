@@ -143,28 +143,61 @@ CREATE TABLE IF NOT EXISTS session_messages (
 ### `session_channel_history`
 
 Append-only audit log of all messages flowing through a session channel.
-Records questions sent to the user, answers received, and outbound messages
-queued by the server.
+Records questions sent to the user, answers received, outbound messages
+queued by the user, and agent-initiated informational messages.
 
 ```sql
 CREATE TABLE IF NOT EXISTS session_channel_history (
   id           INTEGER  PRIMARY KEY AUTOINCREMENT,
   session_id   TEXT     NOT NULL,
-  message_type TEXT     NOT NULL,   -- 'question' | 'answer' | 'outbound'
+  message_type TEXT     NOT NULL,   -- 'question' | 'answer' | 'outbound' | 'agent_message'
   message_text TEXT     NOT NULL,
   attachments  TEXT,                -- JSON array of attachment objects, or NULL
   created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-| Column         | Type     | Nullable | Description                                                                                         |
-| -------------- | -------- | -------- | --------------------------------------------------------------------------------------------------- |
-| `id`           | INTEGER  | No       | Auto-incrementing primary key. Used to preserve insertion order on reads.                           |
-| `session_id`   | TEXT     | No       | Foreign reference to `session_channels.session_id`.                                                 |
-| `message_type` | TEXT     | No       | `'question'` — prompt sent to user; `'answer'` — user reply; `'outbound'` — server-queued message.  |
-| `message_text` | TEXT     | No       | Full message content.                                                                               |
-| `attachments`  | TEXT     | Yes      | JSON-serialised array of attachment objects (same shape as `conversations.attachments`), or `NULL`. |
-| `created_at`   | DATETIME | No       | Row creation timestamp.                                                                             |
+| Column         | Type     | Nullable | Description                                                                                                                                                          |
+| -------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`           | INTEGER  | No       | Auto-incrementing primary key. Used to preserve insertion order on reads.                                                                                            |
+| `session_id`   | TEXT     | No       | Foreign reference to `session_channels.session_id`.                                                                                                                  |
+| `message_type` | TEXT     | No       | `'question'` — prompt sent to user; `'answer'` — user reply; `'outbound'` — user-queued message; `'agent_message'` — agent informational message via `send_message`. |
+| `message_text` | TEXT     | No       | Full message content.                                                                                                                                                |
+| `attachments`  | TEXT     | Yes      | JSON-serialised array of attachment objects (same shape as `conversations.attachments`), or `NULL`.                                                                  |
+| `created_at`   | DATETIME | No       | Row creation timestamp.                                                                                                                                              |
+
+---
+
+### `registered_connections`
+
+Persists named agent connections registered via the `register_connection` MCP tool. One row per registered agent. Rows survive app restarts and are used to restore channel identity when an agent reconnects.
+
+```sql
+CREATE TABLE IF NOT EXISTS registered_connections (
+  connection_id        TEXT     PRIMARY KEY,
+  agent_name           TEXT     NOT NULL,
+  project_name         TEXT     NOT NULL,
+  base_directory       TEXT,
+  open_code_session_id TEXT,
+  created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+| Column                 | Type     | Nullable | Description                                                                                                                                                                                  |
+| ---------------------- | -------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connection_id`        | TEXT     | No       | The `connectionId` UUID for the MCP session (primary key).                                                                                                                                   |
+| `agent_name`           | TEXT     | No       | Human-readable agent name supplied to `register_connection` (e.g. `"Claude Code - my-project"`).                                                                                             |
+| `project_name`         | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                              |
+| `base_directory`       | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied.                                                                                                                   |
+| `open_code_session_id` | TEXT     | Yes      | The OpenCode ACP session ID auto-detected at registration time. Used by `inject-opencode-message` to route noReply injections. `NULL` if OpenCode was not reachable or returned no sessions. |
+| `created_at`           | DATETIME | No       | Row creation timestamp.                                                                                                                                                                      |
+
+#### `open_code_session_id` lifecycle
+
+- **Set** during `register_connection`: `autoDetectOpenCodeSession(openCodePort, baseDirectory)` queries `GET /session?directory={baseDirectory}` (with fallback to `GET /session`) and stores the most recently updated session ID.
+- **Cleared** (`NULL`) when the OpenCode API is unreachable (2-second timeout) or returns no sessions.
+- **Used** by the `inject-opencode-message` IPC handler whenever the user sends a message from `ChannelComposer`.
+- **Not automatically refreshed** — if the OpenCode session ID changes after registration, the agent should call `register_connection` again.
 
 ---
 

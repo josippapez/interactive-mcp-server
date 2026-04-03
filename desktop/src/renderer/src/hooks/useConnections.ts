@@ -53,7 +53,7 @@ function parseAttachments(
 
 function toChannelMessage(record: {
   id: number;
-  messageType: 'question' | 'answer' | 'outbound';
+  messageType: 'question' | 'answer' | 'outbound' | 'agent_message';
   messageText: string;
   attachments: string | null;
   createdAt: string;
@@ -105,11 +105,19 @@ export function useConnections(onActivatePromptTab: () => void) {
     setConnections((prev) => {
       const conn = prev.get(connectionId);
       if (!conn) return prev;
+      const dbMessages = records.map(toChannelMessage);
+      // Merge: keep live messages that are not already covered by a DB record.
+      // A live message is considered a duplicate if a DB record shares the same
+      // kind and text (DB records are the authoritative persisted version).
+      const liveIds = new Set(dbMessages.map((m) => `${m.kind}::${m.text}`));
+      const dedupedLive = conn.channelMessages.filter(
+        (m) => !liveIds.has(`${m.kind}::${m.text}`),
+      );
+      const merged = [...dbMessages, ...dedupedLive].sort(
+        (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+      );
       const next = new Map(prev);
-      next.set(connectionId, {
-        ...conn,
-        channelMessages: records.map(toChannelMessage),
-      });
+      next.set(connectionId, { ...conn, channelMessages: merged });
       return next;
     });
   }, []);
@@ -326,6 +334,14 @@ export function useConnections(onActivatePromptTab: () => void) {
         unreadCount: 0,
       }));
     });
+
+    window.api.onAgentMessage?.((data) => {
+      pushMessage(data.connectionId, {
+        kind: 'agent_message',
+        text: data.message,
+        timestamp: new Date(),
+      });
+    });
   }, [loadChannelHistory, withConnection]);
 
   useEffect(() => {
@@ -401,7 +417,9 @@ export function useConnections(onActivatePromptTab: () => void) {
   }, []);
 
   const handleQueueSessionMessage = useCallback(
-    (sessionId: string, message: string) => {
+    (sessionId: string, message: string, attachments?: Attachment[]) => {
+      const outboundId = `local-outbound-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
       // Always queue in SQLite for VS Code extension polling
       window.api.queueSessionMessage(sessionId, message);
       withConnection(sessionId, (conn) => ({
@@ -409,10 +427,11 @@ export function useConnections(onActivatePromptTab: () => void) {
         channelMessages: [
           ...conn.channelMessages,
           {
-            id: `local-outbound-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            kind: 'outbound',
+            id: outboundId,
+            kind: 'outbound' as const,
             text: message,
             timestamp: new Date(),
+            attachments,
           },
         ],
       }));
@@ -422,9 +441,17 @@ export function useConnections(onActivatePromptTab: () => void) {
       if (!conn?.openCodeSessionId) return;
       const openCodeSessionId = conn.openCodeSessionId;
       void window.api
-        .injectOpenCodeMessage?.(openCodeSessionId, message)
+        .injectOpenCodeMessage?.(openCodeSessionId, message, attachments)
         .then((result) => {
-          if (result.ok) return;
+          if (result.ok) {
+            withConnection(sessionId, (c) => ({
+              ...c,
+              channelMessages: c.channelMessages.map((m) =>
+                m.id === outboundId ? { ...m, sent: true } : m,
+              ),
+            }));
+            return;
+          }
           withConnection(sessionId, (c) => ({
             ...c,
             sessionStatuses: [

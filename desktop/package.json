@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@tailwindcss/typography": "^0.5.19",
     "express": "^5.1.0",
     "react-markdown": "^10.1.0",
     "react-syntax-highlighter": "^16.1.1",

@@ -58,19 +58,17 @@ React.StrictMode
         │   ├── PromptView                 (always mounted, visibility via CSS)
         │   │   ├── ChannelSidebar
         │   │   ├── ChannelHeader
-        │   │   ├── [intensive-chat banner] (inline JSX)
-        │   │   ├── ChatHistoryView
-        │   │   │   └── MarkdownContent ×n
-        │   │   ├── PromptMessage          (when prompt && !activeSession)
-        │   │   │   ├── MarkdownContent
-        │   │   │   └── CollapsibleSection (when message > 10 lines)
+        │   │   ├── [intensive-chat banner] (inline JSX, when activeSession)
+        │   │   ├── PromptMessage          (when prompt && !activeSession — thin banner only)
+        │   │   ├── ChatHistoryView        (when !idle)
+        │   │   │   ├── MarkdownContent ×n
+        │   │   │   └── [predefined option buttons] (inline under active question)
         │   │   ├── [awaiting reconnection state] (inline JSX)
         │   │   ├── [idle state]           (inline JSX)
         │   │   ├── SessionChannelBar      (when sessionChannel present)
-        │   │   ├── ChannelComposer
-        │   │   │   ├── AutocompleteDropdown (when suggestions active)
-        │   │   │   └── AttachmentPreview    (when attachments present)
-        │   │   └── [predefined option buttons] (inline JSX)
+        │   │   └── ChannelComposer
+        │   │       ├── AutocompleteDropdown (when suggestions active)
+        │   │       └── AttachmentPreview    (when attachments present)
         │   ├── HistoryView                (conditional — tab === 'history')
         │   │   └── CollapsibleSection ×n
         │   │       └── MarkdownContent ×n
@@ -140,20 +138,20 @@ Central state manager for all MCP connections. Owns the `Map<string, ConnectionS
 
 #### Returned values
 
-| Value                        | Type                                                   | Description                                                                                                                                    |
-| ---------------------------- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connections`                | `Map<string, ConnectionState>`                         | All known connections/channels, keyed by connection ID.                                                                                        |
-| `activeConnectionId`         | `string \| null`                                       | ID of the currently selected connection in the sidebar.                                                                                        |
-| `setActiveConnectionId`      | `Dispatch<SetStateAction<string \| null>>`             | Setter for the active connection.                                                                                                              |
-| `activeConn`                 | `ConnectionState \| null`                              | Derived: `connections.get(activeConnectionId)` or `null`.                                                                                      |
-| `clientInfo`                 | `{ model?: string; mode?: string } \| undefined`       | Most recently received client info from a prompt request.                                                                                      |
-| `handleSubmit`               | `(answer: string, attachments?: Attachment[]) => void` | Submits an answer for the active connection's pending prompt.                                                                                  |
-| `handleSelectOption`         | `(option: string) => void`                             | Submits a predefined option as the answer for the active prompt.                                                                               |
-| `handleDismissStatus`        | `(connectionId: string, timestamp: Date) => void`      | Removes a `SessionStatus` entry by timestamp.                                                                                                  |
-| `handleDismissSession`       | `(connectionId: string) => void`                       | Calls `window.api.dismissSession` to close the tab in the UI without removing the session channel.                                             |
-| `handleQueueSessionMessage`  | `(sessionId: string, message: string) => void`         | Queues a message for the session via `window.api.queueSessionMessage` and optimistically appends an `'outbound'` message to `channelMessages`. |
-| `handleClearChannelMessages` | `(sessionId: string) => void`                          | Calls `window.api.clearSessionChannelMessages` to clear DB history for the session.                                                            |
-| `handleRemoveSession`        | `(sessionId: string) => void`                          | Calls `window.api.removeSessionChannel` to delete the session channel entirely.                                                                |
+| Value                        | Type                                                                       | Description                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `connections`                | `Map<string, ConnectionState>`                                             | All known connections/channels, keyed by connection ID.                                                                                                                                                                                                                                                                                                            |
+| `activeConnectionId`         | `string \| null`                                                           | ID of the currently selected connection in the sidebar.                                                                                                                                                                                                                                                                                                            |
+| `setActiveConnectionId`      | `Dispatch<SetStateAction<string \| null>>`                                 | Setter for the active connection.                                                                                                                                                                                                                                                                                                                                  |
+| `activeConn`                 | `ConnectionState \| null`                                                  | Derived: `connections.get(activeConnectionId)` or `null`.                                                                                                                                                                                                                                                                                                          |
+| `clientInfo`                 | `{ model?: string; mode?: string } \| undefined`                           | Most recently received client info from a prompt request.                                                                                                                                                                                                                                                                                                          |
+| `handleSubmit`               | `(answer: string, attachments?: Attachment[]) => void`                     | Submits an answer for the active connection's pending prompt.                                                                                                                                                                                                                                                                                                      |
+| `handleSelectOption`         | `(option: string) => void`                                                 | Submits a predefined option as the answer for the active prompt.                                                                                                                                                                                                                                                                                                   |
+| `handleDismissStatus`        | `(connectionId: string, timestamp: Date) => void`                          | Removes a `SessionStatus` entry by timestamp.                                                                                                                                                                                                                                                                                                                      |
+| `handleDismissSession`       | `(connectionId: string) => void`                                           | Calls `window.api.dismissSession` to close the tab in the UI without removing the session channel.                                                                                                                                                                                                                                                                 |
+| `handleQueueSessionMessage`  | `(sessionId: string, message: string, attachments?: Attachment[]) => void` | Queues a message for the session via `window.api.queueSessionMessage` and optimistically appends an `'outbound'` message to `channelMessages`. When an OpenCode session is active, also calls `window.api.injectOpenCodeMessage` with the message and attachments; image attachments are saved to temp files and referenced by path, text attachments are inlined. |
+| `handleClearChannelMessages` | `(sessionId: string) => void`                                              | Calls `window.api.clearSessionChannelMessages` to clear DB history for the session.                                                                                                                                                                                                                                                                                |
+| `handleRemoveSession`        | `(sessionId: string) => void`                                              | Calls `window.api.removeSessionChannel` to delete the session channel entirely.                                                                                                                                                                                                                                                                                    |
 
 #### Internal design
 
@@ -293,7 +291,7 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
 | `onSelectOption`        | `(option) => void`                              | Forward to `handleSelectOption`.                                      |
 | `onDismissStatus`       | `(connectionId, timestamp) => void`             | Forward to `handleDismissStatus`.                                     |
 | `onDismissSession`      | `(connectionId) => void`                        | Forward to `handleDismissSession`.                                    |
-| `onQueueSessionMessage` | `(sessionId, message) => void`                  | Forward to `handleQueueSessionMessage`.                               |
+| `onQueueSessionMessage` | `(sessionId, message, attachments?) => void`    | Forward to `handleQueueSessionMessage`.                               |
 | `onClearMessages`       | `(sessionId) => void`                           | Forward to `handleClearChannelMessages`.                              |
 | `onRemoveSession`       | `(sessionId) => void`                           | Forward to `handleRemoveSession`.                                     |
 
@@ -308,13 +306,12 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
 1. **No active connection** → "No channels yet." empty state.
 2. **Active connection present**:
    - Intensive-chat banner shown when `activeSession !== null` (includes a "✕ Terminate" button that calls `window.api.forceTerminateChat`).
-   - `ChatHistoryView` shown when `channelMessages.length > 0`.
-   - `PromptMessage` shown when `prompt && !activeSession`.
+   - `PromptMessage` shown when `prompt && !activeSession` — renders a thin project badge + optional countdown timer (no message text).
+   - `ChatHistoryView` shown when `!idle` (i.e., any of: prompt is set, activeSession is set, or `channelMessages.length > 0`). The active question message is highlighted with a colored left border and a pulsing dot; predefined option buttons appear inline below it.
    - "Awaiting agent reconnection" state shown when `isRestored && !prompt && !activeSession`.
    - Idle state ("Waiting for prompt from MCP client…") shown when `!prompt && !activeSession && channelMessages.length === 0` (`idle === true`).
    - `SessionChannelBar` shown when `sessionChannel !== null`.
    - `ChannelComposer` always rendered: enabled with prompt-submit behavior when `prompt` is set; enabled for session queuing when `sessionChannel` is set; otherwise disabled.
-   - Predefined option buttons rendered below the composer when `prompt.predefinedOptions` is non-empty.
 
 ---
 
@@ -437,24 +434,30 @@ Scrollable list of all `ChannelMessage` entries for the current connection.
 
 #### Props
 
-| Prop         | Type                                | Description                            |
-| ------------ | ----------------------------------- | -------------------------------------- |
-| `messages`   | `ChannelMessage[]`                  | Messages to render.                    |
-| `chatEndRef` | `RefObject<HTMLDivElement \| null>` | Ref for the scroll-to-bottom sentinel. |
+| Prop                | Type                                    | Description                                                                                            |
+| ------------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `messages`          | `ChannelMessage[]`                      | Messages to render.                                                                                    |
+| `chatEndRef`        | `RefObject<HTMLDivElement \| null>`     | Ref for the scroll-to-bottom sentinel.                                                                 |
+| `activePromptId`    | `string \| null \| undefined`           | ID of the last unanswered question message. That message gets a colored left border and a pulsing dot. |
+| `predefinedOptions` | `string[] \| undefined`                 | Options from the active prompt. Rendered as inline buttons directly below the active question message. |
+| `onSelectOption`    | `(option: string) => void \| undefined` | Called when a predefined option button is clicked.                                                     |
 
 #### Message rendering
 
-| `kind`       | Role label | CSS class   |
-| ------------ | ---------- | ----------- |
-| `'question'` | `Agent`    | `msg-agent` |
-| `'answer'`   | `You`      | `msg-user`  |
-| `'outbound'` | `Queued`   | `msg-user`  |
+| `kind`            | Role label | CSS class        |
+| ----------------- | ---------- | ---------------- |
+| `'question'`      | `Agent`    | `msg-agent`      |
+| `'answer'`        | `You`      | `msg-user`       |
+| `'outbound'`      | `Queued`   | `msg-user`       |
+| `'agent_message'` | `Agent`    | `msg-agent-info` |
 
 Each message shows:
 
 - Role label + timestamp (`HH:MM` via `toLocaleTimeString`).
+- A pulsing dot before the role label when the message is the active (unanswered) question.
 - Message text rendered through `MarkdownContent`.
 - Attachment name badges (📎 prefix) if `msg.attachments` is non-empty.
+- Inline predefined option buttons (below the message body) when `msg.id === activePromptId` and `predefinedOptions` is non-empty.
 
 ---
 
@@ -462,7 +465,7 @@ Each message shows:
 
 **File:** `components/prompt/PromptMessage.tsx`
 
-Renders an active unanswered prompt from the agent. Wrapped in `React.memo`.
+Thin banner rendered above `ChatHistoryView` when a prompt is active but no intensive-chat session is running. Wrapped in `React.memo`.
 
 #### Props
 
@@ -473,11 +476,10 @@ Renders an active unanswered prompt from the agent. Wrapped in `React.memo`.
 
 #### Key behaviors
 
-- If `prompt.projectName` is truthy, a styled badge is shown above the message.
+- Renders only when `prompt.projectName` is truthy **or** `secondsLeft !== null`. Returns `null` otherwise (no DOM output).
+- If `prompt.projectName` is truthy, a styled project badge is shown.
 - If `secondsLeft !== null`, a countdown timer is shown: normal style when `> 60s`, warning style at `≤ 60s`, error style at `0`.
-- If `prompt.message` has **more than 10 lines** (split on `\n`), the message is wrapped in a `CollapsibleSection` (title: "Full message", `defaultOpen: true`, `borderColor: "#5599dd"`).
-- Otherwise the message is rendered directly with `msg-agent` CSS class.
-- Message text is always rendered via `MarkdownContent`.
+- The prompt message text is **not** rendered here — it is displayed as a `'question'` `ChannelMessage` inside `ChatHistoryView`.
 
 ---
 
@@ -706,6 +708,8 @@ Renders a markdown string using `react-markdown` with GitHub Flavored Markdown a
   - Background override: `#111111` (dark) / `#f8fafc` (light).
 - Inline `<code>` elements use standard Tailwind prose classes.
 - All prose color tokens (`prose-headings`, `prose-p`, `prose-a`, etc.) are resolved through `var(--color-*)` CSS custom properties.
+- Paragraph spacing is set to `prose-p:my-1` (4px top/bottom) to keep the compact chat layout while preserving visible line breaks between paragraphs.
+- Requires `@tailwindcss/typography` (`@plugin '@tailwindcss/typography'` in `main.css`) for `prose` classes to take effect.
 
 ---
 
@@ -898,18 +902,17 @@ useConnections — onPromptRequest handler
   └─ activateRef.current()   // switches App to 'prompt' tab
            │
            ▼
-  App re-renders → PromptView receives updated props:
-    prompt = PromptData
-    hasPendingPrompt = true (→ pulsing badge on sidebar / tab)
-    channelMessages += new 'question' message
-           │
-           ▼
-  PromptView renders:
-    ├─ ChatHistoryView shows the question message
-    ├─ PromptMessage renders prompt.message (markdown)
-    │   └─ CollapsibleSection if message > 10 lines
-    ├─ ChannelComposer enabled, placeholder = "Type your answer…"
-    └─ Predefined option buttons if prompt.predefinedOptions is set
+   App re-renders → PromptView receives updated props:
+     prompt = PromptData
+     hasPendingPrompt = true (→ pulsing badge on sidebar / tab)
+     channelMessages += new 'question' message
+            │
+            ▼
+   PromptView renders:
+     ├─ PromptMessage renders project badge + countdown (no message text)
+     ├─ ChatHistoryView shows the question message with active-prompt styling
+     │   └─ Predefined option buttons rendered inline below the active question
+     ├─ ChannelComposer enabled, placeholder = "Type your answer…"
            │
            │  User types and presses ⌘+Enter (or clicks Send)
            ▼

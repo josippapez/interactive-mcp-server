@@ -33,7 +33,7 @@ export type ConversationRecord = {
 export type SessionChannelHistoryRecord = {
   id: number;
   sessionId: string;
-  messageType: 'question' | 'answer' | 'outbound';
+  messageType: 'question' | 'answer' | 'outbound' | 'agent_message';
   messageText: string;
   attachments: string | null;
   createdAt: string;
@@ -161,15 +161,24 @@ const api = {
     ipcRenderer.send('queue-session-message', { sessionId, message });
   },
 
-  // Inject a noReply context message into an OpenCode session
+  // Inject a message into an OpenCode session (visible in session log, no agent response triggered)
   injectOpenCodeMessage: (
     openCodeSessionId: string,
     message: string,
+    attachments?: Attachment[],
   ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('inject-opencode-message', {
       openCodeSessionId,
       message,
+      attachments,
     }),
+
+  // Fired when the agent sends a message via send_message tool
+  onAgentMessage: (
+    callback: (data: { connectionId: string; message: string }) => void,
+  ): void => {
+    ipcRenderer.on('agent-message', (_event, data) => callback(data));
+  },
 
   // Fired when POST /api/sessions creates a new channel
   onSessionChannelCreated: (

@@ -19,7 +19,10 @@ import {
 } from './ipc-prompt';
 import { registerRequestUserInput } from './tools/request-user-input';
 import { registerIntensiveChatTools } from './tools/intensive-chat';
-import { registerSessionChannelTools } from './tools/session-channel';
+import {
+  registerSessionChannelTools,
+  registerSendMessageTool,
+} from './tools/session-channel';
 import { registerConnectionTool } from './tools/register-connection';
 import {
   createSessionChannel,
@@ -92,6 +95,7 @@ function createMcpServerWithTools(
     connectionName,
   );
   registerSessionChannelTools(server, getWindow, connectionId);
+  registerSendMessageTool(server, getWindow, connectionId);
   registerConnectionTool(server, getWindow, connectionId, getOpenCodePort);
   return server;
 }
@@ -502,11 +506,13 @@ export async function startMcpServer(
       status: 'ok',
       activeClients,
       tools: [
+        'register_connection',
         'request_user_input',
         'start_intensive_chat',
         'ask_intensive_chat',
         'stop_intensive_chat',
         'push_session_status',
+        'send_message',
       ],
     });
   });

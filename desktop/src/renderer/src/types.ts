@@ -18,7 +18,7 @@ export type PromptData = {
   clientInfo?: { model?: string; mode?: string };
 };
 
-export type MessageKind = 'question' | 'answer' | 'outbound';
+export type MessageKind = 'question' | 'answer' | 'outbound' | 'agent_message';
 
 export type ChannelMessage = {
   id: string;
@@ -26,6 +26,8 @@ export type ChannelMessage = {
   text: string;
   timestamp: Date;
   attachments?: Attachment[];
+  /** True once an outbound message has been successfully injected into OpenCode */
+  sent?: boolean;
 };
 
 export type SessionStatus = {

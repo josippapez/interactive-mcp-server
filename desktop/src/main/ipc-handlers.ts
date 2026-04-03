@@ -1,6 +1,8 @@
 import { app, ipcMain, dialog, BrowserWindow } from 'electron';
-import { readFileSync } from 'fs';
-import { basename } from 'path';
+import { readFileSync, writeFileSync } from 'fs';
+import { basename, join } from 'path';
+import { tmpdir } from 'os';
+import { randomUUID } from 'crypto';
 import { AppSettings, saveSettings } from './settings';
 import {
   getConversationHistory,
@@ -218,23 +220,60 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     },
   );
 
-  // Inject a noReply context message into an OpenCode session via its HTTP API
+  // Inject a message into an OpenCode session via its HTTP API.
+  // Uses noReply:true so the message is visible in the session log but does not trigger an agent response (no premium request cost).
+  // Attachments are saved to temp files and referenced by path in the message text (same approach as the TUI version).
   ipcMain.handle(
     'inject-opencode-message',
     async (
       _event,
-      data: { openCodeSessionId: string; message: string },
+      data: {
+        openCodeSessionId: string;
+        message: string;
+        attachments?: {
+          data: string;
+          mimeType: string;
+          name: string;
+          size: number;
+        }[];
+      },
     ): Promise<{ ok: boolean; error?: string }> => {
       const port = deps.getSettings().openCodePort;
       const url = `http://localhost:${port}/session/${encodeURIComponent(data.openCodeSessionId)}/message`;
+
+      // Build the full message text: start with the user's message, then append
+      // attachment references as file paths (images saved to temp, text inlined).
+      let fullText = data.message;
+      for (const att of data.attachments ?? []) {
+        if (att.mimeType.startsWith('image/')) {
+          // Save image to a temp file and reference by path
+          const ext =
+            att.mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
+          const tempPath = join(
+            tmpdir(),
+            `imcp-attachment-${randomUUID()}.${ext}`,
+          );
+          try {
+            writeFileSync(tempPath, Buffer.from(att.data, 'base64'));
+            fullText += `\n\n[Image file: ${tempPath}]`;
+          } catch {
+            // If we can't write the temp file, skip this attachment
+          }
+        } else {
+          // Text file: inline the content
+          fullText += `\n\n--- File: ${att.name} ---\n${att.data}`;
+        }
+      }
+
+      const parts: { type: 'text'; text: string }[] = [
+        { type: 'text', text: fullText },
+      ];
+
       try {
         const res = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            noReply: true,
-            parts: [{ type: 'text', text: data.message }],
-          }),
+          body: JSON.stringify({ noReply: true, parts }),
         });
         if (!res.ok) {
           const body = await res.text().catch(() => '');
