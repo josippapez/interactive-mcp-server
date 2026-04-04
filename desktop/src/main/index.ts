@@ -10,6 +10,8 @@ import {
   startSessionTreeManager,
   stopSessionTreeManager,
 } from './session-tree-manager';
+import { startOpenCodeServer, stopOpenCodeServer } from './opencode-server';
+import { syncBridgeConfig } from './opencode-config-sync';
 
 let mainWindow: BrowserWindow | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -32,6 +34,10 @@ app.whenReady().then(async () => {
     openAsHidden: currentSettings.launchAtLogin,
   });
 
+  // Sync the bridge config into the user's OpenCode config
+  const syncResult = syncBridgeConfig();
+  console.log(`[bridge-config] ${syncResult}`);
+
   // Register IPC handlers
   registerIpcHandlers({
     getMainWindow: () => mainWindow,
@@ -48,6 +54,7 @@ app.whenReady().then(async () => {
     () => currentSettings.soundEnabled,
     () => currentSettings.promptTimeoutSeconds * 1000,
     () => currentSettings.openCodePort,
+    () => currentSettings.docIndexingEnabled,
   );
 
   // Start session-tree sync (replaces old poller)
@@ -55,6 +62,11 @@ app.whenReady().then(async () => {
     () => mainWindow,
     () => currentSettings.openCodePort,
   );
+
+  // Auto-start OpenCode serve if enabled
+  if (currentSettings.autoStartOpenCode) {
+    startOpenCodeServer(currentSettings.openCodePort);
+  }
 
   const openedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
   mainWindow = createWindow(() => isQuitting, {
@@ -88,6 +100,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   isQuitting = true;
   stopSessionTreeManager();
+  stopOpenCodeServer();
   stopMcpServer();
 });
 
