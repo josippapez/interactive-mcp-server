@@ -1,6 +1,6 @@
 # Automatic Repository Doc Indexing — Design Plan
 
-> **Status: Planned.** This document describes the design for automatic repository documentation indexing and context injection in the Interactive MCP Desktop app.
+> **Status: Shipped.** This feature is fully implemented. The modules described below (`doc-indexer.ts`, `doc-context-injector.ts`, `tools/find-repo-docs.ts`) exist in the codebase and are active. The `find_repo_docs` MCP tool is registered on every connection, doc manifests are injected on `register_connection`, and the background semantic indexer runs in a worker thread. See [`TOOLS.md`](./TOOLS.md#find_repo_docs) for the tool reference and [`ARCHITECTURE.md`](./ARCHITECTURE.md) for module placement.
 
 ---
 

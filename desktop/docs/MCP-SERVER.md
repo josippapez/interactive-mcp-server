@@ -1,6 +1,6 @@
 # MCP Server — Implementation Reference
 
-**Source:** `desktop/src/main/mcp-server.ts`
+**Source:** `desktop/src/main/mcp-server.ts`, `desktop/src/main/api-routes.ts`
 
 ---
 
@@ -133,10 +133,10 @@ These endpoints operate on the database-backed session channel store. They are u
 
 ### Utility Endpoints
 
-| Method | Path             | Description                                                                                         |
-| ------ | ---------------- | --------------------------------------------------------------------------------------------------- |
-| `POST` | `/api/reconnect` | No-op acknowledgement endpoint (legacy). Always returns `{ ok: true, cleared: 0, message: "..." }`. |
-| `GET`  | `/health`        | Returns server status, active connection count, and registered tool names.                          |
+| Method | Path             | Description                                                                                                                                                                   |
+| ------ | ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST` | `/api/reconnect` | Soft-restart: clears all in-memory MCP sessions but keeps the HTTP listener running. Returns `{ ok: true, cleared: <n>, message: "..." }` with the count of cleared sessions. |
+| `GET`  | `/health`        | Returns server status, active connection count, and registered tool names.                                                                                                    |
 
 **`GET /health` response shape:**
 
@@ -234,17 +234,36 @@ If `handleTransparentReinit` throws at any point, the `POST /mcp` handler catche
 
 ## Session Files
 
-Two session files are written whenever a new connection is established, and deleted whenever a session is closed or the server is restarted.
+Three files are written whenever a new connection is established, and deleted whenever a session is closed or the server is restarted. The session file logic is extracted to `desktop/src/main/session-file.ts`.
 
-| Path                              | Purpose                                                                                  |
-| --------------------------------- | ---------------------------------------------------------------------------------------- |
-| `<os.tmpdir()>/imcp-session.json` | System temp — accessible to any process on the machine                                   |
-| `<process.cwd()>/.imcp-session`   | CWD-relative — accessible to processes in the same working directory (e.g., a local CLI) |
+| Path                                 | Purpose                                                                                                |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
+| `<os.tmpdir()>/imcp-session.json`    | System temp — accessible to any process on the machine                                                 |
+| `<process.cwd()>/.imcp-session`      | CWD-relative — accessible to processes in the same working directory (e.g., a local CLI)               |
+| `<os.tmpdir()>/imcp-mcp-config.json` | Ready-to-use MCP server config snippet with bridge and HTTP connection options for OpenCode and others |
 
-Both files contain the same JSON payload:
+The session file (`imcp-session.json` and `.imcp-session`) contains:
 
 ```json
-{ "sessionId": "<connectionId>", "port": <port> }
+{ "sessionId": "<connectionId>", "port": <port>, "bridgePath": "/path/to/desktop-bridge.cjs" }
+```
+
+The `bridgePath` field is included when the bridge script can be resolved (see [Stdio Bridge](./TOOLS.md#stdio-bridge-desktop-bridgecjs)).
+
+The MCP config hint file (`imcp-mcp-config.json`) contains ready-to-use configuration:
+
+```json
+{
+  "interactive-desktop": {
+    "type": "local",
+    "command": "node",
+    "args": ["/path/to/desktop-bridge.cjs"]
+  },
+  "interactive-desktop-http": {
+    "type": "remote",
+    "url": "http://localhost:3100/mcp"
+  }
+}
 ```
 
 Note: `sessionId` in the file is the internal `connectionId` (a UUID generated per connection), **not** the MCP transport session ID used in `Mcp-Session-Id` headers. Write and delete operations on both paths are wrapped in try/catch and are non-critical — a failure to write or delete a session file does not affect connection handling.
@@ -268,6 +287,9 @@ Each accepted connection receives its own isolated `McpServer` instance. Isolati
 | `registerNotificationTool`    | `message_complete_notification`                                     |
 | `registerIntensiveChatTools`  | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` |
 | `registerSessionChannelTools` | `push_session_status`                                               |
+| `registerSendMessageTool`     | `send_message`                                                      |
+| `registerConnectionTool`      | `register_connection`                                               |
+| `registerFindRepoDocsTool`    | `find_repo_docs`                                                    |
 
 Both `connectionId` and `connectionName` are passed to tool registrations that need to route IPC or database operations to the correct renderer session (e.g., prompts routed to the correct input bar, cancellation tied to the right connection).
 
@@ -309,7 +331,25 @@ Calls `httpServer.closeAllConnections()` and `httpServer.close()`. Sets `httpSer
 stopMcpServer() → clearSessionFile() → startMcpServer(_startParams...)
 ```
 
-Requires that `_startParams` was populated by a prior `startMcpServer` call. If called before `startMcpServer` has ever run, it is a no-op.
+Requires that `_startParams` was populated by a prior `startMcpServer` call. If called before `startMcpServer` has ever run, it is a no-op. This is a **hard restart** — the HTTP listener is stopped entirely and all in-memory sessions are lost. Clients will see `ECONNREFUSED` until the new server is listening. Used when the port changes (via Settings).
+
+### `softRestartMcpServer()`
+
+Clears all in-memory MCP sessions (transports, servers, active prompts) but **keeps the HTTP listener running**. Each session's transport and server are closed, active prompts are cancelled via `cancelActivePrompt`, session channels are deleted from SQLite, and the renderer is notified with `connection-closed` and `session-channel-deleted` IPC events.
+
+The next client request will trigger either:
+
+- A fresh `initialize` handshake (per MCP spec), or
+- A **transparent session resurrection** — the server creates a new session internally, runs the MCP handshake behind the scenes, and forwards the original request so the client never sees an error.
+
+This is the preferred approach for in-app "reconnect" operations since it avoids the TCP downtime window that causes OpenCode (and other `type: "remote"` clients) to require manual toggling.
+
+**Accessible via:**
+
+- IPC: `reconnect-mcp-server` handler (called from Settings UI)
+- REST: `POST /api/reconnect` endpoint (returns `{ ok, cleared, message }`)
+
+Returns the number of sessions that were cleared, or `0` if the server is not running.
 
 ### `closeSessionByConnectionId(connectionId)`
 

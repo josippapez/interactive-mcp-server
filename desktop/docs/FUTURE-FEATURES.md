@@ -40,7 +40,7 @@ When the user sends a message from `ChannelComposer`, the desktop app now delive
 1. **Queue path** — `queueSessionMessage` persists to SQLite for VS Code extension polling.
 2. **Injection path** — `injectOpenCodeMessage` POSTs `{ noReply: true, parts: [{ type: "text", text }] }` to `http://localhost:{openCodePort}/session/{openCodeSessionId}/message`.
 
-Injection failure is non-fatal: an error status badge is shown in `SessionChannelBar` and the queue path always completes regardless.
+Injection failure is non-fatal: an error status badge is shown in `AgentStatusBar` and the queue path always completes regardless.
 
 ### Commits
 

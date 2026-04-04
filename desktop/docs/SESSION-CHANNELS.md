@@ -118,12 +118,13 @@ All IPC events travel from the **main process to the renderer** via `webContents
 
 ### Events emitted by the session channel system
 
-| Event                              | Payload                          | Trigger                                                                  |
-| ---------------------------------- | -------------------------------- | ------------------------------------------------------------------------ |
-| `session-channel-created`          | `{ sessionId, label? }`          | `POST /api/sessions` or new MCP connection initialization                |
-| `session-channel-deleted`          | `{ sessionId }`                  | `transport.onclose`, `DELETE /mcp`, or `DELETE /api/sessions/:sessionId` |
-| `session-channel-messages-cleared` | `{ sessionId }`                  | `window.api.clearSessionChannelMessages(sessionId)` called from renderer |
-| `session-status-update`            | `{ connectionId, status, type }` | `push_session_status` MCP tool invoked by the agent                      |
+| Event                              | Payload                          | Trigger                                                                                      |
+| ---------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------- |
+| `session-channel-created`          | `{ sessionId, label? }`          | `POST /api/sessions` or new MCP connection initialization                                    |
+| `session-channel-deleted`          | `{ sessionId }`                  | `transport.onclose`, `DELETE /mcp`, or `DELETE /api/sessions/:sessionId`                     |
+| `session-channel-messages-cleared` | `{ sessionId }`                  | `window.api.clearSessionChannelMessages(sessionId)` called from renderer                     |
+| `session-status-update`            | `{ connectionId, status, type }` | `push_session_status` MCP tool invoked by the agent                                          |
+| `session-tree-updated`             | `SessionTreeNode[]`              | Session-tree manager poll (~2 s), or immediately after `register_connection`/session removal |
 
 > `session-channel-created` is also sent as part of the standard `connection-opened` IPC flow. See [MCP-SERVER.md](./MCP-SERVER.md#ipc-events-sent-to-renderer) for the full connection event reference.
 
@@ -143,17 +144,30 @@ These calls are initiated from the renderer and handled in the main process via 
 
 ## Session Files
 
-When a new MCP connection is established, two session files are written. External tools read these files to discover the active `sessionId` and `port` without requiring any out-of-band configuration.
+When a new MCP connection is established, session files are written. External tools read these files to discover the active `sessionId` and `port` without requiring any out-of-band configuration.
 
-| Path                              | Accessible to                                               |
-| --------------------------------- | ----------------------------------------------------------- |
-| `<os.tmpdir()>/imcp-session.json` | Any process on the machine (system temp directory)          |
-| `<process.cwd()>/.imcp-session`   | Processes running in the same working directory as the host |
+| Path                                 | Accessible to                                               |
+| ------------------------------------ | ----------------------------------------------------------- |
+| `<os.tmpdir()>/imcp-session.json`    | Any process on the machine (system temp directory)          |
+| `<process.cwd()>/.imcp-session`      | Processes running in the same working directory as the host |
+| `<os.tmpdir()>/imcp-mcp-config.json` | Any process on the machine — MCP config hint for OpenCode   |
 
-Both files contain the same JSON payload:
+The session file (`imcp-session.json` / `.imcp-session`) contains:
 
 ```json
 { "sessionId": "<connectionId>", "port": <port> }
+```
+
+The MCP config hint file (`imcp-mcp-config.json`) contains a ready-to-use MCP server configuration snippet that external tools (like `opencode-config-sync`) can merge into their MCP config. It includes the `bridgePath` when available:
+
+```json
+{
+  "interactive-desktop": {
+    "type": "local",
+    "command": "node",
+    "args": ["/path/to/tools/mcp/desktop-bridge.cjs"]
+  }
+}
 ```
 
 > `sessionId` here is the `connectionId` UUID generated per connection — the same value used as `session_id` in the database tables. It is **not** the `Mcp-Session-Id` transport header value used in the MCP protocol itself.
@@ -183,7 +197,7 @@ The `push_session_status` MCP tool allows the agent to post a non-blocking statu
 
 - **Tool invocation:** Agent calls `push_session_status` with `{ status: string, type: string }`.
 - **IPC event fired:** `session-status-update` → `{ connectionId, status, type }`.
-- **Renderer behavior:** `SessionChannelBar` displays the latest status string. A dismiss button is shown so the user can clear it. The update is non-blocking — it does not pause tool execution or require user interaction.
+- **Renderer behavior:** `AgentStatusBar` displays the latest status string. A dismiss button is shown so the user can clear it. The update is non-blocking — it does not pause tool execution or require user interaction.
 
 | Field          | Type   | Description                                                         |
 | -------------- | ------ | ------------------------------------------------------------------- |
@@ -220,7 +234,7 @@ Content-Type: application/json
 }
 ```
 
-The `noReply: true` flag tells OpenCode to inject the text as **context only** — the agent receives it in its next context window but does not generate a response immediately.
+The `noReply: true` flag tells OpenCode to inject the text as **context only** — the agent receives it in its next context window but does not generate a response immediately. This behavior is controlled by the **Context-only messages** setting (`noReplyInjection`, default `true`). When the setting is `false`, the `noReply` flag is omitted and the agent will respond to the injected message.
 
 Attachments are encoded as plain-text references appended to the single `text` part, mirroring the TUI approach:
 
@@ -242,21 +256,21 @@ When a subagent is spawned via OpenCode's Task tool and calls `register_connecti
 
 A `parentSessionId` on connection A links it as a child of connection B when B's `openCodeSessionId` matches A's `parentSessionId`. Connections with no matching parent are shown at the top level.
 
-#### Session-tree poller (placeholder entries)
+#### Session-tree manager
 
-The main process runs a background poller every 4 seconds that queries the OpenCode API for all active sessions and identifies descendant sessions that haven't yet registered a connection in the app. For each such session, it fires a `child-sessions-detected` IPC event to the renderer with `{ openCodeSessionId, parentOpenCodeSessionId }`.
+The main process runs a `session-tree-manager` that polls the OpenCode API every ~2 seconds. It queries all active sessions, builds a depth-annotated tree, and merges the results with `registered_connections` from SQLite. On each poll, it emits a `session-tree-updated` IPC event to the renderer containing a flat array of `SessionTreeNode` objects (see [`IPC-API.md — Session Tree`](./IPC-API.md#session-tree) for the full type).
 
-The renderer creates a **placeholder** sidebar entry immediately so the parent-child tree is visible even before the subagent calls `register_connection`. Placeholder entries show:
+The renderer uses `session-tree-updated` to build the parent-child sidebar hierarchy. Sessions that appear in the OpenCode tree but have no `connectionId` (i.e., the subagent has not yet called `register_connection`) are shown as **placeholder** sidebar entries:
 
 - Name: `"Subagent (connecting…)"` (italic, muted)
 - A grey pulsing dot instead of the unread-count badge
-- The `↳` child prefix under the parent entry
+- Indented under the parent entry
 
 When the subagent subsequently calls `register_connection`, the placeholder is replaced by the real connection entry and the pulsing dot disappears.
 
 ### Failure handling
 
-If the `injectOpenCodeMessage` IPC call fails (e.g. OpenCode is no longer running, network error), `SessionChannelBar` displays an error status badge. The message is still persisted to the queue path regardless of injection success or failure.
+If the `injectOpenCodeMessage` IPC call fails (e.g. OpenCode is no longer running, network error), `AgentStatusBar` displays an error status badge. The message is still persisted to the queue path regardless of injection success or failure.
 
 ### IPC handler
 

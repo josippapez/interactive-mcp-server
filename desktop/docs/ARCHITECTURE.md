@@ -91,7 +91,7 @@ Interactive MCP Desktop is an Electron application that acts as a desktop UI for
 │   │    ├─ ChatHistoryView (Q&A messages)                         │
 │   │    ├─ ChannelComposer (text input + file attachments)        │
 │   │    ├─ ChannelHeader   (session controls)                     │
-│   │    └─ SessionChannelBar (status badges)                      │
+│   │    └─ AgentStatusBar  (status badges)                        │
 │   ├─ [History tab]  HistoryView                                  │
 │   └─ [Settings tab] SettingsView                                 │
 │                                                                  │
@@ -109,23 +109,28 @@ The main process is the application's Node.js runtime. It bootstraps in `index.t
 
 1. `initDatabase()` — open or create `conversations.db` in Electron's `userData` directory.
 2. `loadSettings()` — read `settings.json` from `userData`; fall back to defaults if absent.
-3. `registerIpcHandlers()` — install all `ipcMain.handle` and `ipcMain.on` listeners.
-4. `startMcpServer()` — bind Express to the configured port (default `3100`).
-5. `createWindow()` — create the `BrowserWindow`; hide it immediately if the app was opened at login.
-6. `createTray()` — create the system-tray icon.
+3. `syncBridgeConfig()` — ensure `~/.config/opencode/opencode.json` has the correct `interactive-desktop` MCP entry pointing to the bridge script (see [OpenCode Config Sync](#opencode-config-sync)).
+4. `registerIpcHandlers()` — install all `ipcMain.handle` and `ipcMain.on` listeners.
+5. `startMcpServer()` — bind Express to the configured port (default `3100`).
+6. `createWindow()` — create the `BrowserWindow`; hide it immediately if the app was opened at login.
+7. `createTray()` — create the system-tray icon.
+8. If `autoStartOpenCode` is enabled, `startOpenCodeServer(openCodePort)` — spawn `opencode serve` as a managed child process.
+9. Start the session-tree manager poller — polls OpenCode API every 2 seconds for session hierarchy updates.
 
 #### `mcp-server.ts`
 
-Owns the Express app and all HTTP routes. Key responsibilities:
+Owns the Express app and all HTTP routes. REST API routes have been extracted to `api-routes.ts`. Key responsibilities:
 
 - **Session map** — an in-memory `Record<sessionId, { transport, server, connectionId }>` tracking every live MCP session.
-- **Session creation** — when `POST /mcp` arrives with an `initialize` body, a new `McpServer` is created (one per connection), a `StreamableHTTPServerTransport` is instantiated with a random UUID session ID, and all tools are registered via the four `register*` helpers.
+- **Session creation** — when `POST /mcp` arrives with an `initialize` body, a new `McpServer` is created (one per connection), a `StreamableHTTPServerTransport` is instantiated with a random UUID session ID, and all tools are registered via the `register*` helpers.
 - **Transparent session resurrection** — when a request arrives with a stale (unknown) `Mcp-Session-Id` header and a non-`initialize` body (e.g. a tool call from a reconnecting agent), the server silently creates a new session, runs the full MCP protocol handshake internally using synthetic request/response objects, patches the `Mcp-Session-Id` response header, and then replays the original request body. The client never receives an error.
-- **Session file** — on every new connection, `{ sessionId, port }` is written to both `/tmp/imcp-session.json` and `<cwd>/.imcp-session`. These files let external tooling discover the active session without polling the HTTP API.
+- **Soft restart** — `softRestartMcpServer()` clears all in-memory MCP sessions (transports, servers, active prompts) without stopping the HTTP listener. The next client request triggers a fresh initialize handshake or transparent reinit. Accessible via `POST /api/reconnect` and the `reconnect-mcp-server` IPC handler.
+- **Session file** — on every new connection, session metadata is written to `/tmp/imcp-session.json`, `<cwd>/.imcp-session`, and `/tmp/imcp-mcp-config.json` (MCP config hint with bridge path). See `session-file.ts`.
 - **Session teardown** — `transport.onclose` fires when a transport closes, which cancels any pending prompt (via `cancelActivePrompt`), deletes the session channel from SQLite, removes the session file, and sends `connection-closed` to the renderer.
-- **REST API** (`/api/sessions/*`) — a separate set of endpoints that let external processes (e.g. VS Code extensions) create, poll, and delete session channels without going through the MCP protocol.
+- **REST API** (`/api/sessions/*`, `/api/reconnect`) — extracted to `api-routes.ts`. A separate set of endpoints that let external processes create, poll, and delete session channels. The `/api/reconnect` endpoint triggers the soft restart.
 - **`/health`** — returns active client count and the list of registered tool names.
 - **`restartMcpServer()`** — closes the HTTP server and re-creates it with the same parameters; used when the port is changed in Settings.
+- **`softRestartMcpServer()`** — clears all sessions without stopping the listener; preferred for in-app reconnect operations.
 
 #### `ipc-prompt.ts`
 
@@ -226,6 +231,9 @@ Persists `AppSettings` as a JSON file at `<userData>/settings.json`. Defaults:
 | `promptTimeoutSeconds` | `800`   |
 | `autoRestoreSessions`  | `false` |
 | `openCodePort`         | `4096`  |
+| `docIndexingEnabled`   | `true`  |
+| `noReplyInjection`     | `true`  |
+| `autoStartOpenCode`    | `false` |
 
 #### `file-indexer.ts`
 
@@ -250,11 +258,12 @@ Each file exports one `register*` function called during `createMcpServerWithToo
 
 | File                     | Tool(s) registered                                                  | Description                                                                                                                                                                                                                                                                                                 |
 | ------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `register-connection.ts` | `register_connection`                                               | Registers a named agent channel. Upserts `registered_connections` in SQLite, writes a `/tmp` ID file, renames the session channel, and auto-detects the active OpenCode session via `autoDetectOpenCodeSession()`. Sends `connection-registered` IPC to the renderer.                                       |
+| `register-connection.ts` | `register_connection`                                               | Registers a named agent channel. Upserts `registered_connections` in SQLite, writes a `/tmp` ID file, renames the session channel, auto-detects the active OpenCode session, and triggers doc indexing if enabled. Sends `connection-registered` IPC to the renderer.                                       |
 | `request-user-input.ts`  | `request_user_input`                                                | Sends a prompt to the user and waits for the typed response. Supports predefined option chips, file attachments, and `baseDirectory` for autocomplete.                                                                                                                                                      |
 | `notification.ts`        | `message_complete_notification`                                     | Fires a native OS notification (Electron `Notification` API). Non-blocking.                                                                                                                                                                                                                                 |
 | `intensive-chat.ts`      | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` | A three-tool lifecycle for persistent multi-question sessions. `start_intensive_chat` generates a UUID session ID and sends `intensive-chat-start` to the renderer. `ask_intensive_chat` routes through `promptUser` like a normal prompt. `stop_intensive_chat` cleans up and sends `intensive-chat-stop`. |
 | `session-channel.ts`     | `push_session_status`, `send_message`                               | `push_session_status`: sends a non-blocking status badge update to the renderer via `webContents.send('session-status-update', ...)`. `send_message`: persists an `agent_message` row to `session_channel_history` and fires `agent-message` IPC to the renderer for live display. Both return immediately. |
+| `find-repo-docs.ts`      | `find_repo_docs`                                                    | Searches repository documentation using hybrid keyword + semantic search. Returns ranked file paths, scores, and snippet previews. Only available when the agent registered with a `baseDirectory`. See [`TOOLS.md`](./TOOLS.md#find_repo_docs).                                                            |
 
 ---
 
@@ -351,7 +360,7 @@ On mount, the hook:
 | `PromptMessage`        | Renders a single Q&A message with optional attachment previews and markdown.                                                           |
 | `ChannelComposer`      | Text input with autocomplete dropdown, file attachment button, and submit. Calls `searchFiles` via `window.api` for path autocomplete. |
 | `ChannelHeader`        | Shows session name, force-terminate and dismiss buttons.                                                                               |
-| `SessionChannelBar`    | Renders `SessionStatus` badges from `push_session_status` calls.                                                                       |
+| `AgentStatusBar`       | Renders `SessionStatus` badges from `push_session_status` calls. (Previously `SessionChannelBar`.)                                     |
 | `AttachmentPreview`    | Shows image thumbnail or file-name chip for queued attachments.                                                                        |
 | `AutocompleteDropdown` | Dropdown overlay populated by `searchFiles` results.                                                                                   |
 | `HistoryView`          | Displays `conversations` table records fetched via `getHistory`.                                                                       |
@@ -418,11 +427,12 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
 index.ts
  ├─ database.ts          (initDatabase)
  ├─ settings.ts          (loadSettings)
+ ├─ opencode-config-sync.ts (syncBridgeConfig)
  ├─ ipc-handlers.ts      (registerIpcHandlers)
  │   ├─ database.ts
  │   ├─ settings.ts
  │   ├─ mcp-server.ts    (startMcpServer, stopMcpServer, restartMcpServer,
- │   │                    closeSessionByConnectionId)
+ │   │                    softRestartMcpServer, closeSessionByConnectionId)
  │   ├─ file-indexer.ts  (indexFiles, rankFileSuggestions)
  │   └─ ipc-prompt.ts    (forceTerminateChat)
  ├─ mcp-server.ts        (startMcpServer)
@@ -430,12 +440,22 @@ index.ts
  │   │                    cancelActivePrompt)
  │   ├─ database.ts      (createSessionChannel, getUnsentMessages,
  │   │                    getUnsentCount, markMessagesSent, deleteSessionChannel)
+ │   ├─ session-file.ts  (writeSessionFile, clearSessionFile, writeMcpConfigHint,
+ │   │                    resolveBridgePath)
+ │   ├─ api-routes.ts    (createApiRouter — extracted REST endpoints)
  │   └─ tools/
  │       ├─ register-connection.ts  (registerConnectionTool)
  │       ├─ request-user-input.ts  (registerRequestUserInput)
  │       ├─ notification.ts        (registerNotificationTool)
  │       ├─ intensive-chat.ts      (registerIntensiveChatTools)
- │       └─ session-channel.ts     (registerSessionChannelTools)
+ │       ├─ session-channel.ts     (registerSessionChannelTools, registerSendMessageTool)
+ │       └─ find-repo-docs.ts      (registerFindRepoDocsTool)
+ ├─ opencode-server.ts   (startOpenCodeServer, stopOpenCodeServer)
+ ├─ session-tree-manager.ts (startSessionTreePoller, stopSessionTreePoller)
+ ├─ doc-indexer.ts        (warmUp, findDocs, searchDocs — worker-thread semantic indexer)
+ ├─ doc-context-injector.ts (initDocContext — doc discovery + manifest injection)
+ ├─ window.ts            (createWindow)
+ └─ tray.ts              (createTray)
  ├─ window.ts            (createWindow)
  └─ tray.ts              (createTray)
 
@@ -448,11 +468,14 @@ preload/index.ts
 
 renderer/src/App.tsx
  ├─ hooks/useConnections.ts
+ │   ├─ hooks/useIpcListeners.ts   (extracted IPC event handler registration)
+ │   ├─ hooks/useChannelHistory.ts (extracted channel history loading)
+ │   ├─ hooks/useOpenCodeInjection.ts (extracted OpenCode message injection)
  │   └─ window.api       (all event listeners and invoke calls)
  ├─ hooks/useGlobalShortcuts.ts
- └─ components/
+ └─ pages/
      ├─ PromptView.tsx   → prompt/ChannelSidebar, ChatHistoryView,
-     │                     ChannelComposer, ChannelHeader, SessionChannelBar
+     │                     ChannelComposer, ChannelHeader, AgentStatusBar
      ├─ HistoryView.tsx  → window.api.getHistory
      └─ SettingsView.tsx → window.api.getSettings / saveSettings
 ```

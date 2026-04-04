@@ -6,14 +6,17 @@ Reference documentation for the Interactive MCP Desktop application settings sys
 
 ## Settings Reference
 
-| Key                    | Type      | Default | UI Label                         | Description                                                                                                                                                                                                 |
-| ---------------------- | --------- | ------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `port`                 | `number`  | `3100`  | MCP Server Port                  | TCP port the embedded MCP HTTP server listens on.                                                                                                                                                           |
-| `soundEnabled`         | `boolean` | `true`  | Notification Sound               | Whether to play a system beep when a prompt arrives.                                                                                                                                                        |
-| `launchAtLogin`        | `boolean` | `false` | Launch at Login                  | Whether the app registers itself as a login item.                                                                                                                                                           |
-| `promptTimeoutSeconds` | `number`  | `800`   | Prompt Timeout (seconds)         | Seconds before an unanswered prompt resolves with a timeout error. `0` disables the timeout.                                                                                                                |
-| `autoRestoreSessions`  | `boolean` | `false` | Auto-restore unfinished sessions | Whether the renderer reopens persisted session tabs on startup.                                                                                                                                             |
-| `openCodePort`         | `number`  | `4096`  | OpenCode Port                    | Port the local OpenCode ACP HTTP server listens on. Used by `register_connection` to auto-detect the active OpenCode session, and by the `inject-opencode-message` IPC handler to deliver noReply messages. |
+| Key                    | Type      | Default | UI Label                         | Description                                                                                                                                                                                                                                                      |
+| ---------------------- | --------- | ------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `port`                 | `number`  | `3100`  | MCP Server Port                  | TCP port the embedded MCP HTTP server listens on.                                                                                                                                                                                                                |
+| `soundEnabled`         | `boolean` | `true`  | Notification Sound               | Whether to play a system beep when a prompt arrives.                                                                                                                                                                                                             |
+| `launchAtLogin`        | `boolean` | `false` | Launch at Login                  | Whether the app registers itself as a login item.                                                                                                                                                                                                                |
+| `promptTimeoutSeconds` | `number`  | `800`   | Prompt Timeout (seconds)         | Seconds before an unanswered prompt resolves with a timeout error. `0` disables the timeout.                                                                                                                                                                     |
+| `autoRestoreSessions`  | `boolean` | `false` | Auto-restore unfinished sessions | Whether the renderer reopens persisted session tabs on startup.                                                                                                                                                                                                  |
+| `openCodePort`         | `number`  | `4096`  | OpenCode API Port                | Port the local OpenCode ACP HTTP server listens on. Used by `register_connection` to auto-detect the active OpenCode session, by the `inject-opencode-message` IPC handler to deliver messages, and by `opencode-server.ts` when auto-starting `opencode serve`. |
+| `docIndexingEnabled`   | `boolean` | `true`  | Repository Doc Indexing          | Whether to index repository markdown files and inject a doc manifest into the agent's OpenCode session when an agent calls `register_connection` with a `baseDirectory`. When disabled, `find_repo_docs` falls back to keyword-only search.                      |
+| `noReplyInjection`     | `boolean` | `true`  | Context-only messages            | When `true`, injected messages use `noReply: true` (context-only — the agent receives the message but does not generate a response). When `false`, injected messages trigger the agent to respond.                                                               |
+| `autoStartOpenCode`    | `boolean` | `false` | Auto-start OpenCode server       | When `true`, the app spawns `opencode serve --port {openCodePort}` as a managed child process on startup. The process is killed when the app quits. Requires the `opencode` binary to be installed and on `PATH` (or at `~/.opencode/bin/opencode`).             |
 
 ---
 
@@ -35,7 +38,10 @@ Settings are stored as pretty-printed JSON. The file is created automatically on
   "launchAtLogin": false,
   "promptTimeoutSeconds": 800,
   "autoRestoreSessions": false,
-  "openCodePort": 4096
+  "openCodePort": 4096,
+  "docIndexingEnabled": true,
+  "noReplyInjection": true,
+  "autoStartOpenCode": false
 }
 ```
 
@@ -89,12 +95,57 @@ Read by the renderer process on startup via `window.api.getSettings()`. If `true
 
 ### `openCodePort`
 
-Used in two places:
+Used in three places:
 
 1. **`register_connection` tool** — `autoDetectOpenCodeSession(openCodePort, baseDirectory)` queries `GET http://localhost:{openCodePort}/session` to find the most recently updated OpenCode session. Called at agent registration time.
 2. **`inject-opencode-message` IPC handler** — reads `currentSettings.openCodePort` at call time to construct the injection URL `http://localhost:{openCodePort}/session/{openCodeSessionId}/message`. The live value is used, so changing the port in Settings takes effect immediately without an app restart.
+3. **`autoStartOpenCode`** — when auto-start is enabled, the managed `opencode serve` child process is spawned with `--port {openCodePort}`.
 
 If OpenCode is not running on the configured port, both operations fail silently: `register_connection` stores `null` for `openCodeSessionId`, and `inject-opencode-message` rejects its promise (which `ChannelComposer` handles by showing an error status badge).
+
+### `docIndexingEnabled`
+
+Controls whether the app indexes repository documentation when an agent calls `register_connection` with a `baseDirectory`. Read by `register_connection` at call time.
+
+When **enabled** (default):
+
+1. A doc manifest (paths + titles) is injected into the agent's OpenCode session via `noReply`.
+2. A background embedding worker is warmed up to build a semantic index.
+3. The `find_repo_docs` tool uses hybrid keyword + semantic search.
+
+When **disabled**:
+
+1. `register_connection` skips manifest injection and background indexing.
+2. `find_repo_docs` falls back to keyword-only search (no semantic augmentation).
+
+### `noReplyInjection`
+
+Controls whether messages injected into the OpenCode ACP session use `noReply: true` (context-only) or `noReply: false` (triggers an agent response). Read at call time by the `inject-opencode-message` IPC handler.
+
+When **enabled** (default, `noReply: true`):
+
+- Injected messages appear in the agent's context window but the agent does not immediately generate a response. This is the recommended mode for most workflows.
+
+When **disabled** (`noReply: false`):
+
+- Injected messages trigger the agent to respond, equivalent to the user typing directly in the agent's session.
+
+### `autoStartOpenCode`
+
+Controls whether the app spawns `opencode serve` as a managed child process on startup. Implemented in `desktop/src/main/opencode-server.ts`.
+
+When **enabled**:
+
+1. On app startup (after `loadSettings()`), `startOpenCodeServer(openCodePort)` is called.
+2. The function locates the `opencode` binary at `~/.opencode/bin/opencode` or falls back to the system `PATH`.
+3. `opencode serve --port {openCodePort}` is spawned with `detached: false` (dies with the parent process).
+4. stdout/stderr are piped and logged with a `[opencode-server]` prefix.
+5. If the port changes in Settings, the old process is killed and a new one is spawned.
+6. On app quit, `stopOpenCodeServer()` sends `SIGTERM` to the child process.
+
+When **disabled** (default):
+
+- No child process is spawned. The user is expected to run `opencode serve` manually.
 
 ---
 
@@ -108,7 +159,7 @@ These rules are enforced in `SettingsView.tsx` before the save function is invok
 | `promptTimeoutSeconds` | Integer, `timeout ≥ 0`         | "Timeout must be 0 or greater."              |
 | `openCodePort`         | Integer, `1024 ≤ port ≤ 65535` | "Enter a valid port between 1024 and 65535." |
 
-Toggle fields (`soundEnabled`, `launchAtLogin`, `autoRestoreSessions`) have no validation; they are boolean and cannot be invalid.
+Toggle fields (`soundEnabled`, `launchAtLogin`, `autoRestoreSessions`, `docIndexingEnabled`, `noReplyInjection`, `autoStartOpenCode`) have no validation; they are boolean and cannot be invalid.
 
 ---
 
@@ -151,15 +202,15 @@ The handler performs the following steps in order:
 
 ## Implementation Reference
 
-| Concern                    | File                                                   | Symbol                                    |
-| -------------------------- | ------------------------------------------------------ | ----------------------------------------- |
-| Type definition & defaults | `desktop/src/main/settings.ts`                         | `AppSettings`, `defaultSettings`          |
-| Load / save from disk      | `desktop/src/main/settings.ts`                         | `loadSettings()`, `saveSettings()`        |
-| Settings path              | `desktop/src/main/settings.ts`                         | `getSettingsPath()`                       |
-| Startup initialization     | `desktop/src/main/index.ts`                            | `currentSettings = loadSettings()`        |
-| IPC handlers               | `desktop/src/main/ipc-handlers.ts`                     | `get-settings`, `save-settings`           |
-| Sound & timeout wiring     | `desktop/src/main/ipc-prompt.ts`                       | `setSoundEnabled()`, `setPromptTimeout()` |
-| Settings UI                | `desktop/src/renderer/src/components/SettingsView.tsx` | `SettingsView`                            |
+| Concern                    | File                                              | Symbol                                    |
+| -------------------------- | ------------------------------------------------- | ----------------------------------------- |
+| Type definition & defaults | `desktop/src/main/settings.ts`                    | `AppSettings`, `defaultSettings`          |
+| Load / save from disk      | `desktop/src/main/settings.ts`                    | `loadSettings()`, `saveSettings()`        |
+| Settings path              | `desktop/src/main/settings.ts`                    | `getSettingsPath()`                       |
+| Startup initialization     | `desktop/src/main/index.ts`                       | `currentSettings = loadSettings()`        |
+| IPC handlers               | `desktop/src/main/ipc-handlers.ts`                | `get-settings`, `save-settings`           |
+| Sound & timeout wiring     | `desktop/src/main/ipc-prompt.ts`                  | `setSoundEnabled()`, `setPromptTimeout()` |
+| Settings UI                | `desktop/src/renderer/src/pages/SettingsView.tsx` | `SettingsView`                            |
 
 ### Load behavior
 

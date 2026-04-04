@@ -665,17 +665,18 @@ Attachments are supported by both `request_user_input` and `ask_intensive_chat`.
 
 These Electron IPC events are used internally between the main process and the renderer. They are not part of the MCP tool surface but are documented here for completeness.
 
-| Channel                   | Direction       | Payload                                                                                              | Triggered by                                                    |
-| ------------------------- | --------------- | ---------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `prompt-request`          | main → renderer | `PromptData`                                                                                         | `request_user_input`, `ask_intensive_chat`                      |
-| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                                                                       | User submits a prompt reply                                     |
-| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                                                                 | `start_intensive_chat`                                          |
-| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                                                                        | `stop_intensive_chat`                                           |
-| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                                                                     | `push_session_status`                                           |
-| `agent-message`           | main → renderer | `{ connectionId, message }`                                                                          | `send_message`                                                  |
-| `connection-registered`   | main → renderer | `{ connectionId, agentName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                           |
-| `child-sessions-detected` | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                   | Session-tree poller (every 4 s) detects unregistered subagents  |
-| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string)` (IPC invoke)                                          | `ChannelComposer` message send when OpenCode session is present |
+| Channel                   | Direction       | Payload                                                                                              | Triggered by                                                                                         |
+| ------------------------- | --------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `prompt-request`          | main → renderer | `PromptData`                                                                                         | `request_user_input`, `ask_intensive_chat`                                                           |
+| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                                                                       | User submits a prompt reply                                                                          |
+| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                                                                 | `start_intensive_chat`                                                                               |
+| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                                                                        | `stop_intensive_chat`                                                                                |
+| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                                                                     | `push_session_status`                                                                                |
+| `agent-message`           | main → renderer | `{ connectionId, message }`                                                                          | `send_message`                                                                                       |
+| `connection-registered`   | main → renderer | `{ connectionId, agentName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                                                                |
+| `child-sessions-detected` | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                   | _(Deprecated — replaced by `session-tree-updated`.)_ Formerly fired by the background poller.        |
+| `session-tree-updated`    | main → renderer | `SessionTreeNode[]` (see [`IPC-API.md`](./IPC-API.md#session-tree))                                  | Session-tree manager (~2 s poll) delivers a full snapshot of all OpenCode sessions + MCP connections |
+| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string)` (IPC invoke)                                          | `ChannelComposer` message send when OpenCode session is present                                      |
 
 ---
 

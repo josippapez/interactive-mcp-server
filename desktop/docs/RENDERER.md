@@ -12,8 +12,13 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
 4. [Theme System](#4-theme-system)
 5. [Hooks Reference](#5-hooks-reference)
    - [useConnections](#51-useconnections)
-   - [useGlobalShortcuts](#52-useglobalshortcuts)
-   - [useTheme](#53-usetheme)
+   - [useIpcListeners](#52-useipclisteners)
+   - [useOpenCodeInjection](#53-useopenCodeinjection)
+   - [useAttachments](#54-useattachments)
+   - [useAutocomplete](#55-useautocomplete)
+   - [useChannelHistory](#56-usechannelhistory)
+   - [useGlobalShortcuts](#57-useglobalshortcuts)
+   - [useTheme](#58-usetheme)
 6. [Components](#6-components)
    - [App](#61-app)
    - [PromptView](#62-promptview)
@@ -22,7 +27,7 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
    - [ChannelComposer](#65-channelcomposer)
    - [ChatHistoryView](#66-chathistoryview)
    - [PromptMessage](#67-promptmessage)
-   - [SessionChannelBar](#68-sessionchannelbar)
+   - [SessionChannelBar (AgentStatusBar)](#68-agentstatusbar)
    - [AutocompleteDropdown](#69-autocompletedropdown)
    - [AttachmentPreview](#610-attachmentpreview)
    - [HistoryView](#611-historyview)
@@ -56,7 +61,7 @@ React.StrictMode
         │   └── TabButton × 3             (inline in App.tsx)
         ├── <main>
         │   ├── PromptView                 (always mounted, visibility via CSS)
-        │   │   ├── ChannelSidebar
+        │   │   ├── ChannelSidebar         (pages/PromptView.tsx)
         │   │   ├── ChannelHeader
         │   │   ├── [intensive-chat banner] (inline JSX, when activeSession)
         │   │   ├── PromptMessage          (when prompt && !activeSession — thin banner only)
@@ -65,14 +70,15 @@ React.StrictMode
         │   │   │   └── [predefined option buttons] (inline under active question)
         │   │   ├── [awaiting reconnection state] (inline JSX)
         │   │   ├── [idle state]           (inline JSX)
-        │   │   ├── SessionChannelBar      (when sessionChannel present)
+        │   │   ├── AgentStatusBar         (when sessionChannel present)
         │   │   └── ChannelComposer
         │   │       ├── AutocompleteDropdown (when suggestions active)
         │   │       └── AttachmentPreview    (when attachments present)
         │   ├── HistoryView                (conditional — tab === 'history')
-        │   │   └── CollapsibleSection ×n
+        │   │   └── CollapsibleSection ×n  (pages/HistoryView.tsx)
         │   │       └── MarkdownContent ×n
         │   └── SettingsView               (conditional — tab === 'settings')
+        │                                  (pages/SettingsView.tsx)
         ├── StatusBar                      (always visible)
         └── ShortcutHelpModal              (overlaid when showShortcuts === true)
 ```
@@ -185,7 +191,47 @@ When a `pushMessage` call targets a connection that is **not** the currently act
 
 ---
 
-### 5.2 `useGlobalShortcuts`
+### 5.2 `useIpcListeners`
+
+**File:** `hooks/useIpcListeners.ts`
+
+Extracted hook that registers all Electron IPC event listeners (`onConnectionOpened`, `onConnectionClosed`, `onPromptRequest`, `onIntensiveChatStart`, `onIntensiveChatStop`, `onSessionStatusUpdate`, `onSessionChannelCreated`, `onSessionChannelDeleted`, `onSessionChannelMessagesCleared`, `onAgentMessage`, `onSessionTreeUpdated`). Called once by `useConnections`. Keeps listener registration behind a `listenersRegistered` ref to prevent double-registration in `React.StrictMode`.
+
+---
+
+### 5.3 `useOpenCodeInjection`
+
+**File:** `hooks/useOpenCodeInjection.ts`
+
+Extracted hook that handles the OpenCode message injection logic. When the user sends a message via the composer and an `openCodeSessionId` is present on the active connection, this hook calls `window.api.injectOpenCodeMessage` alongside the queue path. Manages error state for injection failures.
+
+---
+
+### 5.4 `useAttachments`
+
+**File:** `hooks/useAttachments.ts`
+
+Extracted hook for managing file attachments in `ChannelComposer`. Handles image paste events, file picker dialog, reading files via `window.api.readFileForAttachment`, and maintaining the attachment array state.
+
+---
+
+### 5.5 `useAutocomplete`
+
+**File:** `hooks/useAutocomplete.ts`
+
+Extracted hook for the `#` / `@` file autocomplete in `ChannelComposer`. Manages trigger detection, debounced `window.api.searchFiles` calls, suggestion list state, keyboard navigation (arrow keys, Enter, Tab, Escape), and suggestion application.
+
+---
+
+### 5.6 `useChannelHistory`
+
+**File:** `hooks/useChannelHistory.ts`
+
+Extracted hook for loading and managing channel message history. Calls `window.api.getSessionChannelHistory` when a session channel is attached and provides the `pushMessage` / `appendAnswerMessage` helpers used by `useConnections`.
+
+---
+
+### 5.7 `useGlobalShortcuts`
 
 **File:** `hooks/useGlobalShortcuts.ts`
 
@@ -218,7 +264,7 @@ Registers a single `keydown` listener on `document` for application-wide keyboar
 
 ---
 
-### 5.3 `useTheme`
+### 5.8 `useTheme`
 
 **File:** `ThemeContext.tsx`
 
@@ -269,7 +315,7 @@ A co-located internal component (not exported). Props:
 
 ### 6.2 `PromptView`
 
-**File:** `components/PromptView.tsx`
+**File:** `pages/PromptView.tsx`
 
 The main prompt interaction view. Renders the two-column layout: a fixed-width sidebar on the left and a flexible content area on the right.
 
@@ -285,7 +331,7 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
 | `channelMessages`       | `ChannelMessage[]`                              | Full message history for the current connection.                      |
 | `connectionId`          | `string \| null`                                | Same as `activeConnectionId`; used for `forceTerminateChat` call.     |
 | `sessionChannel`        | `{ sessionId: string; label?: string } \| null` | Session channel metadata if one is attached.                          |
-| `sessionStatuses`       | `SessionStatus[]`                               | Status updates for the `SessionChannelBar`.                           |
+| `sessionStatuses`       | `SessionStatus[]`                               | Status updates for the `AgentStatusBar`.                              |
 | `isRestored`            | `boolean`                                       | Whether this connection was restored from DB (no live transport yet). |
 | `onSubmit`              | `(answer, attachments?) => void`                | Forward to `handleSubmit` from `useConnections`.                      |
 | `onSelectOption`        | `(option) => void`                              | Forward to `handleSelectOption`.                                      |
@@ -312,6 +358,8 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
    - Idle state ("Waiting for prompt from MCP client…") shown when `!prompt && !activeSession && channelMessages.length === 0` (`idle === true`).
    - `SessionChannelBar` shown when `sessionChannel !== null`.
    - `ChannelComposer` always rendered: enabled with prompt-submit behavior when `prompt` is set; enabled for session queuing when `sessionChannel` is set; otherwise disabled.
+
+> **Note:** `SessionChannelBar` was renamed to `AgentStatusBar` in the codebase (file: `components/prompt/AgentStatusBar.tsx`). The component name `AgentStatusBar` is used in the source code and JSX. The documentation below at [6.8](#68-agentstatusbar) uses the new name.
 
 ---
 
@@ -483,11 +531,11 @@ Thin banner rendered above `ChatHistoryView` when a prompt is active but no inte
 
 ---
 
-### 6.8 `SessionChannelBar`
+### 6.8 `AgentStatusBar`
 
-**File:** `components/prompt/SessionChannelBar.tsx`
+**File:** `components/prompt/AgentStatusBar.tsx`
 
-A compact bar rendered above the composer when a session channel is attached. Displays the session label and the latest status update.
+A compact bar rendered above the composer when a session channel is attached. Displays the session label and the latest status update. (Previously named `SessionChannelBar`.)
 
 #### Props
 
@@ -565,7 +613,7 @@ Grid of attachment thumbnails shown above the textarea when the composer has pen
 
 ### 6.11 `HistoryView`
 
-**File:** `components/HistoryView.tsx`
+**File:** `pages/HistoryView.tsx`
 
 Displays persisted prompt/response history loaded from the main process.
 
@@ -603,19 +651,21 @@ type Conversation = {
 
 ### 6.12 `SettingsView`
 
-**File:** `components/SettingsView.tsx`
+**File:** `pages/SettingsView.tsx`
 
 Form for viewing and saving application settings.
 
 #### State
 
-| State             | Type          | Description                                                              |
-| ----------------- | ------------- | ------------------------------------------------------------------------ |
-| `settings`        | `AppSettings` | Current in-memory settings object (includes toggle states).              |
-| `initialSettings` | `AppSettings` | Snapshot from the last save/load, used for dirty detection.              |
-| `portInput`       | `string`      | Raw string value of the port input field.                                |
-| `timeoutInput`    | `string`      | Raw string value of the timeout input field.                             |
-| `saved`           | `boolean`     | True for 2 seconds after a successful save, used for "✓ Saved" feedback. |
+| State               | Type             | Description                                                              |
+| ------------------- | ---------------- | ------------------------------------------------------------------------ |
+| `settings`          | `AppSettings`    | Current in-memory settings object (includes toggle states).              |
+| `initialSettings`   | `AppSettings`    | Snapshot from the last save/load, used for dirty detection.              |
+| `portInput`         | `string`         | Raw string value of the port input field.                                |
+| `timeoutInput`      | `string`         | Raw string value of the timeout input field.                             |
+| `openCodePortInput` | `string`         | Raw string value of the OpenCode API port input field.                   |
+| `bridgePath`        | `string \| null` | Absolute path to the bridge script, fetched from `getBridgeInfo()`.      |
+| `saved`             | `boolean`        | True for 2 seconds after a successful save, used for "✓ Saved" feedback. |
 
 #### `AppSettings` type (local to this file)
 
@@ -626,6 +676,10 @@ type AppSettings = {
   launchAtLogin: boolean;
   promptTimeoutSeconds: number;
   autoRestoreSessions: boolean;
+  openCodePort: number;
+  docIndexingEnabled: boolean;
+  noReplyInjection: boolean;
+  autoStartOpenCode: boolean;
 };
 ```
 
@@ -635,16 +689,25 @@ type AppSettings = {
 | ---------------------- | -------------------------------------------- |
 | `port`                 | Must be an integer in range `[1024, 65535]`. |
 | `promptTimeoutSeconds` | Must be an integer `≥ 0`.                    |
+| `openCodePort`         | Must be an integer in range `[1024, 65535]`. |
 
 The Save button is disabled when `!isFormValid || !isDirty`.
 
 #### Toggle switches
 
-Three boolean settings are controlled by `role="switch"` / `aria-checked` buttons: `soundEnabled`, `launchAtLogin`, `autoRestoreSessions`.
+Six boolean settings are controlled by `role="switch"` / `aria-checked` buttons: `soundEnabled`, `launchAtLogin`, `autoRestoreSessions`, `docIndexingEnabled`, `noReplyInjection`, `autoStartOpenCode`.
 
-#### MCP config URL
+#### Numeric inputs
 
-A read-only code element at the bottom shows `http://localhost:{settings.port}/mcp`.
+Three numeric inputs: MCP Server Port, Prompt Timeout, and OpenCode API Port.
+
+#### Info section
+
+At the bottom, a read-only section shows:
+
+- App version string.
+- MCP config URL: `http://localhost:{settings.port}/mcp`.
+- Bridge script path (when available from `getBridgeInfo()`): displays the absolute path and a ready-to-use OpenCode config JSON snippet.
 
 ---
 
@@ -803,14 +866,15 @@ type PromptData = {
 ### `MessageKind`
 
 ```ts
-type MessageKind = 'question' | 'answer' | 'outbound';
+type MessageKind = 'question' | 'answer' | 'outbound' | 'agent_message';
 ```
 
-| Value        | Meaning                                                                  |
-| ------------ | ------------------------------------------------------------------------ |
-| `'question'` | Message sent from the agent/MCP tool to the user.                        |
-| `'answer'`   | User's direct reply to a prompt.                                         |
-| `'outbound'` | User-initiated message queued for a session (not a direct prompt reply). |
+| Value             | Meaning                                                                  |
+| ----------------- | ------------------------------------------------------------------------ |
+| `'question'`      | Message sent from the agent/MCP tool to the user.                        |
+| `'answer'`        | User's direct reply to a prompt.                                         |
+| `'outbound'`      | User-initiated message queued for a session (not a direct prompt reply). |
+| `'agent_message'` | Informational message pushed by the agent via the `send_message` tool.   |
 
 ### `ChannelMessage`
 
@@ -870,7 +934,7 @@ type ConnectionState = {
 | `unreadCount`      | Messages received while this connection was not the active selection.               |
 | `hasPendingPrompt` | Derived indicator used for sidebar badge and tab badge logic.                       |
 | `sessionChannel`   | Non-null when a named session channel is attached.                                  |
-| `sessionStatuses`  | Ordered list of status push updates for `SessionChannelBar`.                        |
+| `sessionStatuses`  | Ordered list of status push updates for `AgentStatusBar`.                           |
 | `isRestored`       | `true` for sessions rehydrated from the DB on startup before the agent reconnects.  |
 
 ---
