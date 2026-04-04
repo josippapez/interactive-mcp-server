@@ -7,6 +7,9 @@ type AppSettings = {
   promptTimeoutSeconds: number;
   autoRestoreSessions: boolean;
   openCodePort: number;
+  docIndexingEnabled: boolean;
+  noReplyInjection: boolean;
+  autoStartOpenCode: boolean;
 };
 
 export default function SettingsView(): React.ReactElement {
@@ -18,6 +21,7 @@ export default function SettingsView(): React.ReactElement {
   const [portInput, setPortInput] = useState('');
   const [timeoutInput, setTimeoutInput] = useState('');
   const [openCodePortInput, setOpenCodePortInput] = useState('');
+  const [bridgePath, setBridgePath] = useState<string | null>(null);
 
   useEffect(() => {
     window.api.getSettings().then((s) => {
@@ -26,6 +30,9 @@ export default function SettingsView(): React.ReactElement {
       setPortInput(String(s.port));
       setTimeoutInput(String(s.promptTimeoutSeconds));
       setOpenCodePortInput(String(s.openCodePort));
+    });
+    window.api.getBridgeInfo().then((info) => {
+      setBridgePath(info.bridgePath);
     });
   }, []);
 
@@ -73,7 +80,10 @@ export default function SettingsView(): React.ReactElement {
     openCodePortInput !== String(initialSettings.openCodePort) ||
     settings.soundEnabled !== initialSettings.soundEnabled ||
     settings.launchAtLogin !== initialSettings.launchAtLogin ||
-    settings.autoRestoreSessions !== initialSettings.autoRestoreSessions;
+    settings.autoRestoreSessions !== initialSettings.autoRestoreSessions ||
+    settings.docIndexingEnabled !== initialSettings.docIndexingEnabled ||
+    settings.noReplyInjection !== initialSettings.noReplyInjection ||
+    settings.autoStartOpenCode !== initialSettings.autoStartOpenCode;
 
   return (
     <div className="flex flex-col h-full overflow-y-auto p-6">
@@ -189,6 +199,7 @@ export default function SettingsView(): React.ReactElement {
             </p>
           </div>
           <button
+            type="button"
             onClick={() =>
               setSettings((s) =>
                 s ? { ...s, soundEnabled: !s.soundEnabled } : s,
@@ -222,6 +233,7 @@ export default function SettingsView(): React.ReactElement {
             </p>
           </div>
           <button
+            type="button"
             onClick={() =>
               setSettings((s) =>
                 s ? { ...s, launchAtLogin: !s.launchAtLogin } : s,
@@ -255,6 +267,7 @@ export default function SettingsView(): React.ReactElement {
             </p>
           </div>
           <button
+            type="button"
             onClick={() =>
               setSettings((s) =>
                 s ? { ...s, autoRestoreSessions: !s.autoRestoreSessions } : s,
@@ -277,9 +290,118 @@ export default function SettingsView(): React.ReactElement {
           </button>
         </div>
 
+        {/* Doc indexing */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Repository Doc Indexing
+            </p>
+            <p className="text-xs text-[var(--color-text-faint)]">
+              Index and inject repo docs when an agent connects
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setSettings((s) =>
+                s ? { ...s, docIndexingEnabled: !s.docIndexingEnabled } : s,
+              )
+            }
+            role="switch"
+            aria-checked={settings.docIndexingEnabled}
+            aria-label="Repository Doc Indexing"
+            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+              settings.docIndexingEnabled
+                ? 'bg-[var(--color-agent)]'
+                : 'bg-[var(--color-border)]'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.docIndexingEnabled ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Message injection mode */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Context-only messages
+            </p>
+            <p className="text-xs text-[var(--color-text-faint)]">
+              When on, queued messages appear in the session log but do not
+              trigger an agent response. When off, messages trigger the agent to
+              respond.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setSettings((s) =>
+                s ? { ...s, noReplyInjection: !s.noReplyInjection } : s,
+              )
+            }
+            role="switch"
+            aria-checked={settings.noReplyInjection}
+            aria-label="Context-only messages"
+            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+              settings.noReplyInjection
+                ? 'bg-[var(--color-agent)]'
+                : 'bg-[var(--color-border)]'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.noReplyInjection ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Auto-start OpenCode serve */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Auto-start OpenCode server
+            </p>
+            <p className="text-xs text-[var(--color-text-faint)]">
+              Automatically run{' '}
+              <code className="text-[var(--color-text-muted)]">
+                opencode serve
+              </code>{' '}
+              on the configured port when the app starts
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setSettings((s) =>
+                s ? { ...s, autoStartOpenCode: !s.autoStartOpenCode } : s,
+              )
+            }
+            role="switch"
+            aria-checked={settings.autoStartOpenCode}
+            aria-label="Auto-start OpenCode server"
+            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+              settings.autoStartOpenCode
+                ? 'bg-[var(--color-agent)]'
+                : 'bg-[var(--color-border)]'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.autoStartOpenCode ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
         {/* Save button */}
         <div className="pt-4">
           <button
+            type="button"
             onClick={save}
             disabled={!isFormValid || !isDirty}
             className="px-4 py-1.5 rounded-sm bg-[var(--color-agent)] text-black text-sm font-medium hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -304,11 +426,27 @@ export default function SettingsView(): React.ReactElement {
             Interactive MCP Desktop v1.0.0
           </p>
           <p className="text-xs text-[var(--color-text-faint)] mt-1">
-            MCP client config:{' '}
+            MCP client config (HTTP):{' '}
             <code className="text-[var(--color-text-muted)]">
               http://localhost:{settings.port}/mcp
             </code>
           </p>
+          {bridgePath && (
+            <div className="mt-2">
+              <p className="text-xs text-[var(--color-text-faint)]">
+                Bridge script (for auto-reconnect):{' '}
+              </p>
+              <code className="text-xs text-[var(--color-text-muted)] block mt-0.5 break-all select-all">
+                {bridgePath}
+              </code>
+              <p className="text-xs text-[var(--color-text-faint)] mt-1">
+                OpenCode config:{' '}
+                <code className="text-[var(--color-text-muted)]">
+                  {`{ "type": "local", "command": "node", "args": ["${bridgePath}"] }`}
+                </code>
+              </p>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -46,6 +46,9 @@ export type AppSettings = {
   promptTimeoutSeconds: number;
   autoRestoreSessions: boolean;
   openCodePort: number;
+  docIndexingEnabled: boolean;
+  noReplyInjection: boolean;
+  autoStartOpenCode: boolean;
 };
 
 const api = {
@@ -135,6 +138,12 @@ const api = {
   // App version
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('get-app-version'),
 
+  // Bridge info (path to the bridge script + MCP config hint file)
+  getBridgeInfo: (): Promise<{
+    bridgePath: string | null;
+    mcpConfigFile: string;
+  }> => ipcRenderer.invoke('get-bridge-info'),
+
   // Detect the active OpenCode session on demand (best-effort)
   detectOpenCodeSession: (baseDirectory?: string): Promise<string | null> =>
     ipcRenderer.invoke('detect-opencode-session', baseDirectory),
@@ -186,7 +195,7 @@ const api = {
     ipcRenderer.send('queue-session-message', { sessionId, message });
   },
 
-  // Inject a message into an OpenCode session (visible in session log, no agent response triggered)
+  // Inject a message into an OpenCode session via its HTTP API
   injectOpenCodeMessage: (
     openCodeSessionId: string,
     message: string,

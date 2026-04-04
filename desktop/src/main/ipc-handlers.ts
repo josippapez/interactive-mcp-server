@@ -21,12 +21,15 @@ import {
   startMcpServer,
   stopMcpServer,
   restartMcpServer,
+  softRestartMcpServer,
   closeSessionByConnectionId,
 } from './mcp-server';
 import { indexFiles, rankFileSuggestions } from './file-indexer';
 import { forceTerminateChat } from './ipc-prompt';
 import { markConnectionDeleted } from './tools/connection-guard';
 import { triggerSessionTreeUpdate } from './session-tree-manager';
+import { startOpenCodeServer, stopOpenCodeServer } from './opencode-server';
+import { resolveBridgePath, MCP_CONFIG_FILE } from './session-file';
 
 export interface IpcHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -48,6 +51,14 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle('get-app-version', () => app.getVersion());
 
+  // Return the bridge script path and MCP config file location
+  ipcMain.handle('get-bridge-info', () => {
+    return {
+      bridgePath: resolveBridgePath(),
+      mcpConfigFile: MCP_CONFIG_FILE,
+    };
+  });
+
   // Detect the active OpenCode session on demand (best-effort, used for lazy injection)
   ipcMain.handle(
     'detect-opencode-session',
@@ -62,7 +73,8 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('get-settings', () => deps.getSettings());
 
   ipcMain.handle('save-settings', (_event, settings: AppSettings) => {
-    const portChanged = settings.port !== deps.getSettings().port;
+    const prev = deps.getSettings();
+    const portChanged = settings.port !== prev.port;
     deps.setSettings(settings);
     saveSettings(settings);
     app.setLoginItemSettings({
@@ -78,18 +90,28 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         () => deps.getSettings().soundEnabled,
         () => deps.getSettings().promptTimeoutSeconds * 1000,
         () => deps.getSettings().openCodePort,
+        () => deps.getSettings().docIndexingEnabled,
       );
+    }
+    // Start/stop OpenCode serve when the toggle or port changes
+    if (settings.autoStartOpenCode) {
+      if (
+        !prev.autoStartOpenCode ||
+        settings.openCodePort !== prev.openCodePort
+      ) {
+        startOpenCodeServer(settings.openCodePort);
+      }
+    } else if (prev.autoStartOpenCode) {
+      stopOpenCodeServer();
     }
     return true;
   });
 
-  // Reconnect MCP server via the current configured port
+  // Soft-restart: clear all in-memory MCP sessions but keep the HTTP listener
+  // running so clients can transparently reinitialize on their next request.
   ipcMain.handle('reconnect-mcp-server', async () => {
-    const port = deps.getSettings().port;
-    const res = await fetch(`http://localhost:${port}/api/reconnect`, {
-      method: 'POST',
-    });
-    return res.json() as Promise<{ ok: boolean; cleared: number }>;
+    const cleared = await softRestartMcpServer();
+    return { ok: true, cleared };
   });
 
   ipcMain.handle(
@@ -220,8 +242,9 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   );
 
   // Inject a message into an OpenCode session via its HTTP API.
-  // Uses noReply:true so the message is visible in the session log but does not trigger an agent response (no premium request cost).
-  // Attachments are saved to temp files and referenced by path in the message text (same approach as the TUI version).
+  // When noReplyInjection is true (Settings), uses noReply:true so the message
+  // is visible in the session log but does not trigger an agent response.
+  // Default (noReplyInjection=false) triggers a real agent response.
   ipcMain.handle(
     'inject-opencode-message',
     async (
@@ -242,6 +265,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         data.message,
         data.attachments,
         deps.getSettings().openCodePort,
+        deps.getSettings().noReplyInjection,
       );
     },
   );

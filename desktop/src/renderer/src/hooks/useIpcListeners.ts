@@ -145,7 +145,12 @@ export function useIpcListeners({
                   sessionId: snap.connectionId,
                   label: snap.agentName ?? snap.title,
                 }
-              : (existing?.sessionChannel ?? null),
+              : !snap.openCodeParentId
+                ? {
+                    sessionId: snap.openCodeSessionId,
+                    label: snap.title,
+                  }
+                : (existing?.sessionChannel ?? null),
             // Runtime state: preserved from existing node or defaulted
             prompt: existing?.prompt ?? null,
             activeSession: existing?.activeSession ?? null,

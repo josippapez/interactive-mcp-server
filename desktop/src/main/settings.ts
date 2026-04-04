@@ -9,6 +9,11 @@ export interface AppSettings {
   promptTimeoutSeconds: number;
   autoRestoreSessions: boolean;
   openCodePort: number;
+  docIndexingEnabled: boolean;
+  /** When true, injected messages use noReply:true (context-only, no agent response). Default: false. */
+  noReplyInjection: boolean;
+  /** When true, the desktop app spawns `opencode serve` automatically on startup. Default: false. */
+  autoStartOpenCode: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -18,6 +23,9 @@ export const defaultSettings: AppSettings = {
   promptTimeoutSeconds: 800,
   autoRestoreSessions: false,
   openCodePort: 4096,
+  docIndexingEnabled: true,
+  noReplyInjection: false,
+  autoStartOpenCode: false,
 };
 
 export function getSettingsPath(): string {
