@@ -1,6 +1,6 @@
 # Interactive MCP Desktop — Tool Reference
 
-This document is the authoritative reference for all six MCP tools registered by the Interactive MCP Desktop app. Each tool is registered once per MCP connection and is scoped to that connection's `connectionId` and `connectionName`.
+This document is the authoritative reference for all MCP tools registered by the Interactive MCP Desktop app. Each tool is registered once per MCP connection and is scoped to that connection's `connectionId` and `connectionName`.
 
 ---
 
@@ -15,6 +15,7 @@ This document is the authoritative reference for all six MCP tools registered by
 | [`stop_intensive_chat`](#stop_intensive_chat)   | Close an active intensive chat session                     | No — returns immediately            |
 | [`push_session_status`](#push_session_status)   | Display a live status indicator in the UI                  | No — returns immediately            |
 | [`send_message`](#send_message)                 | Send a persistent informational message into the channel   | No — returns immediately            |
+| [`find_repo_docs`](#find_repo_docs)             | Search repository documentation by query                   | No — returns immediately            |
 
 ---
 
@@ -429,6 +430,106 @@ await mcp.callTool('send_message', {
 
 ---
 
+### `find_repo_docs`
+
+**File:** `desktop/src/main/tools/find-repo-docs.ts`
+
+**Description:** Search repository documentation files by query. Uses hybrid keyword + semantic search to find the most relevant docs. Returns file paths, scores, and snippet previews. Use the Read tool to access the full content of any returned file.
+
+This tool is only available when the agent registered with a `baseDirectory` via `register_connection`. If no `baseDirectory` was provided, the tool returns an error.
+
+The search combines:
+
+- **Keyword matching**: path tokens, content frequency (capped at 3 per token), title bonus, directory-context bonuses (e.g. queries mentioning "standard" boost files under `/standards/`).
+- **Semantic similarity**: embedding-based cosine similarity using cached vectors (model: `Xenova/all-MiniLM-L6-v2`, 384 dimensions). Available after the background indexer warms up.
+
+Results are ranked by combined score. The first search after registration may be keyword-only while the semantic index builds in the background.
+
+#### Parameters
+
+| Parameter | Type     | Required | Default | Description                                          |
+| --------- | -------- | -------- | ------- | ---------------------------------------------------- |
+| `query`   | `string` | Yes      | —       | Search query for repository docs and markdown files. |
+| `limit`   | `number` | No       | `8`     | Maximum number of matches to return (1–20).          |
+
+#### Return Value
+
+| Scenario         | Content                                                                   |
+| ---------------- | ------------------------------------------------------------------------- |
+| Matches found    | `[{ type: 'text', text: '<formatted results with paths and snippets>' }]` |
+| No matches       | `[{ type: 'text', text: 'No doc matches found for "<query>".' }]`         |
+| No baseDirectory | `[{ type: 'text', text: 'Error: No baseDirectory registered...' }]`       |
+| Stale connection | `[{ type: 'text', text: '<stale connection error>' }]`                    |
+
+#### Result Format
+
+```
+Top doc matches for "authentication":
+1. docs/guides/auth-setup.md (score: 18)
+   L12: ## Setting up authentication with JWT
+2. docs/standards/security.md (score: 14)
+   L45: All API endpoints must validate the bearer token
+3. .github/instructions/auth-flow.instructions.md (score: 11)
+   (semantic match, similarity: 0.72)
+```
+
+Each result includes:
+
+- **Path**: repo-relative file path
+- **Score**: combined keyword + semantic score
+- **Snippet**: first matching line (with line number) or semantic similarity note
+
+#### Behavior
+
+1. Looks up the registered connection to retrieve `baseDirectory`.
+2. Calls `searchDocs(query, baseDirectory, limit)` which:
+   a. Discovers all doc files (same discovery rules as manifest injection).
+   b. Tokenizes the query and scores each file by keyword matches.
+   c. If the semantic worker is ready, augments scores with cosine similarity from cached embeddings.
+   d. Sorts by combined score descending and returns the top `limit` results.
+3. Formats results as human-readable text and returns them.
+
+#### Document Discovery
+
+The tool discovers files from these locations:
+
+- `docs/` — all `.md` and `.mdx` files (recursive)
+- Root `README.md`
+- `apps/`, `libs/`, `tools/` — `README.md` files (recursive)
+- `.github/instructions/` — all `.md` files
+- `.github/skills/` — `SKILL.md` files
+- `.agents/skills/` — `SKILL.md` files
+
+Directories like `node_modules`, `dist`, `.git`, `build`, `coverage`, etc. are skipped.
+
+#### Semantic Indexing
+
+On first `register_connection` with a `baseDirectory`, the background indexer:
+
+1. Injects a doc manifest (paths + titles) into the OpenCode session via `noReply`.
+2. Warms up an embedding worker thread (`Xenova/all-MiniLM-L6-v2`).
+3. Builds an embedding cache at `<baseDirectory>/.doc-embeddings.json`.
+4. Cache entries are keyed by repo-relative path and invalidated by `mtimeMs`.
+
+The embedding worker runs in a separate thread and does not block the main process. First-time indexing may take 30–60 seconds depending on repo size. Subsequent searches benefit from the cached embeddings.
+
+#### Settings
+
+Doc indexing can be disabled via the **Repository Doc Indexing** toggle in Settings (`docIndexingEnabled`, default `true`). When disabled, `register_connection` skips manifest injection and background indexing, and `find_repo_docs` falls back to keyword-only search.
+
+#### Example (pseudocode)
+
+```ts
+const result = await mcp.callTool('find_repo_docs', {
+  query: 'how to set up authentication',
+  limit: 5,
+});
+// result.content[0].text contains the ranked matches
+// Use the Read tool to access full content of any returned file path
+```
+
+---
+
 ## Prompt Lifecycle
 
 All blocking tools (`request_user_input`, `ask_intensive_chat`) share the same underlying `promptUser()` function defined in `desktop/src/main/ipc-prompt.ts`. This section documents the complete lifecycle.
@@ -585,3 +686,146 @@ All tools operate within the scope of a single MCP connection. The `connectionId
 - `request_user_input`: uses `connectionId` + `connectionName` for prompt tracking and persistence.
 - `start_intensive_chat` / `ask_intensive_chat` / `stop_intensive_chat`: use `connectionId` + `connectionName` for prompt tracking; `activeChatSessions` is a module-level Map shared across all connections.
 - `push_session_status`: uses `connectionId` to route the status update to the correct UI channel.
+- `find_repo_docs`: uses `connectionId` to look up the registered `baseDirectory` for document search.
+
+---
+
+## Server Lifecycle
+
+The MCP server is managed via three exported functions from `desktop/src/main/mcp-server.ts`:
+
+### Hard restart (`restartMcpServer`)
+
+Stops the HTTP listener entirely, clears the session file, and starts a fresh Express server. All in-memory sessions are lost. Clients will see `ECONNREFUSED` until the new server is listening. This is used when the port changes (via Settings).
+
+### Soft restart (`softRestartMcpServer`)
+
+Clears all in-memory MCP sessions (transports, servers, active prompts) but **keeps the HTTP listener running**. The next client request will trigger either:
+
+- A fresh `initialize` handshake (per MCP spec), or
+- A **transparent session resurrection** — the server creates a new session internally, runs the MCP handshake behind the scenes, and forwards the original request so the client never sees an error.
+
+This is the preferred approach for in-app "reconnect" operations since it avoids the TCP downtime window that causes OpenCode (and other `type: "remote"` clients) to require manual toggling.
+
+**Accessible via:**
+
+- IPC: `reconnect-mcp-server` handler (called from Settings UI)
+- REST: `POST /api/reconnect` endpoint (returns `{ ok, cleared, message }`)
+
+### Stop (`stopMcpServer`)
+
+Shuts down the HTTP listener and cleans up all closures. Used on app quit.
+
+### Transparent session resurrection
+
+When a client sends a tool call with a stale MCP session ID (e.g., after the server cleared sessions), instead of returning a 404 error, the server:
+
+1. Creates a new `McpServer` + `StreamableHTTPServerTransport`
+2. Runs a synthetic MCP `initialize` → `notifications/initialized` handshake
+3. Forwards the original request body to the new session
+4. Returns the result with the new `Mcp-Session-Id` header
+
+This means well-behaved MCP clients (including OpenCode) can reconnect transparently without any user intervention after a soft restart.
+
+---
+
+## Stdio Bridge (`desktop-bridge.cjs`)
+
+**File:** `tools/mcp/desktop-bridge.cjs`
+
+The bridge is a lightweight Node.js script that proxies between OpenCode's stdio transport and the desktop app's HTTP Streamable Transport. It enables automatic reconnection even when the desktop app is fully killed and restarted.
+
+```
+OpenCode  <──stdio──>  desktop-bridge.cjs  <──HTTP──>  Desktop App (port 3100)
+           (type: local)                                (Streamable HTTP Transport)
+```
+
+### Why use the bridge?
+
+| Scenario                      | Without bridge (`type: "remote"`)           | With bridge (`type: "local"`)             |
+| ----------------------------- | ------------------------------------------- | ----------------------------------------- |
+| Desktop app in-app restart    | Transparent (soft-restart keeps listener)   | Transparent                               |
+| Desktop app full kill/restart | ECONNREFUSED → user must toggle in OpenCode | Bridge retries automatically → reconnects |
+| Desktop app port change       | Must reconfigure and toggle                 | Bridge detects via session file           |
+
+### How it works
+
+1. OpenCode spawns the bridge as a `type: "local"` process (stdio transport).
+2. The bridge reads JSON-RPC messages from stdin and forwards them as HTTP POST requests to the desktop app's `/mcp` endpoint.
+3. Server-initiated notifications are received via an SSE (GET `/mcp`) long-poll and forwarded to stdout.
+4. On network errors (ECONNREFUSED, ECONNRESET, etc.), the bridge retries with exponential backoff (500ms → 1s → 2s → ... → 30s max).
+5. The bridge watches `/tmp/imcp-session.json` for port changes and auto-adjusts.
+6. A background health poll (every 5s) logs connectivity status to stderr.
+
+### Port resolution
+
+The bridge resolves the desktop app port in this order:
+
+1. `--port <port>` CLI argument
+2. `IMCP_PORT` environment variable
+3. `/tmp/imcp-session.json` (written by the desktop app)
+4. Default: `3100`
+
+### Configuration for OpenCode
+
+Add this to your OpenCode MCP server config (e.g., `.opencode/config.json` or equivalent):
+
+```json
+{
+  "mcpServers": {
+    "interactive-desktop": {
+      "type": "local",
+      "command": "node",
+      "args": ["/absolute/path/to/tools/mcp/desktop-bridge.cjs"]
+    }
+  }
+}
+```
+
+Or with an explicit port:
+
+```json
+{
+  "mcpServers": {
+    "interactive-desktop": {
+      "type": "local",
+      "command": "node",
+      "args": [
+        "/absolute/path/to/tools/mcp/desktop-bridge.cjs",
+        "--port",
+        "3100"
+      ]
+    }
+  }
+}
+```
+
+Or with the environment variable:
+
+```json
+{
+  "mcpServers": {
+    "interactive-desktop": {
+      "type": "local",
+      "command": "node",
+      "args": ["/absolute/path/to/tools/mcp/desktop-bridge.cjs"],
+      "env": { "IMCP_PORT": "3100" }
+    }
+  }
+}
+```
+
+### Logs
+
+The bridge writes status and error messages to **stderr** (not stdout, which is reserved for JSON-RPC). Messages include:
+
+- `[bridge] Interactive MCP Desktop Bridge started (port: 3100)`
+- `[bridge] desktop app unreachable (ECONNREFUSED), retrying in 500ms...`
+- `[bridge] desktop app is reachable at port 3100`
+- `[bridge] session expired, will re-initialize on next request`
+- `[bridge] desktop app port changed: 3100 -> 3200`
+
+### Requirements
+
+- Node.js 18+ (uses built-in `node:http`, `node:readline`, `node:fs`, `node:os`, `node:path`)
+- No npm dependencies — the script is self-contained CommonJS
