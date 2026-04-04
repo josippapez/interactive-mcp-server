@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import type { ChannelMessage, SessionNode } from '../types';
+import { mergeSessionTreeSnapshot } from './session-tree-merge';
 
 type SessionStatusType = 'info' | 'working' | 'success' | 'error';
 
@@ -122,58 +123,16 @@ export function useIpcListeners({
     // ------------------------------------------------------------------
     window.api.onSessionTreeUpdated?.((snapshotNodes) => {
       setNodes((prev) => {
-        const next = new Map<string, SessionNode>();
+        const next = mergeSessionTreeSnapshot(prev, snapshotNodes);
 
+        // Load history once per connectionId for any newly-connected nodes.
         for (const snap of snapshotNodes) {
-          const id = snap.openCodeSessionId;
-          const existing = prev.get(id);
-
-          next.set(id, {
-            // Topology fields always come from the snapshot
-            id,
-            openCodeSessionId: snap.openCodeSessionId,
-            openCodeParentId: snap.openCodeParentId,
-            title: snap.agentName ?? snap.title,
-            directory: snap.directory,
-            depth: snap.depth,
-            connectionId: snap.connectionId,
-            hasMcpChannel: snap.hasMcpChannel,
-            isDirectConnection: false,
-            baseDirectory: snap.baseDirectory,
-            sessionChannel: snap.connectionId
-              ? {
-                  sessionId: snap.connectionId,
-                  label: snap.agentName ?? snap.title,
-                }
-              : !snap.openCodeParentId
-                ? {
-                    sessionId: snap.openCodeSessionId,
-                    label: snap.title,
-                  }
-                : (existing?.sessionChannel ?? null),
-            // Runtime state: preserved from existing node or defaulted
-            prompt: existing?.prompt ?? null,
-            activeSession: existing?.activeSession ?? null,
-            channelMessages: existing?.channelMessages ?? [],
-            unreadCount: existing?.unreadCount ?? 0,
-            hasPendingPrompt: existing?.hasPendingPrompt ?? false,
-            sessionStatuses: existing?.sessionStatuses ?? [],
-          });
-
-          // Load history once per connectionId
           if (
             snap.connectionId &&
             !loadedHistoryIds.current.has(snap.connectionId)
           ) {
             loadedHistoryIds.current.add(snap.connectionId);
             void loadChannelHistory(snap.connectionId);
-          }
-        }
-
-        // Preserve direct-connection nodes (not in the OpenCode snapshot)
-        for (const [id, node] of prev) {
-          if (node.isDirectConnection) {
-            next.set(id, node);
           }
         }
 

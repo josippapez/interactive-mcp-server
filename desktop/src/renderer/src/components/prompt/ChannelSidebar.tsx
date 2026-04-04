@@ -1,57 +1,12 @@
 import { memo } from 'react';
 import type { SessionNode } from '../../types';
+import { partitionNodes } from '../../hooks/session-tree-merge';
 
 type Props = {
   connections: Map<string, SessionNode>;
   activeConnectionId: string | null;
   onSelect: (id: string) => void;
 };
-
-/**
- * Builds a depth-ordered list of OpenCode session nodes rooted at the given
- * parentId, recursing into children.
- */
-function collectSubtree(
-  nodes: SessionNode[],
-  parentId: string | null,
-  depth: number,
-): SessionNode[] {
-  const children = nodes
-    .filter((n) => n.openCodeParentId === parentId && !n.isDirectConnection)
-    .sort((a, b) => a.title.localeCompare(b.title));
-
-  const result: SessionNode[] = [];
-  for (const child of children) {
-    result.push({ ...child, depth });
-    result.push(...collectSubtree(nodes, child.openCodeSessionId, depth + 1));
-  }
-  return result;
-}
-
-/**
- * Returns two ordered lists:
- * - `openCodeTree`: root OpenCode sessions with their subagents interleaved
- *   in depth-first order.
- * - `directConnections`: MCP agents with no associated OpenCode session.
- */
-function partitionNodes(nodes: Map<string, SessionNode>): {
-  openCodeTree: SessionNode[];
-  directConnections: SessionNode[];
-} {
-  const all = Array.from(nodes.values());
-  const directConnections = all.filter((n) => n.isDirectConnection);
-
-  const ocNodes = all.filter((n) => !n.isDirectConnection);
-  const roots = ocNodes.filter((n) => n.openCodeParentId === null);
-
-  const openCodeTree: SessionNode[] = [];
-  for (const root of roots) {
-    openCodeTree.push({ ...root, depth: 0 });
-    openCodeTree.push(...collectSubtree(ocNodes, root.openCodeSessionId, 1));
-  }
-
-  return { openCodeTree, directConnections };
-}
 
 const ChannelSidebar = memo(function ChannelSidebar({
   connections,
