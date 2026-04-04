@@ -10,19 +10,33 @@ import {
 
 export interface ApiRouterDeps {
   getWindow: () => BrowserWindow | null;
+  clearAllSessions: (() => Promise<number>) | null;
 }
 
 export function createApiRouter(deps: ApiRouterDeps): Router {
   const router = Router();
 
-  // Force-reconnect endpoint — clears all in-memory sessions so clients reinitialize on next call
-  router.post('/api/reconnect', (_req, res) => {
-    res.json({
-      ok: true,
-      cleared: 0,
-      message:
-        'Reconnect endpoint acknowledged. Use restart server for full reset.',
-    });
+  // Soft-restart endpoint — clears all in-memory MCP sessions but keeps the
+  // HTTP listener running so clients can transparently reinitialize.
+  router.post('/api/reconnect', async (_req, res) => {
+    if (!deps.clearAllSessions) {
+      res.json({ ok: false, cleared: 0, message: 'Server not initialized.' });
+      return;
+    }
+    try {
+      const cleared = await deps.clearAllSessions();
+      res.json({
+        ok: true,
+        cleared,
+        message: `Cleared ${cleared} session(s). Clients will reinitialize on next request.`,
+      });
+    } catch (err) {
+      res.status(500).json({
+        ok: false,
+        cleared: 0,
+        message: `Reconnect failed: ${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
   });
 
   // Create a session channel

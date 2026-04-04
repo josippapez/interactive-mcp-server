@@ -21,12 +21,20 @@ import {
   registerSendMessageTool,
 } from './tools/session-channel';
 import { registerConnectionTool } from './tools/register-connection';
+import { registerFindRepoDocsTool } from './tools/find-repo-docs';
 import { createSessionChannel, deleteSessionChannel } from './database';
-import { writeSessionFile, clearSessionFile } from './session-file';
+import {
+  writeSessionFile,
+  clearSessionFile,
+  writeMcpConfigHint,
+  resolveBridgePath,
+  MCP_CONFIG_FILE,
+} from './session-file';
 import { createApiRouter } from './api-routes';
 
 let httpServer: Server | null = null;
 let _sessionCleanup: ((connectionId: string) => Promise<boolean>) | null = null;
+let _clearAllSessions: (() => Promise<number>) | null = null;
 
 // Stored params for restart support
 let _startParams: {
@@ -35,6 +43,7 @@ let _startParams: {
   getSoundEnabled: () => boolean;
   getPromptTimeoutMs: () => number;
   getOpenCodePort: () => number;
+  getDocIndexingEnabled: () => boolean;
 } | null = null;
 
 /** Create a fresh McpServer with all tools registered (one per connection). */
@@ -43,6 +52,7 @@ function createMcpServerWithTools(
   connectionId: string,
   connectionName: string,
   getOpenCodePort: () => number,
+  getDocIndexingEnabled: () => boolean,
 ): McpServer {
   const server = new McpServer(
     { name: 'Interactive MCP Desktop', version: '1.0.0' },
@@ -64,7 +74,14 @@ function createMcpServerWithTools(
   );
   registerSessionChannelTools(server, getWindow, connectionId);
   registerSendMessageTool(server, getWindow, connectionId);
-  registerConnectionTool(server, getWindow, connectionId, getOpenCodePort);
+  registerConnectionTool(
+    server,
+    getWindow,
+    connectionId,
+    getOpenCodePort,
+    getDocIndexingEnabled,
+  );
+  registerFindRepoDocsTool(server, connectionId);
   return server;
 }
 
@@ -74,6 +91,7 @@ export async function startMcpServer(
   getSoundEnabled: () => boolean = () => true,
   getPromptTimeoutMs: () => number = () => 800_000,
   getOpenCodePort: () => number = () => 4096,
+  getDocIndexingEnabled: () => boolean = () => true,
 ): Promise<void> {
   _startParams = {
     port,
@@ -81,6 +99,7 @@ export async function startMcpServer(
     getSoundEnabled,
     getPromptTimeoutMs,
     getOpenCodePort,
+    getDocIndexingEnabled,
   };
   setSoundEnabled(getSoundEnabled);
   setPromptTimeout(getPromptTimeoutMs);
@@ -120,6 +139,43 @@ export async function startMcpServer(
     }
     return true;
   };
+
+  /**
+   * Clear all in-memory MCP sessions without stopping the HTTP listener.
+   * Each session's transport and server are closed, active prompts are cancelled,
+   * and the renderer is notified. The HTTP server stays up so the next client
+   * request triggers a fresh initialize handshake (or transparent reinit)
+   * instead of getting ECONNREFUSED.
+   */
+  _clearAllSessions = async (): Promise<number> => {
+    const entries = Object.entries(sessions);
+    let cleared = 0;
+    for (const [sid, entry] of entries) {
+      delete sessions[sid];
+      cancelActivePrompt(entry.connectionId);
+      deleteSessionChannel(entry.connectionId);
+      try {
+        await entry.transport.close();
+      } catch {
+        // best effort
+      }
+      try {
+        await entry.server.close();
+      } catch {
+        // best effort
+      }
+      getWindow()?.webContents.send('connection-closed', {
+        connectionId: entry.connectionId,
+      });
+      getWindow()?.webContents.send('session-channel-deleted', {
+        sessionId: entry.connectionId,
+      });
+      cleared++;
+    }
+    clearSessionFile();
+    return cleared;
+  };
+
   let connectionCounter = 0;
 
   /**
@@ -140,6 +196,7 @@ export async function startMcpServer(
       connectionId,
       connectionName,
       getOpenCodePort,
+      getDocIndexingEnabled,
     );
 
     // Factory for a no-op response stub used for synthetic MCP handshake requests.
@@ -353,6 +410,7 @@ export async function startMcpServer(
         connectionId,
         connectionName,
         getOpenCodePort,
+        getDocIndexingEnabled,
       );
 
       const transport = new StreamableHTTPServerTransport({
@@ -448,13 +506,18 @@ export async function startMcpServer(
   });
 
   // ─── Session channel REST API ───
-  app.use(createApiRouter({ getWindow }));
+  app.use(createApiRouter({ getWindow, clearAllSessions: _clearAllSessions }));
 
   app.get('/health', (_req, res) => {
     const activeClients = Object.keys(sessions).length;
+    const bridgePath = resolveBridgePath();
     res.json({
       status: 'ok',
       activeClients,
+      bridge: {
+        path: bridgePath,
+        mcpConfigFile: MCP_CONFIG_FILE,
+      },
       tools: [
         'register_connection',
         'request_user_input',
@@ -463,6 +526,7 @@ export async function startMcpServer(
         'stop_intensive_chat',
         'push_session_status',
         'send_message',
+        'find_repo_docs',
       ],
     });
   });
@@ -471,6 +535,11 @@ export async function startMcpServer(
     console.log(
       `MCP Streamable HTTP server listening on http://localhost:${port}/mcp`,
     );
+    // Write the session file immediately so the bridge can discover the port
+    // before any agent connects. The sessionId is 'server' as a placeholder.
+    writeSessionFile('server', port);
+    // Write a ready-to-use MCP config snippet for OpenCode
+    writeMcpConfigHint(port);
   });
 }
 
@@ -481,6 +550,7 @@ export function stopMcpServer(): void {
     httpServer = null;
   }
   _sessionCleanup = null;
+  _clearAllSessions = null;
 }
 
 export async function restartMcpServer(): Promise<void> {
@@ -493,7 +563,21 @@ export async function restartMcpServer(): Promise<void> {
     _startParams.getSoundEnabled,
     _startParams.getPromptTimeoutMs,
     _startParams.getOpenCodePort,
+    _startParams.getDocIndexingEnabled,
   );
+}
+
+/**
+ * Soft-restart: clear all in-memory MCP sessions but keep the HTTP listener
+ * running. Clients that send their next request will get a transparent reinit
+ * (or a fresh initialize handshake) instead of ECONNREFUSED.
+ *
+ * Returns the number of sessions that were cleared, or 0 if the server is not
+ * running.
+ */
+export async function softRestartMcpServer(): Promise<number> {
+  if (!_clearAllSessions) return 0;
+  return _clearAllSessions();
 }
 
 export async function closeSessionByConnectionId(

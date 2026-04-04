@@ -5,12 +5,14 @@ import type { BrowserWindow } from 'electron';
 import { upsertRegisteredConnection, createSessionChannel } from '../database';
 import { autoDetectOpenCodeSession } from '../opencode-session';
 import { triggerSessionTreeUpdate } from '../session-tree-manager';
+import { initDocContext } from '../doc-context-injector';
 
 export function registerConnectionTool(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
   connectionId: string,
   getOpenCodePort: () => number,
+  getDocIndexingEnabled: () => boolean,
 ): void {
   server.registerTool(
     'register_connection',
@@ -136,6 +138,18 @@ After registration, your channel will appear in the app's sidebar with the given
       // Immediately push a fresh session-tree snapshot so the renderer
       // reflects the new registration without waiting for the next poll tick.
       void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
+
+      // Kick off doc indexing and context injection in the background.
+      // Fire-and-forget — this should not delay the registration response.
+      if (baseDirectory && openCodeSessionId && getDocIndexingEnabled()) {
+        void initDocContext(
+          baseDirectory,
+          openCodeSessionId,
+          getOpenCodePort(),
+          connectionId,
+          getWindow,
+        );
+      }
 
       return {
         content: [
