@@ -3,14 +3,9 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
-import type { PromptData, PromptResponse } from '../ipc-prompt';
+import type { PromptUserFn } from '../ipc-prompt';
 import { getPromptTimeoutSeconds } from '../ipc-prompt';
 import { staleConnectionError } from './connection-guard';
-
-type PromptUserFn = (
-  win: BrowserWindow | null,
-  data: PromptData,
-) => Promise<PromptResponse>;
 
 interface IntensiveChatSession {
   title: string;

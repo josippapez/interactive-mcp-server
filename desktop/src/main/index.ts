@@ -7,9 +7,9 @@ import { createWindow } from './window';
 import { createTray } from './tray';
 import { registerIpcHandlers } from './ipc-handlers';
 import {
-  startSessionTreePoller,
-  stopSessionTreePoller,
-} from './session-tree-poller';
+  startSessionTreeManager,
+  stopSessionTreeManager,
+} from './session-tree-manager';
 
 let mainWindow: BrowserWindow | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -50,8 +50,8 @@ app.whenReady().then(async () => {
     () => currentSettings.openCodePort,
   );
 
-  // Start polling for OpenCode session hierarchy (subagent detection)
-  startSessionTreePoller(
+  // Start session-tree sync (replaces old poller)
+  startSessionTreeManager(
     () => mainWindow,
     () => currentSettings.openCodePort,
   );
@@ -87,7 +87,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true;
-  stopSessionTreePoller();
+  stopSessionTreeManager();
   stopMcpServer();
 });
 

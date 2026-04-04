@@ -1,26 +1,10 @@
 import { useState, useEffect } from 'react';
-import CollapsibleSection from './CollapsibleSection';
-import MarkdownContent from './MarkdownContent';
-
-type Attachment = {
-  data: string;
-  mimeType: string;
-  name: string;
-  size: number;
-};
-
-type Conversation = {
-  id: number;
-  promptMessage: string;
-  projectName: string;
-  userResponse: string;
-  predefinedOptions: string | null;
-  attachments: string | null;
-  createdAt: string;
-};
+import CollapsibleSection from '../components/CollapsibleSection';
+import MarkdownContent from '../components/MarkdownContent';
+import type { Attachment, ConversationRecord } from '../types';
 
 export default function HistoryView(): React.ReactElement {
-  const [history, setHistory] = useState<Conversation[]>([]);
+  const [history, setHistory] = useState<ConversationRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
   const loadHistory = async (): Promise<void> => {

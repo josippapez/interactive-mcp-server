@@ -10,26 +10,14 @@ type AppSettings = {
 };
 
 export default function SettingsView(): React.ReactElement {
-  const [settings, setSettings] = useState<AppSettings>({
-    port: 3100,
-    soundEnabled: true,
-    launchAtLogin: false,
-    promptTimeoutSeconds: 800,
-    autoRestoreSessions: false,
-    openCodePort: 4096,
-  });
-  const [initialSettings, setInitialSettings] = useState<AppSettings>({
-    port: 3100,
-    soundEnabled: true,
-    launchAtLogin: false,
-    promptTimeoutSeconds: 800,
-    autoRestoreSessions: false,
-    openCodePort: 4096,
-  });
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [initialSettings, setInitialSettings] = useState<AppSettings | null>(
+    null,
+  );
   const [saved, setSaved] = useState(false);
-  const [portInput, setPortInput] = useState('3100');
-  const [timeoutInput, setTimeoutInput] = useState('800');
-  const [openCodePortInput, setOpenCodePortInput] = useState('4096');
+  const [portInput, setPortInput] = useState('');
+  const [timeoutInput, setTimeoutInput] = useState('');
+  const [openCodePortInput, setOpenCodePortInput] = useState('');
 
   useEffect(() => {
     window.api.getSettings().then((s) => {
@@ -37,9 +25,17 @@ export default function SettingsView(): React.ReactElement {
       setInitialSettings(s);
       setPortInput(String(s.port));
       setTimeoutInput(String(s.promptTimeoutSeconds));
-      setOpenCodePortInput(String(s.openCodePort ?? 4096));
+      setOpenCodePortInput(String(s.openCodePort));
     });
   }, []);
+
+  if (!settings || !initialSettings) {
+    return (
+      <div className="flex items-center justify-center h-full text-[var(--color-text-faint)] text-sm">
+        Loading settings…
+      </div>
+    );
+  }
 
   const save = async (): Promise<void> => {
     const port = parseInt(portInput, 10);
@@ -173,7 +169,7 @@ export default function SettingsView(): React.ReactElement {
             id="settings-opencode-port-help"
             className="text-xs text-[var(--color-text-faint)] mt-1"
           >
-            Port used to inject context into OpenCode sessions (default: 4096).
+            Port used to inject context into OpenCode sessions.
           </p>
           {!isOpenCodePortValid && (
             <p className="text-xs text-[var(--color-error)] mt-1">
@@ -194,7 +190,9 @@ export default function SettingsView(): React.ReactElement {
           </div>
           <button
             onClick={() =>
-              setSettings((s) => ({ ...s, soundEnabled: !s.soundEnabled }))
+              setSettings((s) =>
+                s ? { ...s, soundEnabled: !s.soundEnabled } : s,
+              )
             }
             role="switch"
             aria-checked={settings.soundEnabled}
@@ -225,7 +223,9 @@ export default function SettingsView(): React.ReactElement {
           </div>
           <button
             onClick={() =>
-              setSettings((s) => ({ ...s, launchAtLogin: !s.launchAtLogin }))
+              setSettings((s) =>
+                s ? { ...s, launchAtLogin: !s.launchAtLogin } : s,
+              )
             }
             role="switch"
             aria-checked={settings.launchAtLogin}
@@ -256,10 +256,9 @@ export default function SettingsView(): React.ReactElement {
           </div>
           <button
             onClick={() =>
-              setSettings((s) => ({
-                ...s,
-                autoRestoreSessions: !s.autoRestoreSessions,
-              }))
+              setSettings((s) =>
+                s ? { ...s, autoRestoreSessions: !s.autoRestoreSessions } : s,
+              )
             }
             role="switch"
             aria-checked={settings.autoRestoreSessions}

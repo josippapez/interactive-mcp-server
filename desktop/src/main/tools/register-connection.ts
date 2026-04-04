@@ -3,11 +3,8 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { upsertRegisteredConnection, createSessionChannel } from '../database';
-import {
-  autoDetectOpenCodeSession,
-  fetchAllOpenCodeSessions,
-  collectDescendants,
-} from '../opencode-session';
+import { autoDetectOpenCodeSession } from '../opencode-session';
+import { triggerSessionTreeUpdate } from '../session-tree-manager';
 
 export function registerConnectionTool(
   server: McpServer,
@@ -136,16 +133,9 @@ After registration, your channel will appear in the app's sidebar with the given
       // Update the channel label in the DB
       createSessionChannel(connectionId, agentName);
 
-      // Tell the UI to rename this connection's channel
-      getWindow()?.webContents.send('connection-registered', {
-        connectionId,
-        agentName,
-        projectName,
-        baseDirectory: baseDirectory ?? null,
-        label: agentName,
-        openCodeSessionId: openCodeSessionId ?? null,
-        parentSessionId: parentSessionId ?? null,
-      });
+      // Immediately push a fresh session-tree snapshot so the renderer
+      // reflects the new registration without waiting for the next poll tick.
+      void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
 
       return {
         content: [

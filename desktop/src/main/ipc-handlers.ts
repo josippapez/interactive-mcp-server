@@ -1,9 +1,11 @@
 import { app, ipcMain, dialog, BrowserWindow } from 'electron';
-import { readFileSync, writeFileSync } from 'fs';
-import { basename, join } from 'path';
-import { tmpdir } from 'os';
-import { randomUUID } from 'crypto';
+import { readFileSync } from 'fs';
+import { basename } from 'path';
 import { AppSettings, saveSettings } from './settings';
+import {
+  injectOpenCodeMessage,
+  SUPPORTED_FILE_EXTENSIONS,
+} from './opencode-injector';
 import { autoDetectOpenCodeSessionId } from './opencode-session';
 import {
   getConversationHistory,
@@ -24,6 +26,7 @@ import {
 import { indexFiles, rankFileSuggestions } from './file-indexer';
 import { forceTerminateChat } from './ipc-prompt';
 import { markConnectionDeleted } from './tools/connection-guard';
+import { triggerSessionTreeUpdate } from './session-tree-manager';
 
 export interface IpcHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -73,9 +76,20 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         settings.port,
         deps.getMainWindow,
         () => deps.getSettings().soundEnabled,
+        () => deps.getSettings().promptTimeoutSeconds * 1000,
+        () => deps.getSettings().openCodePort,
       );
     }
     return true;
+  });
+
+  // Reconnect MCP server via the current configured port
+  ipcMain.handle('reconnect-mcp-server', async () => {
+    const port = deps.getSettings().port;
+    const res = await fetch(`http://localhost:${port}/api/reconnect`, {
+      method: 'POST',
+    });
+    return res.json() as Promise<{ ok: boolean; cleared: number }>;
   });
 
   ipcMain.handle(
@@ -95,40 +109,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       filters: [
         {
           name: 'Images & Text',
-          extensions: [
-            'png',
-            'jpg',
-            'jpeg',
-            'gif',
-            'webp',
-            'svg',
-            'bmp',
-            'txt',
-            'md',
-            'json',
-            'ts',
-            'tsx',
-            'js',
-            'jsx',
-            'css',
-            'html',
-            'yml',
-            'yaml',
-            'toml',
-            'xml',
-            'csv',
-            'log',
-            'sh',
-            'bash',
-            'py',
-            'rb',
-            'go',
-            'rs',
-            'java',
-            'c',
-            'cpp',
-            'h',
-          ],
+          extensions: SUPPORTED_FILE_EXTENSIONS,
         },
       ],
     });
@@ -217,6 +198,10 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     deleteSessionChannel(sessionId);
     deleteRegisteredConnection(sessionId);
     markConnectionDeleted(sessionId);
+    void triggerSessionTreeUpdate(
+      deps.getMainWindow,
+      () => deps.getSettings().openCodePort,
+    );
     deps.getMainWindow()?.webContents.send('connection-closed', {
       connectionId: sessionId,
     });
@@ -252,55 +237,12 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         }[];
       },
     ): Promise<{ ok: boolean; error?: string }> => {
-      const port = deps.getSettings().openCodePort;
-      const url = `http://localhost:${port}/session/${encodeURIComponent(data.openCodeSessionId)}/message`;
-
-      // Build the full message text: start with the user's message, then append
-      // attachment references as file paths (images saved to temp, text inlined).
-      let fullText = data.message;
-      for (const att of data.attachments ?? []) {
-        if (att.mimeType.startsWith('image/')) {
-          // Save image to a temp file and reference by path
-          const ext =
-            att.mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
-          const tempPath = join(
-            tmpdir(),
-            `imcp-attachment-${randomUUID()}.${ext}`,
-          );
-          try {
-            writeFileSync(tempPath, Buffer.from(att.data, 'base64'));
-            fullText += `\n\n[Image file: ${tempPath}]`;
-          } catch {
-            // If we can't write the temp file, skip this attachment
-          }
-        } else {
-          // Text file: inline the content
-          fullText += `\n\n--- File: ${att.name} ---\n${att.data}`;
-        }
-      }
-
-      const parts: { type: 'text'; text: string }[] = [
-        { type: 'text', text: fullText },
-      ];
-
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ noReply: true, parts }),
-        });
-        if (!res.ok) {
-          const body = await res.text().catch(() => '');
-          return {
-            ok: false,
-            error: `OpenCode API returned ${res.status}: ${body}`,
-          };
-        }
-        return { ok: true };
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        return { ok: false, error: msg };
-      }
+      return injectOpenCodeMessage(
+        data.openCodeSessionId,
+        data.message,
+        data.attachments,
+        deps.getSettings().openCodePort,
+      );
     },
   );
 }

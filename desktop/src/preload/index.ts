@@ -77,7 +77,33 @@ const api = {
     ipcRenderer.on('intensive-chat-stop', (_event, data) => callback(data));
   },
 
-  // Connection lifecycle
+  // Session tree — full snapshot of all OpenCode sessions + direct connections.
+  // Emitted every ~2 s by session-tree-manager and immediately after
+  // register_connection or session removal.
+  onSessionTreeUpdated: (
+    callback: (
+      nodes: {
+        openCodeSessionId: string;
+        openCodeParentId: string | null;
+        title: string;
+        directory: string;
+        createdAt: number;
+        updatedAt: number;
+        depth: number;
+        connectionId: string | null;
+        agentName: string | null;
+        hasMcpChannel: boolean;
+        baseDirectory: string | null;
+        registeredParentSessionId: string | null;
+      }[],
+    ) => void,
+  ) => {
+    ipcRenderer.on('session-tree-updated', (_event, data) => callback(data));
+  },
+
+  // Direct-connection lifecycle — fired when an MCP agent connects/disconnects
+  // but has no associated OpenCode session (i.e. it never called register_connection
+  // with an openCodeSessionId and OpenCode is not running).
   onConnectionOpened: (
     callback: (data: {
       connectionId: string;
@@ -90,32 +116,6 @@ const api = {
   },
   onConnectionClosed: (callback: (data: { connectionId: string }) => void) => {
     ipcRenderer.on('connection-closed', (_event, data) => callback(data));
-  },
-  onConnectionRegistered: (
-    callback: (data: {
-      connectionId: string;
-      agentName: string;
-      projectName: string;
-      baseDirectory: string | null;
-      label: string;
-      openCodeSessionId: string | null;
-      parentSessionId: string | null;
-    }) => void,
-  ) => {
-    ipcRenderer.on('connection-registered', (_event, data) => callback(data));
-  },
-
-  // Fired by the session-tree poller when new OpenCode child sessions are
-  // detected that don't yet have a registered connection in the app.
-  onChildSessionsDetected: (
-    callback: (
-      children: {
-        openCodeSessionId: string;
-        parentOpenCodeSessionId: string;
-      }[],
-    ) => void,
-  ) => {
-    ipcRenderer.on('child-sessions-detected', (_event, data) => callback(data));
   },
 
   // History
@@ -162,9 +162,7 @@ const api = {
   restartMcpServer: (): Promise<boolean> =>
     ipcRenderer.invoke('restart-mcp-server'),
   reconnectMcpServer: (): Promise<{ ok: boolean; cleared: number }> =>
-    fetch(`http://localhost:3100/api/reconnect`, { method: 'POST' }).then((r) =>
-      r.json(),
-    ),
+    ipcRenderer.invoke('reconnect-mcp-server'),
   getPersistedSessionChannels: (): Promise<
     {
       sessionId: string;

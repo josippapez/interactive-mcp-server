@@ -4,17 +4,17 @@ import type {
   ChannelMessage,
   Attachment,
   SessionStatus,
-  ConnectionState,
+  SessionNode,
 } from '../types';
-import PromptMessage from './prompt/PromptMessage';
-import ChatHistoryView from './prompt/ChatHistoryView';
-import SessionChannelBar from './prompt/SessionChannelBar';
-import ChannelSidebar from './prompt/ChannelSidebar';
-import ChannelHeader from './prompt/ChannelHeader';
-import ChannelComposer from './prompt/ChannelComposer';
+import PromptMessage from '../components/prompt/PromptMessage';
+import ChatHistoryView from '../components/prompt/ChatHistoryView';
+import AgentStatusBar from '../components/prompt/AgentStatusBar';
+import ChannelSidebar from '../components/prompt/ChannelSidebar';
+import ChannelHeader from '../components/prompt/ChannelHeader';
+import ChannelComposer from '../components/prompt/ChannelComposer';
 
 type Props = {
-  connections: Map<string, ConnectionState>;
+  connections: Map<string, SessionNode>;
   activeConnectionId: string | null;
   onSelectConnection: (connectionId: string) => void;
   prompt: PromptData | null;
@@ -23,7 +23,6 @@ type Props = {
   connectionId: string | null;
   sessionChannel: { sessionId: string; label?: string } | null;
   sessionStatuses: SessionStatus[];
-  isRestored?: boolean;
   onSubmit: (answer: string, attachments?: Attachment[]) => void;
   onSelectOption: (option: string) => void;
   onDismissStatus: (connectionId: string, timestamp: Date) => void;
@@ -47,7 +46,6 @@ export default function PromptView({
   connectionId,
   sessionChannel,
   sessionStatuses,
-  isRestored = false,
   onSubmit,
   onSelectOption,
   onDismissStatus,
@@ -145,17 +143,6 @@ export default function PromptView({
                 />
               )}
 
-              {isRestored && !prompt && !activeSession && !hasHistory && (
-                <div className="flex flex-col items-center justify-center flex-1 gap-2 text-[var(--color-text-muted)]">
-                  <div className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
-                    <span className="text-sm">
-                      Awaiting agent reconnection…
-                    </span>
-                  </div>
-                </div>
-              )}
-
               {idle && (
                 <div className="flex flex-col items-center justify-center h-full text-[var(--color-text-muted)] gap-2">
                   <div className="flex items-center gap-2 text-lg">
@@ -172,7 +159,7 @@ export default function PromptView({
             </div>
 
             {sessionChannel && (
-              <SessionChannelBar
+              <AgentStatusBar
                 sessionChannel={sessionChannel}
                 sessionStatuses={sessionStatuses}
                 connectionId={activeConnectionId}
@@ -197,7 +184,8 @@ export default function PromptView({
                 submitLabel="Queue"
                 baseDirectory={
                   activeConnectionId
-                    ? connections.get(activeConnectionId)?.baseDirectory
+                    ? (connections.get(activeConnectionId)?.baseDirectory ??
+                      undefined)
                     : undefined
                 }
                 placeholder="Message the agent… (⌘+Enter to queue)"

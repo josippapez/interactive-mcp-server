@@ -72,6 +72,11 @@ export interface PromptResponse {
   }[];
 }
 
+export type PromptUserFn = (
+  win: BrowserWindow | null,
+  data: PromptData,
+) => Promise<PromptResponse>;
+
 export function promptUser(
   win: BrowserWindow | null,
   data: PromptData,

@@ -8,9 +8,6 @@ import express from 'express';
 import type { Server } from 'http';
 import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
-import { writeFileSync, unlinkSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
 import {
   promptUser,
   setSoundEnabled,
@@ -24,13 +21,9 @@ import {
   registerSendMessageTool,
 } from './tools/session-channel';
 import { registerConnectionTool } from './tools/register-connection';
-import {
-  createSessionChannel,
-  getUnsentMessages,
-  getUnsentCount,
-  markMessagesSent,
-  deleteSessionChannel,
-} from './database';
+import { createSessionChannel, deleteSessionChannel } from './database';
+import { writeSessionFile, clearSessionFile } from './session-file';
+import { createApiRouter } from './api-routes';
 
 let httpServer: Server | null = null;
 let _sessionCleanup: ((connectionId: string) => Promise<boolean>) | null = null;
@@ -43,31 +36,6 @@ let _startParams: {
   getPromptTimeoutMs: () => number;
   getOpenCodePort: () => number;
 } | null = null;
-
-const SESSION_FILE = join(tmpdir(), 'imcp-session.json');
-// Also write to CWD-based path for repo-local persistence
-const CWD_SESSION_FILE = join(process.cwd(), '.imcp-session');
-
-function writeSessionFile(sessionId: string, port: number): void {
-  const data = JSON.stringify({ sessionId, port });
-  for (const path of [SESSION_FILE, CWD_SESSION_FILE]) {
-    try {
-      writeFileSync(path, data, 'utf-8');
-    } catch {
-      // non-critical
-    }
-  }
-}
-
-function clearSessionFile(): void {
-  for (const path of [SESSION_FILE, CWD_SESSION_FILE]) {
-    try {
-      unlinkSync(path);
-    } catch {
-      // non-critical
-    }
-  }
-}
 
 /** Create a fresh McpServer with all tools registered (one per connection). */
 function createMcpServerWithTools(
@@ -174,6 +142,55 @@ export async function startMcpServer(
       getOpenCodePort,
     );
 
+    // Factory for a no-op response stub used for synthetic MCP handshake requests.
+    // Must satisfy @hono/node-server's requirements (writeHead, removeHeader, etc.)
+    // so StreamableHTTPServerTransport does not throw on synthetic requests.
+    function createNoopResponse() {
+      const obj = {
+        setHeader() {
+          return obj;
+        },
+        getHeader() {
+          return undefined;
+        },
+        getHeaders() {
+          return {};
+        },
+        removeHeader() {},
+        writeHead() {
+          return obj;
+        },
+        flushHeaders() {},
+        status() {
+          return obj;
+        },
+        json() {},
+        end() {
+          return obj;
+        },
+        write() {
+          return true;
+        },
+        destroy() {},
+        on() {
+          return obj;
+        },
+        once() {
+          return obj;
+        },
+        off() {
+          return obj;
+        },
+        emit() {
+          return true;
+        },
+        headersSent: false,
+        writableEnded: false,
+        writableFinished: false,
+      };
+      return obj;
+    }
+
     // Create transport and wait for onsessioninitialized to fire.
     let newSessionId: string | undefined;
     const transport = await new Promise<StreamableHTTPServerTransport>(
@@ -216,52 +233,7 @@ export async function startMcpServer(
           server.close().catch(() => {});
         };
 
-        // No-op response object — the synthetic initialize response is discarded.
-        // Must include writeHead, removeHeader, getHeaders, flushHeaders, and
-        // destroy so @hono/node-server (used internally by StreamableHTTPServerTransport)
-        // does not throw when handling the synthetic request.
-        const noopRes = {
-          setHeader() {
-            return noopRes;
-          },
-          getHeader() {
-            return undefined;
-          },
-          getHeaders() {
-            return {};
-          },
-          removeHeader() {},
-          writeHead() {
-            return noopRes;
-          },
-          flushHeaders() {},
-          status() {
-            return noopRes;
-          },
-          json() {},
-          end() {
-            return noopRes;
-          },
-          write() {
-            return true;
-          },
-          destroy() {},
-          on() {
-            return noopRes;
-          },
-          once() {
-            return noopRes;
-          },
-          off() {
-            return noopRes;
-          },
-          emit() {
-            return true;
-          },
-          headersSent: false,
-          writableEnded: false,
-          writableFinished: false,
-        };
+        const noopRes = createNoopResponse();
 
         // Synthetic initialize request body.
         const initBody = {
@@ -310,48 +282,7 @@ export async function startMcpServer(
 
     // Complete the MCP handshake with notifications/initialized.
     // Re-use the same noop shape as the first stub — same @hono/node-server requirements.
-    const noopRes2 = {
-      setHeader() {
-        return noopRes2;
-      },
-      getHeader() {
-        return undefined;
-      },
-      getHeaders() {
-        return {};
-      },
-      removeHeader() {},
-      writeHead() {
-        return noopRes2;
-      },
-      flushHeaders() {},
-      status() {
-        return noopRes2;
-      },
-      json() {},
-      end() {
-        return noopRes2;
-      },
-      write() {
-        return true;
-      },
-      destroy() {},
-      on() {
-        return noopRes2;
-      },
-      once() {
-        return noopRes2;
-      },
-      off() {
-        return noopRes2;
-      },
-      emit() {
-        return true;
-      },
-      headersSent: false,
-      writableEnded: false,
-      writableFinished: false,
-    };
+    const noopRes2 = createNoopResponse();
 
     const initializedNotification = {
       jsonrpc: '2.0' as const,
@@ -516,60 +447,8 @@ export async function startMcpServer(
     }
   });
 
-  // Force-reconnect endpoint — clears all in-memory sessions so clients reinitialize on next call
-  app.post('/api/reconnect', (_req, res) => {
-    res.json({
-      ok: true,
-      cleared: 0,
-      message:
-        'Reconnect endpoint acknowledged. Use restart server for full reset.',
-    });
-  });
-
   // ─── Session channel REST API ───
-
-  // Create a session channel
-  app.post('/api/sessions', (req, res) => {
-    const { sessionId, label } = req.body as {
-      sessionId?: string;
-      label?: string;
-    };
-    if (!sessionId) {
-      res.status(400).json({ error: 'sessionId required' });
-      return;
-    }
-    createSessionChannel(sessionId, label);
-    getWindow()?.webContents.send('session-channel-created', {
-      sessionId,
-      label,
-    });
-    res.json({ ok: true, sessionId });
-  });
-
-  // Get unsent messages for a session (and mark them sent)
-  // Count unsent messages without consuming them (used by extension for peek)
-  app.get('/api/sessions/:sessionId/messages/count', (req, res) => {
-    const { sessionId } = req.params;
-    const count = getUnsentCount(sessionId);
-    res.json({ count });
-  });
-
-  app.get('/api/sessions/:sessionId/messages', (req, res) => {
-    const { sessionId } = req.params;
-    const messages = getUnsentMessages(sessionId);
-    if (messages.length > 0) {
-      markMessagesSent(messages.map((m) => m.id));
-    }
-    res.json({ messages });
-  });
-
-  // Delete / cleanup a session channel
-  app.delete('/api/sessions/:sessionId', (req, res) => {
-    const { sessionId } = req.params;
-    deleteSessionChannel(sessionId);
-    getWindow()?.webContents.send('session-channel-deleted', { sessionId });
-    res.json({ ok: true });
-  });
+  app.use(createApiRouter({ getWindow }));
 
   app.get('/health', (_req, res) => {
     const activeClients = Object.keys(sessions).length;

@@ -1,60 +1,56 @@
 import { memo } from 'react';
-import type { ConnectionState } from '../../types';
+import type { SessionNode } from '../../types';
 
 type Props = {
-  connections: Map<string, ConnectionState>;
+  connections: Map<string, SessionNode>;
   activeConnectionId: string | null;
   onSelect: (id: string) => void;
 };
 
-/** A flat connection + its resolved children in display order. */
-interface TreeNode {
-  conn: ConnectionState;
-  children: ConnectionState[];
+/**
+ * Builds a depth-ordered list of OpenCode session nodes rooted at the given
+ * parentId, recursing into children.
+ */
+function collectSubtree(
+  nodes: SessionNode[],
+  parentId: string | null,
+  depth: number,
+): SessionNode[] {
+  const children = nodes
+    .filter((n) => n.openCodeParentId === parentId && !n.isDirectConnection)
+    .sort((a, b) => a.title.localeCompare(b.title));
+
+  const result: SessionNode[] = [];
+  for (const child of children) {
+    result.push({ ...child, depth });
+    result.push(...collectSubtree(nodes, child.openCodeSessionId, depth + 1));
+  }
+  return result;
 }
 
 /**
- * Build a parent-first tree from the flat connections map.
- *
- * A connection is treated as a child of another connection when its
- * `parentSessionId` matches the parent's `openCodeSessionId`.
- *
- * Connections with no parent (or an unresolved parent) appear at the top level.
+ * Returns two ordered lists:
+ * - `openCodeTree`: root OpenCode sessions with their subagents interleaved
+ *   in depth-first order.
+ * - `directConnections`: MCP agents with no associated OpenCode session.
  */
-function buildTree(connections: Map<string, ConnectionState>): TreeNode[] {
-  const items = Array.from(connections.values());
+function partitionNodes(nodes: Map<string, SessionNode>): {
+  openCodeTree: SessionNode[];
+  directConnections: SessionNode[];
+} {
+  const all = Array.from(nodes.values());
+  const directConnections = all.filter((n) => n.isDirectConnection);
 
-  // Index: openCodeSessionId → connectionId
-  const byOpenCodeId = new Map<string, string>();
-  for (const conn of items) {
-    if (conn.openCodeSessionId) {
-      byOpenCodeId.set(conn.openCodeSessionId, conn.id);
-    }
+  const ocNodes = all.filter((n) => !n.isDirectConnection);
+  const roots = ocNodes.filter((n) => n.openCodeParentId === null);
+
+  const openCodeTree: SessionNode[] = [];
+  for (const root of roots) {
+    openCodeTree.push({ ...root, depth: 0 });
+    openCodeTree.push(...collectSubtree(ocNodes, root.openCodeSessionId, 1));
   }
 
-  const childIds = new Set<string>();
-  const parentToChildren = new Map<string, ConnectionState[]>();
-
-  for (const conn of items) {
-    if (!conn.parentSessionId) continue;
-    const parentConnId = byOpenCodeId.get(conn.parentSessionId);
-    if (!parentConnId) continue; // parent not registered in app yet
-    childIds.add(conn.id);
-    const siblings = parentToChildren.get(parentConnId) ?? [];
-    siblings.push(conn);
-    parentToChildren.set(parentConnId, siblings);
-  }
-
-  const roots: TreeNode[] = [];
-  for (const conn of items) {
-    if (childIds.has(conn.id)) continue; // rendered under parent
-    roots.push({
-      conn,
-      children: parentToChildren.get(conn.id) ?? [],
-    });
-  }
-
-  return roots;
+  return { openCodeTree, directConnections };
 }
 
 const ChannelSidebar = memo(function ChannelSidebar({
@@ -62,93 +58,100 @@ const ChannelSidebar = memo(function ChannelSidebar({
   activeConnectionId,
   onSelect,
 }: Props): React.ReactElement {
-  const tree = buildTree(connections);
+  const { openCodeTree, directConnections } = partitionNodes(connections);
+  const hasAny = openCodeTree.length > 0 || directConnections.length > 0;
 
   return (
     <aside className="w-64 border-r border-[var(--color-border)] bg-[var(--color-surface-alt)] overflow-y-auto flex flex-col">
-      <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
-        Channels
-      </div>
-      <div className="px-2 pb-2 space-y-1 flex-1">
-        {tree.length === 0 && (
-          <p className="px-2 py-1.5 text-xs text-[var(--color-text-faint)] italic">
-            No channels yet
-          </p>
-        )}
-        {tree.map(({ conn, children }) => (
-          <div key={conn.id}>
-            <ChannelItem
-              conn={conn}
-              isActive={conn.id === activeConnectionId}
-              onSelect={onSelect}
-            />
-            {children.length > 0 && (
-              <div className="ml-3 mt-0.5 space-y-0.5 border-l border-[var(--color-border)] pl-2">
-                {children.map((child) => (
-                  <ChannelItem
-                    key={child.id}
-                    conn={child}
-                    isActive={child.id === activeConnectionId}
-                    onSelect={onSelect}
-                    isChild
-                  />
-                ))}
-              </div>
-            )}
+      {!hasAny && (
+        <p className="px-4 py-3 text-xs text-[var(--color-text-faint)] italic">
+          No channels yet
+        </p>
+      )}
+
+      {openCodeTree.length > 0 && (
+        <section>
+          <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
+            Sessions
           </div>
-        ))}
-      </div>
+          <div className="px-2 pb-2 space-y-0.5">
+            {openCodeTree.map((node) => (
+              <ChannelItem
+                key={node.id}
+                node={node}
+                isActive={node.id === activeConnectionId}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {directConnections.length > 0 && (
+        <section>
+          <div className="px-3 py-2 text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
+            Direct Connections
+          </div>
+          <div className="px-2 pb-2 space-y-0.5">
+            {directConnections.map((node) => (
+              <ChannelItem
+                key={node.id}
+                node={node}
+                isActive={node.id === activeConnectionId}
+                onSelect={onSelect}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </aside>
   );
 });
 
 function ChannelItem({
-  conn,
+  node,
   isActive,
   onSelect,
-  isChild = false,
 }: {
-  conn: ConnectionState;
+  node: SessionNode;
   isActive: boolean;
   onSelect: (id: string) => void;
-  isChild?: boolean;
 }): React.ReactElement {
-  const label = conn.sessionChannel?.label ?? conn.name;
+  const label = node.sessionChannel?.label ?? node.title;
+  const depth = node.depth ?? 0;
+  const isChild = depth > 0;
+  const isDeepChild = depth > 1;
+
+  const indentPx = depth * 12;
+
   return (
     <button
-      onClick={() => onSelect(conn.id)}
-      className={`w-full flex items-center gap-2 px-2 py-1.5 text-left rounded-sm transition-colors ${
+      onClick={() => onSelect(node.id)}
+      style={{ paddingLeft: `${8 + indentPx}px` }}
+      className={`w-full flex items-center gap-2 pr-2 py-1.5 text-left rounded-sm transition-colors ${
         isChild ? 'text-xs' : 'text-sm'
       } ${
         isActive
           ? 'bg-[var(--color-agent)]/15 text-[var(--color-agent)]'
-          : conn.isPlaceholder
-            ? 'text-[var(--color-text-faint)] hover:bg-[var(--color-border)] italic cursor-default'
-            : conn.isRestored
-              ? 'text-[var(--color-text-faint)] hover:bg-[var(--color-border)] hover:text-[var(--color-text-muted)] italic'
-              : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
       }`}
     >
-      <span
-        className={`${(conn.isRestored || conn.isPlaceholder) && !isActive ? 'opacity-40' : ''} text-[var(--color-text-faint)] shrink-0`}
-      >
-        {isChild ? '↳' : '#'}
-      </span>
-      <span className="truncate flex-1">{label}</span>
-      {conn.isPlaceholder && !isActive && (
-        <span className="w-2 h-2 rounded-full bg-[var(--color-text-faint)] animate-pulse shrink-0" />
-      )}
-      {conn.isRestored && !conn.isPlaceholder && !isActive && (
-        <span className="text-[9px] text-[var(--color-text-faint)] shrink-0 not-italic">
-          ↺
+      {isDeepChild ? (
+        <span className="text-[var(--color-text-faint)] shrink-0">↳</span>
+      ) : isChild ? (
+        <span className="text-[var(--color-text-faint)] shrink-0">↳</span>
+      ) : (
+        <span className="text-[var(--color-text-faint)] shrink-0">
+          {node.isDirectConnection ? '⬡' : '#'}
         </span>
       )}
-      {conn.hasPendingPrompt && (
+      <span className="truncate flex-1">{label}</span>
+      {node.hasPendingPrompt && (
         <span className="w-2 h-2 rounded-full bg-[var(--color-user)] animate-pulse shrink-0" />
       )}
-      {!conn.hasPendingPrompt && conn.unreadCount > 0 && (
+      {!node.hasPendingPrompt && node.unreadCount > 0 && (
         <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--color-user)]/15 text-[var(--color-user)] shrink-0">
-          {conn.unreadCount}
+          {node.unreadCount}
         </span>
       )}
     </button>

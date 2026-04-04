@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react';
-import PromptView from './components/PromptView';
-import HistoryView from './components/HistoryView';
-import SettingsView from './components/SettingsView';
+import PromptView from './pages/PromptView';
+import HistoryView from './pages/HistoryView';
+import SettingsView from './pages/SettingsView';
 import StatusBar from './components/StatusBar';
 import ShortcutHelpModal from './components/ShortcutHelpModal';
 import { useConnections } from './hooks/useConnections';
@@ -90,7 +90,6 @@ export default function App(): React.ReactElement {
             connectionId={activeConnectionId}
             sessionChannel={activeConn?.sessionChannel ?? null}
             sessionStatuses={activeConn?.sessionStatuses ?? []}
-            isRestored={activeConn?.isRestored ?? false}
             onSubmit={handleSubmit}
             onSelectOption={handleSelectOption}
             onDismissStatus={handleDismissStatus}

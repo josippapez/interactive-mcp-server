@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import type { PromptData } from '../../types';
+import { formatTime } from '../../lib/formatters';
 
 type Props = {
   prompt: PromptData;
@@ -36,9 +37,3 @@ const PromptMessage = memo(function PromptMessage({
 });
 
 export default PromptMessage;
-
-function formatTime(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
-}

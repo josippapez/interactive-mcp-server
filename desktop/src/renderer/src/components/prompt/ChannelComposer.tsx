@@ -2,6 +2,8 @@ import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import type { Attachment } from '../../types';
 import AttachmentPreview from './AttachmentPreview';
 import AutocompleteDropdown from './AutocompleteDropdown';
+import { useAutocomplete } from '../../hooks/useAutocomplete';
+import { useAttachments } from '../../hooks/useAttachments';
 
 type Props = {
   enabled: boolean;
@@ -11,8 +13,6 @@ type Props = {
   onSubmit: (text: string, attachments?: Attachment[]) => void;
 };
 
-type Target = { start: number; end: number; query: string };
-
 export default function ChannelComposer({
   enabled,
   baseDirectory,
@@ -21,132 +21,46 @@ export default function ChannelComposer({
   onSubmit,
 }: Props): React.ReactElement {
   const [value, setValue] = useState('');
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
-  const [selectedIndex, setSelectedIndex] = useState(0);
-  const [target, setTarget] = useState<Target | null>(null);
-  const [loading, setLoading] = useState(false);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const {
+    target,
+    suggestions,
+    loading,
+    selectedIndex,
+    setSelectedIndex,
+    detectAutocomplete,
+    applySuggestion,
+    clearSuggestions,
+  } = useAutocomplete(baseDirectory);
+
+  const {
+    attachments,
+    setAttachments,
+    handlePaste,
+    handleFilePicker,
+    removeAttachment,
+  } = useAttachments(enabled);
 
   const showSuggestions =
     target !== null && (loading || suggestions.length > 0);
   const triggerChar: '#' | '@' =
     target !== null && value[target.start] === '@' ? '@' : '#';
 
-  const detectAutocomplete = useCallback(
-    (text: string, cursorPos: number) => {
-      if (!baseDirectory) {
-        setTarget(null);
-        setSuggestions([]);
-        return;
-      }
-      let triggerIdx = -1;
-      for (let i = cursorPos - 1; i >= 0; i--) {
-        const ch = text[i];
-        if (ch === '#' || ch === '@') {
-          triggerIdx = i;
-          break;
-        }
-        if (ch === '\n') break;
-      }
-      if (triggerIdx === -1) {
-        setTarget(null);
-        setSuggestions([]);
-        return;
-      }
-      const query = text.slice(triggerIdx + 1, cursorPos);
-      setTarget({ start: triggerIdx, end: cursorPos, query });
-      setSelectedIndex(0);
-      if (debounceRef.current) clearTimeout(debounceRef.current);
-      setLoading(true);
-      debounceRef.current = setTimeout(async () => {
-        try {
-          const results = await window.api.searchFiles(baseDirectory, query);
-          setSuggestions(results);
-        } catch {
-          setSuggestions([]);
-        } finally {
-          setLoading(false);
-        }
-      }, 150);
-    },
-    [baseDirectory],
-  );
-
-  const applySuggestion = useCallback(
-    (filePath: string) => {
-      if (!target) return;
-      const before = value.slice(0, target.start);
-      const after = value.slice(target.end);
-      const next = before + filePath + after;
-      setValue(next);
-      setSuggestions([]);
-      setTarget(null);
-      setSelectedIndex(0);
-      requestAnimationFrame(() => {
-        const ta = textareaRef.current;
-        if (!ta) return;
-        const newCursor = before.length + filePath.length;
-        ta.focus();
-        ta.selectionStart = newCursor;
-        ta.selectionEnd = newCursor;
-      });
-    },
-    [target, value],
-  );
-
-  const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      if (!enabled) return;
-      const items = Array.from(e.clipboardData.items);
-      const imageItems = items.filter((item) => item.type.startsWith('image/'));
-      if (imageItems.length === 0) return;
-      e.preventDefault();
-      for (const item of imageItems) {
-        const file = item.getAsFile();
-        if (!file) continue;
-        const reader = new FileReader();
-        reader.onload = () => {
-          const base64 = (reader.result as string).split(',')[1];
-          if (!base64) return;
-          setAttachments((prev) => [
-            ...prev,
-            {
-              data: base64,
-              mimeType: file.type || 'image/png',
-              name: file.name || `pasted-image-${Date.now()}.png`,
-              size: file.size,
-            },
-          ]);
-        };
-        reader.readAsDataURL(file);
-      }
-    },
-    [enabled],
-  );
-
-  const handleFilePicker = useCallback(async () => {
-    if (!enabled) return;
-    const paths = await window.api.openFileDialog();
-    for (const filePath of paths) {
-      const result = await window.api.readFileForAttachment(filePath);
-      if (!result) continue;
-      setAttachments((prev) => [
-        ...prev,
-        {
-          data: result.data,
-          mimeType: result.mimeType,
-          name: result.name,
-          size: result.size,
-        },
-      ]);
-    }
-  }, [enabled]);
-
-  const removeAttachment = useCallback((index: number) => {
-    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  const focusTextarea = useCallback((cursorPos: number) => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.focus();
+    ta.selectionStart = cursorPos;
+    ta.selectionEnd = cursorPos;
   }, []);
+
+  const handleApplySuggestion = useCallback(
+    (filePath: string) => {
+      applySuggestion(filePath, () => value, setValue, focusTextarea);
+    },
+    [applySuggestion, value, focusTextarea],
+  );
 
   const submit = useCallback(() => {
     const text = value.trim();
@@ -154,9 +68,8 @@ export default function ChannelComposer({
     onSubmit(text, attachments.length > 0 ? attachments : undefined);
     setValue('');
     setAttachments([]);
-    setTarget(null);
-    setSuggestions([]);
-  }, [enabled, value, attachments, onSubmit]);
+    clearSuggestions();
+  }, [enabled, value, attachments, onSubmit, setAttachments, clearSuggestions]);
 
   const disabled = useMemo(
     () => !enabled || (!value.trim() && attachments.length === 0),
@@ -180,7 +93,7 @@ export default function ChannelComposer({
             selectedIndex={selectedIndex}
             isLoading={loading}
             triggerChar={triggerChar}
-            onSelect={applySuggestion}
+            onSelect={handleApplySuggestion}
             onHoverIndex={setSelectedIndex}
           />
         )}
@@ -223,13 +136,12 @@ export default function ChannelComposer({
                 }
                 if (e.key === 'Enter' || e.key === 'Tab') {
                   e.preventDefault();
-                  applySuggestion(suggestions[selectedIndex]);
+                  handleApplySuggestion(suggestions[selectedIndex]);
                   return;
                 }
                 if (e.key === 'Escape') {
                   e.preventDefault();
-                  setSuggestions([]);
-                  setTarget(null);
+                  clearSuggestions();
                   return;
                 }
               }

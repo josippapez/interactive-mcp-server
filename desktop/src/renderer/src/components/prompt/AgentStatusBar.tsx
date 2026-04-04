@@ -30,7 +30,7 @@ function StatusDot({ type }: { type: string }): React.ReactElement {
   );
 }
 
-export default function SessionChannelBar({
+export default function AgentStatusBar({
   sessionChannel,
   sessionStatuses,
   connectionId,
