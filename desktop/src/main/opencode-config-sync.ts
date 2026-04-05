@@ -69,24 +69,36 @@ export function syncBridgeConfig(): string {
 
   const desiredCommand = ['node', bridgePath];
 
-  // Check if update is needed
-  if (
+  // Track whether any change is needed
+  let needsWrite = false;
+
+  // Remove stale "interactive-bridge" entry if present (legacy duplicate)
+  if ('interactive-bridge' in mcp) {
+    delete mcp['interactive-bridge'];
+    needsWrite = true;
+  }
+
+  // Check if the interactive-desktop entry already matches
+  const alreadyCurrent =
     existing &&
     existing.type === 'local' &&
     Array.isArray(existing.command) &&
     existing.command.length === 2 &&
     existing.command[0] === 'node' &&
-    existing.command[1] === bridgePath
-  ) {
+    existing.command[1] === bridgePath;
+
+  if (alreadyCurrent && !needsWrite) {
     return 'already-current';
   }
 
-  // Update the entry
-  mcp['interactive-desktop'] = {
-    command: desiredCommand,
-    type: 'local',
-    timeout: MCP_TIMEOUT,
-  };
+  if (!alreadyCurrent) {
+    // Update the entry
+    mcp['interactive-desktop'] = {
+      command: desiredCommand,
+      type: 'local',
+      timeout: MCP_TIMEOUT,
+    };
+  }
 
   // Write back. We re-serialize the stripped JSON (comments are lost, which is
   // acceptable since OpenCode configs rarely have user-added comments beyond

@@ -218,4 +218,73 @@ describe('opencode-config-sync', () => {
     expect(config.autoupdate).toBe(true);
     expect(config.plugin).toEqual(['./plugins/test.js']);
   });
+
+  it('removes stale interactive-bridge entry when it exists', () => {
+    writeFileSync(
+      FAKE_CONFIG_FILE,
+      JSON.stringify({
+        mcp: {
+          'interactive-desktop': {
+            url: 'http://localhost:3100/mcp',
+            type: 'remote',
+            timeout: 1_210_000,
+          },
+          'interactive-bridge': {
+            command: ['node', '/old/dev/path/desktop-bridge.cjs'],
+            type: 'local',
+            timeout: 1_210_000,
+          },
+          Context7: {
+            type: 'local',
+            command: ['npx', '-y', '@upstash/context7-mcp'],
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    const result = syncBridgeConfig();
+    expect(result).toBe('updated');
+
+    const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
+    // interactive-desktop should be updated to local bridge
+    expect(config.mcp['interactive-desktop'].type).toBe('local');
+    expect(config.mcp['interactive-desktop'].command).toEqual([
+      'node',
+      FAKE_BRIDGE,
+    ]);
+    // interactive-bridge should be removed
+    expect(config.mcp['interactive-bridge']).toBeUndefined();
+    // Other entries preserved
+    expect(config.mcp.Context7).toBeDefined();
+  });
+
+  it('removes stale interactive-bridge even when interactive-desktop is already current', () => {
+    writeFileSync(
+      FAKE_CONFIG_FILE,
+      JSON.stringify({
+        mcp: {
+          'interactive-desktop': {
+            command: ['node', FAKE_BRIDGE],
+            type: 'local',
+            timeout: 1_210_000,
+          },
+          'interactive-bridge': {
+            command: ['node', '/stale/path/bridge.cjs'],
+            type: 'local',
+            timeout: 1_210_000,
+          },
+        },
+      }),
+      'utf-8',
+    );
+
+    const result = syncBridgeConfig();
+    // Should still report updated because it removed the stale entry
+    expect(result).toBe('updated');
+
+    const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
+    expect(config.mcp['interactive-desktop']).toBeDefined();
+    expect(config.mcp['interactive-bridge']).toBeUndefined();
+  });
 });
