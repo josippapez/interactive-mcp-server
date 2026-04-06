@@ -21,6 +21,10 @@ export default function ChannelComposer({
   onSubmit,
 }: Props): React.ReactElement {
   const [value, setValue] = useState('');
+  const [expandedImage, setExpandedImage] = useState<{
+    src: string;
+    name: string;
+  } | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const {
@@ -85,94 +89,136 @@ export default function ChannelComposer({
   }, [value]);
 
   return (
-    <div className="border-t border-[var(--color-border)]">
-      <div className="relative flex items-end gap-2 p-3">
-        {showSuggestions && (
-          <AutocompleteDropdown
-            suggestions={suggestions}
-            selectedIndex={selectedIndex}
-            isLoading={loading}
-            triggerChar={triggerChar}
-            onSelect={handleApplySuggestion}
-            onHoverIndex={setSelectedIndex}
-          />
-        )}
-        <span className="text-[var(--color-user)] text-sm pb-2 select-none">
-          ❯
-        </span>
-        <div className="flex-1 flex flex-col gap-1.5">
-          {attachments.length > 0 && (
-            <AttachmentPreview
-              attachments={attachments}
-              onRemove={removeAttachment}
-              onExpand={() => undefined}
+    <>
+      <div className="border-t border-[var(--color-border)]">
+        <div className="relative flex items-end gap-2 p-3">
+          {showSuggestions && (
+            <AutocompleteDropdown
+              suggestions={suggestions}
+              selectedIndex={selectedIndex}
+              isLoading={loading}
+              triggerChar={triggerChar}
+              onSelect={handleApplySuggestion}
+              onHoverIndex={setSelectedIndex}
             />
           )}
-          <textarea
-            ref={textareaRef}
-            value={value}
-            disabled={!enabled}
-            onPaste={handlePaste}
-            onChange={(e) => {
-              const next = e.target.value;
-              setValue(next);
-              detectAutocomplete(next, e.target.selectionStart ?? next.length);
-            }}
-            onKeyDown={(e) => {
-              if (showSuggestions && suggestions.length > 0) {
-                if (e.key === 'ArrowDown') {
-                  e.preventDefault();
-                  setSelectedIndex((prev) =>
-                    prev < suggestions.length - 1 ? prev + 1 : 0,
-                  );
-                  return;
+          <span className="text-[var(--color-user)] text-sm pb-2 select-none">
+            ❯
+          </span>
+          <div className="flex-1 flex flex-col gap-1.5">
+            {attachments.length > 0 && (
+              <AttachmentPreview
+                attachments={attachments}
+                onRemove={removeAttachment}
+                onExpand={(src, name) => setExpandedImage({ src, name })}
+              />
+            )}
+            <textarea
+              ref={textareaRef}
+              value={value}
+              disabled={!enabled}
+              onPaste={handlePaste}
+              onChange={(e) => {
+                const next = e.target.value;
+                setValue(next);
+                detectAutocomplete(
+                  next,
+                  e.target.selectionStart ?? next.length,
+                );
+              }}
+              onKeyDown={(e) => {
+                if (showSuggestions && suggestions.length > 0) {
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setSelectedIndex((prev) =>
+                      prev < suggestions.length - 1 ? prev + 1 : 0,
+                    );
+                    return;
+                  }
+                  if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setSelectedIndex((prev) =>
+                      prev > 0 ? prev - 1 : suggestions.length - 1,
+                    );
+                    return;
+                  }
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    handleApplySuggestion(suggestions[selectedIndex]);
+                    return;
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault();
+                    clearSuggestions();
+                    return;
+                  }
                 }
-                if (e.key === 'ArrowUp') {
+                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                   e.preventDefault();
-                  setSelectedIndex((prev) =>
-                    prev > 0 ? prev - 1 : suggestions.length - 1,
-                  );
-                  return;
+                  submit();
                 }
-                if (e.key === 'Enter' || e.key === 'Tab') {
-                  e.preventDefault();
-                  handleApplySuggestion(suggestions[selectedIndex]);
-                  return;
-                }
-                if (e.key === 'Escape') {
-                  e.preventDefault();
-                  clearSuggestions();
-                  return;
-                }
-              }
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                submit();
-              }
-            }}
-            placeholder={placeholder}
-            className="w-full bg-[var(--color-surface-alt)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:border-[var(--color-tool)] focus:outline-none resize-none overflow-hidden min-h-[4rem] max-h-[40vh] disabled:opacity-60"
-            rows={1}
-          />
-        </div>
-        <div className="flex flex-col gap-1 self-end">
-          <button
-            onClick={handleFilePicker}
-            disabled={!enabled}
-            title="Attach file"
-            className="px-2 py-2 rounded-sm text-[var(--color-text-muted)] hover:text-[var(--color-agent)] hover:bg-[var(--color-agent)]/10 transition-colors text-sm disabled:opacity-40"
-          >
-            📎
-          </button>
-          <button
-            onClick={submit}
-            disabled={disabled}
-            className="px-3 py-2 rounded-sm bg-[var(--color-agent)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-          >
-            {submitLabel}
-          </button>
+              }}
+              placeholder={placeholder}
+              className="w-full bg-[var(--color-surface-alt)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:border-[var(--color-tool)] focus:outline-none resize-none overflow-hidden min-h-[4rem] max-h-[40vh] disabled:opacity-60"
+              rows={1}
+            />
+          </div>
+          <div className="flex flex-col gap-1 self-end">
+            <button
+              onClick={handleFilePicker}
+              disabled={!enabled}
+              title="Attach file"
+              className="px-2 py-2 rounded-sm text-[var(--color-text-muted)] hover:text-[var(--color-agent)] hover:bg-[var(--color-agent)]/10 transition-colors text-sm disabled:opacity-40"
+            >
+              📎
+            </button>
+            <button
+              onClick={submit}
+              disabled={disabled}
+              className="px-3 py-2 rounded-sm bg-[var(--color-agent)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            >
+              {submitLabel}
+            </button>
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* Expanded image modal (lightbox) */}
+      {expandedImage && (
+        <div
+          role="dialog"
+          aria-label="Image preview"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
+          onClick={() => setExpandedImage(null)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setExpandedImage(null);
+          }}
+        >
+          <div
+            className="relative max-w-[90vw] max-h-[90vh] flex flex-col items-center"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between w-full mb-2 px-1">
+              <span className="text-xs text-white/70 truncate max-w-[80%]">
+                {expandedImage.name}
+              </span>
+              <button
+                type="button"
+                onClick={() => setExpandedImage(null)}
+                className="text-white/70 hover:text-white text-sm px-2 py-0.5"
+                aria-label="Close image preview"
+              >
+                ESC
+              </button>
+            </div>
+            <img
+              src={expandedImage.src}
+              alt={expandedImage.name}
+              className="max-w-full max-h-[85vh] rounded-sm object-contain"
+            />
+          </div>
+        </div>
+      )}
+    </>
   );
 }

@@ -29,7 +29,9 @@ import { forceTerminateChat } from './ipc-prompt';
 import { markConnectionDeleted } from './tools/connection-guard';
 import { triggerSessionTreeUpdate } from './session-tree-manager';
 import { startOpenCodeServer, stopOpenCodeServer } from './opencode-server';
-import { resolveBridgePath, MCP_CONFIG_FILE } from './session-file';
+import { syncRemoteConfig } from './opencode-config-sync';
+import { registerMcpWithOpenCode } from './opencode-mcp-register';
+import { removePersistedSession } from './remove-persisted-session';
 
 export interface IpcHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -51,12 +53,20 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle('get-app-version', () => app.getVersion());
 
-  // Return the bridge script path and MCP config file location
-  ipcMain.handle('get-bridge-info', () => {
-    return {
-      bridgePath: resolveBridgePath(),
-      mcpConfigFile: MCP_CONFIG_FILE,
-    };
+  // Manually trigger MCP registration + config sync into OpenCode
+  ipcMain.handle('sync-opencode-config', async () => {
+    const settings = deps.getSettings();
+    // Try dynamic registration first
+    const regResult = await registerMcpWithOpenCode({
+      appPort: settings.port,
+      openCodePort: settings.openCodePort,
+    });
+    // Also update config file as fallback
+    const syncResult = syncRemoteConfig(
+      settings.port,
+      settings.promptTimeoutSeconds,
+    );
+    return `register=${regResult.status}, config=${syncResult}`;
   });
 
   // Detect the active OpenCode session on demand (best-effort, used for lazy injection)
@@ -103,6 +113,20 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       }
     } else if (prev.autoStartOpenCode) {
       stopOpenCodeServer();
+    }
+    // Re-sync remote MCP config when the prompt timeout or port changed
+    if (settings.autoSyncOpencode) {
+      const timeoutChanged =
+        settings.promptTimeoutSeconds !== prev.promptTimeoutSeconds;
+      const justEnabled = !prev.autoSyncOpencode;
+      if (timeoutChanged || justEnabled || portChanged) {
+        syncRemoteConfig(settings.port, settings.promptTimeoutSeconds);
+        // Also re-register dynamically
+        void registerMcpWithOpenCode({
+          appPort: settings.port,
+          openCodePort: settings.openCodePort,
+        });
+      }
     }
     return true;
   });
@@ -215,22 +239,16 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     },
   );
   ipcMain.handle('remove-session-channel', (_event, sessionId: string) => {
-    forceTerminateChat(sessionId);
-    void closeSessionByConnectionId(sessionId);
-    deleteSessionChannel(sessionId);
-    deleteRegisteredConnection(sessionId);
-    markConnectionDeleted(sessionId);
-    void triggerSessionTreeUpdate(
-      deps.getMainWindow,
-      () => deps.getSettings().openCodePort,
-    );
-    deps.getMainWindow()?.webContents.send('connection-closed', {
-      connectionId: sessionId,
+    return removePersistedSession(sessionId, {
+      getWindow: deps.getMainWindow,
+      getOpenCodePort: () => deps.getSettings().openCodePort,
+      forceTerminateChat,
+      closeSessionByConnectionId,
+      deleteSessionChannel,
+      deleteRegisteredConnection,
+      markConnectionDeleted,
+      triggerSessionTreeUpdate,
     });
-    deps.getMainWindow()?.webContents.send('session-channel-deleted', {
-      sessionId,
-    });
-    return true;
   });
 
   // Session channel — user sends a message, persist to SQLite for extension polling
@@ -259,13 +277,14 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
           size: number;
         }[];
       },
-    ): Promise<{ ok: boolean; error?: string }> => {
+    ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> => {
       return injectOpenCodeMessage(
         data.openCodeSessionId,
         data.message,
         data.attachments,
         deps.getSettings().openCodePort,
         deps.getSettings().noReplyInjection,
+        deps.getSettings().port,
       );
     },
   );

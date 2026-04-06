@@ -10,6 +10,7 @@ type AppSettings = {
   docIndexingEnabled: boolean;
   noReplyInjection: boolean;
   autoStartOpenCode: boolean;
+  autoSyncOpencode: boolean;
 };
 
 export default function SettingsView(): React.ReactElement {
@@ -21,7 +22,8 @@ export default function SettingsView(): React.ReactElement {
   const [portInput, setPortInput] = useState('');
   const [timeoutInput, setTimeoutInput] = useState('');
   const [openCodePortInput, setOpenCodePortInput] = useState('');
-  const [bridgePath, setBridgePath] = useState<string | null>(null);
+  const [syncStatus, setSyncStatus] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   useEffect(() => {
     window.api.getSettings().then((s) => {
@@ -30,9 +32,6 @@ export default function SettingsView(): React.ReactElement {
       setPortInput(String(s.port));
       setTimeoutInput(String(s.promptTimeoutSeconds));
       setOpenCodePortInput(String(s.openCodePort));
-    });
-    window.api.getBridgeInfo().then((info) => {
-      setBridgePath(info.bridgePath);
     });
   }, []);
 
@@ -83,7 +82,8 @@ export default function SettingsView(): React.ReactElement {
     settings.autoRestoreSessions !== initialSettings.autoRestoreSessions ||
     settings.docIndexingEnabled !== initialSettings.docIndexingEnabled ||
     settings.noReplyInjection !== initialSettings.noReplyInjection ||
-    settings.autoStartOpenCode !== initialSettings.autoStartOpenCode;
+    settings.autoStartOpenCode !== initialSettings.autoStartOpenCode ||
+    settings.autoSyncOpencode !== initialSettings.autoSyncOpencode;
 
   return (
     <div className="flex flex-col h-full overflow-y-auto p-6">
@@ -398,6 +398,98 @@ export default function SettingsView(): React.ReactElement {
           </button>
         </div>
 
+        {/* Auto-sync OpenCode config */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Auto-sync OpenCode config
+            </p>
+            <p className="text-xs text-[var(--color-text-faint)]">
+              Write a remote MCP entry into{' '}
+              <code className="text-[var(--color-text-muted)]">
+                opencode.json
+              </code>{' '}
+              on startup (fallback)
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setSettings((s) =>
+                s ? { ...s, autoSyncOpencode: !s.autoSyncOpencode } : s,
+              )
+            }
+            role="switch"
+            aria-checked={settings.autoSyncOpencode}
+            aria-label="Auto-sync OpenCode config"
+            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+              settings.autoSyncOpencode
+                ? 'bg-[var(--color-agent)]'
+                : 'bg-[var(--color-border)]'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.autoSyncOpencode ? 'translate-x-5' : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
+        {/* Manual sync button */}
+        <div>
+          <button
+            type="button"
+            onClick={async () => {
+              setSyncStatus(null);
+              try {
+                const result = await window.api.syncOpencodeConfig();
+                setSyncStatus(result);
+              } catch {
+                setSyncStatus('error');
+              }
+              setTimeout(() => setSyncStatus(null), 4000);
+            }}
+            className="px-3 py-1.5 rounded-sm border border-[var(--color-border)] text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] transition-colors"
+          >
+            Register with OpenCode
+          </button>
+          {syncStatus && (
+            <div className="text-xs mt-1 space-y-0.5" aria-live="polite">
+              {syncStatus.includes('register=registered') && (
+                <p className="text-[var(--color-agent)]">
+                  Registered with OpenCode
+                </p>
+              )}
+              {syncStatus.includes('register=unreachable') && (
+                <p className="text-[var(--color-warning,orange)]">
+                  OpenCode not reachable
+                </p>
+              )}
+              {syncStatus.includes('config=updated') && (
+                <p className="text-[var(--color-agent)]">Config file updated</p>
+              )}
+              {syncStatus.includes('config=already-current') && (
+                <p className="text-[var(--color-agent)]">
+                  Config already up to date
+                </p>
+              )}
+              {syncStatus.includes('opencode-config-missing') && (
+                <p className="text-[var(--color-error)]">
+                  No opencode.json found — run OpenCode once to create it.
+                </p>
+              )}
+              {!syncStatus.includes('register=') &&
+                !syncStatus.includes('config=') &&
+                !syncStatus.includes('opencode-config-missing') && (
+                  <p className="text-[var(--color-error)]">
+                    Sync failed: {syncStatus}
+                  </p>
+                )}
+            </div>
+          )}
+        </div>
+
         {/* Save button */}
         <div className="pt-4">
           <button
@@ -431,22 +523,52 @@ export default function SettingsView(): React.ReactElement {
               http://localhost:{settings.port}/mcp
             </code>
           </p>
-          {bridgePath && (
-            <div className="mt-2">
+          <div className="mt-3">
+            <div className="flex items-center gap-2 mb-1">
               <p className="text-xs text-[var(--color-text-faint)]">
-                Bridge script (for auto-reconnect):{' '}
+                OpenCode config snippet:
               </p>
-              <code className="text-xs text-[var(--color-text-muted)] block mt-0.5 break-all select-all">
-                {bridgePath}
-              </code>
-              <p className="text-xs text-[var(--color-text-faint)] mt-1">
-                OpenCode config:{' '}
-                <code className="text-[var(--color-text-muted)]">
-                  {`{ "type": "local", "command": "node", "args": ["${bridgePath}"] }`}
-                </code>
-              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  const snippet = JSON.stringify(
+                    {
+                      mcp: {
+                        'interactive-desktop': {
+                          type: 'remote',
+                          url: `http://localhost:${settings.port}/mcp`,
+                        },
+                      },
+                    },
+                    null,
+                    2,
+                  );
+                  navigator.clipboard.writeText(snippet).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  });
+                }}
+                aria-label="Copy MCP config snippet"
+                className="px-1.5 py-0.5 rounded-sm border border-[var(--color-border)] text-[10px] text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] transition-colors"
+              >
+                {copied ? 'Copied!' : 'Copy'}
+              </button>
             </div>
-          )}
+            <pre className="text-[11px] leading-relaxed text-[var(--color-text-muted)] bg-[var(--color-input-bg)] border border-[var(--color-border)] rounded-sm p-2 overflow-x-auto">
+              {JSON.stringify(
+                {
+                  mcp: {
+                    'interactive-desktop': {
+                      type: 'remote',
+                      url: `http://localhost:${settings.port}/mcp`,
+                    },
+                  },
+                },
+                null,
+                2,
+              )}
+            </pre>
+          </div>
         </div>
       </div>
     </div>

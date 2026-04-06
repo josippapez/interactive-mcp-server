@@ -188,12 +188,10 @@ Ask a new question in an active intensive chat session previously started with '
           ),
       },
     },
-    async ({
-      sessionId,
-      question,
-      predefinedOptions,
-      baseDirectory,
-    }): Promise<CallToolResult> => {
+    async (
+      { sessionId, question, predefinedOptions, baseDirectory },
+      extra,
+    ): Promise<CallToolResult> => {
       const session = activeChatSessions.get(sessionId);
       if (!session) {
         return {
@@ -207,17 +205,21 @@ Ask a new question in an active intensive chat session previously started with '
       }
 
       const promptId = randomUUID();
-      const result = await promptFn(getWindow(), {
-        id: promptId,
-        message: question,
-        projectName: session.title,
-        predefinedOptions,
-        baseDirectory: baseDirectory || session.baseDirectory,
-        sessionId,
-        connectionId,
-        connectionName,
-        timeoutSeconds: getPromptTimeoutSeconds(),
-      });
+      const result = await promptFn(
+        getWindow(),
+        {
+          id: promptId,
+          message: question,
+          projectName: session.title,
+          predefinedOptions,
+          baseDirectory: baseDirectory || session.baseDirectory,
+          sessionId,
+          connectionId,
+          connectionName,
+          timeoutSeconds: getPromptTimeoutSeconds(),
+        },
+        extra.signal,
+      );
 
       const { answer, attachments } = result;
 

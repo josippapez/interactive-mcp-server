@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 
 // vi.hoisted runs before vi.mock hoisting, so these constants are available
-const { TEST_DIR, FAKE_HOME, FAKE_CONFIG_DIR, FAKE_CONFIG_FILE, FAKE_BRIDGE } =
-  vi.hoisted(() => {
+const { TEST_DIR, FAKE_HOME, FAKE_CONFIG_DIR, FAKE_CONFIG_FILE } = vi.hoisted(
+  () => {
     /* eslint-disable @typescript-eslint/no-require-imports */
     const os = require('os') as typeof import('os');
     const path = require('path') as typeof import('path');
@@ -23,9 +23,9 @@ const { TEST_DIR, FAKE_HOME, FAKE_CONFIG_DIR, FAKE_CONFIG_FILE, FAKE_BRIDGE } =
         'opencode',
         'opencode.json',
       ),
-      FAKE_BRIDGE: path.join(testDir, 'desktop-bridge.cjs'),
     };
-  });
+  },
+);
 
 vi.mock('os', async (importOriginal) => {
   const actual = await importOriginal<typeof import('os')>();
@@ -35,18 +35,12 @@ vi.mock('os', async (importOriginal) => {
   };
 });
 
-vi.mock('./session-file', () => ({
-  resolveBridgePath: () => FAKE_BRIDGE,
-}));
-
-import { syncBridgeConfig } from '../main/opencode-config-sync';
+import { syncRemoteConfig } from '../main/opencode-config-sync';
 
 describe('opencode-config-sync', () => {
   beforeEach(() => {
     // Create test directories
     mkdirSync(FAKE_CONFIG_DIR, { recursive: true });
-    // Create a fake bridge file
-    writeFileSync(FAKE_BRIDGE, '// fake bridge', 'utf-8');
   });
 
   afterEach(() => {
@@ -58,26 +52,25 @@ describe('opencode-config-sync', () => {
   });
 
   it('returns "opencode-config-missing" when no config file exists', () => {
-    // beforeEach creates the directory but not the file, so no unlink needed
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
     expect(result).toBe('opencode-config-missing');
   });
 
-  it('creates the mcp.interactive-desktop entry when config has no mcp section', () => {
+  it('creates the mcp.interactive-desktop remote entry when config has no mcp section', () => {
     writeFileSync(
       FAKE_CONFIG_FILE,
       JSON.stringify({ $schema: 'test' }),
       'utf-8',
     );
 
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
     expect(result).toBe('updated');
 
     const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
     expect(config.mcp['interactive-desktop']).toEqual({
-      command: ['node', FAKE_BRIDGE],
-      type: 'local',
-      timeout: 1_210_000,
+      type: 'remote',
+      url: 'http://localhost:3100/mcp',
+      timeout: 860_000, // default: 800s * 1000 + 60_000 buffer
     });
   });
 
@@ -95,19 +88,19 @@ describe('opencode-config-sync', () => {
       'utf-8',
     );
 
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
     expect(result).toBe('updated');
 
     const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
-    expect(config.mcp['interactive-desktop'].command).toEqual([
-      'node',
-      FAKE_BRIDGE,
-    ]);
+    expect(config.mcp['interactive-desktop'].type).toBe('remote');
+    expect(config.mcp['interactive-desktop'].url).toBe(
+      'http://localhost:3100/mcp',
+    );
     // Existing entries should be preserved
     expect(config.mcp.Context7).toBeDefined();
   });
 
-  it('updates the bridge path when it differs', () => {
+  it('updates a stale local/bridge entry to remote', () => {
     writeFileSync(
       FAKE_CONFIG_FILE,
       JSON.stringify({
@@ -115,36 +108,41 @@ describe('opencode-config-sync', () => {
           'interactive-desktop': {
             command: ['node', '/old/path/bridge.cjs'],
             type: 'local',
-            timeout: 1_210_000,
+            timeout: 1_810_000,
           },
         },
       }),
       'utf-8',
     );
 
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
     expect(result).toBe('updated');
 
     const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
-    expect(config.mcp['interactive-desktop'].command[1]).toBe(FAKE_BRIDGE);
+    expect(config.mcp['interactive-desktop'].type).toBe('remote');
+    expect(config.mcp['interactive-desktop'].url).toBe(
+      'http://localhost:3100/mcp',
+    );
+    // Old command key should be gone (replaced entirely)
+    expect(config.mcp['interactive-desktop'].command).toBeUndefined();
   });
 
-  it('returns "already-current" when the path is already correct', () => {
+  it('returns "already-current" when the remote entry is already correct', () => {
     writeFileSync(
       FAKE_CONFIG_FILE,
       JSON.stringify({
         mcp: {
           'interactive-desktop': {
-            command: ['node', FAKE_BRIDGE],
-            type: 'local',
-            timeout: 1_210_000,
+            type: 'remote',
+            url: 'http://localhost:3100/mcp',
+            timeout: 860_000,
           },
         },
       }),
       'utf-8',
     );
 
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
     expect(result).toBe('already-current');
   });
 
@@ -161,41 +159,13 @@ describe('opencode-config-sync', () => {
 }`;
     writeFileSync(FAKE_CONFIG_FILE, configWithComments, 'utf-8');
 
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
     expect(result).toBe('updated');
 
     const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
     expect(config.mcp['interactive-desktop']).toBeDefined();
-    // Note: comments are lost after re-serialization, which is expected
+    expect(config.mcp['interactive-desktop'].type).toBe('remote');
     expect(config.mcp.Context7).toBeDefined();
-  });
-
-  it('updates remote type entries to local bridge', () => {
-    writeFileSync(
-      FAKE_CONFIG_FILE,
-      JSON.stringify({
-        mcp: {
-          'interactive-desktop': {
-            url: 'http://localhost:3100/mcp',
-            type: 'remote',
-            timeout: 1_210_000,
-          },
-        },
-      }),
-      'utf-8',
-    );
-
-    const result = syncBridgeConfig();
-    expect(result).toBe('updated');
-
-    const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
-    expect(config.mcp['interactive-desktop'].type).toBe('local');
-    expect(config.mcp['interactive-desktop'].command).toEqual([
-      'node',
-      FAKE_BRIDGE,
-    ]);
-    // Old 'url' key should be gone (replaced entirely)
-    expect(config.mcp['interactive-desktop'].url).toBeUndefined();
   });
 
   it('preserves other config keys (schema, plugin, etc.)', () => {
@@ -210,7 +180,7 @@ describe('opencode-config-sync', () => {
       'utf-8',
     );
 
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
     expect(result).toBe('updated');
 
     const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
@@ -227,12 +197,12 @@ describe('opencode-config-sync', () => {
           'interactive-desktop': {
             url: 'http://localhost:3100/mcp',
             type: 'remote',
-            timeout: 1_210_000,
+            timeout: 860_000,
           },
           'interactive-bridge': {
             command: ['node', '/old/dev/path/desktop-bridge.cjs'],
             type: 'local',
-            timeout: 1_210_000,
+            timeout: 1_810_000,
           },
           Context7: {
             type: 'local',
@@ -243,48 +213,74 @@ describe('opencode-config-sync', () => {
       'utf-8',
     );
 
-    const result = syncBridgeConfig();
+    const result = syncRemoteConfig(3100);
+    // Should still report updated because it removed the stale entry
     expect(result).toBe('updated');
 
     const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
-    // interactive-desktop should be updated to local bridge
-    expect(config.mcp['interactive-desktop'].type).toBe('local');
-    expect(config.mcp['interactive-desktop'].command).toEqual([
-      'node',
-      FAKE_BRIDGE,
-    ]);
     // interactive-bridge should be removed
     expect(config.mcp['interactive-bridge']).toBeUndefined();
     // Other entries preserved
     expect(config.mcp.Context7).toBeDefined();
+    expect(config.mcp['interactive-desktop']).toBeDefined();
   });
 
-  it('removes stale interactive-bridge even when interactive-desktop is already current', () => {
+  it('uses dynamic timeout based on promptTimeoutSeconds when provided', () => {
+    writeFileSync(FAKE_CONFIG_FILE, JSON.stringify({ mcp: {} }), 'utf-8');
+
+    const result = syncRemoteConfig(3100, 1200);
+    expect(result).toBe('updated');
+
+    const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
+    // timeout should be promptTimeoutSeconds * 1000 + 60_000 buffer
+    expect(config.mcp['interactive-desktop'].timeout).toBe(1_200_000 + 60_000);
+  });
+
+  it('uses default timeout when promptTimeoutSeconds is not provided', () => {
+    writeFileSync(FAKE_CONFIG_FILE, JSON.stringify({ mcp: {} }), 'utf-8');
+
+    const result = syncRemoteConfig(3100);
+    expect(result).toBe('updated');
+
+    const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
+    // Default: 800s * 1000 + 60_000 = 860_000
+    expect(config.mcp['interactive-desktop'].timeout).toBe(860_000);
+  });
+
+  it('detects timeout change and updates the entry', () => {
+    // First sync with default timeout
+    writeFileSync(FAKE_CONFIG_FILE, JSON.stringify({ mcp: {} }), 'utf-8');
+    syncRemoteConfig(3100);
+
+    // Second sync with different timeout — should update
+    const result = syncRemoteConfig(3100, 1800);
+    expect(result).toBe('updated');
+
+    const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
+    expect(config.mcp['interactive-desktop'].timeout).toBe(1_800_000 + 60_000);
+  });
+
+  it('updates when port changes', () => {
     writeFileSync(
       FAKE_CONFIG_FILE,
       JSON.stringify({
         mcp: {
           'interactive-desktop': {
-            command: ['node', FAKE_BRIDGE],
-            type: 'local',
-            timeout: 1_210_000,
-          },
-          'interactive-bridge': {
-            command: ['node', '/stale/path/bridge.cjs'],
-            type: 'local',
-            timeout: 1_210_000,
+            type: 'remote',
+            url: 'http://localhost:3100/mcp',
+            timeout: 860_000,
           },
         },
       }),
       'utf-8',
     );
 
-    const result = syncBridgeConfig();
-    // Should still report updated because it removed the stale entry
+    const result = syncRemoteConfig(4200);
     expect(result).toBe('updated');
 
     const config = JSON.parse(readFileSync(FAKE_CONFIG_FILE, 'utf-8'));
-    expect(config.mcp['interactive-desktop']).toBeDefined();
-    expect(config.mcp['interactive-bridge']).toBeUndefined();
+    expect(config.mcp['interactive-desktop'].url).toBe(
+      'http://localhost:4200/mcp',
+    );
   });
 });

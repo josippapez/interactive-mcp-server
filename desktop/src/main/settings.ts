@@ -14,6 +14,8 @@ export interface AppSettings {
   noReplyInjection: boolean;
   /** When true, the desktop app spawns `opencode serve` automatically on startup. Default: false. */
   autoStartOpenCode: boolean;
+  /** When true, syncRemoteConfig() runs automatically at startup. Default: true. */
+  autoSyncOpencode: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -26,6 +28,7 @@ export const defaultSettings: AppSettings = {
   docIndexingEnabled: true,
   noReplyInjection: true,
   autoStartOpenCode: false,
+  autoSyncOpencode: true,
 };
 
 export function getSettingsPath(): string {

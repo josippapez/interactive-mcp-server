@@ -30,16 +30,32 @@ describe('session-file', () => {
       expect(data.port).toBe(3100);
     });
 
-    it('includes bridgePath when the bridge script exists', () => {
+    it('does not include bridgePath (bridge removed)', () => {
       writeSessionFile('test-session', 3100);
 
       const data = JSON.parse(readFileSync(SESSION_FILE, 'utf-8'));
-      // bridgePath may or may not be present depending on dev env,
-      // but the key should exist if the bridge file is found
-      if (data.bridgePath) {
-        expect(typeof data.bridgePath).toBe('string');
-        expect(data.bridgePath).toContain('desktop-bridge.cjs');
-      }
+      expect(data.bridgePath).toBeUndefined();
+    });
+
+    it('includes promptTimeoutMs when provided', () => {
+      writeSessionFile('test-session', 3100, 1_200_000);
+
+      const data = JSON.parse(readFileSync(SESSION_FILE, 'utf-8'));
+      expect(data.promptTimeoutMs).toBe(1_200_000);
+    });
+
+    it('omits promptTimeoutMs when not provided', () => {
+      writeSessionFile('test-session', 3100);
+
+      const data = JSON.parse(readFileSync(SESSION_FILE, 'utf-8'));
+      expect(data.promptTimeoutMs).toBeUndefined();
+    });
+
+    it('omits promptTimeoutMs when zero', () => {
+      writeSessionFile('test-session', 3100, 0);
+
+      const data = JSON.parse(readFileSync(SESSION_FILE, 'utf-8'));
+      expect(data.promptTimeoutMs).toBeUndefined();
     });
   });
 
@@ -66,40 +82,22 @@ describe('session-file', () => {
   });
 
   describe('writeMcpConfigHint', () => {
-    it('writes a JSON config file', () => {
+    it('writes a JSON config file with remote entry', () => {
       writeMcpConfigHint(3100);
 
       expect(existsSync(MCP_CONFIG_FILE)).toBe(true);
       const data = JSON.parse(readFileSync(MCP_CONFIG_FILE, 'utf-8'));
 
-      // Should always have the HTTP config
-      expect(data['interactive-desktop-http']).toBeDefined();
-      expect(data['interactive-desktop-http'].type).toBe('remote');
-      expect(data['interactive-desktop-http'].url).toBe(
-        'http://localhost:3100/mcp',
-      );
+      expect(data['interactive-desktop']).toBeDefined();
+      expect(data['interactive-desktop'].type).toBe('remote');
+      expect(data['interactive-desktop'].url).toBe('http://localhost:3100/mcp');
     });
 
-    it('includes bridge config when the bridge script exists', () => {
-      writeMcpConfigHint(3100);
-
-      const data = JSON.parse(readFileSync(MCP_CONFIG_FILE, 'utf-8'));
-
-      // Bridge config is only present if the script was found on disk
-      if (data['interactive-desktop']) {
-        expect(data['interactive-desktop'].type).toBe('local');
-        expect(data['interactive-desktop'].command).toBe('node');
-        expect(data['interactive-desktop'].args).toHaveLength(1);
-      }
-    });
-
-    it('uses the correct port in the HTTP URL', () => {
+    it('uses the correct port in the URL', () => {
       writeMcpConfigHint(9999);
 
       const data = JSON.parse(readFileSync(MCP_CONFIG_FILE, 'utf-8'));
-      expect(data['interactive-desktop-http'].url).toBe(
-        'http://localhost:9999/mcp',
-      );
+      expect(data['interactive-desktop'].url).toBe('http://localhost:9999/mcp');
     });
   });
 });

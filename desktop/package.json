@@ -116,11 +116,7 @@
       "out/**/*"
     ],
     "extraResources": [
-      "resources/**",
-      {
-        "from": "../tools/mcp/desktop-bridge.cjs",
-        "to": "desktop-bridge.cjs"
-      }
+      "resources/**"
     ]
   }
 }

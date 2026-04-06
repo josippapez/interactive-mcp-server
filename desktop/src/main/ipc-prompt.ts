@@ -75,13 +75,24 @@ export interface PromptResponse {
 export type PromptUserFn = (
   win: BrowserWindow | null,
   data: PromptData,
+  signal?: AbortSignal,
 ) => Promise<PromptResponse>;
 
 export function promptUser(
   win: BrowserWindow | null,
   data: PromptData,
+  signal?: AbortSignal,
 ): Promise<PromptResponse> {
   return new Promise((resolve) => {
+    // If the signal is already aborted, resolve immediately.
+    if (signal?.aborted) {
+      resolve({
+        answer:
+          'Error: Tool call aborted — the MCP session was closed or the request was cancelled.',
+      });
+      return;
+    }
+
     if (!win || win.isDestroyed()) {
       resolve({ answer: 'Error: Application window is not available.' });
       return;
@@ -155,6 +166,21 @@ export function promptUser(
       }
     };
     ipcMain.on('prompt-response', handler);
+
+    // Listen for abort signal from the MCP SDK (fires when server.close() or
+    // notifications/cancelled is received). This prevents the prompt from
+    // hanging indefinitely when the desktop app restarts.
+    if (signal) {
+      const onAbort = (): void => {
+        if (settled) return;
+        cleanup();
+        resolve({
+          answer:
+            'Error: Tool call aborted — the MCP session was closed or the request was cancelled.',
+        });
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
 
     // Register as the active prompt for this connection
     activePrompts.set(data.connectionId, {

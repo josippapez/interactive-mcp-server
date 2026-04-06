@@ -43,7 +43,9 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
 
 ## 1. App Structure Overview
 
-The renderer is a tab-based UI with three views: **Prompts**, **History**, and **Settings**. All MCP connection state lives in the `useConnections` hook and is threaded downward as props. The Prompts tab is always mounted (hidden with CSS when inactive) to avoid tearing live IPC state; the other two tabs are conditionally rendered.
+The renderer is a tab-based UI with two views: **Prompts** and **Settings**. All session/channel state lives in the `useConnections` hook and is threaded downward as props. The Prompts tab is always mounted (hidden with CSS when inactive) to avoid tearing live IPC state; the Settings tab is conditionally rendered.
+
+Sidebar selection is keyed by `openCodeSessionId ?? connectionId`. That renderer key is not always the same as the persisted session identifier used by destructive actions. Clear/remove/dismiss actions must resolve back to `sessionChannel.sessionId` (or `connectionId`) before calling main-process APIs.
 
 Theme preference is stored in `localStorage` and applied globally to `document.documentElement` via a `data-theme` attribute. All color tokens are CSS custom properties resolved at runtime against the current theme.
 
@@ -58,7 +60,7 @@ React.StrictMode
 └── ThemeProvider                          (ThemeContext.tsx)
     └── App                                (App.tsx)
         ├── <header> titlebar
-        │   └── TabButton × 3             (inline in App.tsx)
+        │   └── TabButton × 2             (inline in App.tsx)
         ├── <main>
         │   ├── PromptView                 (always mounted, visibility via CSS)
         │   │   ├── ChannelSidebar         (pages/PromptView.tsx)
@@ -74,9 +76,6 @@ React.StrictMode
         │   │   └── ChannelComposer
         │   │       ├── AutocompleteDropdown (when suggestions active)
         │   │       └── AttachmentPreview    (when attachments present)
-        │   ├── HistoryView                (conditional — tab === 'history')
-        │   │   └── CollapsibleSection ×n  (pages/HistoryView.tsx)
-        │   │       └── MarkdownContent ×n
         │   └── SettingsView               (conditional — tab === 'settings')
         │                                  (pages/SettingsView.tsx)
         ├── StatusBar                      (always visible)
@@ -134,7 +133,7 @@ CSS custom properties (e.g. `--color-bg`, `--color-agent`, `--color-text-muted`)
 
 **File:** `hooks/useConnections.ts`
 
-Central state manager for all MCP connections. Owns the `Map<string, ConnectionState>` and all IPC event subscriptions. Called once at the `App` level.
+Central state manager for renderer session nodes. Owns the `Map<string, SessionNode>` and all IPC event subscriptions. Called once at the `App` level.
 
 #### Parameters
 
@@ -144,20 +143,20 @@ Central state manager for all MCP connections. Owns the `Map<string, ConnectionS
 
 #### Returned values
 
-| Value                        | Type                                                                       | Description                                                                                                                                                                                                                                                                                                                                                        |
-| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `connections`                | `Map<string, ConnectionState>`                                             | All known connections/channels, keyed by connection ID.                                                                                                                                                                                                                                                                                                            |
-| `activeConnectionId`         | `string \| null`                                                           | ID of the currently selected connection in the sidebar.                                                                                                                                                                                                                                                                                                            |
-| `setActiveConnectionId`      | `Dispatch<SetStateAction<string \| null>>`                                 | Setter for the active connection.                                                                                                                                                                                                                                                                                                                                  |
-| `activeConn`                 | `ConnectionState \| null`                                                  | Derived: `connections.get(activeConnectionId)` or `null`.                                                                                                                                                                                                                                                                                                          |
-| `clientInfo`                 | `{ model?: string; mode?: string } \| undefined`                           | Most recently received client info from a prompt request.                                                                                                                                                                                                                                                                                                          |
-| `handleSubmit`               | `(answer: string, attachments?: Attachment[]) => void`                     | Submits an answer for the active connection's pending prompt.                                                                                                                                                                                                                                                                                                      |
-| `handleSelectOption`         | `(option: string) => void`                                                 | Submits a predefined option as the answer for the active prompt.                                                                                                                                                                                                                                                                                                   |
-| `handleDismissStatus`        | `(connectionId: string, timestamp: Date) => void`                          | Removes a `SessionStatus` entry by timestamp.                                                                                                                                                                                                                                                                                                                      |
-| `handleDismissSession`       | `(connectionId: string) => void`                                           | Calls `window.api.dismissSession` to close the tab in the UI without removing the session channel.                                                                                                                                                                                                                                                                 |
-| `handleQueueSessionMessage`  | `(sessionId: string, message: string, attachments?: Attachment[]) => void` | Queues a message for the session via `window.api.queueSessionMessage` and optimistically appends an `'outbound'` message to `channelMessages`. When an OpenCode session is active, also calls `window.api.injectOpenCodeMessage` with the message and attachments; image attachments are saved to temp files and referenced by path, text attachments are inlined. |
-| `handleClearChannelMessages` | `(sessionId: string) => void`                                              | Calls `window.api.clearSessionChannelMessages` to clear DB history for the session.                                                                                                                                                                                                                                                                                |
-| `handleRemoveSession`        | `(sessionId: string) => void`                                              | Calls `window.api.removeSessionChannel` to delete the session channel entirely.                                                                                                                                                                                                                                                                                    |
+| Value                        | Type                                                                       | Description                                                                                                                                                                                                                                                                                                                                                                           |
+| ---------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `connections`                | `Map<string, SessionNode>`                                                 | All known sidebar nodes, keyed by `openCodeSessionId ?? connectionId`.                                                                                                                                                                                                                                                                                                                |
+| `activeConnectionId`         | `string \| null`                                                           | ID of the currently selected sidebar node. This is a renderer node key, not always the persisted session ID.                                                                                                                                                                                                                                                                          |
+| `setActiveConnectionId`      | `Dispatch<SetStateAction<string \| null>>`                                 | Setter for the active connection.                                                                                                                                                                                                                                                                                                                                                     |
+| `activeConn`                 | `SessionNode \| null`                                                      | Derived: `connections.get(activeConnectionId)` or `null`.                                                                                                                                                                                                                                                                                                                             |
+| `clientInfo`                 | `{ model?: string; mode?: string } \| undefined`                           | Most recently received client info from a prompt request.                                                                                                                                                                                                                                                                                                                             |
+| `handleSubmit`               | `(answer: string, attachments?: Attachment[]) => void`                     | Submits an answer for the active connection's pending prompt.                                                                                                                                                                                                                                                                                                                         |
+| `handleSelectOption`         | `(option: string) => void`                                                 | Submits a predefined option as the answer for the active prompt.                                                                                                                                                                                                                                                                                                                      |
+| `handleDismissStatus`        | `(connectionId: string, timestamp: Date) => void`                          | Removes a `SessionStatus` entry by timestamp.                                                                                                                                                                                                                                                                                                                                         |
+| `handleDismissSession`       | `(connectionId: string) => void`                                           | Calls `window.api.dismissSession` with the persisted session identifier (`connectionId`).                                                                                                                                                                                                                                                                                             |
+| `handleQueueSessionMessage`  | `(sessionId: string, message: string, attachments?: Attachment[]) => void` | Queues a message for the session via `window.api.queueSessionMessage` and optimistically appends an `'outbound'` message to `channelMessages`. When an OpenCode session is active, also calls `window.api.injectOpenCodeMessage`; image attachments are saved to the persistent attachment store and referenced by `/attachments/:filename` URLs, while text attachments are inlined. |
+| `handleClearChannelMessages` | `(sessionId: string) => void`                                              | Calls `window.api.clearSessionChannelMessages` to clear DB history for the session.                                                                                                                                                                                                                                                                                                   |
+| `handleRemoveSession`        | `(sessionId: string) => void`                                              | Calls `window.api.removeSessionChannel` to delete the session channel entirely.                                                                                                                                                                                                                                                                                                       |
 
 #### Internal design
 
@@ -165,29 +164,35 @@ Central state manager for all MCP connections. Owns the `Map<string, ConnectionS
 
 **Stable refs pattern:** `onActivatePromptTab` and `activeConnectionId` are mirrored to refs (`activateRef`, `activeConnectionRef`) so that event callbacks registered at mount time always access the latest values without needing to re-register.
 
-**`withConnection` helper:** All state mutations go through `withConnection(connectionId, updater)`, which performs a safe `Map` clone and applies the updater only if the connection exists.
+**`withNode` helper:** All state mutations go through `withNode(nodeId, updater)`, which performs a safe `Map` clone and applies the updater only if the node exists.
 
 #### IPC events handled
 
-| Event                             | Effect                                                                                                                                      |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onConnectionOpened`              | Adds or updates the connection entry; clears any matching `isRestored` entry; loads channel history; activates prompt tab.                  |
-| `onConnectionClosed`              | Removes the connection entry; selects the next available connection if it was active.                                                       |
-| `onPromptRequest`                 | Sets `prompt` and `hasPendingPrompt` on the connection; appends a `'question'` channel message; updates `clientInfo`; activates prompt tab. |
-| `onIntensiveChatStart`            | Sets `activeSession` (`{ id, title }`) on the connection; activates prompt tab.                                                             |
-| `onIntensiveChatStop`             | Clears `activeSession` to `null`.                                                                                                           |
-| `onSessionStatusUpdate`           | Appends a new `SessionStatus` to `sessionStatuses`.                                                                                         |
-| `onSessionChannelCreated`         | Associates a `sessionChannel` with an existing connection or creates a new connection entry; loads channel history; activates prompt tab.   |
-| `onSessionChannelDeleted`         | Removes the connection entry; clears active selection if it matched.                                                                        |
-| `onSessionChannelMessagesCleared` | Resets `channelMessages` and `unreadCount` to empty/zero.                                                                                   |
+| Event                             | Effect                                                                                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onSessionTreeUpdated`            | Rebuilds renderer topology from the latest full snapshot, preserving runtime state and loading history for newly claimed `connectionId`s.                     |
+| `onConnectionOpened`              | Adds a direct-connection node keyed by `connectionId` when no OpenCode-backed node already owns that connection; loads channel history; activates prompt tab. |
+| `onConnectionClosed`              | Removes only direct-connection nodes. OpenCode-backed nodes are governed by later session-tree snapshots or explicit deletion events.                         |
+| `onPromptRequest`                 | Sets `prompt` and `hasPendingPrompt` on the connection; appends a `'question'` channel message; updates `clientInfo`; activates prompt tab.                   |
+| `onIntensiveChatStart`            | Sets `activeSession` (`{ id, title }`) on the connection; activates prompt tab.                                                                               |
+| `onIntensiveChatStop`             | Clears `activeSession` to `null`.                                                                                                                             |
+| `onSessionStatusUpdate`           | Appends a new `SessionStatus` to `sessionStatuses`.                                                                                                           |
+| `onSessionChannelDeleted`         | Removes the owning node by persisted session identifier (`connectionId`) or direct node key; clears active selection if it matched.                           |
+| `onSessionChannelMessagesCleared` | Resets `channelMessages` and `unreadCount` to empty/zero.                                                                                                     |
 
-#### Startup restore flow
+#### Startup/session reconciliation flow
 
-On mount, the hook reads `settings.autoRestoreSessions`. If enabled it calls `window.api.getPersistedSessionChannels()` and creates `ConnectionState` entries with `isRestored: true` for each persisted channel not already present. These entries display an "Awaiting agent reconnection" state in `PromptView`. When the agent reconnects (`onConnectionOpened`), the restored entry is replaced with a live one matched by `name`.
+The renderer now reconciles against full `session-tree-updated` snapshots instead of maintaining a separate restored-tab model.
+
+- `session-tree-updated` supplies all live OpenCode sessions enriched with `registered_connections` metadata.
+- `mergeSessionTreeSnapshot` rebuilds the node map using `openCodeSessionId ?? connectionId` keys while preserving runtime state such as prompts, messages, unread counts, and statuses.
+- If a snapshot node claims a `connectionId` that previously existed as a direct connection, the direct node's runtime state is absorbed into the OpenCode-keyed node.
+- History is loaded once per claimed `connectionId` via `getSessionChannelHistory(connectionId)`.
+- Direct MCP connections with no OpenCode session remain keyed by `connectionId` and are preserved until explicitly removed or closed.
 
 #### Unread count logic
 
-When a `pushMessage` call targets a connection that is **not** the currently active one (`activeConnectionRef.current !== connectionId`), `unreadCount` is incremented. It resets to `0` whenever that connection becomes active (watched via a `useEffect` on `activeConnectionId`).
+When a message targets a node that is **not** the currently active one, `unreadCount` is incremented. It resets to `0` whenever that node becomes active.
 
 ---
 
@@ -239,9 +244,9 @@ Registers a single `keydown` listener on `document` for application-wide keyboar
 
 #### Parameters
 
-| Parameter     | Type                         | Description                                         |
-| ------------- | ---------------------------- | --------------------------------------------------- |
-| `onSwitchTab` | `(tab: 1 \| 2 \| 3) => void` | Callback to switch the active tab by 1-based index. |
+| Parameter     | Type                    | Description                                         |
+| ------------- | ----------------------- | --------------------------------------------------- |
+| `onSwitchTab` | `(tab: 1 \| 2) => void` | Callback to switch the active tab by 1-based index. |
 
 #### Returned values
 
@@ -256,8 +261,7 @@ Registers a single `keydown` listener on `document` for application-wide keyboar
 | Key combo       | Condition                                  | Action                     |
 | --------------- | ------------------------------------------ | -------------------------- |
 | `⌘1` / `Ctrl+1` | —                                          | Switch to Prompts tab      |
-| `⌘2` / `Ctrl+2` | —                                          | Switch to History tab      |
-| `⌘3` / `Ctrl+3` | —                                          | Switch to Settings tab     |
+| `⌘2` / `Ctrl+2` | —                                          | Switch to Settings tab     |
 | `⌘/` / `Ctrl+/` | —                                          | Toggle shortcut help modal |
 | `?`             | Target is not `<textarea>` or `<input>`    | Toggle shortcut help modal |
 | `Escape`        | Modal is open (`showRef.current === true`) | Close shortcut help modal  |
@@ -286,9 +290,9 @@ The root component. Owns tab state and orchestrates the top-level layout.
 
 #### State
 
-| State       | Type                                  | Initial    | Description            |
-| ----------- | ------------------------------------- | ---------- | ---------------------- |
-| `activeTab` | `'prompt' \| 'history' \| 'settings'` | `'prompt'` | Currently visible tab. |
+| State       | Type                     | Initial    | Description            |
+| ----------- | ------------------------ | ---------- | ---------------------- |
+| `activeTab` | `'prompt' \| 'settings'` | `'prompt'` | Currently visible tab. |
 
 #### Key behaviors
 
@@ -296,7 +300,7 @@ The root component. Owns tab state and orchestrates the top-level layout.
 - Calls `useGlobalShortcuts({ onSwitchTab: switchTab })` to wire keyboard shortcuts.
 - Derives `hasAnyPrompt` by scanning `connections.values()` for any entry where `hasPendingPrompt === true`.
 - Renders the Prompts tab wrapped in a div that uses `className="hidden"` when inactive rather than unmounting, preserving all hook and IPC state.
-- `HistoryView` and `SettingsView` are conditionally rendered (`{activeTab === 'history' && <HistoryView />}`), so they mount/unmount on tab switch.
+- `SettingsView` is conditionally rendered (`{activeTab === 'settings' && <SettingsView />}`), so it mounts/unmounts on tab switch.
 - Shows a pulsing badge on the Prompts `TabButton` when `hasAnyPrompt && activeTab !== 'prompt'`.
 
 #### Internal: `TabButton`
@@ -321,25 +325,24 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
 
 #### Props
 
-| Prop                    | Type                                            | Description                                                           |
-| ----------------------- | ----------------------------------------------- | --------------------------------------------------------------------- |
-| `connections`           | `Map<string, ConnectionState>`                  | All connections, forwarded to `ChannelSidebar`.                       |
-| `activeConnectionId`    | `string \| null`                                | Currently selected connection.                                        |
-| `onSelectConnection`    | `(id: string) => void`                          | Sidebar selection callback.                                           |
-| `prompt`                | `PromptData \| null`                            | Active unanswered prompt for the current connection.                  |
-| `activeSession`         | `{ id: string; title: string } \| null`         | Active intensive-chat session metadata.                               |
-| `channelMessages`       | `ChannelMessage[]`                              | Full message history for the current connection.                      |
-| `connectionId`          | `string \| null`                                | Same as `activeConnectionId`; used for `forceTerminateChat` call.     |
-| `sessionChannel`        | `{ sessionId: string; label?: string } \| null` | Session channel metadata if one is attached.                          |
-| `sessionStatuses`       | `SessionStatus[]`                               | Status updates for the `AgentStatusBar`.                              |
-| `isRestored`            | `boolean`                                       | Whether this connection was restored from DB (no live transport yet). |
-| `onSubmit`              | `(answer, attachments?) => void`                | Forward to `handleSubmit` from `useConnections`.                      |
-| `onSelectOption`        | `(option) => void`                              | Forward to `handleSelectOption`.                                      |
-| `onDismissStatus`       | `(connectionId, timestamp) => void`             | Forward to `handleDismissStatus`.                                     |
-| `onDismissSession`      | `(connectionId) => void`                        | Forward to `handleDismissSession`.                                    |
-| `onQueueSessionMessage` | `(sessionId, message, attachments?) => void`    | Forward to `handleQueueSessionMessage`.                               |
-| `onClearMessages`       | `(sessionId) => void`                           | Forward to `handleClearChannelMessages`.                              |
-| `onRemoveSession`       | `(sessionId) => void`                           | Forward to `handleRemoveSession`.                                     |
+| Prop                    | Type                                            | Description                                                                                         |
+| ----------------------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `connections`           | `Map<string, SessionNode>`                      | All session nodes, forwarded to `ChannelSidebar`.                                                   |
+| `activeConnectionId`    | `string \| null`                                | Currently selected sidebar node key.                                                                |
+| `onSelectConnection`    | `(id: string) => void`                          | Sidebar selection callback.                                                                         |
+| `prompt`                | `PromptData \| null`                            | Active unanswered prompt for the current connection.                                                |
+| `activeSession`         | `{ id: string; title: string } \| null`         | Active intensive-chat session metadata.                                                             |
+| `channelMessages`       | `ChannelMessage[]`                              | Full message history for the current connection.                                                    |
+| `connectionId`          | `string \| null`                                | Persisted MCP `connectionId` for the active node; used for force-terminate and destructive actions. |
+| `sessionChannel`        | `{ sessionId: string; label?: string } \| null` | Session channel metadata if one is attached.                                                        |
+| `sessionStatuses`       | `SessionStatus[]`                               | Status updates for the `AgentStatusBar`.                                                            |
+| `onSubmit`              | `(answer, attachments?) => void`                | Forward to `handleSubmit` from `useConnections`.                                                    |
+| `onSelectOption`        | `(option) => void`                              | Forward to `handleSelectOption`.                                                                    |
+| `onDismissStatus`       | `(connectionId, timestamp) => void`             | Forward to `handleDismissStatus`.                                                                   |
+| `onDismissSession`      | `(connectionId) => void`                        | Forward to `handleDismissSession`.                                                                  |
+| `onQueueSessionMessage` | `(sessionId, message, attachments?) => void`    | Forward to `handleQueueSessionMessage`.                                                             |
+| `onClearMessages`       | `(sessionId) => void`                           | Forward to `handleClearChannelMessages`.                                                            |
+| `onRemoveSession`       | `(sessionId) => void`                           | Forward to `handleRemoveSession`.                                                                   |
 
 #### State
 
@@ -354,12 +357,11 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
    - Intensive-chat banner shown when `activeSession !== null` (includes a "✕ Terminate" button that calls `window.api.forceTerminateChat`).
    - `PromptMessage` shown when `prompt && !activeSession` — renders a thin project badge + optional countdown timer (no message text).
    - `ChatHistoryView` shown when `!idle` (i.e., any of: prompt is set, activeSession is set, or `channelMessages.length > 0`). The active question message is highlighted with a colored left border and a pulsing dot; predefined option buttons appear inline below it.
-   - "Awaiting agent reconnection" state shown when `isRestored && !prompt && !activeSession`.
    - Idle state ("Waiting for prompt from MCP client…") shown when `!prompt && !activeSession && channelMessages.length === 0` (`idle === true`).
-   - `SessionChannelBar` shown when `sessionChannel !== null`.
+   - `AgentStatusBar` shown when `sessionChannel !== null`.
    - `ChannelComposer` always rendered: enabled with prompt-submit behavior when `prompt` is set; enabled for session queuing when `sessionChannel` is set; otherwise disabled.
 
-> **Note:** `SessionChannelBar` was renamed to `AgentStatusBar` in the codebase (file: `components/prompt/AgentStatusBar.tsx`). The component name `AgentStatusBar` is used in the source code and JSX. The documentation below at [6.8](#68-agentstatusbar) uses the new name.
+Before clear/remove/dismiss actions run, `PromptView` resolves a persisted target with `resolveSessionActionTarget({ requestedId, connectionId, sessionChannelId })`. This ensures header actions operate on the persisted session identifier rather than the selected sidebar node key.
 
 ---
 
@@ -367,24 +369,24 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
 
 **File:** `components/prompt/ChannelSidebar.tsx`
 
-Lists all active connections as clickable channel buttons. Wrapped in `React.memo`.
+Lists all session nodes as clickable channel buttons. Wrapped in `React.memo`.
 
 #### Props
 
-| Prop                 | Type                           | Description                              |
-| -------------------- | ------------------------------ | ---------------------------------------- |
-| `connections`        | `Map<string, ConnectionState>` | All connections.                         |
-| `activeConnectionId` | `string \| null`               | Currently selected connection.           |
-| `onSelect`           | `(id: string) => void`         | Called when a channel button is clicked. |
+| Prop                 | Type                       | Description                              |
+| -------------------- | -------------------------- | ---------------------------------------- |
+| `connections`        | `Map<string, SessionNode>` | All session nodes.                       |
+| `activeConnectionId` | `string \| null`           | Currently selected sidebar node key.     |
+| `onSelect`           | `(id: string) => void`     | Called when a channel button is clicked. |
 
 #### Key behaviors
 
 - Iterates `connections.values()` to build the list.
-- Each button label is `conn.sessionChannel?.label ?? conn.name`.
+- Each button label is `conn.sessionChannel?.label ?? conn.title`.
 - Active channel receives `bg-[var(--color-agent)]/15 text-[var(--color-agent)]` styling.
 - Pulsing dot badge (colored `var(--color-user)`) shown when `conn.hasPendingPrompt === true`.
 - Numeric unread count badge shown when `!conn.hasPendingPrompt && conn.unreadCount > 0`.
-- Each button is prefixed with a `#` glyph.
+- The rendered hierarchy comes from the latest `session-tree-updated` snapshot. OpenCode-backed nodes use `depth`/`openCodeParentId`; direct connections remain keyed by `connectionId`.
 
 ---
 
@@ -611,45 +613,7 @@ Grid of attachment thumbnails shown above the textarea when the composer has pen
 
 ---
 
-### 6.11 `HistoryView`
-
-**File:** `pages/HistoryView.tsx`
-
-Displays persisted prompt/response history loaded from the main process.
-
-#### State
-
-| State     | Type             | Description                                    |
-| --------- | ---------------- | ---------------------------------------------- |
-| `history` | `Conversation[]` | Records loaded from `window.api.getHistory()`. |
-| `loading` | `boolean`        | True while the initial fetch is in-flight.     |
-
-#### `Conversation` type (local to this file)
-
-```ts
-type Conversation = {
-  id: number;
-  promptMessage: string;
-  projectName: string;
-  userResponse: string;
-  predefinedOptions: string | null;
-  attachments: string | null; // JSON-serialized Attachment[]
-  createdAt: string;
-};
-```
-
-#### Key behaviors
-
-- Calls `window.api.getHistory()` on mount; shows a loading placeholder during fetch.
-- Renders each conversation as a `CollapsibleSection` titled `"${projectName} — ${new Date(createdAt).toLocaleString()}"`.
-- The **first** item (`index === 0`) has `defaultOpen: true`; all others default closed.
-- Inside each section, the agent message uses `msg-agent` CSS class and the user response uses `msg-user`, both rendered via `MarkdownContent`.
-- If `attachments` is non-null, it is `JSON.parse`d and image attachments are shown as 56×56 thumbnails.
-- "Clear all" button calls `window.api.clearHistory()` and sets `history` to `[]`.
-
----
-
-### 6.12 `SettingsView`
+### 6.11 `SettingsView`
 
 **File:** `pages/SettingsView.tsx`
 
@@ -657,15 +621,14 @@ Form for viewing and saving application settings.
 
 #### State
 
-| State               | Type             | Description                                                              |
-| ------------------- | ---------------- | ------------------------------------------------------------------------ |
-| `settings`          | `AppSettings`    | Current in-memory settings object (includes toggle states).              |
-| `initialSettings`   | `AppSettings`    | Snapshot from the last save/load, used for dirty detection.              |
-| `portInput`         | `string`         | Raw string value of the port input field.                                |
-| `timeoutInput`      | `string`         | Raw string value of the timeout input field.                             |
-| `openCodePortInput` | `string`         | Raw string value of the OpenCode API port input field.                   |
-| `bridgePath`        | `string \| null` | Absolute path to the bridge script, fetched from `getBridgeInfo()`.      |
-| `saved`             | `boolean`        | True for 2 seconds after a successful save, used for "✓ Saved" feedback. |
+| State               | Type          | Description                                                              |
+| ------------------- | ------------- | ------------------------------------------------------------------------ |
+| `settings`          | `AppSettings` | Current in-memory settings object (includes toggle states).              |
+| `initialSettings`   | `AppSettings` | Snapshot from the last save/load, used for dirty detection.              |
+| `portInput`         | `string`      | Raw string value of the port input field.                                |
+| `timeoutInput`      | `string`      | Raw string value of the timeout input field.                             |
+| `openCodePortInput` | `string`      | Raw string value of the OpenCode API port input field.                   |
+| `saved`             | `boolean`     | True for 2 seconds after a successful save, used for "✓ Saved" feedback. |
 
 #### `AppSettings` type (local to this file)
 
@@ -707,11 +670,10 @@ At the bottom, a read-only section shows:
 
 - App version string.
 - MCP config URL: `http://localhost:{settings.port}/mcp`.
-- Bridge script path (when available from `getBridgeInfo()`): displays the absolute path and a ready-to-use OpenCode config JSON snippet.
 
 ---
 
-### 6.13 `StatusBar`
+### 6.12 `StatusBar`
 
 **File:** `components/StatusBar.tsx`
 
@@ -751,7 +713,7 @@ Persistent footer bar visible across all tabs.
 
 ---
 
-### 6.14 `MarkdownContent`
+### 6.13 `MarkdownContent`
 
 **File:** `components/MarkdownContent.tsx`
 
@@ -776,7 +738,7 @@ Renders a markdown string using `react-markdown` with GitHub Flavored Markdown a
 
 ---
 
-### 6.15 `CollapsibleSection`
+### 6.14 `CollapsibleSection`
 
 **File:** `components/CollapsibleSection.tsx`
 
@@ -799,7 +761,7 @@ The toggle button chevron (`▶`) rotates 90° when open via a CSS `transition-t
 
 ---
 
-### 6.16 `ShortcutHelpModal`
+### 6.15 `ShortcutHelpModal`
 
 **File:** `components/ShortcutHelpModal.tsx`
 
@@ -818,8 +780,7 @@ Modal overlay listing all keyboard shortcuts. Returns `null` when `open === fals
 | ------------- | ---------------------------- |
 | `⌘ + Enter`   | Submit response              |
 | `⌘ + 1`       | Prompts tab                  |
-| `⌘ + 2`       | History tab                  |
-| `⌘ + 3`       | Settings tab                 |
+| `⌘ + 2`       | Settings tab                 |
 | `⌘ + /`       | Toggle this help             |
 | `⌘ + V`       | Paste image                  |
 | `Esc`         | Close autocomplete / overlay |
@@ -905,37 +866,52 @@ type SessionStatus = {
 };
 ```
 
-### `ConnectionState`
+### `SessionNode`
 
 ```ts
-type ConnectionState = {
+type SessionNode = {
   id: string;
-  name: string;
+  openCodeSessionId: string | null;
+  openCodeParentId: string | null;
+  title: string;
+  directory: string;
+  depth: number;
+  connectionId: string | null;
+  hasMcpChannel: boolean;
+  isDirectConnection: boolean;
   prompt: PromptData | null;
   activeSession: { id: string; title: string } | null;
-  baseDirectory?: string;
+  baseDirectory: string | null;
   channelMessages: ChannelMessage[];
   unreadCount: number;
   hasPendingPrompt: boolean;
   sessionChannel: { sessionId: string; label?: string } | null;
   sessionStatuses: SessionStatus[];
-  isRestored?: boolean;
 };
 ```
 
-| Field              | Description                                                                         |
-| ------------------ | ----------------------------------------------------------------------------------- |
-| `id`               | Unique connection identifier (from the main process).                               |
-| `name`             | Human-readable connection name.                                                     |
-| `prompt`           | The currently pending `PromptData`, or `null` when idle.                            |
-| `activeSession`    | Non-null while an intensive-chat session is in progress.                            |
-| `baseDirectory`    | Working directory for file autocomplete, set from the first prompt that carries it. |
-| `channelMessages`  | Ordered list of all messages in the channel.                                        |
-| `unreadCount`      | Messages received while this connection was not the active selection.               |
-| `hasPendingPrompt` | Derived indicator used for sidebar badge and tab badge logic.                       |
-| `sessionChannel`   | Non-null when a named session channel is attached.                                  |
-| `sessionStatuses`  | Ordered list of status push updates for `AgentStatusBar`.                           |
-| `isRestored`       | `true` for sessions rehydrated from the DB on startup before the agent reconnects.  |
+| Field               | Description                                                                                                                              |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                | Renderer node key: `openCodeSessionId ?? connectionId`.                                                                                  |
+| `openCodeSessionId` | OpenCode session ID for tree-backed nodes, otherwise `null`.                                                                             |
+| `openCodeParentId`  | Parent OpenCode session ID used for sidebar hierarchy, otherwise `null`.                                                                 |
+| `title`             | Display label from registration or OpenCode session metadata.                                                                            |
+| `connectionId`      | Persisted MCP/session-channel identifier. This is the value destructive actions and REST endpoints use.                                  |
+| `sessionChannel`    | Renderer-visible session-channel metadata. `sessionChannel.sessionId` is the persisted identifier to use for clear/remove/queue actions. |
+| `prompt`            | The currently pending `PromptData`, or `null` when idle.                                                                                 |
+| `activeSession`     | Non-null while an intensive-chat session is in progress.                                                                                 |
+| `baseDirectory`     | Working directory for file autocomplete and repo-doc search, if known.                                                                   |
+| `channelMessages`   | Ordered list of all messages in the channel.                                                                                             |
+| `unreadCount`       | Messages received while this connection was not the active selection.                                                                    |
+| `hasPendingPrompt`  | Derived indicator used for sidebar badge and tab badge logic.                                                                            |
+| `sessionStatuses`   | Ordered list of status push updates for `AgentStatusBar`.                                                                                |
+
+Identity summary:
+
+- `openCodeSessionId` identifies the OpenCode session and is the preferred renderer/sidebar key when present.
+- `connectionId` identifies the MCP connection and persisted session channel row.
+- `sessionChannel.sessionId` mirrors the persisted session identifier exposed to renderer components.
+- `activeConnectionId` is just the currently selected renderer node key; for OpenCode-backed nodes it may differ from `connectionId`.
 
 ---
 
@@ -953,16 +929,11 @@ Main Process (IPC)
   ▼
 useConnections — onPromptRequest handler
   ├─ setClientInfo(data.clientInfo)
-  ├─ withConnection(data.connectionId, conn => ({
-  │    ...conn,
-  │    prompt: data,          // PromptData stored
-  │    hasPendingPrompt: true,
-  │    baseDirectory: data.baseDirectory ?? conn.baseDirectory
-  │  }))
-  ├─ pushMessage(data.connectionId, { kind: 'question', text: data.message, timestamp: new Date() })
-  │    └─ withConnection → appends ChannelMessage to channelMessages
-  │       (increments unreadCount if not the active connection)
-  ├─ setActiveConnectionId(prev => prev ?? data.connectionId)
+  ├─ findKeyByConnectionId(prevNodes, data.connectionId)
+  ├─ setNodes(... prompt + hasPendingPrompt + baseDirectory ...)
+  ├─ appends 'question' ChannelMessage to the owning SessionNode
+  │    (increments unreadCount if that node is not active)
+  ├─ setActiveConnectionId(prev => prev ?? nodeId)
   └─ activateRef.current()   // switches App to 'prompt' tab
            │
            ▼
@@ -984,10 +955,10 @@ useConnections — onPromptRequest handler
     └─ onSubmit(text, attachments)
            │
            ▼
-  App.handleSubmit (from useConnections)
+   App.handleSubmit (from useConnections)
     ├─ appendAnswerMessage(activeConn.id, answer, attachments)
-    │    └─ withConnection → appends 'answer' ChannelMessage
-    │                      → sets prompt: null, hasPendingPrompt: false
+    │    └─ withNode → appends 'answer' ChannelMessage
+     │                      → sets prompt: null, hasPendingPrompt: false
     └─ window.api.sendPromptResponse({ id: prompt.id, answer, attachments })
            │
            ▼
@@ -1015,5 +986,6 @@ ChannelComposer.submit()
   └─ onSubmit(text)  [no attachments in this path]
        └─ onQueueSessionMessage(sessionChannel.sessionId, text)
             ├─ window.api.queueSessionMessage(sessionId, message)
-            └─ withConnection → appends 'outbound' ChannelMessage (optimistic)
+            ├─ withNode → appends 'outbound' ChannelMessage (optimistic)
+            └─ window.api.injectOpenCodeMessage(...) when an `openCodeSessionId` is available
 ```

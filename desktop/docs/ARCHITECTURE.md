@@ -92,7 +92,6 @@ Interactive MCP Desktop is an Electron application that acts as a desktop UI for
 │   │    ├─ ChannelComposer (text input + file attachments)        │
 │   │    ├─ ChannelHeader   (session controls)                     │
 │   │    └─ AgentStatusBar  (status badges)                        │
-│   ├─ [History tab]  HistoryView                                  │
 │   └─ [Settings tab] SettingsView                                 │
 │                                                                  │
 │  useConnections hook — owns all connection state (Map)           │
@@ -109,24 +108,28 @@ The main process is the application's Node.js runtime. It bootstraps in `index.t
 
 1. `initDatabase()` — open or create `conversations.db` in Electron's `userData` directory.
 2. `loadSettings()` — read `settings.json` from `userData`; fall back to defaults if absent.
-3. `syncBridgeConfig()` — ensure `~/.config/opencode/opencode.json` has the correct `interactive-desktop` MCP entry pointing to the bridge script (see [OpenCode Config Sync](#opencode-config-sync)).
-4. `registerIpcHandlers()` — install all `ipcMain.handle` and `ipcMain.on` listeners.
-5. `startMcpServer()` — bind Express to the configured port (default `3100`).
-6. `createWindow()` — create the `BrowserWindow`; hide it immediately if the app was opened at login.
-7. `createTray()` — create the system-tray icon.
-8. If `autoStartOpenCode` is enabled, `startOpenCodeServer(openCodePort)` — spawn `opencode serve` as a managed child process.
-9. Start the session-tree manager poller — polls OpenCode API every 2 seconds for session hierarchy updates.
+3. `registerMcpWithOpenCode()` — dynamically register the desktop app as a remote MCP server with OpenCode via `POST /mcp` (primary method). See [TOOLS.md — OpenCode Registration](./TOOLS.md#opencode-registration).
+4. If `autoSyncOpencode` is enabled, `syncRemoteConfig()` — ensure `~/.config/opencode/opencode.json` has a `type: "remote"` MCP entry for `interactive-desktop` (fallback method).
+5. `registerIpcHandlers()` — install all `ipcMain.handle` and `ipcMain.on` listeners.
+6. `startMcpServer()` — bind Express to the configured port (default `3100`).
+7. `createWindow()` — create the `BrowserWindow`; hide it immediately if the app was opened at login.
+8. `createTray()` — create the system-tray icon.
+9. If `autoStartOpenCode` is enabled, `startOpenCodeServer(openCodePort)` — spawn `opencode serve` as a managed child process.
+10. Start the session-tree manager poller — polls OpenCode API every 2 seconds for session hierarchy updates.
+11. Reconcile persisted `registered_connections` against live OpenCode sessions and clean stale registrations before the first steady-state snapshot.
 
 #### `mcp-server.ts`
 
 Owns the Express app and all HTTP routes. REST API routes have been extracted to `api-routes.ts`. Key responsibilities:
 
-- **Session map** — an in-memory `Record<sessionId, { transport, server, connectionId }>` tracking every live MCP session.
+- **Session map** — an in-memory `Record<sessionId, { transport, server, connectionId, connectionName }>` tracking every live MCP session.
 - **Session creation** — when `POST /mcp` arrives with an `initialize` body, a new `McpServer` is created (one per connection), a `StreamableHTTPServerTransport` is instantiated with a random UUID session ID, and all tools are registered via the `register*` helpers.
+- **Default channel bootstrap** — new connections are auto-registered into `registered_connections`, auto-bound to an OpenCode session when detectable, and given a stable session channel label before the first user-facing activity.
 - **Transparent session resurrection** — when a request arrives with a stale (unknown) `Mcp-Session-Id` header and a non-`initialize` body (e.g. a tool call from a reconnecting agent), the server silently creates a new session, runs the full MCP protocol handshake internally using synthetic request/response objects, patches the `Mcp-Session-Id` response header, and then replays the original request body. The client never receives an error.
 - **Soft restart** — `softRestartMcpServer()` clears all in-memory MCP sessions (transports, servers, active prompts) without stopping the HTTP listener. The next client request triggers a fresh initialize handshake or transparent reinit. Accessible via `POST /api/reconnect` and the `reconnect-mcp-server` IPC handler.
-- **Session file** — on every new connection, session metadata is written to `/tmp/imcp-session.json`, `<cwd>/.imcp-session`, and `/tmp/imcp-mcp-config.json` (MCP config hint with bridge path). See `session-file.ts`.
-- **Session teardown** — `transport.onclose` fires when a transport closes, which cancels any pending prompt (via `cancelActivePrompt`), deletes the session channel from SQLite, removes the session file, and sends `connection-closed` to the renderer.
+- **Session file** — on every new connection, session metadata is written to `/tmp/imcp-session.json`, `<cwd>/.imcp-session`, and `/tmp/imcp-mcp-config.json` (MCP config hint with remote HTTP entry). See `session-file.ts`.
+- **Session teardown** — `transport.onclose` fires when a transport closes, which cancels any pending prompt (via `cancelActivePrompt`), deletes the session channel from SQLite, removes the session file, and sends both `connection-closed` and `session-channel-deleted` to the renderer.
+- **Attachment serving** — image attachments are persisted under `<userData>/attachments` and exposed locally via `GET /attachments/:filename`.
 - **REST API** (`/api/sessions/*`, `/api/reconnect`) — extracted to `api-routes.ts`. A separate set of endpoints that let external processes create, poll, and delete session channels. The `/api/reconnect` endpoint triggers the soft restart.
 - **`/health`** — returns active client count and the list of registered tool names.
 - **`restartMcpServer()`** — closes the HTTP server and re-creates it with the same parameters; used when the port is changed in Settings.
@@ -150,24 +153,25 @@ On resolution, `promptUser` saves the conversation to the `conversations` table 
 
 Registers all `ipcMain.handle` (request/response) and `ipcMain.on` (fire-and-forget) channels that `window.api` calls from the renderer. Key handlers:
 
-| IPC channel                      | Action                                                                                      |
-| -------------------------------- | ------------------------------------------------------------------------------------------- |
-| `get-history`                    | Query `conversations` table (last 100 rows)                                                 |
-| `clear-history`                  | Delete all rows from `conversations`                                                        |
-| `get-settings` / `save-settings` | Read/write `settings.json`; restart server if port changed                                  |
-| `get-server-status`              | Return `{ running: true, port }`                                                            |
-| `search-files`                   | Run `indexFiles` + `rankFileSuggestions` for autocomplete                                   |
-| `open-file-dialog`               | Open native Electron file picker                                                            |
-| `read-file-for-attachment`       | Read a file from disk; return base64 (images) or UTF-8 text                                 |
-| `force-terminate-chat`           | Call `forceTerminateChat(connectionId)` to unblock pending prompt                           |
-| `dismiss-session`                | Terminate prompt + send `connection-closed` to renderer                                     |
-| `restart-mcp-server`             | Delegate to `restartMcpServer()`                                                            |
-| `get-persisted-session-channels` | Return active session rows from SQLite                                                      |
-| `get-session-channel-history`    | Return `session_channel_history` for a session                                              |
-| `clear-session-channel-messages` | Delete messages; notify renderer                                                            |
-| `remove-session-channel`         | Terminate + close session; delete from DB; notify renderer                                  |
-| `queue-session-message` (on)     | Persist a user-typed outbound message to `session_messages`                                 |
-| `inject-opencode-message`        | POST noReply message to OpenCode ACP `http://localhost:{openCodePort}/session/{id}/message` |
+| IPC channel                      | Action                                                                                                                       |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `get-history`                    | Query `conversations` table (last 100 rows)                                                                                  |
+| `clear-history`                  | Delete all rows from `conversations`                                                                                         |
+| `get-settings` / `save-settings` | Read/write `settings.json`; restart server if port changed                                                                   |
+| `get-server-status`              | Return `{ running: true, port }`                                                                                             |
+| `search-files`                   | Run `indexFiles` + `rankFileSuggestions` for autocomplete                                                                    |
+| `open-file-dialog`               | Open native Electron file picker                                                                                             |
+| `read-file-for-attachment`       | Read a file from disk; return base64 (images) or UTF-8 text                                                                  |
+| `force-terminate-chat`           | Call `forceTerminateChat(connectionId)` to unblock pending prompt                                                            |
+| `dismiss-session`                | Terminate prompt + send `connection-closed` to renderer                                                                      |
+| `restart-mcp-server`             | Delegate to `restartMcpServer()`                                                                                             |
+| `get-persisted-session-channels` | Return active session rows from SQLite                                                                                       |
+| `get-session-channel-history`    | Return `session_channel_history` for a session                                                                               |
+| `clear-session-channel-messages` | Delete messages; notify renderer                                                                                             |
+| `remove-session-channel`         | Terminate + close session; delete channel + registration; mark stale-connection guard; refresh session tree; notify renderer |
+| `queue-session-message` (on)     | Persist a user-typed outbound message to `session_messages`                                                                  |
+| `inject-opencode-message`        | POST noReply message to OpenCode ACP `http://localhost:{openCodePort}/session/{id}/message`                                  |
+| `sync-opencode-config`           | Re-register with OpenCode and update fallback config file                                                                    |
 
 #### `database.ts`
 
@@ -215,6 +219,7 @@ registered_connections (
   project_name         TEXT NOT NULL,
   base_directory       TEXT,        -- NULL if not supplied
   open_code_session_id TEXT,        -- auto-detected OpenCode session ID, or NULL
+  parent_session_id    TEXT,        -- parent OpenCode session ID, or NULL
   created_at           DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 ```
@@ -234,6 +239,7 @@ Persists `AppSettings` as a JSON file at `<userData>/settings.json`. Defaults:
 | `docIndexingEnabled`   | `true`  |
 | `noReplyInjection`     | `true`  |
 | `autoStartOpenCode`    | `false` |
+| `autoSyncOpencode`     | `false` |
 
 #### `file-indexer.ts`
 
@@ -305,7 +311,7 @@ The preload script runs in a Node.js context with access to `ipcRenderer`, but i
 | `forceTerminateChat`           | `invoke('force-terminate-chat')`     | Terminate a connection's pending prompt                                        |
 | `dismissSession`               | `invoke('dismiss-session')`          | Terminate + remove a session from the UI                                       |
 | `restartMcpServer`             | `invoke('restart-mcp-server')`       | Restart the HTTP server                                                        |
-| `reconnectMcpServer`           | `fetch('/api/reconnect')`            | Direct HTTP call (not IPC)                                                     |
+| `reconnectMcpServer`           | `invoke('reconnect-mcp-server')`     | Soft-restart via IPC                                                           |
 | `getPersistedSessionChannels`  | `invoke`                             | Restore sessions on startup                                                    |
 | `getSessionChannelHistory`     | `invoke`                             | Load per-session message history                                               |
 | `clearSessionChannelMessages`  | `invoke`                             | Clear messages for a session                                                   |
@@ -318,31 +324,29 @@ The preload script runs in a Node.js context with access to `ipcRenderer`, but i
 
 ### 3. Renderer (`desktop/src/renderer/src/`)
 
-A React 19 single-page app bundled by electron-vite. It uses Tailwind CSS v4 with CSS custom properties for theming (`--color-bg`, `--color-text`, `--color-agent`, etc.). There is no client-side router; navigation between the three views is a simple `activeTab` state value in `App.tsx`.
+A React 19 single-page app bundled by electron-vite. It uses Tailwind CSS v4 with CSS custom properties for theming (`--color-bg`, `--color-text`, `--color-agent`, etc.). There is no client-side router; navigation between the two views is a simple `activeTab` state value in `App.tsx`.
 
 #### `App.tsx`
 
-The root component. Renders a fixed header with three tab buttons (**Prompts**, **History**, **Settings**), the active tab's content, and a `StatusBar` at the bottom. The Prompts tab renders as `display: block` at all times (so React state is not lost when switching tabs); the other two tabs mount only when active.
+The root component. Renders a fixed header with two tab buttons (**Prompts**, **Settings**), the active tab's content, and a `StatusBar` at the bottom. The Prompts tab renders as `display: block` at all times (so React state is not lost when switching tabs); the Settings tab mounts only when active.
 
 The `useConnections` hook is instantiated here and provides all connection-related state and handlers to `PromptView`.
 
 #### `useConnections` hook
 
-This is the central state manager for the renderer. It holds a `Map<connectionId, ConnectionState>` where each `ConnectionState` contains:
+This is the central state manager for the renderer. It holds a `Map<nodeId, SessionNode>` where `nodeId` is `openCodeSessionId ?? connectionId`.
 
-- `prompt` — the currently pending `PromptData` (or `null`).
-- `activeSession` — the active intensive chat session ID and title (or `null`).
-- `channelMessages` — the chat history array (`ChannelMessage[]`).
-- `sessionChannel` — the session channel reference `{ sessionId, label }` (or `null`).
-- `sessionStatuses` — array of live status badge updates from `push_session_status`.
-- `hasPendingPrompt` — boolean used to show the badge dot on the Prompts tab.
-- `unreadCount` — count of messages in non-active connections.
-- `isRestored` — `true` for sessions re-hydrated from SQLite on startup (no live transport).
+- `openCodeSessionId` / `openCodeParentId` — OpenCode tree identity.
+- `connectionId` — persisted MCP/session-channel identity.
+- `prompt` / `activeSession` / `channelMessages` / `sessionStatuses` — runtime UI state.
+- `sessionChannel` — persisted session-channel reference `{ sessionId, label }`.
+- `hasPendingPrompt` / `unreadCount` — sidebar badge state.
 
 On mount, the hook:
 
-1. Checks `autoRestoreSessions` from settings. If enabled, calls `getPersistedSessionChannels` and loads history for each, creating `ConnectionState` entries marked `isRestored: true`.
-2. Registers all `window.api.on*` listeners (guarded by a `useRef` flag to prevent double-registration in React strict mode).
+1. Registers all `window.api.on*` listeners (guarded by a `useRef` flag to prevent double-registration in React strict mode).
+2. Reconciles topology from `session-tree-updated` full snapshots, absorbing direct connections into OpenCode-keyed nodes when they claim the same `connectionId`.
+3. Loads history once per `connectionId` for any node that owns a persisted session channel.
 
 **Response submission flow:**
 
@@ -355,7 +359,7 @@ On mount, the hook:
 | Component              | Purpose                                                                                                                                |
 | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | `PromptView`           | Root of the Prompts tab; composes all sub-components.                                                                                  |
-| `ChannelSidebar`       | Lists all active connections with unread badges.                                                                                       |
+| `ChannelSidebar`       | Lists OpenCode-backed session nodes and direct MCP connections with unread badges.                                                     |
 | `ChatHistoryView`      | Scrollable message history; renders `PromptMessage` per entry.                                                                         |
 | `PromptMessage`        | Renders a single Q&A message with optional attachment previews and markdown.                                                           |
 | `ChannelComposer`      | Text input with autocomplete dropdown, file attachment button, and submit. Calls `searchFiles` via `window.api` for path autocomplete. |
@@ -363,7 +367,6 @@ On mount, the hook:
 | `AgentStatusBar`       | Renders `SessionStatus` badges from `push_session_status` calls. (Previously `SessionChannelBar`.)                                     |
 | `AttachmentPreview`    | Shows image thumbnail or file-name chip for queued attachments.                                                                        |
 | `AutocompleteDropdown` | Dropdown overlay populated by `searchFiles` results.                                                                                   |
-| `HistoryView`          | Displays `conversations` table records fetched via `getHistory`.                                                                       |
 | `SettingsView`         | Form for all `AppSettings` fields; calls `saveSettings` on change.                                                                     |
 | `MarkdownContent`      | Renders markdown-formatted prompt text.                                                                                                |
 | `StatusBar`            | Bottom bar showing connection count and optional client model/mode info.                                                               |
@@ -397,7 +400,8 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
 4. Renderer receives prompt
    └─ ipcRenderer.on('prompt-request') fires in preload
       └─ window.api.onPromptRequest callback in useConnections
-         ├─ Updates ConnectionState: { prompt: data, hasPendingPrompt: true }
+         ├─ Finds the owning `SessionNode` by `connectionId`
+         ├─ Updates that node: { prompt: data, hasPendingPrompt: true }
          ├─ Appends { kind: 'question', text } to channelMessages (optimistic)
          └─ setActiveConnectionId + activates Prompts tab
 
@@ -427,7 +431,8 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
 index.ts
  ├─ database.ts          (initDatabase)
  ├─ settings.ts          (loadSettings)
- ├─ opencode-config-sync.ts (syncBridgeConfig)
+ ├─ opencode-config-sync.ts (syncRemoteConfig)
+ ├─ opencode-mcp-register.ts (registerMcpWithOpenCode)
  ├─ ipc-handlers.ts      (registerIpcHandlers)
  │   ├─ database.ts
  │   ├─ settings.ts
@@ -440,8 +445,7 @@ index.ts
  │   │                    cancelActivePrompt)
  │   ├─ database.ts      (createSessionChannel, getUnsentMessages,
  │   │                    getUnsentCount, markMessagesSent, deleteSessionChannel)
- │   ├─ session-file.ts  (writeSessionFile, clearSessionFile, writeMcpConfigHint,
- │   │                    resolveBridgePath)
+ │   ├─ session-file.ts  (writeSessionFile, clearSessionFile, writeMcpConfigHint)
  │   ├─ api-routes.ts    (createApiRouter — extracted REST endpoints)
  │   └─ tools/
  │       ├─ register-connection.ts  (registerConnectionTool)
@@ -451,7 +455,8 @@ index.ts
  │       ├─ session-channel.ts     (registerSessionChannelTools, registerSendMessageTool)
  │       └─ find-repo-docs.ts      (registerFindRepoDocsTool)
  ├─ opencode-server.ts   (startOpenCodeServer, stopOpenCodeServer)
- ├─ session-tree-manager.ts (startSessionTreePoller, stopSessionTreePoller)
+  ├─ session-tree-manager.ts (startSessionTreeManager, stopSessionTreeManager)
+  ├─ session-reconnect.ts   (startup reconciliation for persisted registrations)
  ├─ doc-indexer.ts        (warmUp, findDocs, searchDocs — worker-thread semantic indexer)
  ├─ doc-context-injector.ts (initDocContext — doc discovery + manifest injection)
  ├─ window.ts            (createWindow)
@@ -476,7 +481,6 @@ renderer/src/App.tsx
  └─ pages/
      ├─ PromptView.tsx   → prompt/ChannelSidebar, ChatHistoryView,
      │                     ChannelComposer, ChannelHeader, AgentStatusBar
-     ├─ HistoryView.tsx  → window.api.getHistory
      └─ SettingsView.tsx → window.api.getSettings / saveSettings
 ```
 
@@ -516,6 +520,6 @@ If a new `promptUser` call arrives for the same `connectionId` while a previous 
 
 Writing `{ sessionId, port }` to `/tmp/imcp-session.json` and `<cwd>/.imcp-session` is a low-overhead mechanism for external tooling (e.g. VS Code extensions, shell scripts) to locate the active session without requiring a separate service registry. The files are deleted when the session closes.
 
-### `autoRestoreSessions` flag
+### Startup reconciliation over restore placeholders
 
-When this setting is enabled, the renderer queries `getPersistedSessionChannels` on startup and re-creates `ConnectionState` entries marked `isRestored: true` for every session channel still in SQLite. These show their persisted message history immediately. When a new live MCP connection arrives with a matching name, the restored placeholder is replaced transparently by the live connection.
+The app no longer relies on a standalone restored-tab model. Instead, startup reconciliation removes stale `registered_connections`, then the session-tree manager emits full snapshots that the renderer merges into `SessionNode`s keyed by `openCodeSessionId ?? connectionId`. Persisted message history is then loaded by `connectionId` and preserved across later topology refreshes.

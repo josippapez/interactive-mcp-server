@@ -181,7 +181,7 @@ The packaging step is handled by **electron-builder 26**. It reads configuration
 | Packaged files   | `out/**/*`                    |
 | Extra resources  | `resources/**`                |
 
-The `resources/` directory is copied into the app bundle and is accessible at runtime. It contains application icons (`icon.png`, `icon.icns`, `icon.ico`) used by the window and system tray.
+The `resources/` directory is copied into the app bundle and is accessible at runtime. It contains application icons (`icon.png`) used by the window and system tray.
 
 ---
 
@@ -243,7 +243,7 @@ The full `build` configuration lives in `package.json`. Key structural points:
     "productName": "Interactive MCP",
     "directories": { "output": "release/" },
     "files": ["out/**/*"],
-    "extraResources": [{ "from": "resources/**", "to": "." }],
+    "extraResources": ["resources/**"],
     "mac": {
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
@@ -277,7 +277,9 @@ The full `build` configuration lives in `package.json`. Key structural points:
 
 **`files`** — Instructs electron-builder which files to include in the app bundle. Only `out/**/*` is included; source files and `node_modules` are not re-packaged (they are either bundled into `out/` by electron-vite or resolved via `extraResources`).
 
-**`extraResources`** — Copies `resources/**` into the platform-specific resources directory of the packaged app (`Resources/` on macOS, `resources/` on Windows/Linux). Contents are accessible at runtime via `process.resourcesPath`.
+**`extraResources`** — Copies additional files into the platform-specific resources directory of the packaged app (`Resources/` on macOS, `resources/` on Windows/Linux). Contents are accessible at runtime via `process.resourcesPath`. One entry is included:
+
+1. `resources/**` — application icons and other static assets.
 
 ---
 

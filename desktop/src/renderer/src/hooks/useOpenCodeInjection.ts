@@ -1,5 +1,10 @@
 import { useCallback } from 'react';
 import type { Attachment, SessionNode } from '../types';
+import {
+  shouldDetectSessionForInjection,
+  injectWithSessionRecovery,
+  buildInjectionSuccessStatus,
+} from './opencode-injection-flow';
 
 type WithNodeFn = (
   id: string,
@@ -51,7 +56,12 @@ export function useOpenCodeInjection(
       let openCodeSessionId = node?.openCodeSessionId ?? null;
 
       // Lazy detection: only attempt for direct connections with no session ID.
-      if (!openCodeSessionId && !node?.isDirectConnection) {
+      if (
+        shouldDetectSessionForInjection({
+          openCodeSessionId,
+          isDirectConnection: node?.isDirectConnection ?? false,
+        })
+      ) {
         openCodeSessionId =
           (await window.api.detectOpenCodeSession?.(baseDirectory)) ?? null;
       }
@@ -70,18 +80,50 @@ export function useOpenCodeInjection(
       }
 
       try {
-        const result = await window.api.injectOpenCodeMessage?.(
-          openCodeSessionId,
-          message,
-          attachments,
+        const result = await injectWithSessionRecovery(
+          {
+            initialSessionId: openCodeSessionId,
+            baseDirectory,
+          },
+          {
+            inject: async (sessionId: string) =>
+              (await window.api.injectOpenCodeMessage?.(
+                sessionId,
+                message,
+                attachments,
+              )) ?? { ok: false, error: 'OpenCode inject bridge unavailable' },
+            detect: async (dir?: string) =>
+              (await window.api.detectOpenCodeSession?.(dir)) ?? null,
+          },
         );
-        if (result?.ok) {
+        if (result.ok) {
           if (nodeKey) {
             withNode(nodeKey, (n) => ({
               ...n,
               channelMessages: n.channelMessages.map((m) =>
                 m.id === outboundId ? { ...m, sent: true } : m,
               ),
+              ...(result.sessionId !== openCodeSessionId
+                ? { openCodeSessionId: result.sessionId }
+                : {}),
+              ...(buildInjectionSuccessStatus(
+                result.noReply ?? false,
+                result.retried,
+              )
+                ? {
+                    sessionStatuses: [
+                      ...n.sessionStatuses,
+                      {
+                        status: buildInjectionSuccessStatus(
+                          result.noReply ?? false,
+                          result.retried,
+                        )!,
+                        type: 'success' as const,
+                        timestamp: new Date(),
+                      },
+                    ],
+                  }
+                : {}),
             }));
           }
           return;
@@ -89,10 +131,23 @@ export function useOpenCodeInjection(
         if (nodeKey) {
           withNode(nodeKey, (n) => ({
             ...n,
+            ...(result.sessionId !== openCodeSessionId
+              ? { openCodeSessionId: result.sessionId }
+              : {}),
             sessionStatuses: [
               ...n.sessionStatuses,
+              ...(result.retried
+                ? [
+                    {
+                      status:
+                        'OpenCode session recovered, but inject retry failed',
+                      type: 'working' as const,
+                      timestamp: new Date(),
+                    },
+                  ]
+                : []),
               {
-                status: `OpenCode inject failed: ${result?.error ?? 'unknown error'}`,
+                status: `OpenCode inject failed: ${result.error ?? 'unknown error'}`,
                 type: 'error' as const,
                 timestamp: new Date(),
               },

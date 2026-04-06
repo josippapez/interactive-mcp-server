@@ -59,6 +59,16 @@ export interface SessionNodeData {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+function collectFallbackDirectories(): string[] {
+  return Array.from(
+    new Set(
+      getAllRegisteredConnections()
+        .map((rc) => rc.baseDirectory)
+        .filter((dir): dir is string => !!dir && dir.trim().length > 0),
+    ),
+  );
+}
+
 /** Compute depth (0 = root) from a flat session array. */
 function computeDepth(
   sessionId: string,
@@ -137,7 +147,10 @@ export function startSessionTreeManager(
     const win = getWindow();
     if (!win || win.isDestroyed()) return;
 
-    const allSessions = await fetchAllOpenCodeSessions(getOpenCodePort());
+    const allSessions = await fetchAllOpenCodeSessions(
+      getOpenCodePort(),
+      collectFallbackDirectories(),
+    );
     if (!allSessions) return; // API unreachable — skip this tick silently
 
     const snapshot = buildSnapshot(allSessions);
@@ -168,7 +181,10 @@ export async function triggerSessionTreeUpdate(
   const win = getWindow();
   if (!win || win.isDestroyed()) return;
 
-  const allSessions = await fetchAllOpenCodeSessions(getOpenCodePort());
+  const allSessions = await fetchAllOpenCodeSessions(
+    getOpenCodePort(),
+    collectFallbackDirectories(),
+  );
   if (!allSessions) return;
 
   const snapshot = buildSnapshot(allSessions);

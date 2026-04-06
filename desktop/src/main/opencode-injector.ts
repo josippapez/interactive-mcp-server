@@ -1,7 +1,4 @@
-import { writeFileSync } from 'fs';
-import { tmpdir } from 'os';
-import { join } from 'path';
-import { randomUUID } from 'crypto';
+import { saveAttachment, attachmentUrl } from './attachment-store';
 
 export const SUPPORTED_FILE_EXTENSIONS: string[] = [
   'png',
@@ -51,22 +48,24 @@ export async function injectOpenCodeMessage(
   attachments: Attachment[] | undefined,
   openCodePort: number,
   noReply: boolean = false,
-): Promise<{ ok: boolean; error?: string }> {
+  mcpServerPort?: number,
+): Promise<{ ok: boolean; error?: string; noReply?: boolean }> {
   const url = `http://localhost:${openCodePort}/session/${encodeURIComponent(openCodeSessionId)}/message`;
 
   // Build the full message text: start with the user's message, then append
-  // attachment references as file paths (images saved to temp, text inlined).
+  // attachment references. Images are saved to persistent storage and
+  // referenced by URL (served via the MCP server). Text files are inlined.
   let fullText = message;
   for (const att of attachments ?? []) {
     if (att.mimeType.startsWith('image/')) {
-      // Save image to a temp file and reference by path
-      const ext = att.mimeType.split('/')[1]?.replace('jpeg', 'jpg') ?? 'png';
-      const tempPath = join(tmpdir(), `imcp-attachment-${randomUUID()}.${ext}`);
-      try {
-        writeFileSync(tempPath, Buffer.from(att.data, 'base64'));
-        fullText += `\n\n[Image file: ${tempPath}]`;
-      } catch {
-        // If we can't write the temp file, skip this attachment
+      // Save image to persistent attachment store and reference by URL
+      const filename = saveAttachment(att.data, att.mimeType);
+      if (filename && mcpServerPort) {
+        const imageUrl = attachmentUrl(filename, mcpServerPort);
+        fullText += `\n\n[Image: ${att.name}](${imageUrl})`;
+      } else if (filename) {
+        // Fallback: reference the file by name (no port available)
+        fullText += `\n\n[Image attached: ${att.name}]`;
       }
     } else {
       // Text file: inline the content
@@ -89,11 +88,12 @@ export async function injectOpenCodeMessage(
       return {
         ok: false,
         error: `OpenCode API returned ${res.status}: ${body}`,
+        noReply,
       };
     }
-    return { ok: true };
+    return { ok: true, noReply };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: msg };
+    return { ok: false, error: msg, noReply };
   }
 }

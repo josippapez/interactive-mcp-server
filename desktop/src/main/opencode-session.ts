@@ -37,8 +37,43 @@ async function fetchSessions(url: string): Promise<OpenCodeSession[] | null> {
  */
 export async function fetchAllOpenCodeSessions(
   openCodePort: number,
+  fallbackDirectories: string[] = [],
 ): Promise<OpenCodeSession[] | null> {
-  return fetchSessions(`http://localhost:${openCodePort}/session`);
+  const unscoped = await fetchSessions(
+    `http://localhost:${openCodePort}/session`,
+  );
+  if (!unscoped) return null;
+  if (unscoped.length > 0) return unscoped;
+
+  const scopedDirectories = Array.from(
+    new Set(
+      fallbackDirectories
+        .map((dir) => dir.trim())
+        .filter((dir) => dir.length > 0),
+    ),
+  );
+
+  if (scopedDirectories.length === 0) return [];
+
+  const scopedResults = await Promise.all(
+    scopedDirectories.map((dir) =>
+      fetchSessions(
+        `http://localhost:${openCodePort}/session?directory=${encodeURIComponent(dir)}`,
+      ),
+    ),
+  );
+
+  const mergedById = new Map<string, OpenCodeSession>();
+  for (const scoped of scopedResults) {
+    if (!scoped) continue;
+    for (const session of scoped) {
+      mergedById.set(session.id, session);
+    }
+  }
+
+  return Array.from(mergedById.values()).sort(
+    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
+  );
 }
 
 /**

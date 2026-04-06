@@ -12,6 +12,7 @@ import AgentStatusBar from '../components/prompt/AgentStatusBar';
 import ChannelSidebar from '../components/prompt/ChannelSidebar';
 import ChannelHeader from '../components/prompt/ChannelHeader';
 import ChannelComposer from '../components/prompt/ChannelComposer';
+import { resolveSessionActionTarget } from '../hooks/remove-session-target';
 
 type Props = {
   connections: Map<string, SessionNode>;
@@ -82,6 +83,14 @@ export default function PromptView({
       null)
     : null;
 
+  const sessionActionTarget = activeConnectionId
+    ? resolveSessionActionTarget({
+        requestedId: activeConnectionId,
+        connectionId,
+        sessionChannelId: sessionChannel?.sessionId ?? null,
+      })
+    : null;
+
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [channelMessages]);
@@ -99,9 +108,15 @@ export default function PromptView({
             <ChannelHeader
               label={sessionChannel?.label ?? activeConnectionId}
               promptActive={Boolean(prompt)}
-              onClearMessages={() => onClearMessages(activeConnectionId)}
-              onRemoveSession={() => onRemoveSession(activeConnectionId)}
-              onDismissSession={() => onDismissSession(activeConnectionId)}
+              onClearMessages={() =>
+                sessionActionTarget && onClearMessages(sessionActionTarget)
+              }
+              onRemoveSession={() =>
+                sessionActionTarget && onRemoveSession(sessionActionTarget)
+              }
+              onDismissSession={() =>
+                sessionActionTarget && onDismissSession(sessionActionTarget)
+              }
             />
 
             <div className="flex-1 overflow-hidden flex flex-col">
@@ -170,9 +185,18 @@ export default function PromptView({
             {prompt ? (
               <ChannelComposer
                 enabled
-                baseDirectory={prompt.baseDirectory}
+                baseDirectory={
+                  prompt.baseDirectory ??
+                  (activeConnectionId
+                    ? (connections.get(activeConnectionId)?.baseDirectory ??
+                      connections.get(activeConnectionId)?.directory ??
+                      undefined)
+                    : undefined)
+                }
                 placeholder={
-                  prompt.baseDirectory
+                  prompt.baseDirectory ||
+                  connections.get(activeConnectionId ?? '')?.baseDirectory ||
+                  connections.get(activeConnectionId ?? '')?.directory
                     ? 'Type your answer… (# or @ for files, ⌘+Enter to send)'
                     : 'Type your answer… (⌘+Enter to send)'
                 }
@@ -182,12 +206,12 @@ export default function PromptView({
               <ChannelComposer
                 enabled={Boolean(sessionChannel)}
                 submitLabel="Queue"
-                baseDirectory={
-                  activeConnectionId
-                    ? (connections.get(activeConnectionId)?.baseDirectory ??
-                      undefined)
-                    : undefined
-                }
+                baseDirectory={(() => {
+                  const node = activeConnectionId
+                    ? connections.get(activeConnectionId)
+                    : undefined;
+                  return node?.baseDirectory ?? node?.directory ?? undefined;
+                })()}
                 placeholder="Message the agent… (⌘+Enter to queue)"
                 onSubmit={(text, attachments) => {
                   if (sessionChannel)

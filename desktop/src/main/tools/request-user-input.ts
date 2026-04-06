@@ -132,28 +132,29 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
           .describe('Optional metadata about the MCP client'),
       },
     },
-    async ({
-      projectName,
-      message,
-      predefinedOptions,
-      baseDirectory,
-      clientInfo,
-    }): Promise<CallToolResult> => {
+    async (
+      { projectName, message, predefinedOptions, baseDirectory, clientInfo },
+      extra,
+    ): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
 
       const promptId = randomUUID();
-      const result = await promptFn(getWindow(), {
-        id: promptId,
-        message,
-        projectName,
-        predefinedOptions,
-        baseDirectory,
-        connectionId,
-        connectionName,
-        timeoutSeconds: getPromptTimeoutSeconds(),
-        clientInfo,
-      });
+      const result = await promptFn(
+        getWindow(),
+        {
+          id: promptId,
+          message,
+          projectName,
+          predefinedOptions,
+          baseDirectory,
+          connectionId,
+          connectionName,
+          timeoutSeconds: getPromptTimeoutSeconds(),
+          clientInfo,
+        },
+        extra.signal,
+      );
 
       const { answer, attachments } = result;
 

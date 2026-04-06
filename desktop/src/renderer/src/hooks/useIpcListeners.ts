@@ -54,7 +54,7 @@ type Opts = {
 // Internal helper — look up map key for a connectionId
 // ---------------------------------------------------------------------------
 
-function findKeyByConnectionId(
+export function findKeyByConnectionId(
   nodes: Map<string, SessionNode>,
   connectionId: string,
 ): string | null {
@@ -290,10 +290,17 @@ export function useIpcListeners({
     // Session channel events
     // ------------------------------------------------------------------
     window.api.onSessionChannelDeleted?.((data) => {
+      // Track the resolved map key so setActiveId can clear it correctly.
+      // For direct connections the key IS data.sessionId (connectionId).
+      // For OpenCode-backed sessions the key is the openCodeSessionId, which
+      // differs from data.sessionId — hence the plain comparison on line below
+      // would never clear activeId for those sessions (the bug).
+      let deletedKey: string | null = null;
       setNodes((prev) => {
         // Always delete the node — this event only fires on explicit deletion
         // (user-initiated remove), not on normal disconnect.
         if (prev.has(data.sessionId)) {
+          deletedKey = data.sessionId;
           const next = new Map(prev);
           next.delete(data.sessionId);
           return next;
@@ -301,11 +308,14 @@ export function useIpcListeners({
         // Also handle OpenCode-keyed nodes (connectionId stored inside the node)
         const nodeId = findKeyByConnectionId(prev, data.sessionId);
         if (!nodeId) return prev;
+        deletedKey = nodeId;
         const next = new Map(prev);
         next.delete(nodeId);
         return next;
       });
-      setActiveId((prev) => (prev === data.sessionId ? null : prev));
+      setActiveId((prev) =>
+        deletedKey !== null && prev === deletedKey ? null : prev,
+      );
     });
 
     window.api.onSessionChannelMessagesCleared?.((data) => {

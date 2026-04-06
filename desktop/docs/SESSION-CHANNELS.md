@@ -8,7 +8,19 @@
 
 A **session channel** is a named, database-backed communication channel that ties an active MCP connection to the renderer UI and to external tooling (VS Code extensions, shell hooks, polling agents, etc.).
 
-Each MCP connection is assigned a `connectionId` (UUID) when it initializes. The session channel for that connection carries the same identifier as its primary key (`session_id`). This means external tools do not need to know the MCP transport session ID — they only need the `connectionId` that was written to the session file.
+Each MCP connection is assigned a `connectionId` (UUID) when it initializes. The session channel for that connection carries the same identifier as its primary key (`session_id`). This means external tools do not need to know the MCP transport session ID — they only need the persisted session identifier (`connectionId`) written to the session file.
+
+## Session Identity
+
+Three identifiers appear in the desktop app and they are not interchangeable:
+
+| Identifier                 | Source                | Used for                                                                                          | Notes                                                                                  |
+| -------------------------- | --------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `openCodeSessionId`        | OpenCode ACP API      | Sidebar tree identity and parent/child topology                                                   | Preferred renderer key when a session is known to OpenCode.                            |
+| `connectionId`             | MCP server            | Session channel persistence, prompt routing, destructive actions, REST `/api/sessions/:sessionId` | Stored as `session_channels.session_id` and in `registered_connections.connection_id`. |
+| `sessionChannel.sessionId` | Renderer session node | UI-facing copy of the persisted session identifier                                                | For channel-backed nodes this is the same value as `connectionId`.                     |
+
+Renderer sidebar nodes are keyed by `openCodeSessionId ?? connectionId`. That selected node key is not always valid for destructive actions. Clear/remove/dismiss operations must resolve back to the persisted identifier (`sessionChannel.sessionId` / `connectionId`).
 
 ### Why session channels exist
 
@@ -108,7 +120,15 @@ Drains the unsent message queue. Returns all rows where `sent = 0`, then **immed
 
 ### `DELETE /api/sessions/:sessionId`
 
-Removes the channel from the database by calling `deleteSessionChannel(sessionId)` and sends the `session-channel-deleted` IPC event to the renderer.
+This is the full-removal endpoint for a persisted session. Its intended semantics are:
+
+1. Remove the session channel and queued/history rows from SQLite.
+2. Remove the matching `registered_connections` row and its ID file.
+3. Mark the connection as deleted in the stale-connection guard so later tool calls on that `connectionId` return a re-register error instead of silently failing.
+4. Emit renderer events so the UI removes the channel immediately.
+5. Trigger a fresh `session-tree-updated` snapshot so OpenCode tree state and the renderer sidebar reconcile immediately.
+
+If a live MCP session still exists for that `connectionId`, the removal path must also close it so the persisted and in-memory states stay aligned.
 
 ---
 
@@ -132,13 +152,13 @@ All IPC events travel from the **main process to the renderer** via `webContents
 
 These calls are initiated from the renderer and handled in the main process via `ipcRenderer.send` / `ipcMain.handle`.
 
-| Method                                              | Direction       | Description                                                                                                                                                      |
-| --------------------------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `window.api.queueSessionMessage(sessionId, msg)`    | Renderer → Main | Inserts `msg` into `session_messages` (`sent=0`) and `session_channel_history` (`type='outbound'`). Sends `queue-session-message` IPC event.                     |
-| `window.api.getPersistedSessionChannels()`          | Renderer → Main | Returns all rows from `session_channels`. Used during auto-restore on startup.                                                                                   |
-| `window.api.getSessionChannelHistory(sessionId)`    | Renderer → Main | Returns all rows from `session_channel_history` for the given `sessionId`, ordered chronologically. Used to populate the chat view on load.                      |
-| `window.api.clearSessionChannelMessages(sessionId)` | Renderer → Main | Deletes all history rows for `sessionId` and sends `session-channel-messages-cleared` IPC back to the renderer.                                                  |
-| `window.api.removeSessionChannel(sessionId)`        | Renderer → Main | Force-terminates the associated MCP session, deletes the channel from the database, and sends both `connection-closed` and `session-channel-deleted` IPC events. |
+| Method                                              | Direction       | Description                                                                                                                                                                                                                            |
+| --------------------------------------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `window.api.queueSessionMessage(sessionId, msg)`    | Renderer → Main | Inserts `msg` into `session_messages` (`sent=0`) and `session_channel_history` (`type='outbound'`). Sends `queue-session-message` IPC event.                                                                                           |
+| `window.api.getPersistedSessionChannels()`          | Renderer → Main | Returns persisted session channels joined with `registered_connections` metadata (`openCodeSessionId`, `parentSessionId`). Used as startup reconciliation input.                                                                       |
+| `window.api.getSessionChannelHistory(sessionId)`    | Renderer → Main | Returns all rows from `session_channel_history` for the given `sessionId`, ordered chronologically. Used to populate the chat view on load.                                                                                            |
+| `window.api.clearSessionChannelMessages(sessionId)` | Renderer → Main | Deletes all history rows for `sessionId` and sends `session-channel-messages-cleared` IPC back to the renderer.                                                                                                                        |
+| `window.api.removeSessionChannel(sessionId)`        | Renderer → Main | Force-terminates the associated MCP session, removes persisted channel/registration state, marks the connection deleted, triggers a session-tree refresh, and sends both `connection-closed` and `session-channel-deleted` IPC events. |
 
 ---
 
@@ -158,14 +178,13 @@ The session file (`imcp-session.json` / `.imcp-session`) contains:
 { "sessionId": "<connectionId>", "port": <port> }
 ```
 
-The MCP config hint file (`imcp-mcp-config.json`) contains a ready-to-use MCP server configuration snippet that external tools (like `opencode-config-sync`) can merge into their MCP config. It includes the `bridgePath` when available:
+The MCP config hint file (`imcp-mcp-config.json`) contains a ready-to-use MCP server configuration snippet that external tools (like `opencode-config-sync`) can merge into their MCP config. It uses a remote HTTP entry:
 
 ```json
 {
   "interactive-desktop": {
-    "type": "local",
-    "command": "node",
-    "args": ["/path/to/tools/mcp/desktop-bridge.cjs"]
+    "type": "remote",
+    "url": "http://localhost:3100/mcp"
   }
 }
 ```
@@ -181,13 +200,24 @@ Write and delete operations on both paths are wrapped in try/catch. A failure to
 
 ---
 
-## Auto-Restore Behavior
+## Startup Reconciliation
 
-When the **Auto-Restore Sessions** setting is enabled, the renderer calls `window.api.getPersistedSessionChannels()` on startup. For each persisted channel returned, the renderer creates a `ConnectionState` entry with `isRestored: true`.
+Startup state is reconciled from three sources:
 
-Restored entries appear as channel tabs in the UI and make the stored history available for reading. When the agent reconnects and a live `connection-opened` IPC event arrives for the same `connectionId`, the restored entry is replaced by the live connection state.
+1. `registered_connections` — persisted MCP registration metadata (`connectionId`, `agentName`, `baseDirectory`, `openCodeSessionId`, `parentSessionId`).
+2. Live OpenCode sessions — fetched from the OpenCode ACP API by the session-tree manager.
+3. Persisted session-channel rows/history — used to recover message history for known `connectionId`s.
 
-If the agent never reconnects (e.g., it was terminated), the restored tab remains visible with its history until the user manually removes it.
+The startup sequence is:
+
+1. The main process starts the session-tree manager.
+2. The main process runs `reconcileSessionConnections(openCodePort)` once.
+3. Any `registered_connections` row whose `openCodeSessionId` no longer exists is removed as stale.
+4. The session-tree manager emits a full `session-tree-updated` snapshot built from live OpenCode sessions merged with remaining `registered_connections` rows.
+5. The renderer merges that snapshot into its `SessionNode` map, keyed by `openCodeSessionId ?? connectionId`.
+6. For any node that claims a `connectionId`, the renderer loads `getSessionChannelHistory(connectionId)` once and preserves that runtime state across later snapshots.
+
+Direct MCP connections that have no OpenCode session are still represented, but they remain keyed directly by `connectionId`.
 
 ---
 
@@ -228,7 +258,7 @@ Content-Type: application/json
   "parts": [
     {
       "type": "text",
-      "text": "<message>\n\n[Image file: /tmp/imcp-attachment-<uuid>.png]\n\n--- File: notes.txt ---\n<file content>"
+      "text": "<message>\n\n[Image: screenshot.png](http://localhost:{mcpPort}/attachments/<filename>)\n\n--- File: notes.txt ---\n<file content>"
     }
   ]
 }
@@ -236,10 +266,22 @@ Content-Type: application/json
 
 The `noReply: true` flag tells OpenCode to inject the text as **context only** — the agent receives it in its next context window but does not generate a response immediately. This behavior is controlled by the **Context-only messages** setting (`noReplyInjection`, default `true`). When the setting is `false`, the `noReply` flag is omitted and the agent will respond to the injected message.
 
-Attachments are encoded as plain-text references appended to the single `text` part, mirroring the TUI approach:
+Attachments are encoded as plain-text references appended to the single `text` part:
 
-- **Image attachments** — the main process writes the base64 image data to a temp file (e.g. `/tmp/imcp-attachment-<uuid>.png`) and appends `[Image file: /tmp/...]` to the message. The agent reads the image from disk.
+- **Image attachments** — the main process saves the base64 image into the persistent attachment store under `<userData>/attachments/<uuid>.<ext>`, then appends a markdown link to `http://localhost:{mcpPort}/attachments/<filename>`.
 - **Text file attachments** — the file content is inlined as `--- File: <name> ---\n<content>`.
+
+### Attachment Serving
+
+Persisted image attachments are served by the MCP server at `GET /attachments/:filename`.
+
+- The route resolves the filename inside the attachment store.
+- Path traversal is rejected by filename sanitization.
+- `Content-Type` is inferred from the file extension.
+- Missing files return `404 { error: "Attachment not found" }`.
+- The server binds to localhost, so attachments are only served to local clients.
+
+Attachment files survive app restarts and are cleaned up periodically by the attachment-store cleanup job.
 
 ### When injection is available
 
@@ -258,7 +300,7 @@ A `parentSessionId` on connection A links it as a child of connection B when B's
 
 #### Session-tree manager
 
-The main process runs a `session-tree-manager` that polls the OpenCode API every ~2 seconds. It queries all active sessions, builds a depth-annotated tree, and merges the results with `registered_connections` from SQLite. On each poll, it emits a `session-tree-updated` IPC event to the renderer containing a flat array of `SessionTreeNode` objects (see [`IPC-API.md — Session Tree`](./IPC-API.md#session-tree) for the full type).
+The main process runs a `session-tree-manager` that polls the OpenCode API every ~2 seconds. It queries all active sessions, builds a depth-annotated tree, and merges the results with `registered_connections` from SQLite. On each poll, it emits a full `session-tree-updated` IPC snapshot to the renderer containing a flat array of `SessionTreeNode` objects (see [`IPC-API.md — Session Tree`](./IPC-API.md#session-tree) for the full type).
 
 The renderer uses `session-tree-updated` to build the parent-child sidebar hierarchy. Sessions that appear in the OpenCode tree but have no `connectionId` (i.e., the subagent has not yet called `register_connection`) are shown as **placeholder** sidebar entries:
 
@@ -266,7 +308,7 @@ The renderer uses `session-tree-updated` to build the parent-child sidebar hiera
 - A grey pulsing dot instead of the unread-count badge
 - Indented under the parent entry
 
-When the subagent subsequently calls `register_connection`, the placeholder is replaced by the real connection entry and the pulsing dot disappears.
+When the subagent subsequently calls `register_connection`, the placeholder is replaced by the real connection entry and the pulsing dot disappears. If a direct connection already exists for that `connectionId`, the renderer absorbs its runtime state into the OpenCode-keyed node.
 
 ### Failure handling
 
@@ -317,7 +359,7 @@ Agent                        MCP Server (main)              SQLite              
   │<─ 200 ─────────────────────────│                            │                       │
 ```
 
-> If **Auto-Restore Sessions** is enabled, the `session-channel-deleted` event does not remove the tab immediately. The tab transitions to a restored state and remains visible until the user removes it or the agent reconnects.
+> Current renderer behavior does not preserve a separate restored-tab state after explicit deletion. `session-channel-deleted` removes the owning node immediately; later `session-tree-updated` snapshots determine what remains visible.
 
 ---
 

@@ -1,5 +1,15 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
+
+// Mock the attachment-store module so we don't write to the real userData dir
+vi.mock('./attachment-store', () => ({
+  saveAttachment: vi.fn(() => 'test-uuid.png'),
+  attachmentUrl: vi.fn(
+    (filename: string, port: number) =>
+      `http://localhost:${port}/attachments/${filename}`,
+  ),
+}));
+
 import { injectOpenCodeMessage } from '../main/opencode-injector';
 
 // ---------------------------------------------------------------------------
@@ -131,7 +141,7 @@ describe('injectOpenCodeMessage', () => {
     expect(text).toContain('console.log("hi")');
   });
 
-  it('saves image attachments to temp files and references by path', async () => {
+  it('saves image attachments and references them by URL', async () => {
     // Base64 for a 1x1 red PNG pixel
     const pngBase64 =
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==';
@@ -145,12 +155,23 @@ describe('injectOpenCodeMessage', () => {
       },
     ];
 
-    await injectOpenCodeMessage('s1', 'See image', attachments, serverPort);
+    const mcpPort = 3100;
+    await injectOpenCodeMessage(
+      's1',
+      'See image',
+      attachments,
+      serverPort,
+      false,
+      mcpPort,
+    );
 
     const body = JSON.parse(lastRequest!.body);
     const text = body.parts[0].text as string;
     expect(text).toContain('See image');
-    expect(text).toMatch(/\[Image file: .*\.png\]/);
+    expect(text).toContain('[Image: screenshot.png]');
+    expect(text).toContain(
+      `http://localhost:${mcpPort}/attachments/test-uuid.png`,
+    );
   });
 
   it('returns ok: false when the server returns a non-200 status', async () => {

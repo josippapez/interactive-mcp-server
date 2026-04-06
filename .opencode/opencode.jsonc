@@ -12,6 +12,7 @@
         "message_complete_notification",
       ],
       "type": "local",
+      "timeout": 1210000,
     },
     "repo-docs-libs": {
       "type": "local",

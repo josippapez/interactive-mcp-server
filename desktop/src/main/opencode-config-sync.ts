@@ -1,39 +1,58 @@
 /**
- * Syncs the Interactive MCP Desktop bridge entry into the user's global
+ * Syncs the Interactive MCP Desktop remote entry into the user's global
  * OpenCode config (`~/.config/opencode/opencode.json`).
  *
- * Called once at app startup. It ensures the `interactive-desktop` MCP entry
- * always points to the correct bridge path — whether running from source
- * (dev) or from an installed Electron app (production).
+ * This is the **fallback** connection method. The primary method is dynamic
+ * registration via `POST /mcp` (see `opencode-mcp-register.ts`).
+ *
+ * Called once at app startup (if auto-sync is enabled). It ensures the
+ * `interactive-desktop` MCP entry points to the desktop app's HTTP endpoint
+ * as a `type: "remote"` server.
  *
  * Only writes when:
  *   1. The config file exists (we never create it from scratch).
- *   2. The bridge script exists on disk.
- *   3. The existing entry is missing or the path differs.
+ *   2. The existing entry is missing or differs.
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
-import { resolveBridgePath } from './session-file';
 
 const OPENCODE_CONFIG_DIR = join(homedir(), '.config', 'opencode');
 const OPENCODE_CONFIG_FILE = join(OPENCODE_CONFIG_DIR, 'opencode.json');
 
-/** Timeout to use for the interactive-desktop MCP entry (ms). */
-const MCP_TIMEOUT = 1_210_000;
+/** Default prompt timeout (seconds) matching defaultSettings.promptTimeoutSeconds. */
+const DEFAULT_PROMPT_TIMEOUT_S = 800;
+
+/** Extra buffer (ms) added on top of the prompt timeout for the MCP entry. */
+const MCP_TIMEOUT_BUFFER_MS = 60_000;
+
+/**
+ * Compute the MCP timeout (ms) for the interactive-desktop entry.
+ * Formula: promptTimeoutSeconds * 1000 + buffer.
+ */
+function computeMcpTimeout(promptTimeoutSeconds: number): number {
+  return promptTimeoutSeconds * 1000 + MCP_TIMEOUT_BUFFER_MS;
+}
 
 /**
  * Ensure the user's `~/.config/opencode/opencode.json` has an
- * `interactive-desktop` MCP entry pointing to the current bridge path.
+ * `interactive-desktop` MCP entry pointing to the desktop app's HTTP endpoint.
  *
- * Returns a short status string for logging.
+ * @param appPort — the port the desktop app's MCP HTTP server listens on.
+ * @param promptTimeoutSeconds — current prompt timeout from settings.
+ *   Used to compute the MCP entry timeout dynamically. Defaults to 800s.
+ * @returns a short status string for logging.
  */
-export function syncBridgeConfig(): string {
-  const bridgePath = resolveBridgePath();
-  if (!bridgePath) {
-    return 'bridge-not-found';
-  }
+export function syncRemoteConfig(
+  appPort: number,
+  promptTimeoutSeconds?: number,
+): string {
+  const mcpTimeout = computeMcpTimeout(
+    promptTimeoutSeconds ?? DEFAULT_PROMPT_TIMEOUT_S,
+  );
+
+  const desiredUrl = `http://localhost:${appPort}/mcp`;
 
   if (!existsSync(OPENCODE_CONFIG_FILE)) {
     return 'opencode-config-missing';
@@ -64,39 +83,38 @@ export function syncBridgeConfig(): string {
 
   const mcp = config.mcp as Record<string, unknown>;
   const existing = mcp['interactive-desktop'] as
-    | { command?: string[]; type?: string; timeout?: number }
+    | { url?: string; type?: string; timeout?: number; command?: string[] }
     | undefined;
-
-  const desiredCommand = ['node', bridgePath];
 
   // Track whether any change is needed
   let needsWrite = false;
 
-  // Remove stale "interactive-bridge" entry if present (legacy duplicate)
-  if ('interactive-bridge' in mcp) {
-    delete mcp['interactive-bridge'];
-    needsWrite = true;
+  // Remove stale legacy entries if present
+  for (const staleKey of ['interactive-bridge']) {
+    if (staleKey in mcp) {
+      delete mcp[staleKey];
+      needsWrite = true;
+    }
   }
 
-  // Check if the interactive-desktop entry already matches
+  // Check if the interactive-desktop entry already matches the desired remote config
   const alreadyCurrent =
     existing &&
-    existing.type === 'local' &&
-    Array.isArray(existing.command) &&
-    existing.command.length === 2 &&
-    existing.command[0] === 'node' &&
-    existing.command[1] === bridgePath;
+    existing.type === 'remote' &&
+    existing.url === desiredUrl &&
+    existing.timeout === mcpTimeout &&
+    !existing.command; // must not be a leftover local entry
 
   if (alreadyCurrent && !needsWrite) {
     return 'already-current';
   }
 
   if (!alreadyCurrent) {
-    // Update the entry
+    // Write a clean remote entry (replaces any old local/bridge entry)
     mcp['interactive-desktop'] = {
-      command: desiredCommand,
-      type: 'local',
-      timeout: MCP_TIMEOUT,
+      type: 'remote',
+      url: desiredUrl,
+      timeout: mcpTimeout,
     };
   }
 

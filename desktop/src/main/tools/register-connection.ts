@@ -7,12 +7,57 @@ import { autoDetectOpenCodeSession } from '../opencode-session';
 import { triggerSessionTreeUpdate } from '../session-tree-manager';
 import { initDocContext } from '../doc-context-injector';
 
+const REGISTER_CONNECTION_TIMEOUT_MS = 15_000;
+const REGISTER_CONNECTION_TIMEOUT_MESSAGE =
+  'register_connection timed out after 15s';
+
+function ensureRegisterConnectionTimeRemaining(startedAt: number): number {
+  const elapsed = Date.now() - startedAt;
+  const remaining = REGISTER_CONNECTION_TIMEOUT_MS - elapsed;
+  if (remaining <= 0) {
+    throw new Error(REGISTER_CONNECTION_TIMEOUT_MESSAGE);
+  }
+  return remaining;
+}
+
+async function withRegisterConnectionDeadline<T>(
+  promise: Promise<T>,
+  startedAt: number,
+): Promise<T> {
+  const remaining = ensureRegisterConnectionTimeRemaining(startedAt);
+
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(REGISTER_CONNECTION_TIMEOUT_MESSAGE));
+    }, remaining);
+
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+function isRegisterConnectionTimeoutError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    error.message === REGISTER_CONNECTION_TIMEOUT_MESSAGE
+  );
+}
+
 export function registerConnectionTool(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
   connectionId: string,
   getOpenCodePort: () => number,
   getDocIndexingEnabled: () => boolean,
+  onRegistered?: (connectionId: string) => void | Promise<void>,
 ): void {
   server.registerTool(
     'register_connection',
@@ -30,6 +75,7 @@ After registration, your channel will appear in the app's sidebar with the given
 - (!important!) The connectionId returned by this tool is automatically used by all other tools.
 - (!important!) If you pass baseDirectory and omit openCodeSessionId, the desktop app will auto-detect your active session for context injection — this is the correct path for the main agent.
 - (!important!) If you are a subagent spawned via the Task tool, you MUST pass your own OpenCode session ID via the openCodeSessionId parameter. Without it your channel will have no injection target and messages typed in your channel will not reach you.
+- (!important!) This tool has a hard 15-second deadline; if registration does not complete in time, it fails so callers can retry cleanly.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -82,6 +128,8 @@ After registration, your channel will appear in the app's sidebar with the given
       baseDirectory,
       openCodeSessionId: explicitSessionId,
     }): Promise<CallToolResult> => {
+      const startedAt = Date.now();
+
       // Use explicitly provided session ID if given.
       // Only auto-detect when baseDirectory is also provided — that is the
       // reliable signal that this is the main agent calling from a real project
@@ -94,9 +142,9 @@ After registration, your channel will appear in the app's sidebar with the given
       let parentSessionId: string | null = null;
 
       if (!openCodeSessionId && baseDirectory) {
-        const detected = await autoDetectOpenCodeSession(
-          getOpenCodePort(),
-          baseDirectory,
+        const detected = await withRegisterConnectionDeadline(
+          autoDetectOpenCodeSession(getOpenCodePort(), baseDirectory),
+          startedAt,
         );
         if (detected) {
           openCodeSessionId = detected.id;
@@ -106,21 +154,32 @@ After registration, your channel will appear in the app's sidebar with the given
         // When session ID is explicit, try to fetch its parentID from the API.
         try {
           const port = getOpenCodePort();
-          const res = await fetch(`http://localhost:${port}/session`, {
-            signal: AbortSignal.timeout(2000),
-          });
+          const res = await withRegisterConnectionDeadline(
+            fetch(`http://localhost:${port}/session`, {
+              signal: AbortSignal.timeout(2000),
+            }),
+            startedAt,
+          );
           if (res.ok) {
-            const sessions = (await res.json()) as Array<{
+            const sessions = (await withRegisterConnectionDeadline(
+              res.json() as Promise<unknown>,
+              startedAt,
+            )) as Array<{
               id: string;
               parentID?: string | null;
             }>;
             const match = sessions.find((s) => s.id === openCodeSessionId);
             parentSessionId = match?.parentID ?? null;
           }
-        } catch {
+        } catch (error) {
+          if (isRegisterConnectionTimeoutError(error)) {
+            throw error;
+          }
           // non-critical — parentSessionId stays null
         }
       }
+
+      ensureRegisterConnectionTimeRemaining(startedAt);
 
       // Persist registration: upsert DB record + write /tmp ID file
       const idFilePath = upsertRegisteredConnection({
@@ -134,6 +193,8 @@ After registration, your channel will appear in the app's sidebar with the given
 
       // Update the channel label in the DB
       createSessionChannel(connectionId, agentName);
+
+      void onRegistered?.(connectionId);
 
       // Immediately push a fresh session-tree snapshot so the renderer
       // reflects the new registration without waiting for the next poll tick.

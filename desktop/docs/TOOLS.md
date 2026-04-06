@@ -46,6 +46,12 @@ This document is the authoritative reference for all MCP tools registered by the
 
 The JSON also includes `openCodeSessionId` when an OpenCode session was successfully detected or explicitly provided, and `parentSessionId` when the OpenCode API returned a parent session for this connection.
 
+Identity note:
+
+- `connectionId` is the persisted MCP/session-channel identifier and is the value other tools bind to.
+- `openCodeSessionId` is the OpenCode tree/session identity used for renderer hierarchy and OpenCode message injection.
+- Renderer sidebar selection may use `openCodeSessionId ?? connectionId`, but destructive operations still resolve back to `connectionId`.
+
 #### Behavior
 
 1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `agentName`, `projectName`, `baseDirectory`, the detected `openCodeSessionId` (or `null`), and `parentSessionId` (or `null`).
@@ -54,7 +60,10 @@ The JSON also includes `openCodeSessionId` when an OpenCode session was successf
 4. Sends a `connection-registered` IPC event to the renderer so the sidebar updates immediately.
 5. Resolves `openCodeSessionId`: if `openCodeSessionId` was passed explicitly it is used directly; otherwise `autoDetectOpenCodeSession(openCodePort, baseDirectory)` is called, which returns a `DetectedSession | null` object with `{ id: string; parentId: string | null }` (see [OpenCode auto-detection](#opencode-auto-detection)).
 6. Resolves `parentSessionId`: after the `openCodeSessionId` is known (whether explicit or auto-detected), the tool fetches `GET /session` and inspects the matched session's `parentID` field to identify the parent OpenCode session, if any.
-7. Returns `{ ok: true, connectionId, agentName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId?, parentSessionId? }`.
+7. Triggers an immediate `session-tree-updated` refresh so the renderer reflects the new registration without waiting for the next poll.
+8. Returns `{ ok: true, connectionId, agentName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId?, parentSessionId? }`.
+
+This tool has a hard 15-second deadline. If detection or parent lookup does not complete in time, the call fails so the agent can retry cleanly.
 
 #### OpenCode auto-detection
 
@@ -625,6 +634,8 @@ interface PromptResponse {
 
 Attachments are saved alongside the conversation in the `conversations` table and appended to `session_channel_history` as part of the `answer` record.
 
+For OpenCode message injection, image attachments also take a second path: they are saved into the persistent attachment store and referenced back to the agent as `http://localhost:<mcpPort>/attachments/<filename>` links.
+
 ### MCP content encoding
 
 When the tool constructs its return value, attachments are appended to the content array after the primary text reply:
@@ -676,7 +687,7 @@ These Electron IPC events are used internally between the main process and the r
 | `connection-registered`   | main → renderer | `{ connectionId, agentName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                                                                |
 | `child-sessions-detected` | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                   | _(Deprecated — replaced by `session-tree-updated`.)_ Formerly fired by the background poller.        |
 | `session-tree-updated`    | main → renderer | `SessionTreeNode[]` (see [`IPC-API.md`](./IPC-API.md#session-tree))                                  | Session-tree manager (~2 s poll) delivers a full snapshot of all OpenCode sessions + MCP connections |
-| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string)` (IPC invoke)                                          | `ChannelComposer` message send when OpenCode session is present                                      |
+| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string, attachments?: Attachment[])` (IPC invoke)              | `ChannelComposer` message send when OpenCode session is present                                      |
 
 ---
 
@@ -688,6 +699,8 @@ All tools operate within the scope of a single MCP connection. The `connectionId
 - `start_intensive_chat` / `ask_intensive_chat` / `stop_intensive_chat`: use `connectionId` + `connectionName` for prompt tracking; `activeChatSessions` is a module-level Map shared across all connections.
 - `push_session_status`: uses `connectionId` to route the status update to the correct UI channel.
 - `find_repo_docs`: uses `connectionId` to look up the registered `baseDirectory` for document search.
+
+If the user explicitly removes a session, subsequent tool calls on that `connectionId` are expected to return a structured stale-connection error instructing the agent to call `register_connection` again.
 
 ---
 
@@ -730,103 +743,67 @@ This means well-behaved MCP clients (including OpenCode) can reconnect transpare
 
 ---
 
-## Stdio Bridge (`desktop-bridge.cjs`)
+## OpenCode Registration
 
-**File:** `tools/mcp/desktop-bridge.cjs`
+**Files:** `src/main/opencode-mcp-register.ts`, `src/main/opencode-config-sync.ts`
 
-The bridge is a lightweight Node.js script that proxies between OpenCode's stdio transport and the desktop app's HTTP Streamable Transport. It enables automatic reconnection even when the desktop app is fully killed and restarted.
+The desktop app registers itself with OpenCode as a remote MCP server. Two methods are used, in order of preference:
 
-```
-OpenCode  <──stdio──>  desktop-bridge.cjs  <──HTTP──>  Desktop App (port 3100)
-           (type: local)                                (Streamable HTTP Transport)
-```
+### 1. Dynamic Registration (Primary)
 
-### Why use the bridge?
-
-| Scenario                      | Without bridge (`type: "remote"`)           | With bridge (`type: "local"`)             |
-| ----------------------------- | ------------------------------------------- | ----------------------------------------- |
-| Desktop app in-app restart    | Transparent (soft-restart keeps listener)   | Transparent                               |
-| Desktop app full kill/restart | ECONNREFUSED → user must toggle in OpenCode | Bridge retries automatically → reconnects |
-| Desktop app port change       | Must reconfigure and toggle                 | Bridge detects via session file           |
-
-### How it works
-
-1. OpenCode spawns the bridge as a `type: "local"` process (stdio transport).
-2. The bridge reads JSON-RPC messages from stdin and forwards them as HTTP POST requests to the desktop app's `/mcp` endpoint.
-3. Server-initiated notifications are received via an SSE (GET `/mcp`) long-poll and forwarded to stdout.
-4. On network errors (ECONNREFUSED, ECONNRESET, etc.), the bridge retries with exponential backoff (500ms → 1s → 2s → ... → 30s max).
-5. The bridge watches `/tmp/imcp-session.json` for port changes and auto-adjusts.
-6. A background health poll (every 5s) logs connectivity status to stderr.
-
-### Port resolution
-
-The bridge resolves the desktop app port in this order:
-
-1. `--port <port>` CLI argument
-2. `IMCP_PORT` environment variable
-3. `/tmp/imcp-session.json` (written by the desktop app)
-4. Default: `3100`
-
-### Configuration for OpenCode
-
-Add this to your OpenCode MCP server config (e.g., `.opencode/config.json` or equivalent):
+On startup the app calls `POST http://localhost:{openCodePort}/mcp` to register itself:
 
 ```json
 {
-  "mcpServers": {
+  "name": "interactive-desktop",
+  "config": {
+    "type": "remote",
+    "url": "http://localhost:{appPort}/mcp"
+  }
+}
+```
+
+This requires no config file edits — OpenCode discovers the desktop app at runtime. The call uses a 3-second timeout and returns one of: `registered`, `unreachable`, or `error`.
+
+**Source:** `registerMcpWithOpenCode()` in `opencode-mcp-register.ts`.
+
+### 2. Config File Sync (Fallback)
+
+When the `autoSyncOpencode` setting is enabled, the app also writes a `type: "remote"` entry into `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
     "interactive-desktop": {
-      "type": "local",
-      "command": "node",
-      "args": ["/absolute/path/to/tools/mcp/desktop-bridge.cjs"]
+      "type": "remote",
+      "url": "http://localhost:3100/mcp",
+      "timeout": 860000
     }
   }
 }
 ```
 
-Or with an explicit port:
+The timeout is computed as `promptTimeoutSeconds * 1000 + 60000` (prompt timeout plus a 60-second buffer). Stale legacy entries (e.g., `interactive-bridge`) are cleaned up automatically.
+
+**Source:** `syncRemoteConfig()` in `opencode-config-sync.ts`.
+
+### Manual Configuration
+
+If neither automatic method is used, add this to your OpenCode MCP config (e.g., `~/.config/opencode/opencode.json`):
 
 ```json
 {
-  "mcpServers": {
+  "mcp": {
     "interactive-desktop": {
-      "type": "local",
-      "command": "node",
-      "args": [
-        "/absolute/path/to/tools/mcp/desktop-bridge.cjs",
-        "--port",
-        "3100"
-      ]
+      "type": "remote",
+      "url": "http://localhost:3100/mcp"
     }
   }
 }
 ```
 
-Or with the environment variable:
+Replace `3100` with the port configured in Settings if different.
 
-```json
-{
-  "mcpServers": {
-    "interactive-desktop": {
-      "type": "local",
-      "command": "node",
-      "args": ["/absolute/path/to/tools/mcp/desktop-bridge.cjs"],
-      "env": { "IMCP_PORT": "3100" }
-    }
-  }
-}
-```
+### Manual Sync
 
-### Logs
-
-The bridge writes status and error messages to **stderr** (not stdout, which is reserved for JSON-RPC). Messages include:
-
-- `[bridge] Interactive MCP Desktop Bridge started (port: 3100)`
-- `[bridge] desktop app unreachable (ECONNREFUSED), retrying in 500ms...`
-- `[bridge] desktop app is reachable at port 3100`
-- `[bridge] session expired, will re-initialize on next request`
-- `[bridge] desktop app port changed: 3100 -> 3200`
-
-### Requirements
-
-- Node.js 18+ (uses built-in `node:http`, `node:readline`, `node:fs`, `node:os`, `node:path`)
-- No npm dependencies — the script is self-contained CommonJS
+The Settings UI and the `sync-opencode-config` IPC handler allow manual re-registration. This first attempts dynamic registration, then falls back to config file sync.

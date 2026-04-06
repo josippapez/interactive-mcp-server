@@ -1,14 +1,13 @@
 import { useState, useCallback } from 'react';
 import PromptView from './pages/PromptView';
-import HistoryView from './pages/HistoryView';
 import SettingsView from './pages/SettingsView';
 import StatusBar from './components/StatusBar';
 import ShortcutHelpModal from './components/ShortcutHelpModal';
 import { useConnections } from './hooks/useConnections';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 
-type Tab = 'prompt' | 'history' | 'settings';
-const TABS: Tab[] = ['prompt', 'history', 'settings'];
+type Tab = 'prompt' | 'settings';
+const TABS: Tab[] = ['prompt', 'settings'];
 
 export default function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<Tab>('prompt');
@@ -30,7 +29,7 @@ export default function App(): React.ReactElement {
     handleRemoveSession,
   } = useConnections(switchToPrompt);
 
-  const switchTab = useCallback((tab: 1 | 2 | 3) => {
+  const switchTab = useCallback((tab: 1 | 2) => {
     setActiveTab(TABS[tab - 1]);
   }, []);
 
@@ -62,16 +61,9 @@ export default function App(): React.ReactElement {
             Prompts
           </TabButton>
           <TabButton
-            active={activeTab === 'history'}
-            onClick={() => setActiveTab('history')}
-            shortcut="⌘2"
-          >
-            History
-          </TabButton>
-          <TabButton
             active={activeTab === 'settings'}
             onClick={() => setActiveTab('settings')}
-            shortcut="⌘3"
+            shortcut="⌘2"
           >
             Settings
           </TabButton>
@@ -87,7 +79,7 @@ export default function App(): React.ReactElement {
             prompt={activeConn?.prompt ?? null}
             activeSession={activeConn?.activeSession ?? null}
             channelMessages={activeConn?.channelMessages ?? []}
-            connectionId={activeConnectionId}
+            connectionId={activeConn?.connectionId ?? null}
             sessionChannel={activeConn?.sessionChannel ?? null}
             sessionStatuses={activeConn?.sessionStatuses ?? []}
             onSubmit={handleSubmit}
@@ -99,7 +91,6 @@ export default function App(): React.ReactElement {
             onRemoveSession={handleRemoveSession}
           />
         </div>
-        {activeTab === 'history' && <HistoryView />}
         {activeTab === 'settings' && <SettingsView />}
       </main>
 

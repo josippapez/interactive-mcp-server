@@ -6,11 +6,19 @@ import {
   getUnsentCount,
   markMessagesSent,
   deleteSessionChannel,
+  deleteRegisteredConnection,
 } from './database';
+import { resolveAttachmentPath } from './attachment-store';
+import { forceTerminateChat } from './ipc-prompt';
+import { closeSessionByConnectionId } from './mcp-server';
+import { markConnectionDeleted } from './tools/connection-guard';
+import { triggerSessionTreeUpdate } from './session-tree-manager';
+import { removePersistedSession } from './remove-persisted-session';
 
 export interface ApiRouterDeps {
   getWindow: () => BrowserWindow | null;
   clearAllSessions: (() => Promise<number>) | null;
+  getOpenCodePort: () => number;
 }
 
 export function createApiRouter(deps: ApiRouterDeps): Router {
@@ -77,11 +85,42 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
   // Delete / cleanup a session channel
   router.delete('/api/sessions/:sessionId', (req, res) => {
     const { sessionId } = req.params;
-    deleteSessionChannel(sessionId);
-    deps
-      .getWindow()
-      ?.webContents.send('session-channel-deleted', { sessionId });
+    removePersistedSession(sessionId, {
+      getWindow: deps.getWindow,
+      getOpenCodePort: deps.getOpenCodePort,
+      forceTerminateChat,
+      closeSessionByConnectionId,
+      deleteSessionChannel,
+      deleteRegisteredConnection,
+      markConnectionDeleted,
+      triggerSessionTreeUpdate,
+    });
     res.json({ ok: true });
+  });
+
+  // Serve persisted attachment files (images) by filename.
+  // Bound to localhost only (Express server binds to 127.0.0.1) so no
+  // external exposure risk.
+  router.get('/attachments/:filename', (req, res) => {
+    const { filename } = req.params;
+    const filePath = resolveAttachmentPath(filename);
+    if (!filePath) {
+      res.status(404).json({ error: 'Attachment not found' });
+      return;
+    }
+    // Infer content-type from extension
+    const ext = filename.split('.').pop()?.toLowerCase() ?? '';
+    const mimeMap: Record<string, string> = {
+      png: 'image/png',
+      jpg: 'image/jpeg',
+      jpeg: 'image/jpeg',
+      gif: 'image/gif',
+      webp: 'image/webp',
+      svg: 'image/svg+xml',
+      bmp: 'image/bmp',
+    };
+    res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream');
+    res.sendFile(filePath);
   });
 
   return router;

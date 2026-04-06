@@ -3,6 +3,7 @@ import type { Attachment, SessionNode } from '../types';
 import { useChannelHistory } from './useChannelHistory';
 import { useIpcListeners } from './useIpcListeners';
 import { useOpenCodeInjection } from './useOpenCodeInjection';
+import { getRemoveSessionTarget } from './remove-session-target';
 
 export function useConnections(onActivatePromptTab: () => void) {
   // ---------------------------------------------------------------------------
@@ -246,7 +247,11 @@ export function useConnections(onActivatePromptTab: () => void) {
   }, []);
 
   const handleRemoveSession = useCallback((sessionId: string) => {
-    void window.api.removeSessionChannel(sessionId);
+    const targetSessionId = getRemoveSessionTarget(
+      nodesRef.current.get(sessionId),
+      sessionId,
+    );
+    void window.api.removeSessionChannel(targetSessionId);
   }, []);
 
   // ---------------------------------------------------------------------------

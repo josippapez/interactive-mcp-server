@@ -53,8 +53,8 @@ The handler inspects the `mcp-session-id` request header and the request body to
 **Case 2 — Initialize request (new or reconnecting client)**
 
 - Either no `mcp-session-id` header is present, or the header refers to a session that no longer exists, **and** `isInitializeRequest(req.body)` returns `true`.
-- A new `connectionId` (UUID), `connectionName` (`Agent N`), `McpServer`, and `StreamableHTTPServerTransport` are created.
-- `onsessioninitialized` registers the session in the `sessions` map, writes the session file, creates the session channel in the database, and sends `connection-opened` IPC to the renderer.
+- A new `connectionId` (UUID), `connectionName` (`OpenCode - Main Channel` for the first runtime connection, then `Agent N`), `McpServer`, and `StreamableHTTPServerTransport` are created.
+- `onsessioninitialized` registers the session in the `sessions` map, auto-registers a default named channel, writes the session file, and sends `connection-opened` IPC to the renderer.
 - The transport's `onclose` handler is wired (see [Session Close](#session-close)).
 - The request is forwarded to the new transport.
 
@@ -127,7 +127,17 @@ These endpoints operate on the database-backed session channel store. They are u
 
 **`GET /api/sessions/:sessionId/messages`** — Drains the unsent message queue. All returned messages are immediately marked as sent in the database.
 
-**`DELETE /api/sessions/:sessionId`** — Removes the channel from the database and sends `session-channel-deleted` IPC to the renderer.
+**`DELETE /api/sessions/:sessionId`** — Intended as a full-removal path for a persisted session: remove channel state, remove registration state, guard against stale follow-up tool calls, emit renderer deletion events, and refresh the session-tree snapshot.
+
+### `GET /attachments/:filename`
+
+Serves persisted image attachments from the local attachment store.
+
+- Attachment files live under `<userData>/attachments/<uuid>.<ext>`.
+- The route sanitizes the filename and rejects path traversal.
+- `Content-Type` is inferred from the extension.
+- Missing files return `404 { error: "Attachment not found" }`.
+- This route is used by OpenCode injection for image attachments, which are referenced as `http://localhost:<port>/attachments/<filename>` markdown links.
 
 ---
 
@@ -197,6 +207,8 @@ When `transport.onclose` fires (either from `DELETE /mcp` or from the transport 
 6. Send `session-channel-deleted` IPC to the renderer with `{ sessionId: connectionId }`.
 7. Call `server.close()` to shut down the per-connection `McpServer`.
 
+The `transport.onclose` cleanup path does **not** delete `registered_connections`; explicit user/session removal paths handle that separately.
+
 ---
 
 ## Transparent Session Resurrection
@@ -205,11 +217,11 @@ When a client holds a **stale session ID** (e.g., the server was restarted or th
 
 ### Step-by-step
 
-1. **Allocate a new connection.** Increment `connectionCounter`, generate a new `connectionId` (UUID), derive `connectionName` (`Agent N`), and create a fresh `McpServer` via `createMcpServerWithTools`.
+1. **Allocate a new connection.** Increment `connectionCounter`, generate a new `connectionId` (UUID), derive `connectionName` (`OpenCode - Main Channel` for the first runtime connection, then `Agent N`), and create a fresh `McpServer` via `createMcpServerWithTools`.
 
 2. **Create a new transport.** Instantiate `StreamableHTTPServerTransport` with a `sessionIdGenerator` and an `onsessioninitialized` callback. When `onsessioninitialized` fires:
    - Register the session in `sessions[newSessionId]`.
-   - Create the session channel in the database.
+   - Auto-register a default named channel in `registered_connections` and `session_channels`.
    - Write the session file.
    - Send `connection-opened` IPC to the renderer.
    - Wire `transport.onclose` with the standard cleanup sequence.
@@ -236,37 +248,30 @@ If `handleTransparentReinit` throws at any point, the `POST /mcp` handler catche
 
 Three files are written whenever a new connection is established, and deleted whenever a session is closed or the server is restarted. The session file logic is extracted to `desktop/src/main/session-file.ts`.
 
-| Path                                 | Purpose                                                                                                |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------ |
-| `<os.tmpdir()>/imcp-session.json`    | System temp — accessible to any process on the machine                                                 |
-| `<process.cwd()>/.imcp-session`      | CWD-relative — accessible to processes in the same working directory (e.g., a local CLI)               |
-| `<os.tmpdir()>/imcp-mcp-config.json` | Ready-to-use MCP server config snippet with bridge and HTTP connection options for OpenCode and others |
+| Path                                 | Purpose                                                                                            |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| `<os.tmpdir()>/imcp-session.json`    | System temp — accessible to any process on the machine                                             |
+| `<process.cwd()>/.imcp-session`      | CWD-relative — accessible to processes in the same working directory (e.g., a local CLI)           |
+| `<os.tmpdir()>/imcp-mcp-config.json` | Ready-to-use MCP server config snippet with remote HTTP connection options for OpenCode and others |
 
 The session file (`imcp-session.json` and `.imcp-session`) contains:
 
 ```json
-{ "sessionId": "<connectionId>", "port": <port>, "bridgePath": "/path/to/desktop-bridge.cjs" }
+{ "sessionId": "<connectionId>", "port": <port> }
 ```
 
-The `bridgePath` field is included when the bridge script can be resolved (see [Stdio Bridge](./TOOLS.md#stdio-bridge-desktop-bridgecjs)).
-
-The MCP config hint file (`imcp-mcp-config.json`) contains ready-to-use configuration:
+The MCP config hint file (`imcp-mcp-config.json`) contains a ready-to-use remote configuration:
 
 ```json
 {
   "interactive-desktop": {
-    "type": "local",
-    "command": "node",
-    "args": ["/path/to/desktop-bridge.cjs"]
-  },
-  "interactive-desktop-http": {
     "type": "remote",
     "url": "http://localhost:3100/mcp"
   }
 }
 ```
 
-Note: `sessionId` in the file is the internal `connectionId` (a UUID generated per connection), **not** the MCP transport session ID used in `Mcp-Session-Id` headers. Write and delete operations on both paths are wrapped in try/catch and are non-critical — a failure to write or delete a session file does not affect connection handling.
+Note: `sessionId` in the file is the internal `connectionId` (a UUID generated per connection), **not** the MCP transport session ID used in `Mcp-Session-Id` headers. This persisted identifier is also the value used by `session_channels.session_id`, REST `/api/sessions/:sessionId`, and renderer `sessionChannel.sessionId`. Write and delete operations on both paths are wrapped in try/catch and are non-critical — a failure to write or delete a session file does not affect connection handling.
 
 ### When files are cleared
 
@@ -315,7 +320,7 @@ All events are sent via `webContents.send` on the `BrowserWindow` returned by `g
 | `session-channel-created` | `{ sessionId, label }`                     | `POST /api/sessions`                                     |
 | `session-channel-deleted` | `{ sessionId }`                            | `transport.onclose` or `DELETE /api/sessions/:sessionId` |
 
-> `connectionId` in `connection-opened` and `connection-closed` is the UUID generated at connection time. `sessionId` in `connection-opened` is also set to `connectionId` (not the MCP transport session ID).
+> `connectionId` in `connection-opened` and `connection-closed` is the UUID generated at connection time. `sessionId` in `connection-opened` is also set to `connectionId` (not the MCP transport session ID). Renderer sidebar keys may instead be `openCodeSessionId` when an OpenCode session is known.
 
 ---
 
@@ -335,7 +340,7 @@ Requires that `_startParams` was populated by a prior `startMcpServer` call. If 
 
 ### `softRestartMcpServer()`
 
-Clears all in-memory MCP sessions (transports, servers, active prompts) but **keeps the HTTP listener running**. Each session's transport and server are closed, active prompts are cancelled via `cancelActivePrompt`, session channels are deleted from SQLite, and the renderer is notified with `connection-closed` and `session-channel-deleted` IPC events.
+Clears all in-memory MCP sessions (transports, servers, active prompts) but **keeps the HTTP listener running**. Each session's server is closed before its transport so in-flight tool handlers see the SDK abort signal, active prompts are cancelled via `cancelActivePrompt`, session channels are deleted from SQLite, and the renderer is notified with `connection-closed` and `session-channel-deleted` IPC events.
 
 The next client request will trigger either:
 
@@ -353,7 +358,7 @@ Returns the number of sessions that were cleared, or `0` if the server is not ru
 
 ### `closeSessionByConnectionId(connectionId)`
 
-Finds the MCP session ID corresponding to `connectionId` via a linear scan of `sessions`, removes it from the map, then calls `transport.close()` and `server.close()` on that entry. Returns `true` if a session was found and closed, `false` otherwise.
+Finds the MCP session ID corresponding to `connectionId` via a linear scan of `sessions`, removes it from the map, then calls `server.close()` followed by `transport.close()` on that entry. Returns `true` if a session was found and closed, `false` otherwise.
 
 Important: `cancelActivePrompt`, `deleteSessionChannel`, `clearSessionFile`, and IPC events are **not** called directly by this function — they run only if `transport.onclose` fires as a consequence of `transport.close()`. This is used for programmatic session eviction (e.g., from the renderer UI's disconnect button).
 

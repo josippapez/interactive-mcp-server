@@ -601,6 +601,7 @@ export async function initDocContext(
       manifestText,
       undefined,
       openCodePort,
+      true,
     );
     if (!result.ok) {
       console.error(`[doc-context] manifest injection failed: ${result.error}`);
