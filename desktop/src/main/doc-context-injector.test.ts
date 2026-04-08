@@ -59,7 +59,6 @@ describe('initDocContext', () => {
       ),
       undefined,
       4096,
-      true,
     );
   });
 });

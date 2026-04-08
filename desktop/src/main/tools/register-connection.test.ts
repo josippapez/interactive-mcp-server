@@ -13,6 +13,7 @@ import { registerConnectionTool } from './register-connection';
 vi.mock('../database', () => ({
   upsertRegisteredConnection: vi.fn(),
   createSessionChannel: vi.fn(),
+  isOpenCodeSessionClaimed: vi.fn().mockReturnValue(false),
 }));
 
 vi.mock('../opencode-session', () => ({

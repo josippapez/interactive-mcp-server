@@ -33,10 +33,15 @@ This document is the authoritative reference for all MCP tools registered by the
 
 | Parameter           | Type     | Required | Description                                                                                                                                                                                                                         |
 | ------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agentName`         | `string` | Yes      | Human-readable name for this agent (e.g. `"Claude Code - my-project"`). Shown in the channel sidebar.                                                                                                                               |
+| `agentName`         | `string` | Yes      | Human-readable name for this agent. Prefer unique names per active session (especially for parallel subagents) so channels are easy to distinguish in the sidebar.                                                                  |
 | `projectName`       | `string` | Yes      | Name of the project or workspace this agent is working in.                                                                                                                                                                          |
 | `baseDirectory`     | `string` | No       | Absolute path to the working directory / repository root. Used for file autocomplete and for OpenCode session auto-detection.                                                                                                       |
 | `openCodeSessionId` | `string` | No       | Explicit OpenCode ACP session ID for this agent. When provided, takes precedence over auto-detection entirely. Subagents spawned via the Task tool should pass their own session ID explicitly to ensure correct context injection. |
+
+Naming note:
+
+- Root/main agent can use a stable label such as `"Claude Code"`.
+- Parallel/spawned subagents should use unique task labels (for example `"Research Agent A"`, `"Research Agent B"`) so channel names do not collide.
 
 #### Return Value
 

@@ -48,6 +48,8 @@ type Opts = {
   >;
   withNode: (id: string, updater: (node: SessionNode) => SessionNode) => void;
   loadChannelHistory: (connectionId: string) => Promise<void>;
+  /** Apply any startup-buffered history for a connectionId once its node arrives. */
+  applyStartupHistoryBuffer: (connectionId: string) => void;
 };
 
 // ---------------------------------------------------------------------------
@@ -62,6 +64,49 @@ export function findKeyByConnectionId(
     if (node.connectionId === connectionId) return id;
   }
   return null;
+}
+
+/**
+ * Find the map key that should *display* a prompt for the given connectionId.
+ *
+ * Prompts appear in the originating agent's own channel.
+ */
+export function findPromptTargetKey(
+  nodes: Map<string, SessionNode>,
+  connectionId: string,
+): string | null {
+  return findKeyByConnectionId(nodes, connectionId);
+}
+
+// ---------------------------------------------------------------------------
+// Helper — collect all descendant map keys for a given OpenCode session ID
+// ---------------------------------------------------------------------------
+
+/**
+ * Returns the set of map keys for all nodes whose openCodeParentId chain
+ * leads back to `rootOcId`. Used to cascade-delete a full subtree from
+ * the renderer nodes map when a parent session is removed.
+ */
+export function collectDescendantKeys(
+  nodes: Map<string, SessionNode>,
+  rootOcId: string,
+): Set<string> {
+  const result = new Set<string>();
+  // BFS over nodes looking for children
+  const queue = [rootOcId];
+  while (queue.length > 0) {
+    const parentId = queue.shift()!;
+    for (const [key, node] of nodes) {
+      if (node.openCodeParentId === parentId) {
+        result.add(key);
+        // Walk into grandchildren using the child's own openCodeSessionId
+        if (node.openCodeSessionId) {
+          queue.push(node.openCodeSessionId);
+        }
+      }
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +130,7 @@ export function useIpcListeners({
   setClientInfo,
   withNode,
   loadChannelHistory,
+  applyStartupHistoryBuffer,
 }: Opts): void {
   const listenersRegistered = useRef(false);
   // Track which connectionIds we've already loaded history for.
@@ -126,13 +172,15 @@ export function useIpcListeners({
         const next = mergeSessionTreeSnapshot(prev, snapshotNodes);
 
         // Load history once per connectionId for any newly-connected nodes.
+        // Also drain any startup-buffered history for nodes that just appeared.
         for (const snap of snapshotNodes) {
-          if (
-            snap.connectionId &&
-            !loadedHistoryIds.current.has(snap.connectionId)
-          ) {
-            loadedHistoryIds.current.add(snap.connectionId);
-            void loadChannelHistory(snap.connectionId);
+          if (snap.connectionId) {
+            // Drain startup buffer first (no-op if nothing buffered)
+            applyStartupHistoryBuffer(snap.connectionId);
+            if (!loadedHistoryIds.current.has(snap.connectionId)) {
+              loadedHistoryIds.current.add(snap.connectionId);
+              void loadChannelHistory(snap.connectionId);
+            }
           }
         }
 
@@ -190,7 +238,8 @@ export function useIpcListeners({
       if (data.clientInfo) setClientInfo(data.clientInfo);
 
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(prev, data.connectionId);
+        // Route the prompt to the originating agent's own channel.
+        const nodeId = findPromptTargetKey(prev, data.connectionId);
         if (!nodeId) return prev;
         const node = prev.get(nodeId)!;
         const next = new Map(prev);
@@ -213,8 +262,24 @@ export function useIpcListeners({
               ? node.unreadCount
               : node.unreadCount + 1,
         });
-        setActiveId((prev2) => prev2 ?? nodeId);
+        // Always switch the active channel to the node that has the prompt,
+        // so subagent prompts are visible in their own channel immediately.
+        setActiveId(nodeId);
         activateRef.current();
+        return next;
+      });
+    });
+
+    // Clear the prompt UI when a prompt times out (main process sends this).
+    window.api.onPromptClear?.((data) => {
+      setNodes((prev) => {
+        const nodeId = findKeyByConnectionId(prev, data.connectionId);
+        if (!nodeId) return prev;
+        const node = prev.get(nodeId)!;
+        // Only clear if it's still the same prompt (guard against races).
+        if (node.prompt?.id !== data.id) return prev;
+        const next = new Map(prev);
+        next.set(nodeId, { ...node, prompt: null, hasPendingPrompt: false });
         return next;
       });
     });
@@ -291,28 +356,33 @@ export function useIpcListeners({
     // ------------------------------------------------------------------
     window.api.onSessionChannelDeleted?.((data) => {
       // Track the resolved map key so setActiveId can clear it correctly.
-      // For direct connections the key IS data.sessionId (connectionId).
-      // For OpenCode-backed sessions the key is the openCodeSessionId, which
-      // differs from data.sessionId — hence the plain comparison on line below
-      // would never clear activeId for those sessions (the bug).
       let deletedKey: string | null = null;
+      let deletedOcId: string | null = null;
+
       setNodes((prev) => {
-        // Always delete the node — this event only fires on explicit deletion
-        // (user-initiated remove), not on normal disconnect.
-        if (prev.has(data.sessionId)) {
-          deletedKey = data.sessionId;
-          const next = new Map(prev);
-          next.delete(data.sessionId);
-          return next;
-        }
-        // Also handle OpenCode-keyed nodes (connectionId stored inside the node)
-        const nodeId = findKeyByConnectionId(prev, data.sessionId);
-        if (!nodeId) return prev;
-        deletedKey = nodeId;
+        // Resolve the primary key to delete
+        const key: string | null = prev.has(data.sessionId)
+          ? data.sessionId
+          : findKeyByConnectionId(prev, data.sessionId);
+        if (!key) return prev;
+
+        deletedKey = key;
+        const deletedNode = prev.get(key);
+        // Prefer the node's openCodeSessionId for child lookup; fall back to
+        // the map key (which IS the openCodeSessionId for OC-backed nodes).
+        deletedOcId = deletedNode?.openCodeSessionId ?? key;
+
+        // Collect descendants so the entire subtree is removed at once.
+        const descendantKeys = collectDescendantKeys(prev, deletedOcId);
+
         const next = new Map(prev);
-        next.delete(nodeId);
+        next.delete(key);
+        for (const dk of descendantKeys) {
+          next.delete(dk);
+        }
         return next;
       });
+
       setActiveId((prev) =>
         deletedKey !== null && prev === deletedKey ? null : prev,
       );

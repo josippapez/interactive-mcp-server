@@ -7,12 +7,16 @@ import {
   markMessagesSent,
   deleteSessionChannel,
   deleteRegisteredConnection,
+  getRegisteredConnection,
 } from './database';
 import { resolveAttachmentPath } from './attachment-store';
 import { forceTerminateChat } from './ipc-prompt';
 import { closeSessionByConnectionId } from './mcp-server';
 import { markConnectionDeleted } from './tools/connection-guard';
-import { triggerSessionTreeUpdate } from './session-tree-manager';
+import {
+  triggerSessionTreeUpdate,
+  tombstoneOpenCodeSession,
+} from './session-tree-manager';
 import { removePersistedSession } from './remove-persisted-session';
 
 export interface ApiRouterDeps {
@@ -94,6 +98,8 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
       deleteRegisteredConnection,
       markConnectionDeleted,
       triggerSessionTreeUpdate,
+      getRegisteredConnection,
+      tombstoneOpenCodeSession,
     });
     res.json({ ok: true });
   });

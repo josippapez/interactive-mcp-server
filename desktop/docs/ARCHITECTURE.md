@@ -114,7 +114,7 @@ The main process is the application's Node.js runtime. It bootstraps in `index.t
 6. `startMcpServer()` — bind Express to the configured port (default `3100`).
 7. `createWindow()` — create the `BrowserWindow`; hide it immediately if the app was opened at login.
 8. `createTray()` — create the system-tray icon.
-9. If `autoStartOpenCode` is enabled, `startOpenCodeServer(openCodePort)` — spawn `opencode serve` as a managed child process.
+9. If `autoStartOpenCode` is enabled, `startOpenCodeServer(openCodePort)` — spawn `opencode serve` as a managed child process. The process is always spawned with `cwd` set to `process.env.HOME ?? process.env.USERPROFILE ?? '/'` so it does not inherit `/` when the Electron app is launched from the macOS Dock or as a login item (which would otherwise trigger a filesystem-root scan and a flood of permission-denied errors).
 10. Start the session-tree manager poller — polls OpenCode API every 2 seconds for session hierarchy updates.
 11. Reconcile persisted `registered_connections` against live OpenCode sessions and clean stale registrations before the first steady-state snapshot.
 
@@ -124,7 +124,7 @@ Owns the Express app and all HTTP routes. REST API routes have been extracted to
 
 - **Session map** — an in-memory `Record<sessionId, { transport, server, connectionId, connectionName }>` tracking every live MCP session.
 - **Session creation** — when `POST /mcp` arrives with an `initialize` body, a new `McpServer` is created (one per connection), a `StreamableHTTPServerTransport` is instantiated with a random UUID session ID, and all tools are registered via the `register*` helpers.
-- **Default channel bootstrap** — new connections are auto-registered into `registered_connections`, auto-bound to an OpenCode session when detectable, and given a stable session channel label before the first user-facing activity.
+- **Default channel bootstrap** — new connections are auto-registered into `registered_connections`, auto-bound to an OpenCode session when detectable, and given a stable session channel label before the first user-facing activity. The `baseDirectory` for the auto-registration is derived from `process.cwd()` but guarded: if `process.cwd()` returns `/` or an empty string (which happens when the app is launched from the macOS Dock or as a login item), it falls back to `process.env.HOME ?? process.env.USERPROFILE` to prevent the doc indexer from traversing the entire filesystem.
 - **Transparent session resurrection** — when a request arrives with a stale (unknown) `Mcp-Session-Id` header and a non-`initialize` body (e.g. a tool call from a reconnecting agent), the server silently creates a new session, runs the full MCP protocol handshake internally using synthetic request/response objects, patches the `Mcp-Session-Id` response header, and then replays the original request body. The client never receives an error.
 - **Soft restart** — `softRestartMcpServer()` clears all in-memory MCP sessions (transports, servers, active prompts) without stopping the HTTP listener. The next client request triggers a fresh initialize handshake or transparent reinit. Accessible via `POST /api/reconnect` and the `reconnect-mcp-server` IPC handler.
 - **Session file** — on every new connection, session metadata is written to `/tmp/imcp-session.json`, `<cwd>/.imcp-session`, and `/tmp/imcp-mcp-config.json` (MCP config hint with remote HTTP entry). See `session-file.ts`.
@@ -350,8 +350,8 @@ On mount, the hook:
 
 **Response submission flow:**
 
-- `handleSubmit(answer, attachments)` calls `window.api.sendPromptResponse`, which fires `ipcRenderer.send('prompt-response')`. It also optimistically appends an `answer` message to the local channel history.
-- `handleSelectOption(option)` is equivalent for predefined option chips.
+- `handleSubmit(answer, attachments)` calls `window.api.sendPromptResponse`, which fires `ipcRenderer.send('prompt-response')`. It also optimistically appends an `answer` message to the local channel history. Before sending the prompt response, it fires a fire-and-forget `window.api.injectDocContext?.(connectionId, openCodeSessionId, answer, baseDirectory)` call (using `resolveInjectionSessionId` for correct parent-session routing) so that relevant repository documentation is injected as a `<system-reminder>` into the agent's context window ahead of the reply.
+- `handleSelectOption(option)` is equivalent for predefined option chips, and likewise calls `window.api.injectDocContext?.(...)` before sending the prompt response.
 - `handleQueueSessionMessage(sessionId, message)` calls `window.api.queueSessionMessage` (which persists to SQLite via `queue-session-message` IPC) and optimistically appends an `outbound` message.
 
 #### Renderer Components
@@ -408,6 +408,8 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
 5. User types answer and submits
    └─ ChannelComposer → handleSubmit(answer, attachments)
       ├─ appendAnswerMessage (optimistic UI update)
+      ├─ window.api.injectDocContext?.(connectionId, openCodeSessionId, answer, baseDirectory)
+      │     fire-and-forget: injects <system-reminder> doc context into OpenCode session
       └─ window.api.sendPromptResponse({ id, answer, attachments })
          └─ ipcRenderer.send('prompt-response', { id, answer, attachments })
 

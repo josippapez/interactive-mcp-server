@@ -175,17 +175,33 @@ export async function startMcpServer(
     connectionId: string,
     agentName: string,
   ): Promise<void> => {
-    const baseDirectory = process.cwd();
+    // process.cwd() is '/' when the app is launched from the macOS Dock or at
+    // login item, which would cause the doc indexer to traverse the entire
+    // filesystem. Fall back to the user's home directory in that case.
+    const rawCwd = process.cwd();
+    const baseDirectory =
+      rawCwd === '/' || rawCwd === ''
+        ? (process.env.HOME ?? process.env.USERPROFILE ?? rawCwd)
+        : rawCwd;
     const projectName = basename(baseDirectory) || 'project';
 
+    // Only auto-detect the OpenCode session for the main channel. Subagent
+    // connections (agentName !== DEFAULT_MAIN_CHANNEL_NAME, i.e. "Agent N")
+    // ALWAYS call register_connection explicitly with their own openCodeSessionId.
+    // Auto-detecting here for subagents would incorrectly assign the root/parent
+    // session ID to their connectionId (because autoDetectOpenCodeSession prefers
+    // root sessions), causing their prompts to appear in the parent's channel.
+    const isMainChannel = agentName === DEFAULT_MAIN_CHANNEL_NAME;
     let detected: Awaited<ReturnType<typeof autoDetectOpenCodeSession>> = null;
-    try {
-      detected = await autoDetectOpenCodeSession(
-        getOpenCodePort(),
-        baseDirectory,
-      );
-    } catch {
-      // non-critical: still register defaults without a session binding
+    if (isMainChannel) {
+      try {
+        detected = await autoDetectOpenCodeSession(
+          getOpenCodePort(),
+          baseDirectory,
+        );
+      } catch {
+        // non-critical: still register defaults without a session binding
+      }
     }
 
     upsertRegisteredConnection({
@@ -210,7 +226,24 @@ export async function startMcpServer(
       await _sessionCleanup?.(staleConnectionId);
     }
 
-    void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
+    if (detected) {
+      // An OpenCode session is bound — the session-tree-updated snapshot will
+      // create the renderer node via mergeSessionTreeSnapshot. Emitting
+      // connection-opened here would create a redundant direct-connection node
+      // that the snapshot cannot yet absorb (race). Skip it; the snapshot is
+      // sufficient.
+      void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
+    } else {
+      // No OpenCode session detected — emit connection-opened so the renderer
+      // shows a direct-connection node immediately (classic non-OC path).
+      getWindow()?.webContents.send('connection-opened', {
+        connectionId,
+        name: agentName,
+        sessionId: connectionId,
+        label: agentName,
+      });
+      void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
+    }
   };
 
   _sessionCleanup = async (connectionId: string): Promise<boolean> => {
@@ -375,13 +408,6 @@ export async function startMcpServer(
             void autoRegisterDefaultConnection(connectionId, connectionName);
             writeSessionFile(connectionId, port, getPromptTimeoutMs());
 
-            getWindow()?.webContents.send('connection-opened', {
-              connectionId,
-              name: connectionName,
-              sessionId: connectionId,
-              label: connectionName,
-            });
-
             resolve(t);
           },
         });
@@ -541,15 +567,12 @@ export async function startMcpServer(
 
           // Auto-register a stable named channel so reconnects do not stay as
           // generic "Agent N" channels.
+          // connection-opened is emitted inside autoRegisterDefaultConnection
+          // only when no OpenCode session is detected, to avoid a race where
+          // both a direct-connection node and a session-tree snapshot node are
+          // created simultaneously (dual-entry bug).
           void autoRegisterDefaultConnection(connectionId, connectionName);
           writeSessionFile(connectionId, port, getPromptTimeoutMs());
-
-          getWindow()?.webContents.send('connection-opened', {
-            connectionId,
-            name: connectionName,
-            sessionId: connectionId,
-            label: connectionName,
-          });
         },
       });
 

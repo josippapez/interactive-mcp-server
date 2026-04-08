@@ -10,12 +10,16 @@ export interface AppSettings {
   autoRestoreSessions: boolean;
   openCodePort: number;
   docIndexingEnabled: boolean;
-  /** When true, injected messages use noReply:true (context-only, no agent response). Default: true. */
-  noReplyInjection: boolean;
-  /** When true, the desktop app spawns `opencode serve` automatically on startup. Default: false. */
+  /** When true, the desktop app spawns `opencode serve` automatically on startup. Default: true. */
   autoStartOpenCode: boolean;
   /** When true, syncRemoteConfig() runs automatically at startup. Default: true. */
   autoSyncOpencode: boolean;
+  /**
+   * When true, doc context is injected without <system-reminder> wrapping so the
+   * raw content is visible as a plain message in the OpenCode session log.
+   * Default: false (wrapping is on).
+   */
+  docContextDebug: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -26,9 +30,9 @@ export const defaultSettings: AppSettings = {
   autoRestoreSessions: false,
   openCodePort: 4096,
   docIndexingEnabled: true,
-  noReplyInjection: true,
-  autoStartOpenCode: false,
+  autoStartOpenCode: true,
   autoSyncOpencode: true,
+  docContextDebug: false,
 };
 
 export function getSettingsPath(): string {

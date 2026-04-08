@@ -8,24 +8,24 @@
  * 4. Providing hybrid keyword + semantic search for on-demand queries.
  */
 
+import type { BrowserWindow } from 'electron';
 import {
+  existsSync,
   readdirSync,
   readFileSync,
   statSync,
-  existsSync,
   type Dirent,
 } from 'node:fs';
 import { join, relative } from 'node:path';
-import type { BrowserWindow } from 'electron';
 import {
-  warmUp,
-  isReady,
-  findSemantic,
   buildFullCache,
-  extractTitle,
   DOC_MAX_FILE_SIZE,
+  extractTitle,
+  findSemantic,
+  isReady,
   SEMANTIC_THRESHOLD,
   SEMANTIC_WEIGHT,
+  warmUp,
 } from './doc-indexer';
 import { injectOpenCodeMessage } from './opencode-injector';
 
@@ -521,15 +521,26 @@ export async function searchDocs(
 /**
  * Format search results as text for MCP tool output.
  */
+const MAX_QUERY_DISPLAY_CHARS = 80;
+
+/** Truncate a query string to a short display snippet. */
+function truncateQueryDisplay(query: string): string {
+  const firstLine = query.split('\n')[0].trim();
+  if (firstLine.length <= MAX_QUERY_DISPLAY_CHARS) return firstLine;
+  return `${firstLine.slice(0, MAX_QUERY_DISPLAY_CHARS)}…`;
+}
+
 export function formatSearchResults(
   results: DocSearchResult[],
   query: string,
 ): string {
+  const displayQuery = truncateQueryDisplay(query);
+
   if (results.length === 0) {
-    return `No doc matches found for "${query}".`;
+    return `No doc matches found for "${displayQuery}".`;
   }
 
-  const lines = [`Top doc matches for "${query}":`];
+  const lines = [`Top doc matches for "${displayQuery}":`];
   results.forEach((item, index) => {
     lines.push(`${index + 1}. ${item.path} (score: ${item.score})`);
     if (item.snippet) {
@@ -601,7 +612,6 @@ export async function initDocContext(
       manifestText,
       undefined,
       openCodePort,
-      true,
     );
     if (!result.ok) {
       console.error(`[doc-context] manifest injection failed: ${result.error}`);

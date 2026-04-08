@@ -16,7 +16,10 @@ import {
   clearSessionChannelMessages,
   deleteSessionChannel,
   deleteRegisteredConnection,
+  getRegisteredConnection,
 } from './database';
+import { searchDocs } from './doc-context-injector';
+import { handleInjectDocContext } from './inject-doc-context-handler';
 import {
   startMcpServer,
   stopMcpServer,
@@ -27,7 +30,10 @@ import {
 import { indexFiles, rankFileSuggestions } from './file-indexer';
 import { forceTerminateChat } from './ipc-prompt';
 import { markConnectionDeleted } from './tools/connection-guard';
-import { triggerSessionTreeUpdate } from './session-tree-manager';
+import {
+  triggerSessionTreeUpdate,
+  tombstoneOpenCodeSession,
+} from './session-tree-manager';
 import { startOpenCodeServer, stopOpenCodeServer } from './opencode-server';
 import { syncRemoteConfig } from './opencode-config-sync';
 import { registerMcpWithOpenCode } from './opencode-mcp-register';
@@ -248,6 +254,8 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       deleteRegisteredConnection,
       markConnectionDeleted,
       triggerSessionTreeUpdate,
+      getRegisteredConnection,
+      tombstoneOpenCodeSession,
     });
   });
 
@@ -260,9 +268,8 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   );
 
   // Inject a message into an OpenCode session via its HTTP API.
-  // When noReplyInjection is true (Settings), uses noReply:true so the message
-  // is visible in the session log but does not trigger an agent response.
-  // Default (noReplyInjection=false) triggers a real agent response.
+  // Always uses noReply:true so the message is visible in the session log
+  // but does not trigger an agent response.
   ipcMain.handle(
     'inject-opencode-message',
     async (
@@ -283,8 +290,43 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         data.message,
         data.attachments,
         deps.getSettings().openCodePort,
-        deps.getSettings().noReplyInjection,
         deps.getSettings().port,
+      );
+    },
+  );
+
+  /**
+   * Inject relevant repository documentation context into an OpenCode session
+   * immediately before the user's outbound message. This is called from the
+   * renderer just before injecting the user message so that docs are present
+   * in model context when OpenCode processes the user's request.
+   */
+  ipcMain.handle(
+    'inject-doc-context',
+    async (
+      _event,
+      data: {
+        connectionId: string;
+        openCodeSessionId: string;
+        message: string;
+        baseDirectory?: string;
+      },
+    ): Promise<{ ok: boolean; injectedCount: number; error?: string }> => {
+      const settings = deps.getSettings();
+      return handleInjectDocContext(
+        { ...data, debug: settings.docContextDebug },
+        {
+          openCodePort: settings.openCodePort,
+          getRegisteredConnection,
+          searchDocs,
+          injectOpenCodeMessage,
+          sendAgentMessage: (connectionId, message) => {
+            deps.getMainWindow()?.webContents.send('agent-message', {
+              connectionId,
+              message,
+            });
+          },
+        },
       );
     },
   );

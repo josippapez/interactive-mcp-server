@@ -8,9 +8,9 @@ type AppSettings = {
   autoRestoreSessions: boolean;
   openCodePort: number;
   docIndexingEnabled: boolean;
-  noReplyInjection: boolean;
   autoStartOpenCode: boolean;
   autoSyncOpencode: boolean;
+  docContextDebug: boolean;
 };
 
 export default function SettingsView(): React.ReactElement {
@@ -81,9 +81,9 @@ export default function SettingsView(): React.ReactElement {
     settings.launchAtLogin !== initialSettings.launchAtLogin ||
     settings.autoRestoreSessions !== initialSettings.autoRestoreSessions ||
     settings.docIndexingEnabled !== initialSettings.docIndexingEnabled ||
-    settings.noReplyInjection !== initialSettings.noReplyInjection ||
     settings.autoStartOpenCode !== initialSettings.autoStartOpenCode ||
-    settings.autoSyncOpencode !== initialSettings.autoSyncOpencode;
+    settings.autoSyncOpencode !== initialSettings.autoSyncOpencode ||
+    settings.docContextDebug !== initialSettings.docContextDebug;
 
   return (
     <div className="flex flex-col h-full overflow-y-auto p-6">
@@ -324,37 +324,39 @@ export default function SettingsView(): React.ReactElement {
           </button>
         </div>
 
-        {/* Message injection mode */}
+        {/* Doc context debug mode */}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-[var(--color-text-muted)]">
-              Context-only messages
+              Doc Context Debug Mode
             </p>
             <p className="text-xs text-[var(--color-text-faint)]">
-              When on, queued messages appear in the session log but do not
-              trigger an agent response. When off, messages trigger the agent to
-              respond.
+              Inject doc context without{' '}
+              <code className="text-[var(--color-text-muted)]">
+                &lt;system-reminder&gt;
+              </code>{' '}
+              tags — raw content visible in OpenCode session log
             </p>
           </div>
           <button
             type="button"
             onClick={() =>
               setSettings((s) =>
-                s ? { ...s, noReplyInjection: !s.noReplyInjection } : s,
+                s ? { ...s, docContextDebug: !s.docContextDebug } : s,
               )
             }
             role="switch"
-            aria-checked={settings.noReplyInjection}
-            aria-label="Context-only messages"
+            aria-checked={settings.docContextDebug}
+            aria-label="Doc Context Debug Mode"
             className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
-              settings.noReplyInjection
+              settings.docContextDebug
                 ? 'bg-[var(--color-agent)]'
                 : 'bg-[var(--color-border)]'
             }`}
           >
             <span
               className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                settings.noReplyInjection ? 'translate-x-5' : 'translate-x-0'
+                settings.docContextDebug ? 'translate-x-5' : 'translate-x-0'
               }`}
             />
           </button>

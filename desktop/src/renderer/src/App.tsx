@@ -27,6 +27,7 @@ export default function App(): React.ReactElement {
     handleQueueSessionMessage,
     handleClearChannelMessages,
     handleRemoveSession,
+    handleToggleDocContext,
   } = useConnections(switchToPrompt);
 
   const switchTab = useCallback((tab: 1 | 2) => {
@@ -82,6 +83,7 @@ export default function App(): React.ReactElement {
             connectionId={activeConn?.connectionId ?? null}
             sessionChannel={activeConn?.sessionChannel ?? null}
             sessionStatuses={activeConn?.sessionStatuses ?? []}
+            docContextEnabled={activeConn?.docContextEnabled !== false}
             onSubmit={handleSubmit}
             onSelectOption={handleSelectOption}
             onDismissStatus={handleDismissStatus}
@@ -89,6 +91,9 @@ export default function App(): React.ReactElement {
             onQueueSessionMessage={handleQueueSessionMessage}
             onClearMessages={handleClearChannelMessages}
             onRemoveSession={handleRemoveSession}
+            onToggleDocContext={() =>
+              activeConnectionId && handleToggleDocContext(activeConnectionId)
+            }
           />
         </div>
         {activeTab === 'settings' && <SettingsView />}

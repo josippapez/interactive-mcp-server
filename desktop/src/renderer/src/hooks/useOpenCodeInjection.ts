@@ -4,6 +4,7 @@ import {
   shouldDetectSessionForInjection,
   injectWithSessionRecovery,
   buildInjectionSuccessStatus,
+  resolveInjectionSessionId,
 } from './opencode-injection-flow';
 
 type WithNodeFn = (
@@ -51,9 +52,10 @@ export function useOpenCodeInjection(
 
       const baseDirectory = node?.baseDirectory ?? undefined;
 
-      // OpenCode session ID is the node's openCodeSessionId (already known for
-      // OpenCode-backed sessions; null for direct connections).
-      let openCodeSessionId = node?.openCodeSessionId ?? null;
+      // Resolve the OpenCode session ID to inject into.
+      // Always uses the node's own openCodeSessionId so subagent channels
+      // route messages directly into the subagent session.
+      let openCodeSessionId = resolveInjectionSessionId(node);
 
       // Lazy detection: only attempt for direct connections with no session ID.
       if (
@@ -77,6 +79,24 @@ export function useOpenCodeInjection(
           }));
         }
         return;
+      }
+
+      // Inject relevant doc context (noReply) before the user's message so
+      // OpenCode has repo docs in context when it processes the request.
+      // This is intentionally fire-and-forget on the error path — a failure
+      // here should NOT block the user's message from being injected.
+      // Skip if the session has doc context injection disabled.
+      try {
+        if (node?.docContextEnabled !== false) {
+          await window.api.injectDocContext?.(
+            sessionId,
+            openCodeSessionId,
+            message,
+            baseDirectory,
+          );
+        }
+      } catch {
+        // Doc context injection is best-effort; swallow errors silently.
       }
 
       try {

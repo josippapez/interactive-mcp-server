@@ -112,6 +112,13 @@ export type SessionNode = {
 
   /** Status badge updates pushed by the agent. */
   sessionStatuses: SessionStatus[];
+
+  /**
+   * Per-session toggle for doc context injection.
+   * When false, injectDocContext calls are skipped for this session.
+   * Defaults to true (undefined = enabled).
+   */
+  docContextEnabled?: boolean;
 };
 
 /**

@@ -268,6 +268,25 @@ Agent calls find_repo_docs({ query: 'authentication setup' })
               └── Return ranked results with paths, scores, snippets
 ```
 
+### C. Context injection on `request_user_input` replies
+
+When the user submits a reply to a `request_user_input` prompt (or clicks a predefined option chip), the renderer's `handleSubmit` / `handleSelectOption` handlers fire a fire-and-forget `window.api.injectDocContext?.(...)` call before sending the prompt response:
+
+```
+User submits answer (or clicks option chip) in ChannelComposer
+    │
+    ├── appendAnswerMessage (optimistic UI update)
+    │
+    ├── window.api.injectDocContext?.(connectionId, openCodeSessionId, answer, baseDirectory)
+    │     fire-and-forget — injects <system-reminder> doc context into OpenCode session
+    │     resolveInjectionSessionId() resolves the correct parent session for routing
+    │
+    └── window.api.sendPromptResponse({ id, answer, attachments })
+          ipcRenderer.send('prompt-response', ...) → main process resolves prompt
+```
+
+This ensures the agent receives relevant repository documentation in its context window _alongside_ the user's reply, not just at initial connection registration. The `injectDocContext` API is optional-chained (`?.`) so this path is a safe no-op if the API is not available (e.g. in older builds or unit tests).
+
 ---
 
 ## What Gets Injected (noReply format)

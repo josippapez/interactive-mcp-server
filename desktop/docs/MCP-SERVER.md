@@ -54,7 +54,7 @@ The handler inspects the `mcp-session-id` request header and the request body to
 
 - Either no `mcp-session-id` header is present, or the header refers to a session that no longer exists, **and** `isInitializeRequest(req.body)` returns `true`.
 - A new `connectionId` (UUID), `connectionName` (`OpenCode - Main Channel` for the first runtime connection, then `Agent N`), `McpServer`, and `StreamableHTTPServerTransport` are created.
-- `onsessioninitialized` registers the session in the `sessions` map, auto-registers a default named channel, writes the session file, and sends `connection-opened` IPC to the renderer.
+- `onsessioninitialized` registers the session in the `sessions` map, auto-registers a default named channel (see **Default channel bootstrap** below), writes the session file, and sends `connection-opened` IPC to the renderer.
 - The transport's `onclose` handler is wired (see [Session Close](#session-close)).
 - The request is forwarded to the new transport.
 
@@ -365,3 +365,37 @@ Important: `cancelActivePrompt`, `deleteSessionChannel`, `clearSessionFile`, and
 ### Client recovery after server restart
 
 Clients that send a tool call immediately after a server restart carry a stale `mcp-session-id`. The [Transparent Session Resurrection](#transparent-session-resurrection) mechanism handles this case automatically — clients do not need to implement any reconnect logic beyond reading the `Mcp-Session-Id` response header to update their stored session ID.
+
+---
+
+## Dock-launch Guards
+
+When the Electron app is launched from the macOS Dock or registered as a login item, the OS starts the process with a working directory of `/`. Two subsystems that depend on a meaningful working directory contain explicit guards against this:
+
+### `opencode-server.ts` — `startOpenCodeServer()` spawn `cwd`
+
+`spawn()` is always called with an explicit `cwd` option:
+
+```ts
+const spawnCwd = process.env.HOME ?? process.env.USERPROFILE ?? '/';
+child = spawn(opencodeBin, ['serve', '--port', String(port)], {
+  cwd: spawnCwd,
+  ...
+});
+```
+
+Without this, `opencode serve` would inherit `/` as its working directory and immediately begin scanning the filesystem root, producing a flood of permission-denied errors and high I/O load.
+
+### `mcp-server.ts` — `autoRegisterDefaultConnection()` `baseDirectory` guard
+
+`autoRegisterDefaultConnection()` derives the `baseDirectory` for the default channel registration from `process.cwd()`. When the value is `/` or empty, it falls back to the user's home directory instead:
+
+```ts
+const rawCwd = process.cwd();
+const baseDirectory =
+  rawCwd === '/' || rawCwd === ''
+    ? (process.env.HOME ?? process.env.USERPROFILE ?? rawCwd)
+    : rawCwd;
+```
+
+Without this guard, the doc indexer (`doc-context-injector.ts`) would receive `/` as the `baseDirectory` and attempt to walk the entire filesystem to discover documentation files.

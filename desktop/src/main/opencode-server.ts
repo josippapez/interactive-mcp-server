@@ -42,9 +42,14 @@ export function startOpenCodeServer(port: number): void {
     `[opencode-server] Starting opencode serve --port ${port} (bin: ${opencodeBin})`,
   );
 
+  // Use the user's home directory as cwd so that opencode serve doesn't
+  // inherit '/' when the app is launched from the macOS Dock or at login.
+  const spawnCwd = process.env.HOME ?? process.env.USERPROFILE ?? '/';
+
   child = spawn(opencodeBin, ['serve', '--port', String(port)], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false, // die with the parent
+    cwd: spawnCwd,
   });
 
   managedPort = port;

@@ -1,9 +1,10 @@
-import { useState, useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Attachment, SessionNode } from '../types';
+import { resolveInjectionSessionId } from './opencode-injection-flow';
+import { getRemoveSessionTarget } from './remove-session-target';
 import { useChannelHistory } from './useChannelHistory';
 import { useIpcListeners } from './useIpcListeners';
 import { useOpenCodeInjection } from './useOpenCodeInjection';
-import { getRemoveSessionTarget } from './remove-session-target';
 
 export function useConnections(onActivatePromptTab: () => void) {
   // ---------------------------------------------------------------------------
@@ -85,6 +86,124 @@ export function useConnections(onActivatePromptTab: () => void) {
     [loadHistory],
   );
 
+  // ---------------------------------------------------------------------------
+  // Startup — load history for all persisted channels immediately on mount.
+  // This runs independently of the OpenCode session-tree so history appears
+  // even when OpenCode is not running. If the node doesn't exist yet (it
+  // arrives via the session-tree snapshot later), the history is buffered
+  // in a ref and applied once the node appears.
+  // ---------------------------------------------------------------------------
+
+  const startupHistoryBuffer = useRef<
+    Map<string, import('../types').ChannelMessage[]>
+  >(new Map());
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async (): Promise<void> => {
+      const channels = await window.api.getPersistedSessionChannels?.();
+      if (!channels || cancelled) return;
+
+      await Promise.all(
+        channels.map(async (ch) => {
+          const records = await window.api.getSessionChannelHistory?.(
+            ch.sessionId,
+          );
+          if (!records || records.length === 0 || cancelled) return;
+
+          const dbMessages = records.map((r) => ({
+            id: `db-${r.id}`,
+            kind: r.messageType as import('../types').ChannelMessage['kind'],
+            text: r.messageText,
+            timestamp: (() => {
+              const v = r.createdAt;
+              const normalized = v.includes('T') ? v : v.replace(' ', 'T');
+              const parsed = new Date(
+                normalized.endsWith('Z') ? normalized : `${normalized}Z`,
+              );
+              return Number.isNaN(parsed.getTime()) ? new Date() : parsed;
+            })(),
+            attachments: r.attachments
+              ? (() => {
+                  try {
+                    return JSON.parse(
+                      r.attachments,
+                    ) as import('../types').Attachment[];
+                  } catch {
+                    return undefined;
+                  }
+                })()
+              : undefined,
+          }));
+
+          setNodes((prev) => {
+            // Find the node that owns this connectionId
+            let key: string | null = null;
+            for (const [id, n] of prev) {
+              if (n.connectionId === ch.sessionId || n.id === ch.sessionId) {
+                key = id;
+                break;
+              }
+            }
+            if (!key) {
+              // Node not in map yet — store in buffer to apply when it arrives
+              startupHistoryBuffer.current.set(ch.sessionId, dbMessages);
+              return prev;
+            }
+            const n = prev.get(key)!;
+            // Merge: DB messages are authoritative; deduplicate live messages
+            const liveIds = new Set(
+              dbMessages.map((m) => `${m.kind}::${m.text}`),
+            );
+            const dedupedLive = n.channelMessages.filter(
+              (m) => !liveIds.has(`${m.kind}::${m.text}`),
+            );
+            const merged = [...dbMessages, ...dedupedLive].sort(
+              (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+            );
+            const next = new Map(prev);
+            next.set(key, { ...n, channelMessages: merged });
+            return next;
+          });
+        }),
+      );
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // When new nodes arrive via the session-tree snapshot, apply any buffered
+  // startup history that couldn't be applied earlier (node didn't exist yet).
+  const applyStartupHistoryBuffer = useCallback((connectionId: string) => {
+    const buffered = startupHistoryBuffer.current.get(connectionId);
+    if (!buffered || buffered.length === 0) return;
+    startupHistoryBuffer.current.delete(connectionId);
+
+    setNodes((prev) => {
+      let key: string | null = null;
+      for (const [id, n] of prev) {
+        if (n.connectionId === connectionId || n.id === connectionId) {
+          key = id;
+          break;
+        }
+      }
+      if (!key) return prev;
+      const n = prev.get(key)!;
+      const liveIds = new Set(buffered.map((m) => `${m.kind}::${m.text}`));
+      const dedupedLive = n.channelMessages.filter(
+        (m) => !liveIds.has(`${m.kind}::${m.text}`),
+      );
+      const merged = [...buffered, ...dedupedLive].sort(
+        (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),
+      );
+      const next = new Map(prev);
+      next.set(key, { ...n, channelMessages: merged });
+      return next;
+    });
+  }, []);
+
   useIpcListeners({
     activeConnectionRef: activeIdRef,
     activateRef,
@@ -93,6 +212,7 @@ export function useConnections(onActivatePromptTab: () => void) {
     setClientInfo,
     withNode,
     loadChannelHistory,
+    applyStartupHistoryBuffer,
   });
 
   const { inject } = useOpenCodeInjection(nodes, withNode);
@@ -179,6 +299,23 @@ export function useConnections(onActivatePromptTab: () => void) {
       if (!activeNode?.prompt) return;
       const { prompt } = activeNode;
       appendAnswerMessage(activeNode.id, answer, attachments);
+
+      // Inject relevant doc context into OpenCode before the prompt response
+      // so the agent receives repo docs in its context window.
+      const openCodeSessionId = resolveInjectionSessionId(activeNode);
+      if (
+        openCodeSessionId &&
+        activeNode.connectionId &&
+        activeNode.docContextEnabled !== false
+      ) {
+        void window.api.injectDocContext?.(
+          activeNode.connectionId,
+          openCodeSessionId,
+          answer,
+          activeNode.baseDirectory ?? undefined,
+        );
+      }
+
       window.api.sendPromptResponse({
         id: prompt.id,
         answer,
@@ -193,6 +330,22 @@ export function useConnections(onActivatePromptTab: () => void) {
       if (!activeNode?.prompt) return;
       const { prompt } = activeNode;
       appendAnswerMessage(activeNode.id, option);
+
+      // Inject relevant doc context into OpenCode before the prompt response.
+      const openCodeSessionId = resolveInjectionSessionId(activeNode);
+      if (
+        openCodeSessionId &&
+        activeNode.connectionId &&
+        activeNode.docContextEnabled !== false
+      ) {
+        void window.api.injectDocContext?.(
+          activeNode.connectionId,
+          openCodeSessionId,
+          option,
+          activeNode.baseDirectory ?? undefined,
+        );
+      }
+
       window.api.sendPromptResponse({ id: prompt.id, answer: option });
     },
     [activeNode, appendAnswerMessage],
@@ -246,13 +399,26 @@ export function useConnections(onActivatePromptTab: () => void) {
     void window.api.clearSessionChannelMessages(sessionId);
   }, []);
 
-  const handleRemoveSession = useCallback((sessionId: string) => {
-    const targetSessionId = getRemoveSessionTarget(
-      nodesRef.current.get(sessionId),
-      sessionId,
-    );
-    void window.api.removeSessionChannel(targetSessionId);
-  }, []);
+  const handleToggleDocContext = useCallback(
+    (nodeId: string) => {
+      withNode(nodeId, (node) => ({
+        ...node,
+        docContextEnabled: node.docContextEnabled === false ? true : false,
+      }));
+    },
+    [withNode],
+  );
+
+  const handleRemoveSession = useCallback(
+    (sessionId: string): Promise<boolean> => {
+      const targetSessionId = getRemoveSessionTarget(
+        nodesRef.current.get(sessionId),
+        sessionId,
+      );
+      return window.api.removeSessionChannel(targetSessionId);
+    },
+    [],
+  );
 
   // ---------------------------------------------------------------------------
   // Public API
@@ -277,5 +443,6 @@ export function useConnections(onActivatePromptTab: () => void) {
     handleQueueSessionMessage,
     handleClearChannelMessages,
     handleRemoveSession,
+    handleToggleDocContext,
   };
 }

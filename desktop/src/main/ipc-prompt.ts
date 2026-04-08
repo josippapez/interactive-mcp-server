@@ -63,7 +63,7 @@ export function forceTerminateChat(connectionId: string): void {
 }
 
 export interface PromptResponse {
-  answer: string;
+  answer: string | null;
   attachments?: {
     data: string;
     mimeType: string;
@@ -203,7 +203,14 @@ export function promptUser(
       setTimeout(() => {
         if (settled) return;
         cleanup();
-        resolve({ answer: 'Error: Prompt timed out — no response received.' });
+        // Notify the renderer so it clears the stuck prompt UI.
+        if (win && !win.isDestroyed()) {
+          win.webContents.send('prompt-clear', {
+            id: data.id,
+            connectionId: data.connectionId,
+          });
+        }
+        resolve({ answer: null as unknown as string });
       }, timeoutMs);
     }
   });

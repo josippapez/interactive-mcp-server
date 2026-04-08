@@ -100,14 +100,15 @@ export function collectDescendants(
 
 /**
  * Detect the best OpenCode session for the given directory.
- * Returns the most-recently-CREATED matching session with its parentID.
  *
  * Strategy:
  * 1. Query /session?directory=<dir> for directory-scoped sessions.
  * 2. If that returns nothing, fall back to /session (all sessions).
- * 3. Sort by time.created DESC (newest first) so that freshly-spawned
- *    subagent sessions are preferred over the longer-running parent session.
- * 4. Return { id, parentId } for the best match, or null on failure.
+ * 3. Prefer root sessions (no parentID) over subagent sessions — the caller
+ *    is most likely the main agent, and we want to attach to its own session
+ *    rather than a freshly-spawned child session.
+ * 4. Within each tier (root vs child), sort by time.created DESC (newest first).
+ * 5. Return { id, parentId } for the best match, or null on failure.
  */
 export async function autoDetectOpenCodeSession(
   openCodePort: number,
@@ -125,10 +126,13 @@ export async function autoDetectOpenCodeSession(
 
   if (!sessions || sessions.length === 0) return null;
 
-  // Sort by most recently CREATED (newest first).
-  // This ensures a freshly-spawned subagent session is preferred over the
-  // parent session that has been running (and updating) for longer.
-  const sorted = [...sessions].sort(
+  // Prefer root sessions (no parentID) — the caller is most likely the main
+  // agent. Only fall back to children if there are no root sessions.
+  const roots = sessions.filter((s) => !s.parentID);
+  const candidates = roots.length > 0 ? roots : sessions;
+
+  // Within the chosen tier, pick the most recently created session.
+  const sorted = [...candidates].sort(
     (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
   );
 

@@ -47,15 +47,20 @@ export type AppSettings = {
   autoRestoreSessions: boolean;
   openCodePort: number;
   docIndexingEnabled: boolean;
-  noReplyInjection: boolean;
   autoStartOpenCode: boolean;
   autoSyncOpencode: boolean;
+  docContextDebug: boolean;
 };
 
 const api = {
   // Prompt handling
   onPromptRequest: (callback: (data: PromptRequest) => void) => {
     ipcRenderer.on('prompt-request', (_event, data) => callback(data));
+  },
+  onPromptClear: (
+    callback: (data: { id: string; connectionId: string }) => void,
+  ) => {
+    ipcRenderer.on('prompt-clear', (_event, data) => callback(data));
   },
   sendPromptResponse: (response: {
     id: string;
@@ -200,6 +205,20 @@ const api = {
       openCodeSessionId,
       message,
       attachments,
+    }),
+
+  // Inject relevant repository doc context into OpenCode before a user message
+  injectDocContext: (
+    connectionId: string,
+    openCodeSessionId: string,
+    message: string,
+    baseDirectory?: string,
+  ): Promise<{ ok: boolean; injectedCount: number; error?: string }> =>
+    ipcRenderer.invoke('inject-doc-context', {
+      connectionId,
+      openCodeSessionId,
+      message,
+      baseDirectory,
     }),
 
   // Manually trigger OpenCode config sync (register MCP server + update config file)

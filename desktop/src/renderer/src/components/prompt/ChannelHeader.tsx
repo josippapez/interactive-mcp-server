@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useState } from 'react';
+import ConfirmDeleteModal from '../ConfirmDeleteModal';
 
 type Props = {
   label: string;
@@ -21,78 +22,94 @@ export default function ChannelHeader({
   onRemoveSession,
   onDismissSession,
 }: Props): React.ReactElement {
+  const [confirmDelete, setConfirmDelete] = useState(false);
+
   return (
-    <header className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface-alt)]">
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-[var(--color-text-faint)] select-none">#</span>
-        <h2 className="text-sm text-[var(--color-text)] truncate">{label}</h2>
-        {promptActive && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[var(--color-user)]/10 text-[var(--color-user)] select-none">
-            pending prompt
-          </span>
-        )}
-      </div>
-      <div className="flex items-center gap-0.5">
-        <button
-          onClick={onClearMessages}
-          className={iconBtn}
-          title="Clear message history"
-        >
-          {/* eraser-ish: lines with strike */}
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+    <>
+      <header className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--color-border)] bg-[var(--color-surface-alt)]">
+        <div className="flex items-center gap-2 min-w-0">
+          <span className="text-[var(--color-text-faint)] select-none">#</span>
+          <h2 className="text-sm text-[var(--color-text)] truncate">{label}</h2>
+          {promptActive && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-[var(--color-user)]/10 text-[var(--color-user)] select-none">
+              pending prompt
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={onClearMessages}
+            className={iconBtn}
+            title="Clear message history"
           >
-            <path d="M2 13h12" />
-            <path d="M4 10 9 3l4 3-5 7H4z" />
-            <path d="M9 3l4 3" />
-          </svg>
-        </button>
-        <button
-          onClick={onDismissSession}
-          className={iconBtn}
-          title="Close tab from UI"
-        >
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
+            {/* eraser-ish: lines with strike */}
+            <svg
+              width="14"
+              height="14"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M2 13h12" />
+              <path d="M4 10 9 3l4 3-5 7H4z" />
+              <path d="M9 3l4 3" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={onDismissSession}
+            className={iconBtn}
+            title="Close tab from UI"
           >
-            <path d="M3 3l10 10M13 3 3 13" />
-          </svg>
-        </button>
-        <button
-          onClick={onRemoveSession}
-          className={iconBtnDanger}
-          title="Remove session channel permanently"
-        >
-          <svg
-            width="13"
-            height="13"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            >
+              <path d="M3 3l10 10M13 3 3 13" />
+            </svg>
+          </button>
+          <button
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+            className={iconBtnDanger}
+            title="Remove session channel permanently"
           >
-            <path d="M3 4h10" />
-            <path d="M6 4V2h4v2" />
-            <path d="M5 4l.5 9h5l.5-9" />
-            <path d="M7 7v4M9 7v4" />
-          </svg>
-        </button>
-      </div>
-    </header>
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M3 4h10" />
+              <path d="M6 4V2h4v2" />
+              <path d="M5 4l.5 9h5l.5-9" />
+              <path d="M7 7v4M9 7v4" />
+            </svg>
+          </button>
+        </div>
+      </header>
+      <ConfirmDeleteModal
+        open={confirmDelete}
+        label={label}
+        onConfirm={() => {
+          setConfirmDelete(false);
+          onRemoveSession();
+        }}
+        onCancel={() => setConfirmDelete(false)}
+      />
+    </>
   );
 }

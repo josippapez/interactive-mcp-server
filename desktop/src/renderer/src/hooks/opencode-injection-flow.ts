@@ -7,6 +7,21 @@ export function shouldDetectSessionForInjection(input: {
   return !input.openCodeSessionId && input.isDirectConnection;
 }
 
+/**
+ * Resolves the OpenCode session ID to use as the injection target.
+ *
+ * Always injects into the node's own OpenCode session so that subagent
+ * channels route messages directly to the subagent, not to the parent.
+ */
+export function resolveInjectionSessionId(
+  node: {
+    openCodeSessionId: string | null;
+  } | null,
+): string | null {
+  if (!node) return null;
+  return node.openCodeSessionId;
+}
+
 export function isRecoverableInjectionError(error?: string): boolean {
   if (!error) return false;
   const text = error.toLowerCase();

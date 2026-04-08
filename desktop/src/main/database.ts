@@ -97,13 +97,23 @@ function runMigrations(): void {
 
   // v5 — deduplicate registered_connections by agent_name.
   // Each restart previously created a new row (new transport UUID → new PK).
-  // Keep the most-recently-updated row per agent_name; delete older duplicates
-  // and their corresponding session_channels / session_channel_history rows.
+  // Keep the most-recently-updated row per (agent_name, open_code_session_id)
+  // group; delete older duplicates within the same group only.
+  //
+  // NOTE: Two rows with the same agent_name but *different* non-null
+  // open_code_session_ids belong to distinct agent instances (e.g. root and
+  // subagent both named "Claude Code"). They MUST NOT be deduplicated against
+  // each other — doing so would orphan one agent from the snapshot index and
+  // cause its prompts to be silently dropped.
   db.run(
     `DELETE FROM registered_connections
      WHERE connection_id NOT IN (
        SELECT connection_id FROM registered_connections rc2
        WHERE rc2.agent_name = registered_connections.agent_name
+         AND (
+           rc2.open_code_session_id IS NULL AND registered_connections.open_code_session_id IS NULL
+           OR rc2.open_code_session_id = registered_connections.open_code_session_id
+         )
        ORDER BY rc2.updated_at DESC
        LIMIT 1
      )`,
@@ -486,40 +496,82 @@ export function upsertRegisteredConnection(data: {
   }
 
   if (db) {
-    // Remove any existing rows for this agent_name that use a different
-    // connection_id. This prevents duplicate sidebar entries across restarts
-    // (each restart generates a new transport UUID, which would otherwise
-    // create a new row since connection_id is the PK).
-    // We also clean up the associated session_channels rows so the UI stays
-    // in sync — history rows are left intact for audit purposes.
+    // When the same agent reconnects with a new transport UUID (new connectionId),
+    // re-key any existing history and queued messages from the old connection(s)
+    // to the new connectionId so history is preserved across restarts.
+    // session_channels and registered_connections rows for the old IDs are
+    // cleaned up below — only the content tables are migrated, not the PKs.
+    //
+    // IMPORTANT: Only deduplicate rows that represent the *same* agent instance
+    // (same openCodeSessionId, or no openCodeSessionId on either side). Two rows
+    // with different non-null openCodeSessionIds are distinct agent instances that
+    // happen to share a display name (e.g. both root and subagent are named
+    // "Claude Code"). Deleting the root's row would orphan it from the snapshot
+    // index and cause its prompts to be dropped.
+    //
+    // Match condition: both have no session ID, OR both share the same non-null
+    // session ID. Any cross-session combination is left alone.
+    const newSessionId = data.openCodeSessionId ?? null;
+    const sameSessionFilter = `(
+      (? IS NULL AND open_code_session_id IS NULL)
+      OR
+      (? IS NOT NULL AND open_code_session_id = ?)
+    )`;
+    // dedupeParams for UPDATE queries: [newConnId, agentName, newConnId, newSesId, newSesId, newSesId]
+    const dedupeParams = [
+      data.connectionId,
+      data.agentName,
+      data.connectionId,
+      newSessionId,
+      newSessionId,
+      newSessionId,
+    ];
     db.run(
-      `DELETE FROM session_channel_history
+      `UPDATE session_channel_history
+       SET session_id = ?
        WHERE session_id IN (
          SELECT connection_id FROM registered_connections
          WHERE agent_name = ? AND connection_id != ?
+           AND ${sameSessionFilter}
        )`,
-      [data.agentName, data.connectionId],
+      dedupeParams,
     );
     db.run(
-      `DELETE FROM session_messages
+      `UPDATE session_messages
+       SET session_id = ?
        WHERE session_id IN (
          SELECT connection_id FROM registered_connections
          WHERE agent_name = ? AND connection_id != ?
+           AND ${sameSessionFilter}
        )`,
-      [data.agentName, data.connectionId],
+      dedupeParams,
     );
     db.run(
       `DELETE FROM session_channels
        WHERE session_id IN (
          SELECT connection_id FROM registered_connections
          WHERE agent_name = ? AND connection_id != ?
+           AND ${sameSessionFilter}
        )`,
-      [data.agentName, data.connectionId],
+      [
+        data.agentName,
+        data.connectionId,
+        newSessionId,
+        newSessionId,
+        newSessionId,
+      ],
     );
     db.run(
       `DELETE FROM registered_connections
-       WHERE agent_name = ? AND connection_id != ?`,
-      [data.agentName, data.connectionId],
+       WHERE agent_name = ? AND connection_id != ?
+         AND ${sameSessionFilter}`,
+      [
+        data.agentName,
+        data.connectionId,
+        newSessionId,
+        newSessionId,
+        newSessionId,
+      ],
     );
 
     db.run(
@@ -588,6 +640,29 @@ export function getRegisteredConnectionByName(
   );
   if (results.length === 0 || results[0].values.length === 0) return null;
   return mapRowToRegisteredConnection(results[0].values[0]);
+}
+
+/**
+ * Returns true if the given openCodeSessionId is already claimed by a
+ * registered connection OTHER than `excludingConnectionId`.
+ *
+ * Used during register_connection auto-detection: if the detected session is
+ * already owned by another connection (e.g. the root agent), a subagent must
+ * NOT bind itself to that same session — doing so would route the subagent's
+ * prompts to the root channel.
+ */
+export function isOpenCodeSessionClaimed(
+  openCodeSessionId: string,
+  excludingConnectionId: string,
+): boolean {
+  if (!db) return false;
+  const results = db.exec(
+    `SELECT 1 FROM registered_connections
+     WHERE open_code_session_id = ? AND connection_id != ?
+     LIMIT 1`,
+    [openCodeSessionId, excludingConnectionId],
+  );
+  return results.length > 0 && results[0].values.length > 0;
 }
 
 /**

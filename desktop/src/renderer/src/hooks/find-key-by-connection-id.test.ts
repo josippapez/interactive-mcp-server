@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { findKeyByConnectionId } from './useIpcListeners';
+import { findKeyByConnectionId, findPromptTargetKey } from './useIpcListeners';
 import type { SessionNode } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -99,5 +99,116 @@ describe('findKeyByConnectionId', () => {
 
     const result = findKeyByConnectionId(nodes, 'conn-shared');
     expect(['key-a', 'key-b']).toContain(result);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findPromptTargetKey
+// ---------------------------------------------------------------------------
+
+describe('findPromptTargetKey', () => {
+  it('returns the node key itself when the node has no parent (root)', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_root',
+        makeNode({
+          id: 'ses_root',
+          openCodeSessionId: 'ses_root',
+          openCodeParentId: null,
+          connectionId: 'conn-root',
+          depth: 0,
+        }),
+      ],
+    ]);
+
+    expect(findPromptTargetKey(nodes, 'conn-root')).toBe('ses_root');
+  });
+
+  it('returns the child node key itself (no parent walking)', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_parent',
+        makeNode({
+          id: 'ses_parent',
+          openCodeSessionId: 'ses_parent',
+          openCodeParentId: null,
+          connectionId: 'conn-parent',
+          depth: 0,
+        }),
+      ],
+      [
+        'ses_child',
+        makeNode({
+          id: 'ses_child',
+          openCodeSessionId: 'ses_child',
+          openCodeParentId: 'ses_parent',
+          connectionId: 'conn-child',
+          depth: 1,
+        }),
+      ],
+    ]);
+
+    // Prompt from child agent appears in the child's own channel
+    expect(findPromptTargetKey(nodes, 'conn-child')).toBe('ses_child');
+  });
+
+  it('returns the leaf node key itself for deeply nested agents', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_root',
+        makeNode({
+          id: 'ses_root',
+          openCodeSessionId: 'ses_root',
+          openCodeParentId: null,
+          connectionId: 'conn-root',
+          depth: 0,
+        }),
+      ],
+      [
+        'ses_mid',
+        makeNode({
+          id: 'ses_mid',
+          openCodeSessionId: 'ses_mid',
+          openCodeParentId: 'ses_root',
+          connectionId: 'conn-mid',
+          depth: 1,
+        }),
+      ],
+      [
+        'ses_leaf',
+        makeNode({
+          id: 'ses_leaf',
+          openCodeSessionId: 'ses_leaf',
+          openCodeParentId: 'ses_mid',
+          connectionId: 'conn-leaf',
+          depth: 2,
+        }),
+      ],
+    ]);
+
+    // Prompt from deeply nested leaf stays in its own channel
+    expect(findPromptTargetKey(nodes, 'conn-leaf')).toBe('ses_leaf');
+  });
+
+  it('returns null when connectionId is not found', () => {
+    expect(findPromptTargetKey(new Map(), 'conn-missing')).toBeNull();
+  });
+
+  it('returns the direct-connection node key unchanged (no parent walk for direct connections)', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'conn-direct',
+        makeNode({
+          id: 'conn-direct',
+          openCodeSessionId: null,
+          openCodeParentId: null,
+          connectionId: 'conn-direct',
+          isDirectConnection: true,
+          depth: 0,
+        }),
+      ],
+    ]);
+
+    expect(findPromptTargetKey(nodes, 'conn-direct')).toBe('conn-direct');
   });
 });

@@ -59,6 +59,25 @@ export interface SessionNodeData {
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+/**
+ * In-memory set of OpenCode session IDs that have been explicitly deleted by
+ * the user via the Desktop app. Sessions in this set are excluded from every
+ * subsequent snapshot so the periodic poller never re-adds a deleted node.
+ *
+ * Entries are process-scoped and are NOT persisted — they reset on app restart,
+ * at which point the session will only reappear if OpenCode itself still has it.
+ */
+const _tombstonedSessionIds = new Set<string>();
+
+/**
+ * Mark an OpenCode session as tombstoned so it is excluded from all future
+ * session-tree snapshots. Call this immediately after a user-initiated delete
+ * to prevent the poller from re-adding the just-deleted node.
+ */
+export function tombstoneOpenCodeSession(openCodeSessionId: string): void {
+  _tombstonedSessionIds.add(openCodeSessionId);
+}
+
 function collectFallbackDirectories(): string[] {
   return Array.from(
     new Set(
@@ -88,6 +107,23 @@ function computeDepth(
   return depth;
 }
 
+/**
+ * Returns true if any ancestor of `sessionId` in `byId` has been tombstoned.
+ * Used to cascade-exclude all descendants of a deleted session from snapshots.
+ */
+function hasTombstonedAncestor(
+  sessionId: string,
+  byId: Map<string, OpenCodeSession>,
+  visited = new Set<string>(),
+): boolean {
+  if (visited.has(sessionId)) return false; // cycle guard
+  visited.add(sessionId);
+  const session = byId.get(sessionId);
+  if (!session?.parentID) return false;
+  if (_tombstonedSessionIds.has(session.parentID)) return true;
+  return hasTombstonedAncestor(session.parentID, byId, visited);
+}
+
 function buildSnapshot(allSessions: OpenCodeSession[]): SessionNodeData[] {
   const registeredConnections = getAllRegisteredConnections();
 
@@ -102,35 +138,41 @@ function buildSnapshot(allSessions: OpenCodeSession[]): SessionNodeData[] {
   const sessionsById = new Map(allSessions.map((s) => [s.id, s]));
   const depthCache = new Map<string, number>();
 
-  return allSessions.map((session): SessionNodeData => {
-    const rc = byOpenCodeId.get(session.id) ?? null;
-    const depth = computeDepth(session.id, sessionsById, depthCache);
+  return allSessions
+    .filter(
+      (session) =>
+        !_tombstonedSessionIds.has(session.id) &&
+        !hasTombstonedAncestor(session.id, sessionsById),
+    )
+    .map((session): SessionNodeData => {
+      const rc = byOpenCodeId.get(session.id) ?? null;
+      const depth = computeDepth(session.id, sessionsById, depthCache);
 
-    // Build a readable title: use OpenCode title field if present,
-    // fall back to registered agent name, then to a truncated ID.
-    const title =
-      (session as OpenCodeSession & { title?: string; summary?: string })
-        .title ??
-      (session as OpenCodeSession & { summary?: string }).summary ??
-      rc?.agentName ??
-      `Session ${session.id.slice(0, 8)}`;
+      // Build a readable title: use OpenCode title field if present,
+      // fall back to registered agent name, then to a truncated ID.
+      const title =
+        (session as OpenCodeSession & { title?: string; summary?: string })
+          .title ??
+        (session as OpenCodeSession & { summary?: string }).summary ??
+        rc?.agentName ??
+        `Session ${session.id.slice(0, 8)}`;
 
-    return {
-      openCodeSessionId: session.id,
-      openCodeParentId: session.parentID ?? null,
-      title,
-      directory:
-        (session as OpenCodeSession & { directory?: string }).directory ?? '',
-      createdAt: session.time?.created ?? 0,
-      updatedAt: session.time?.updated ?? 0,
-      depth,
-      connectionId: rc?.connectionId ?? null,
-      agentName: rc?.agentName ?? null,
-      hasMcpChannel: rc !== null,
-      baseDirectory: rc?.baseDirectory ?? null,
-      registeredParentSessionId: rc?.parentSessionId ?? null,
-    };
-  });
+      return {
+        openCodeSessionId: session.id,
+        openCodeParentId: session.parentID ?? null,
+        title,
+        directory:
+          (session as OpenCodeSession & { directory?: string }).directory ?? '',
+        createdAt: session.time?.created ?? 0,
+        updatedAt: session.time?.updated ?? 0,
+        depth,
+        connectionId: rc?.connectionId ?? null,
+        agentName: rc?.agentName ?? null,
+        hasMcpChannel: rc !== null,
+        baseDirectory: rc?.baseDirectory ?? null,
+        registeredParentSessionId: rc?.parentSessionId ?? null,
+      };
+    });
 }
 
 /**

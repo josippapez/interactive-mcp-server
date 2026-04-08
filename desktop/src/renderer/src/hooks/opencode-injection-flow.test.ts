@@ -4,7 +4,41 @@ import {
   isRecoverableInjectionError,
   buildInjectionSuccessStatus,
   injectWithSessionRecovery,
+  resolveInjectionSessionId,
 } from './opencode-injection-flow';
+
+describe('resolveInjectionSessionId', () => {
+  it('returns null for a null node', () => {
+    expect(resolveInjectionSessionId(null)).toBeNull();
+  });
+
+  it('returns openCodeSessionId for a root node (no parent)', () => {
+    expect(
+      resolveInjectionSessionId({
+        openCodeParentId: null,
+        openCodeSessionId: 'ses_root',
+      }),
+    ).toBe('ses_root');
+  });
+
+  it('returns openCodeSessionId for a child node (own session, not parent)', () => {
+    expect(
+      resolveInjectionSessionId({
+        openCodeParentId: 'ses_parent',
+        openCodeSessionId: 'ses_child',
+      }),
+    ).toBe('ses_child');
+  });
+
+  it('returns null when both are null', () => {
+    expect(
+      resolveInjectionSessionId({
+        openCodeParentId: null,
+        openCodeSessionId: null,
+      }),
+    ).toBeNull();
+  });
+});
 
 describe('opencode-injection-flow', () => {
   it('detects a session for direct connections with no openCodeSessionId', () => {

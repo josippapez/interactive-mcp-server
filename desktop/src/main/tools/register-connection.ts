@@ -2,10 +2,15 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
-import { upsertRegisteredConnection, createSessionChannel } from '../database';
+import {
+  upsertRegisteredConnection,
+  createSessionChannel,
+  isOpenCodeSessionClaimed,
+} from '../database';
 import { autoDetectOpenCodeSession } from '../opencode-session';
 import { triggerSessionTreeUpdate } from '../session-tree-manager';
 import { initDocContext } from '../doc-context-injector';
+import { injectOpenCodeMessage } from '../opencode-injector';
 
 const REGISTER_CONNECTION_TIMEOUT_MS = 15_000;
 const REGISTER_CONNECTION_TIMEOUT_MESSAGE =
@@ -51,6 +56,43 @@ function isRegisterConnectionTimeoutError(error: unknown): boolean {
   );
 }
 
+function buildStartupContextMessage(params: {
+  agentName: string;
+  projectName: string;
+  baseDirectory?: string;
+}): string {
+  const { agentName, projectName, baseDirectory } = params;
+  const locationLine = baseDirectory
+    ? `- Base directory: ${baseDirectory}`
+    : '- Base directory: not provided';
+
+  return [
+    '<system-reminder>',
+    'Interactive MCP Desktop session bootstrap:',
+    `- Registered agent: ${agentName}`,
+    `- Project: ${projectName}`,
+    locationLine,
+    '- Prompting policy: use interactive prompt tools for user questions.',
+    '- Timeout policy: if a prompt times out or returns a timeout error (including -32001), re-prompt immediately.',
+    '- Stop phrases (exact match): "Stop prompting", "End session", "Don\'t ask anymore", "Close conversation".',
+    '- Parallel subagents should use unique agent names to avoid sidebar name collisions.',
+    '</system-reminder>',
+  ].join('\n');
+}
+
+function pushSessionStatus(
+  getWindow: () => BrowserWindow | null,
+  connectionId: string,
+  status: string,
+  type: 'info' | 'working' | 'success' | 'error',
+): void {
+  getWindow()?.webContents.send('session-status-update', {
+    connectionId,
+    status,
+    type,
+  });
+}
+
 export function registerConnectionTool(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
@@ -73,6 +115,8 @@ After registration, your channel will appear in the app's sidebar with the given
 - (!important!) If a user deletes your session from the app, call this tool again to re-establish the connection.
 - (!important!) Other tools will return an error with instructions to call register_connection if your session has been removed.
 - (!important!) The connectionId returned by this tool is automatically used by all other tools.
+- (!important!) Use clear, human-readable agentName values so channels are easy to distinguish in the sidebar.
+- (!important!) For spawned/parallel subagents, use a unique task label (for example "Research Agent A", "Research Agent B") to avoid duplicate names.
 - (!important!) If you pass baseDirectory and omit openCodeSessionId, the desktop app will auto-detect your active session for context injection — this is the correct path for the main agent.
 - (!important!) If you are a subagent spawned via the Task tool, you MUST pass your own OpenCode session ID via the openCodeSessionId parameter. Without it your channel will have no injection target and messages typed in your channel will not reach you.
 - (!important!) This tool has a hard 15-second deadline; if registration does not complete in time, it fails so callers can retry cleanly.
@@ -85,16 +129,18 @@ After registration, your channel will appear in the app's sidebar with the given
 </whenToUseThisTool>
 
 <parameters>
-- agentName: Human-readable name for this agent (e.g. "Claude Code - my-project"). Shown in the channel sidebar.
+- agentName: Human-readable name for this agent shown in the channel sidebar. Prefer unique names per active agent/session (especially for spawned subagents) to avoid channel-name collisions.
 - projectName: Name of the project or workspace this agent is working in.
 - baseDirectory: Absolute path to the working directory / repository root (optional but recommended for file autocomplete).
 - openCodeSessionId: Your own OpenCode session ID (optional). Pass this explicitly when you know it (e.g. as a subagent). Takes precedence over auto-detection. Enables the desktop app to inject context directly into your session.
 </parameters>
 
 <examples>
-- { "agentName": "Claude Code", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project" }
-- { "agentName": "Research Agent", "projectName": "literature-review" }
-- { "agentName": "Subagent - fe-specialist", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project", "openCodeSessionId": "ses_abc123" }
+- { "agentName": "<Task name>", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project", "openCodeSessionId": "ses_abc123" }
+- { "agentName": "Agent <Task name>", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project" }
+- { "agentName": "Research <Task name> Agent", "projectName": "literature-review" }
+- { "agentName": "Research <Task name> Agent A", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project", "openCodeSessionId": "ses_abc123" }
+- { "agentName": "Research <Task name> Agent B", "projectName": "my-project", "baseDirectory": "/Users/me/projects/my-project", "openCodeSessionId": "ses_def456" }
 </examples>`,
       title: 'Register this agent as a named connection',
       inputSchema: {
@@ -147,8 +193,19 @@ After registration, your channel will appear in the app's sidebar with the given
           startedAt,
         );
         if (detected) {
-          openCodeSessionId = detected.id;
-          parentSessionId = detected.parentId;
+          // Guard: only bind to the detected session if it isn't already
+          // claimed by another connection. If it IS claimed, this agent is
+          // almost certainly a subagent that forgot to pass its own session ID
+          // — binding it to the root's session would route its prompts to the
+          // root channel.
+          const alreadyClaimed = isOpenCodeSessionClaimed(
+            detected.id,
+            connectionId,
+          );
+          if (!alreadyClaimed) {
+            openCodeSessionId = detected.id;
+            parentSessionId = detected.parentId;
+          }
         }
       } else if (openCodeSessionId) {
         // When session ID is explicit, try to fetch its parentID from the API.
@@ -212,6 +269,59 @@ After registration, your channel will appear in the app's sidebar with the given
         );
       }
 
+      const startupContextMessage = buildStartupContextMessage({
+        agentName,
+        projectName,
+        baseDirectory,
+      });
+
+      // Provider-aware startup injection (Phase 1):
+      // - OpenCode path: inject into the provider session via noReply so it is
+      //   visible in the OpenCode transcript and available in model context.
+      // - Standalone path: include the same context as part of this tool result
+      //   so the caller still receives deterministic startup context.
+      if (openCodeSessionId) {
+        pushSessionStatus(
+          getWindow,
+          connectionId,
+          'Injecting startup context into OpenCode session…',
+          'working',
+        );
+
+        void (async () => {
+          const injectionResult = await injectOpenCodeMessage(
+            openCodeSessionId,
+            startupContextMessage,
+            undefined,
+            getOpenCodePort(),
+          );
+
+          if (injectionResult.ok) {
+            pushSessionStatus(
+              getWindow,
+              connectionId,
+              'Startup context injected into OpenCode session',
+              'success',
+            );
+            return;
+          }
+
+          pushSessionStatus(
+            getWindow,
+            connectionId,
+            `Startup context injection failed: ${injectionResult.error ?? 'unknown error'}`,
+            'error',
+          );
+        })();
+      } else {
+        pushSessionStatus(
+          getWindow,
+          connectionId,
+          'Startup context prepared (standalone mode)',
+          'info',
+        );
+      }
+
       return {
         content: [
           {
@@ -236,6 +346,10 @@ After registration, your channel will appear in the app's sidebar with the given
                   ? ` Parent session: "${parentSessionId}".`
                   : ''),
             }),
+          },
+          {
+            type: 'text' as const,
+            text: startupContextMessage,
           },
         ],
       };

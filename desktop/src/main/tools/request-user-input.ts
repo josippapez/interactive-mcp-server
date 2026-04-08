@@ -158,7 +158,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 
       const { answer, attachments } = result;
 
-      if (!answer) {
+      if (answer === null || answer === undefined) {
         return {
           content: [
             {

@@ -3,7 +3,33 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { staleConnectionError } from './connection-guard';
-import { appendSessionChannelMessage } from '../database';
+import {
+  appendSessionChannelMessage,
+  getRegisteredConnection,
+} from '../database';
+
+/** Returns an actionable error if the agent hasn't called register_connection yet. */
+function unregisteredConnectionError(
+  connectionId: string,
+): CallToolResult | null {
+  if (getRegisteredConnection(connectionId) !== null) return null;
+  return {
+    isError: true,
+    content: [
+      {
+        type: 'text' as const,
+        text: JSON.stringify({
+          error: 'NOT_REGISTERED',
+          message:
+            'You must call register_connection before using send_message. ' +
+            'Without registration there is no channel to send to and the message will be lost.',
+          action:
+            'Call the register_connection tool with your agentName, projectName, and baseDirectory first.',
+        }),
+      },
+    ],
+  };
+}
 
 export function registerSessionChannelTools(
   server: McpServer,
@@ -141,6 +167,9 @@ Send a visible, persistent message directly into the desktop app channel history
     async ({ message }): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
+
+      const unregisteredErr = unregisteredConnectionError(connectionId);
+      if (unregisteredErr) return unregisteredErr;
 
       appendSessionChannelMessage({
         sessionId: connectionId,

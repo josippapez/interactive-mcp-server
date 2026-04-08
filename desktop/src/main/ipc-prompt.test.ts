@@ -91,14 +91,21 @@ describe('promptUser', () => {
     expect(result.answer).toContain('Error');
   });
 
-  it('resolves with timeout error when prompt times out', async () => {
+  it('resolves with null answer when prompt times out (silent timeout, clears UI)', async () => {
     const win = createMockWindow();
     vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
 
     const promise = promptUser(win as never, createPromptData());
     vi.advanceTimersByTime(6000);
     const result = await promise;
-    expect(result.answer).toContain('timed out');
+    // Timeout resolves with null so the renderer can clear the prompt UI
+    // without surfacing a misleading error string to the agent.
+    expect(result.answer).toBeNull();
+    // The renderer should also receive prompt-clear to dismiss the prompt UI.
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      'prompt-clear',
+      expect.objectContaining({ connectionId: 'conn-1' }),
+    );
   });
 
   it('resolves with cancel message when cancelActivePrompt is called', async () => {

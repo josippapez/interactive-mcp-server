@@ -24,6 +24,7 @@ type Props = {
   connectionId: string | null;
   sessionChannel: { sessionId: string; label?: string } | null;
   sessionStatuses: SessionStatus[];
+  docContextEnabled: boolean;
   onSubmit: (answer: string, attachments?: Attachment[]) => void;
   onSelectOption: (option: string) => void;
   onDismissStatus: (connectionId: string, timestamp: Date) => void;
@@ -34,7 +35,8 @@ type Props = {
     attachments?: Attachment[],
   ) => void;
   onClearMessages: (sessionId: string) => void;
-  onRemoveSession: (sessionId: string) => void;
+  onRemoveSession: (sessionId: string) => Promise<boolean>;
+  onToggleDocContext: () => void;
 };
 
 export default function PromptView({
@@ -47,6 +49,7 @@ export default function PromptView({
   connectionId,
   sessionChannel,
   sessionStatuses,
+  docContextEnabled,
   onSubmit,
   onSelectOption,
   onDismissStatus,
@@ -54,6 +57,7 @@ export default function PromptView({
   onQueueSessionMessage,
   onClearMessages,
   onRemoveSession,
+  onToggleDocContext,
 }: Props): React.ReactElement {
   const chatEndRef = useRef<HTMLDivElement>(null);
   const hasHistory = channelMessages.length > 0;
@@ -61,6 +65,9 @@ export default function PromptView({
 
   // Countdown timer — resets whenever a new prompt arrives
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+
+  // Error state for failed session removal
+  const [removeError, setRemoveError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!prompt) {
@@ -77,6 +84,11 @@ export default function PromptView({
     return () => clearInterval(interval);
   }, [prompt?.id]); // re-run only when prompt identity changes
 
+  // Clear remove error whenever the active session changes
+  useEffect(() => {
+    setRemoveError(null);
+  }, [activeConnectionId]);
+
   // ID of the last question message that is still awaiting a response
   const activePromptId = prompt
     ? ([...channelMessages].reverse().find((m) => m.kind === 'question')?.id ??
@@ -90,6 +102,18 @@ export default function PromptView({
         sessionChannelId: sessionChannel?.sessionId ?? null,
       })
     : null;
+
+  const handleRemoveSession = async () => {
+    if (!sessionActionTarget) return;
+    const ok = await onRemoveSession(sessionActionTarget);
+    if (!ok) {
+      setRemoveError(
+        'Failed to remove session. The channel data was cleaned up but the agent transport may still be active.',
+      );
+    } else {
+      setRemoveError(null);
+    }
+  };
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -111,13 +135,25 @@ export default function PromptView({
               onClearMessages={() =>
                 sessionActionTarget && onClearMessages(sessionActionTarget)
               }
-              onRemoveSession={() =>
-                sessionActionTarget && onRemoveSession(sessionActionTarget)
-              }
+              onRemoveSession={handleRemoveSession}
               onDismissSession={() =>
                 sessionActionTarget && onDismissSession(sessionActionTarget)
               }
             />
+
+            {removeError && (
+              <div className="flex items-center justify-between px-4 py-2 border-b border-[var(--color-error)]/20 bg-[var(--color-error)]/10 text-xs text-[var(--color-error)]">
+                <span>{removeError}</span>
+                <button
+                  type="button"
+                  onClick={() => setRemoveError(null)}
+                  className="ml-3 text-[var(--color-error)]/60 hover:text-[var(--color-error)] transition-colors cursor-pointer"
+                  aria-label="Dismiss error"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             <div className="flex-1 overflow-hidden flex flex-col">
               {activeSession && (
@@ -132,6 +168,7 @@ export default function PromptView({
                     </span>
                   </div>
                   <button
+                    type="button"
                     onClick={() =>
                       connectionId &&
                       window.api.forceTerminateChat(connectionId)
@@ -181,6 +218,26 @@ export default function PromptView({
                 onDismissStatus={onDismissStatus}
               />
             )}
+
+            <div className="flex items-center justify-end px-3 py-1 border-t border-[var(--color-border)] bg-[var(--color-surface-alt)]">
+              <button
+                type="button"
+                onClick={onToggleDocContext}
+                className={`flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded-sm border transition-colors cursor-pointer select-none ${
+                  docContextEnabled
+                    ? 'border-[var(--color-agent)]/40 text-[var(--color-agent)] bg-[var(--color-agent)]/10 hover:bg-[var(--color-agent)]/20'
+                    : 'border-[var(--color-border)] text-[var(--color-text-faint)] bg-transparent hover:text-[var(--color-text-muted)]'
+                }`}
+                title={
+                  docContextEnabled
+                    ? 'Doc context injection enabled — click to disable'
+                    : 'Doc context injection disabled — click to enable'
+                }
+              >
+                <span>{docContextEnabled ? '⬡' : '⬡'}</span>
+                <span>docs {docContextEnabled ? 'on' : 'off'}</span>
+              </button>
+            </div>
 
             {prompt ? (
               <ChannelComposer

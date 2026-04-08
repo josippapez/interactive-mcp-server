@@ -87,25 +87,18 @@ describe('injectOpenCodeMessage', () => {
     expect(lastRequest!.url).toBe('/session/session-abc/message');
   });
 
-  it('defaults noReply to false when not specified', async () => {
+  it('always sends noReply: true', async () => {
     await injectOpenCodeMessage('s1', 'test', undefined, serverPort);
-
-    const body = JSON.parse(lastRequest!.body);
-    expect(body.noReply).toBe(false);
-  });
-
-  it('sends noReply: true when explicitly set', async () => {
-    await injectOpenCodeMessage('s1', 'test', undefined, serverPort, true);
 
     const body = JSON.parse(lastRequest!.body);
     expect(body.noReply).toBe(true);
   });
 
-  it('sends noReply: false when explicitly set', async () => {
-    await injectOpenCodeMessage('s1', 'test', undefined, serverPort, false);
+  it('sends noReply: true when explicitly set', async () => {
+    await injectOpenCodeMessage('s1', 'test', undefined, serverPort);
 
     const body = JSON.parse(lastRequest!.body);
-    expect(body.noReply).toBe(false);
+    expect(body.noReply).toBe(true);
   });
 
   it('includes the message text in parts[0].text', async () => {
@@ -161,7 +154,6 @@ describe('injectOpenCodeMessage', () => {
       'See image',
       attachments,
       serverPort,
-      false,
       mcpPort,
     );
 
