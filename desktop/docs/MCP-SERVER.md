@@ -27,6 +27,14 @@ startMcpServer(port, getWindow, getSoundEnabled, getPromptTimeoutMs);
 
 All four parameters are stored in module-level `_startParams` so that `restartMcpServer()` can replay an identical startup without being called again by the caller.
 
+### OpenCode startup registration
+
+When `agentBackend === 'opencode'`, `index.ts` calls `registerMcpWithRetry` immediately after the MCP server starts. This POSTs to OpenCode's `/mcp` API (`http://localhost:{openCodePort}/mcp`), registering the Desktop as a remote MCP server and causing OpenCode to perform a fresh `initialize` handshake right away.
+
+Without this call, OpenCode's `type: "remote"` client retains a stale connection state from the previous server instance and may take tens of seconds to reconnect on its own backoff schedule — during which any agent tool calls queue silently inside OpenCode and never reach the Desktop app.
+
+The call is fire-and-forget with exponential-backoff retries (up to 5 attempts) so it handles the case where OpenCode is not yet running at the moment the Desktop launches. See `src/main/opencode-mcp-register.ts` for implementation details and `docs/KNOWN-ISSUES.md #1` for the full bug description.
+
 ---
 
 ## HTTP Endpoint Reference
@@ -154,13 +162,17 @@ Serves persisted image attachments from the local attachment store.
 {
   "status": "ok",
   "activeClients": 2,
+  "mcpConfigFile": "<path to imcp-mcp-config.json>",
   "tools": [
+    "register_connection",
     "request_user_input",
-    "message_complete_notification",
     "start_intensive_chat",
     "ask_intensive_chat",
     "stop_intensive_chat",
-    "push_session_status"
+    "push_session_status",
+    "send_message",
+    "find_repo_docs",
+    "manage_skills_and_instructions"
   ]
 }
 ```
@@ -286,15 +298,15 @@ Each accepted connection receives its own isolated `McpServer` instance. Isolati
 
 `createMcpServerWithTools(getWindow, connectionId, connectionName)` constructs the server and registers all tools:
 
-| Tool registration function    | Tool(s) registered                                                  |
-| ----------------------------- | ------------------------------------------------------------------- |
-| `registerRequestUserInput`    | `request_user_input`                                                |
-| `registerNotificationTool`    | `message_complete_notification`                                     |
-| `registerIntensiveChatTools`  | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` |
-| `registerSessionChannelTools` | `push_session_status`                                               |
-| `registerSendMessageTool`     | `send_message`                                                      |
-| `registerConnectionTool`      | `register_connection`                                               |
-| `registerFindRepoDocsTool`    | `find_repo_docs`                                                    |
+| Tool registration function                | Tool(s) registered                                                  |
+| ----------------------------------------- | ------------------------------------------------------------------- |
+| `registerRequestUserInput`                | `request_user_input`                                                |
+| `registerIntensiveChatTools`              | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` |
+| `registerSessionChannelTools`             | `push_session_status`                                               |
+| `registerSendMessageTool`                 | `send_message`                                                      |
+| `registerConnectionTool`                  | `register_connection`                                               |
+| `registerFindRepoDocsTool`                | `find_repo_docs`                                                    |
+| `registerManageSkillsAndInstructionsTool` | `manage_skills_and_instructions`                                    |
 
 Both `connectionId` and `connectionName` are passed to tool registrations that need to route IPC or database operations to the correct renderer session (e.g., prompts routed to the correct input bar, cancellation tied to the right connection).
 

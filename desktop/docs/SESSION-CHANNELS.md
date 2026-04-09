@@ -34,7 +34,7 @@ The MCP protocol is synchronous and request-driven: a tool call waits for a resp
 
 ## Database Tables
 
-Three SQLite tables back the session channel system.
+Three SQLite tables back the session channel system. A fourth table, `skills_and_instructions`, is managed alongside session state but is documented in full in [DATABASE.md — `skills_and_instructions`](./DATABASE.md#skills_and_instructions). It is included in both the `dropAllTables` and `resetDatabase` operations that clear session state.
 
 ### `session_channels`
 
@@ -204,7 +204,7 @@ Write and delete operations on both paths are wrapped in try/catch. A failure to
 
 Startup state is reconciled from three sources:
 
-1. `registered_connections` — persisted MCP registration metadata (`connectionId`, `agentName`, `baseDirectory`, `openCodeSessionId`, `parentSessionId`).
+1. `registered_connections` — persisted MCP registration metadata (`connectionId`, `channelName`, `baseDirectory`, `openCodeSessionId`, `parentSessionId`).
 2. Live OpenCode sessions — fetched from the OpenCode ACP API by the session-tree manager.
 3. Persisted session-channel rows/history — used to recover message history for known `connectionId`s.
 
@@ -213,9 +213,10 @@ The startup sequence is:
 1. The main process starts the session-tree manager.
 2. The main process runs `reconcileSessionConnections(openCodePort)` once.
 3. Any `registered_connections` row whose `openCodeSessionId` no longer exists is removed as stale.
-4. The session-tree manager emits a full `session-tree-updated` snapshot built from live OpenCode sessions merged with remaining `registered_connections` rows.
-5. The renderer merges that snapshot into its `SessionNode` map, keyed by `openCodeSessionId ?? connectionId`.
-6. For any node that claims a `connectionId`, the renderer loads `getSessionChannelHistory(connectionId)` once and preserves that runtime state across later snapshots.
+4. `seedCacheFromRest` seeds the session tree from the OpenCode REST API. When `autoRegisterSubagents` is `true`, `autoRegisterSession(info)` is called for each seeded session, ensuring all live OpenCode sessions appear as sidebar channels even before any agent calls `register_connection`. Sessions already present in `registered_connections` are not duplicated.
+5. The session-tree manager emits a full `session-tree-updated` snapshot built from live OpenCode sessions merged with remaining `registered_connections` rows.
+6. The renderer merges that snapshot into its `SessionNode` map, keyed by `openCodeSessionId ?? connectionId`.
+7. For any node that claims a `connectionId`, the renderer loads `getSessionChannelHistory(connectionId)` once and preserves that runtime state across later snapshots.
 
 Direct MCP connections that have no OpenCode session are still represented, but they remain keyed directly by `connectionId`.
 
@@ -302,13 +303,28 @@ A `parentSessionId` on connection A links it as a child of connection B when B's
 
 The main process runs a `session-tree-manager` that polls the OpenCode API every ~2 seconds. It queries all active sessions, builds a depth-annotated tree, and merges the results with `registered_connections` from SQLite. On each poll, it emits a full `session-tree-updated` IPC snapshot to the renderer containing a flat array of `SessionTreeNode` objects (see [`IPC-API.md — Session Tree`](./IPC-API.md#session-tree) for the full type).
 
-The renderer uses `session-tree-updated` to build the parent-child sidebar hierarchy. Sessions that appear in the OpenCode tree but have no `connectionId` (i.e., the subagent has not yet called `register_connection`) are shown as **placeholder** sidebar entries:
+The renderer uses `session-tree-updated` to build the parent-child sidebar hierarchy.
+
+##### Auto-registration (all sessions)
+
+When the `autoRegisterSubagents` setting is `true` (the default), the session-tree manager automatically registers **all** OpenCode sessions — both root sessions and subagent sessions — as sidebar channels. This happens in two places:
+
+- **SSE `session.created.1` events:** When a new session is detected via live SSE, `autoRegisterSession(info)` is called for every session regardless of whether it has a `parentID`. A `registered_connections` row is created with `connectionId = "auto-{sessionId}"` and a placeholder `channelName`.
+- **`seedCacheFromRest` (startup + manual refresh):** When the session tree is seeded from the OpenCode REST API at startup or on user-triggered refresh, `autoRegisterSession(info)` is also called for each session in the results, gated on the `autoRegisterSubagents` toggle.
+
+Because auto-registration fires before the agent connects, sessions initially appear in the sidebar as **placeholder** entries:
 
 - Name: `"Subagent (connecting…)"` (italic, muted)
 - A grey pulsing dot instead of the unread-count badge
-- Indented under the parent entry
+- Indented under the parent entry (for subagent sessions)
 
-When the subagent subsequently calls `register_connection`, the placeholder is replaced by the real connection entry and the pulsing dot disappears. If a direct connection already exists for that `connectionId`, the renderer absorbs its runtime state into the OpenCode-keyed node.
+When an agent subsequently calls `register_connection`, the placeholder is replaced by the real connection entry and the pulsing dot disappears. If a direct connection already exists for that `connectionId`, the renderer absorbs its runtime state into the OpenCode-keyed node.
+
+> **No nudge injection.** Auto-registered sessions do **not** receive an injected message prompting them to call `register_connection`. Agents are not expected to call `register_connection` when auto-registration is active — it remains available as an opt-in tool for setting a custom channel name, linking a `baseDirectory`, or enabling doc indexing and session context injection.
+
+When `autoRegisterSubagents` is `false`, no auto-registration occurs. Sessions that have not called `register_connection` still appear as placeholder entries (created from the session-tree poll), but they will not have a `registered_connections` row until the agent calls `register_connection` manually.
+
+See [SETTINGS-CONFIG.md — autoRegisterSubagents](./SETTINGS-CONFIG.md#autoregistersubagents) for the full setting reference.
 
 ### Failure handling
 
@@ -325,11 +341,18 @@ The injection is handled by the `inject-opencode-message` IPC handler in `ipc-ha
 ```
 Agent                        MCP Server (main)              SQLite                  Renderer
   │                                │                            │                       │
+  │  [autoRegisterSubagents=true]  │                            │                       │
+  │  (session detected via SSE     │                            │                       │
+  │   or seedCacheFromRest)        │                            │                       │
+  │                                │── autoRegisterSession() ──>│ INSERT registered_    │
+  │                                │                            │  connections (auto-*) │
+  │                                │─────── session-tree-updated IPC ──────────────────>│ (placeholder tab)
+  │                                │                            │                       │
   │── POST /mcp (initialize) ─────>│                            │                       │
   │                                │── createSessionChannel() ─>│ INSERT session_channels│
   │                                │<──────────────────────────>│                       │
   │                                │─────── session-channel-created IPC ───────────────>│
-  │                                │─────── connection-opened IPC ─────────────────────>│ (new channel tab)
+  │                                │─────── connection-opened IPC ─────────────────────>│ (placeholder → real tab)
   │<─ 200 (Mcp-Session-Id) ────────│                            │                       │
   │                                │                            │                       │
   │── tool: request_user_input ───>│                            │                       │
@@ -358,6 +381,8 @@ Agent                        MCP Server (main)              SQLite              
   │                                │─────── session-channel-deleted IPC ───────────────>│ (tab removed)
   │<─ 200 ─────────────────────────│                            │                       │
 ```
+
+> The top section of the diagram (auto-registration) shows what happens when `autoRegisterSubagents` is `true` and a session is detected before it connects via MCP. The session appears as a placeholder tab in the sidebar immediately. When the agent subsequently opens an MCP connection, the placeholder transitions to a real channel tab. If the agent calls `register_connection`, the placeholder is replaced with the custom channel name provided.
 
 > Current renderer behavior does not preserve a separate restored-tab state after explicit deletion. `session-channel-deleted` removes the owning node immediately; later `session-tree-updated` snapshots determine what remains visible.
 

@@ -2,6 +2,8 @@ import { app } from 'electron';
 import { join } from 'path';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 
+export type AgentBackend = 'standalone' | 'opencode' | 'claude_sdk';
+
 export interface AppSettings {
   port: number;
   soundEnabled: boolean;
@@ -20,19 +22,25 @@ export interface AppSettings {
    * Default: false (wrapping is on).
    */
   docContextDebug: boolean;
+  /** Active provider backend for session discovery/injection behavior. */
+  agentBackend: AgentBackend;
+  /** When true, child OpenCode sessions are automatically registered as channels in the sidebar. Default: true. */
+  autoRegisterSubagents: boolean;
 }
 
 export const defaultSettings: AppSettings = {
   port: 3100,
   soundEnabled: true,
   launchAtLogin: false,
-  promptTimeoutSeconds: 800,
+  promptTimeoutSeconds: 200,
   autoRestoreSessions: false,
   openCodePort: 4096,
   docIndexingEnabled: true,
   autoStartOpenCode: true,
   autoSyncOpencode: true,
   docContextDebug: false,
+  agentBackend: 'opencode',
+  autoRegisterSubagents: true,
 };
 
 export function getSettingsPath(): string {

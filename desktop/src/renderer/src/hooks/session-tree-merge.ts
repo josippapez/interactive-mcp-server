@@ -20,7 +20,7 @@ export interface SnapshotNode {
   directory: string;
   depth: number;
   connectionId: string | null;
-  agentName: string | null;
+  channelName: string | null;
   hasMcpChannel: boolean;
   baseDirectory: string | null;
   registeredParentSessionId: string | null;
@@ -80,7 +80,7 @@ export function mergeSessionTreeSnapshot(
       id,
       openCodeSessionId: snap.openCodeSessionId,
       openCodeParentId: snap.openCodeParentId,
-      title: snap.agentName ?? snap.title,
+      title: snap.channelName ?? snap.title,
       directory: snap.directory,
       depth: snap.depth,
       connectionId: snap.connectionId,
@@ -90,7 +90,7 @@ export function mergeSessionTreeSnapshot(
       sessionChannel: snap.connectionId
         ? {
             sessionId: snap.connectionId,
-            label: snap.agentName ?? snap.title,
+            label: snap.channelName ?? snap.title,
           }
         : !snap.openCodeParentId
           ? {
@@ -105,6 +105,7 @@ export function mergeSessionTreeSnapshot(
       unreadCount: mergeSource?.unreadCount ?? 0,
       hasPendingPrompt: mergeSource?.hasPendingPrompt ?? false,
       sessionStatuses: mergeSource?.sessionStatuses ?? [],
+      pendingPermissions: mergeSource?.pendingPermissions ?? [],
     });
   }
 

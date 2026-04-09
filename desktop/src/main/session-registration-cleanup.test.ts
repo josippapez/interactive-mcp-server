@@ -16,7 +16,7 @@ describe('pickUnregisteredConnectionsForCleanup', () => {
           isRegistered: false,
         },
       ],
-      { connectionId: 'conn-1', agentName: 'OpenCode - Main Channel' },
+      { connectionId: 'conn-1', channelName: 'OpenCode - Main Channel' },
     );
 
     expect(result).toEqual(['conn-2']);
@@ -36,7 +36,7 @@ describe('pickUnregisteredConnectionsForCleanup', () => {
           isRegistered: false,
         },
       ],
-      { connectionId: 'conn-new', agentName: 'OpenCode - Main Channel' },
+      { connectionId: 'conn-new', channelName: 'OpenCode - Main Channel' },
     );
 
     expect(result).toEqual(['conn-old']);

@@ -10,6 +10,26 @@ type SqlValue = string | number | Uint8Array | null;
 let db: SqlJsDatabase | null = null;
 let dbPath = '';
 
+/**
+ * Schema version — bump this whenever the DDL changes.
+ * On startup: if the stored user_version doesn't match, the database is
+ * dropped and recreated from scratch. This eliminates all incremental
+ * migration code.
+ */
+const SCHEMA_VERSION = 2;
+
+// ─── Public interfaces ─────────────────────────────────────────────────────
+
+export interface SkillOrInstruction {
+  id: number;
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ConversationRecord {
   id: number;
   promptMessage: string;
@@ -31,7 +51,7 @@ export interface SessionChannelMessageRecord {
 
 export interface RegisteredConnection {
   connectionId: string;
-  agentName: string;
+  channelName: string;
   projectName: string;
   baseDirectory: string | null;
   idFilePath: string;
@@ -41,6 +61,8 @@ export interface RegisteredConnection {
   updatedAt: string;
 }
 
+// ─── Internal helpers ──────────────────────────────────────────────────────
+
 function persist(): void {
   if (!db) return;
   const data = db.export();
@@ -48,104 +70,103 @@ function persist(): void {
 }
 
 /**
- * Apply all incremental schema migrations in order. Each block is idempotent:
- * ALTER TABLE probes are guarded by a try/catch SELECT, and data-fix DML is
- * safe to run on already-migrated databases.
- *
- * Add new migrations at the bottom with a comment marking the version/purpose.
- * Do NOT reorder or remove existing blocks.
+ * Create all tables with their final column set.
+ * Called on fresh DBs and after a schema-version mismatch wipe.
  */
-function runMigrations(): void {
+function createTables(): void {
   if (!db) return;
 
-  // v1 — add attachments column to conversations
-  try {
-    db.exec('SELECT attachments FROM conversations LIMIT 0');
-  } catch {
-    db.run('ALTER TABLE conversations ADD COLUMN attachments TEXT');
-  }
+  db.run(`
+    CREATE TABLE IF NOT EXISTS conversations (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      prompt_message     TEXT    NOT NULL,
+      project_name       TEXT    NOT NULL,
+      user_response      TEXT    NOT NULL,
+      predefined_options TEXT,
+      attachments        TEXT,
+      created_at         TEXT    DEFAULT (datetime('now'))
+    )
+  `);
 
-  // v2 — add open_code_session_id column to registered_connections
-  try {
-    db.exec('SELECT open_code_session_id FROM registered_connections LIMIT 0');
-  } catch {
-    db.run(
-      'ALTER TABLE registered_connections ADD COLUMN open_code_session_id TEXT',
-    );
-  }
+  db.run(`
+    CREATE TABLE IF NOT EXISTS session_channels (
+      session_id TEXT     PRIMARY KEY,
+      label      TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-  // v3 — add parent_session_id column to registered_connections
-  try {
-    db.exec('SELECT parent_session_id FROM registered_connections LIMIT 0');
-  } catch {
-    db.run(
-      'ALTER TABLE registered_connections ADD COLUMN parent_session_id TEXT',
-    );
-  }
+  db.run(`
+    CREATE TABLE IF NOT EXISTS session_messages (
+      id         INTEGER  PRIMARY KEY AUTOINCREMENT,
+      session_id TEXT,
+      message    TEXT     NOT NULL,
+      sent       INTEGER  DEFAULT 0,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-  // v4 — clear stale open_code_session_id for connections registered without a
-  // base_directory. These received a stale auto-detected session ID from a
-  // different agent, causing injected messages to land in the wrong session.
-  // With the updated register_connection logic, such channels will no longer
-  // auto-detect at all — this migration retroactively fixes existing records.
-  db.run(
-    `UPDATE registered_connections
-     SET open_code_session_id = NULL, parent_session_id = NULL
-     WHERE (base_directory IS NULL OR base_directory = '')
-       AND open_code_session_id IS NOT NULL`,
-  );
+  db.run(`
+    CREATE TABLE IF NOT EXISTS session_channel_history (
+      id           INTEGER  PRIMARY KEY AUTOINCREMENT,
+      session_id   TEXT     NOT NULL,
+      message_type TEXT     NOT NULL,
+      message_text TEXT     NOT NULL,
+      attachments  TEXT,
+      created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-  // v5 — deduplicate registered_connections by agent_name.
-  // Each restart previously created a new row (new transport UUID → new PK).
-  // Keep the most-recently-updated row per (agent_name, open_code_session_id)
-  // group; delete older duplicates within the same group only.
-  //
-  // NOTE: Two rows with the same agent_name but *different* non-null
-  // open_code_session_ids belong to distinct agent instances (e.g. root and
-  // subagent both named "Claude Code"). They MUST NOT be deduplicated against
-  // each other — doing so would orphan one agent from the snapshot index and
-  // cause its prompts to be silently dropped.
-  db.run(
-    `DELETE FROM registered_connections
-     WHERE connection_id NOT IN (
-       SELECT connection_id FROM registered_connections rc2
-       WHERE rc2.agent_name = registered_connections.agent_name
-         AND (
-           rc2.open_code_session_id IS NULL AND registered_connections.open_code_session_id IS NULL
-           OR rc2.open_code_session_id = registered_connections.open_code_session_id
-         )
-       ORDER BY rc2.updated_at DESC
-       LIMIT 1
-     )`,
-  );
+  db.run(`
+    CREATE TABLE IF NOT EXISTS skills_and_instructions (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      name        TEXT    NOT NULL UNIQUE,
+      type        TEXT    NOT NULL CHECK(type IN ('skill', 'instruction')),
+      description TEXT    NOT NULL,
+      content     TEXT    NOT NULL,
+      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 
-  // v6 — remove orphaned session_channels rows.
-  // These are channels created during handleTransparentReinit (labelled "Agent N")
-  // that were never claimed by a register_connection call, so they have no
-  // matching registered_connections entry and appear as ghost top-level channels.
-  db.run(
-    `DELETE FROM session_channel_history
-     WHERE session_id IN (
-       SELECT sc.session_id FROM session_channels sc
-       LEFT JOIN registered_connections rc ON rc.connection_id = sc.session_id
-       WHERE rc.connection_id IS NULL
-     )`,
-  );
-  db.run(
-    `DELETE FROM session_messages
-     WHERE session_id IN (
-       SELECT sc.session_id FROM session_channels sc
-       LEFT JOIN registered_connections rc ON rc.connection_id = sc.session_id
-       WHERE rc.connection_id IS NULL
-     )`,
-  );
-  db.run(
-    `DELETE FROM session_channels
-     WHERE session_id NOT IN (
-       SELECT connection_id FROM registered_connections
-     )`,
-  );
+  db.run(`
+    CREATE TABLE IF NOT EXISTS registered_connections (
+      connection_id        TEXT     PRIMARY KEY,
+      agent_name           TEXT     NOT NULL,
+      project_name         TEXT     NOT NULL,
+      base_directory       TEXT,
+      id_file_path         TEXT     NOT NULL,
+      open_code_session_id TEXT,
+      parent_session_id    TEXT,
+      created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
 }
+
+/**
+ * Map a raw SQL row (9 columns) from `registered_connections` to a
+ * `RegisteredConnection` object. Column order must match every SELECT that
+ * queries this table:
+ *   0 connection_id, 1 agent_name, 2 project_name, 3 base_directory,
+ *   4 id_file_path, 5 open_code_session_id, 6 parent_session_id,
+ *   7 created_at, 8 updated_at
+ */
+function mapRowToRegisteredConnection(row: SqlValue[]): RegisteredConnection {
+  return {
+    connectionId: row[0] as string,
+    channelName: row[1] as string,
+    projectName: row[2] as string,
+    baseDirectory: row[3] as string | null,
+    idFilePath: row[4] as string,
+    openCodeSessionId: row[5] as string | null,
+    parentSessionId: row[6] as string | null,
+    createdAt: row[7] as string,
+    updatedAt: row[8] as string,
+  };
+}
+
+// ─── Initialization ────────────────────────────────────────────────────────
 
 export async function initDatabase(): Promise<void> {
   dbPath = join(app.getPath('userData'), 'conversations.db');
@@ -159,68 +180,51 @@ export async function initDatabase(): Promise<void> {
     db = new SQL.Database();
   }
 
-  // ── 1. Base DDL ──────────────────────────────────────────────────────────
+  // Check stored schema version against expected version.
+  // If they differ (or the DB is brand new with version 0), wipe and recreate.
+  const storedVersion = getSchemaVersion();
+  if (storedVersion !== SCHEMA_VERSION) {
+    dropAllTables();
+    createTables();
+    setSchemaVersion(SCHEMA_VERSION);
+  } else {
+    // Schema matches — just ensure tables exist (idempotent).
+    createTables();
+  }
 
-  db.run(`
-    CREATE TABLE IF NOT EXISTS conversations (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      prompt_message TEXT NOT NULL,
-      project_name TEXT NOT NULL,
-      user_response TEXT NOT NULL,
-      predefined_options TEXT,
-      attachments TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS session_channels (
-      session_id TEXT PRIMARY KEY,
-      label TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS session_messages (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT,
-      message TEXT NOT NULL,
-      sent INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  db.run(`
-    CREATE TABLE IF NOT EXISTS session_channel_history (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      session_id TEXT NOT NULL,
-      message_type TEXT NOT NULL,
-      message_text TEXT NOT NULL,
-      attachments TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // Registered connections — named agent registrations with ID file tracking
-  db.run(`
-    CREATE TABLE IF NOT EXISTS registered_connections (
-      connection_id TEXT PRIMARY KEY,
-      agent_name TEXT NOT NULL,
-      project_name TEXT NOT NULL,
-      base_directory TEXT,
-      id_file_path TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
-
-  // ── 2. Migrations ─────────────────────────────────────────────────────────
-  runMigrations();
-
-  // ── 3. Persist ────────────────────────────────────────────────────────────
   persist();
 }
+
+function getSchemaVersion(): number {
+  if (!db) return 0;
+  const results = db.exec('PRAGMA user_version');
+  if (results.length === 0 || results[0].values.length === 0) return 0;
+  return (results[0].values[0][0] as number) ?? 0;
+}
+
+function setSchemaVersion(version: number): void {
+  if (!db) return;
+  db.run(`PRAGMA user_version = ${version}`);
+}
+
+function dropAllTables(): void {
+  if (!db) return;
+  // Order matters: drop dependents first to avoid FK issues (though we don't
+  // use FK constraints, this keeps the intent clear).
+  const tables = [
+    'session_messages',
+    'session_channel_history',
+    'session_channels',
+    'registered_connections',
+    'conversations',
+    'skills_and_instructions',
+  ];
+  for (const table of tables) {
+    db.run(`DROP TABLE IF EXISTS ${table}`);
+  }
+}
+
+// ─── Conversations ─────────────────────────────────────────────────────────
 
 export function saveConversation(data: {
   promptMessage: string;
@@ -278,7 +282,48 @@ export function clearHistory(): void {
   persist();
 }
 
-// ─── Session channel functions ───
+// ─── Database reset ────────────────────────────────────────────────────────
+
+export function resetDatabase(): {
+  ok: boolean;
+  clearedTables: string[];
+  removedIdFiles: number;
+} {
+  if (!db) {
+    return { ok: false, clearedTables: [], removedIdFiles: 0 };
+  }
+
+  // Clean up ID files on disk before wiping the table data.
+  let removedIdFiles = 0;
+  const registered = getAllRegisteredConnections();
+  for (const rec of registered) {
+    try {
+      unlinkSync(rec.idFilePath);
+      removedIdFiles += 1;
+    } catch {
+      // file may be missing; ignore
+    }
+  }
+
+  const clearedTables = [
+    'session_messages',
+    'session_channel_history',
+    'session_channels',
+    'registered_connections',
+    'conversations',
+    'skills_and_instructions',
+  ];
+
+  for (const table of clearedTables) {
+    db.run(`DELETE FROM ${table}`);
+  }
+
+  persist();
+
+  return { ok: true, clearedTables, removedIdFiles };
+}
+
+// ─── Session channel functions ─────────────────────────────────────────────
 
 export function createSessionChannel(sessionId: string, label?: string): void {
   if (!db) return;
@@ -433,49 +478,47 @@ export function getActiveSessionChannels(): {
   }));
 }
 
-// ─── Registered connections ───
-
-/**
- * Map a raw SQL row (9 columns) from `registered_connections` to a
- * `RegisteredConnection` object. Column order must match every SELECT that
- * queries this table:
- *   0 connection_id, 1 agent_name, 2 project_name, 3 base_directory,
- *   4 id_file_path, 5 open_code_session_id, 6 parent_session_id,
- *   7 created_at, 8 updated_at
- */
-function mapRowToRegisteredConnection(row: SqlValue[]): RegisteredConnection {
-  return {
-    connectionId: row[0] as string,
-    agentName: row[1] as string,
-    projectName: row[2] as string,
-    baseDirectory: row[3] as string | null,
-    idFilePath: row[4] as string,
-    openCodeSessionId: row[5] as string | null,
-    parentSessionId: row[6] as string | null,
-    createdAt: row[7] as string,
-    updatedAt: row[8] as string,
-  };
-}
+// ─── Registered connections ────────────────────────────────────────────────
 
 /** Path for a per-agent connection ID file in /tmp. */
-export function agentIdFilePath(agentName: string): string {
-  const safe = agentName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-  return join(tmpdir(), `imcp-agent-${safe}.json`);
+export function agentIdFilePath(
+  channelName: string,
+  openCodeSessionId?: string,
+  connectionId?: string,
+): string {
+  const safe = channelName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const identityRaw = openCodeSessionId ?? connectionId ?? 'main';
+  const identity = identityRaw.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  return join(tmpdir(), `imcp-agent-${safe}-${identity}.json`);
 }
 
 /**
  * Upsert a registered connection. Writes the ID file to /tmp and persists
  * the record to the database.
+ *
+ * Deduplication: when the same agent reconnects with a new transport UUID
+ * (new connectionId), existing history and queued messages from old
+ * connections with the same (channelName, openCodeSessionId) pair are re-keyed
+ * to the new connectionId. Old session_channels and registered_connections
+ * rows are then cleaned up.
+ *
+ * Two rows with the same channelName but *different* non-null
+ * openCodeSessionIds are distinct agent instances (e.g. root and subagent
+ * both named "Claude Code") and are NOT deduplicated against each other.
  */
 export function upsertRegisteredConnection(data: {
   connectionId: string;
-  agentName: string;
+  channelName: string;
   projectName: string;
   baseDirectory?: string;
   openCodeSessionId?: string;
   parentSessionId?: string;
 }): string {
-  const idFilePath = agentIdFilePath(data.agentName);
+  const idFilePath = agentIdFilePath(
+    data.channelName,
+    data.openCodeSessionId,
+    data.connectionId,
+  );
 
   // Write ID file so agents can read their connectionId back on restart
   try {
@@ -483,7 +526,7 @@ export function upsertRegisteredConnection(data: {
       idFilePath,
       JSON.stringify({
         connectionId: data.connectionId,
-        agentName: data.agentName,
+        channelName: data.channelName,
         projectName: data.projectName,
         baseDirectory: data.baseDirectory ?? null,
         openCodeSessionId: data.openCodeSessionId ?? null,
@@ -496,31 +539,19 @@ export function upsertRegisteredConnection(data: {
   }
 
   if (db) {
-    // When the same agent reconnects with a new transport UUID (new connectionId),
-    // re-key any existing history and queued messages from the old connection(s)
-    // to the new connectionId so history is preserved across restarts.
-    // session_channels and registered_connections rows for the old IDs are
-    // cleaned up below — only the content tables are migrated, not the PKs.
-    //
-    // IMPORTANT: Only deduplicate rows that represent the *same* agent instance
-    // (same openCodeSessionId, or no openCodeSessionId on either side). Two rows
-    // with different non-null openCodeSessionIds are distinct agent instances that
-    // happen to share a display name (e.g. both root and subagent are named
-    // "Claude Code"). Deleting the root's row would orphan it from the snapshot
-    // index and cause its prompts to be dropped.
-    //
-    // Match condition: both have no session ID, OR both share the same non-null
-    // session ID. Any cross-session combination is left alone.
+    // Match condition: both have no session ID, OR both share the same
+    // non-null session ID. Any cross-session combination is left alone.
     const newSessionId = data.openCodeSessionId ?? null;
     const sameSessionFilter = `(
       (? IS NULL AND open_code_session_id IS NULL)
       OR
       (? IS NOT NULL AND open_code_session_id = ?)
     )`;
-    // dedupeParams for UPDATE queries: [newConnId, agentName, newConnId, newSesId, newSesId, newSesId]
+    // dedupeParams for UPDATE queries:
+    // [newConnId, channelName, newConnId, newSesId, newSesId, newSesId]
     const dedupeParams = [
       data.connectionId,
-      data.agentName,
+      data.channelName,
       data.connectionId,
       newSessionId,
       newSessionId,
@@ -554,7 +585,7 @@ export function upsertRegisteredConnection(data: {
            AND ${sameSessionFilter}
        )`,
       [
-        data.agentName,
+        data.channelName,
         data.connectionId,
         newSessionId,
         newSessionId,
@@ -566,7 +597,7 @@ export function upsertRegisteredConnection(data: {
        WHERE agent_name = ? AND connection_id != ?
          AND ${sameSessionFilter}`,
       [
-        data.agentName,
+        data.channelName,
         data.connectionId,
         newSessionId,
         newSessionId,
@@ -588,7 +619,7 @@ export function upsertRegisteredConnection(data: {
          updated_at = CURRENT_TIMESTAMP`,
       [
         data.connectionId,
-        data.agentName,
+        data.channelName,
         data.projectName,
         data.baseDirectory ?? null,
         idFilePath,
@@ -627,16 +658,16 @@ export function getRegisteredConnection(
   return mapRowToRegisteredConnection(results[0].values[0]);
 }
 
-/** Look up a registered connection by agent name. */
+/** Look up a registered connection by channel name. */
 export function getRegisteredConnectionByName(
-  agentName: string,
+  channelName: string,
 ): RegisteredConnection | null {
   if (!db) return null;
   const results = db.exec(
     `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, created_at, updated_at
      FROM registered_connections WHERE agent_name = ?
      ORDER BY updated_at DESC LIMIT 1`,
-    [agentName],
+    [channelName],
   );
   if (results.length === 0 || results[0].values.length === 0) return null;
   return mapRowToRegisteredConnection(results[0].values[0]);
@@ -666,6 +697,61 @@ export function isOpenCodeSessionClaimed(
 }
 
 /**
+ * Returns the connectionId of the connection that is currently claiming
+ * the given openCodeSessionId, excluding `excludingConnectionId`.
+ *
+ * Returns null if no other connection claims the session.
+ */
+export function getConnectionClaimingSession(
+  openCodeSessionId: string,
+  excludingConnectionId: string,
+): string | null {
+  if (!db) return null;
+  const results = db.exec(
+    `SELECT connection_id FROM registered_connections
+     WHERE open_code_session_id = ? AND connection_id != ?
+     LIMIT 1`,
+    [openCodeSessionId, excludingConnectionId],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return null;
+  return results[0].values[0][0] as string;
+}
+
+/**
+ * Clear the openCodeSessionId for a connection (set to NULL).
+ * Used to release a stale session claim so a new connection can take over.
+ */
+export function clearConnectionOpenCodeSession(connectionId: string): void {
+  if (!db) return;
+  db.run(
+    `UPDATE registered_connections
+     SET open_code_session_id = NULL, updated_at = CURRENT_TIMESTAMP
+     WHERE connection_id = ?`,
+    [connectionId],
+  );
+  persist();
+}
+
+/**
+ * Patch the openCodeSessionId on an existing registered connection.
+ * Used by the SSE auto-bind logic to attach a just-created OpenCode child
+ * session to the MCP connection that was registered within the same time window.
+ */
+export function updateConnectionOpenCodeSession(
+  connectionId: string,
+  openCodeSessionId: string,
+): void {
+  if (!db) return;
+  db.run(
+    `UPDATE registered_connections
+     SET open_code_session_id = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE connection_id = ?`,
+    [openCodeSessionId, connectionId],
+  );
+  persist();
+}
+
+/**
  * Delete a registered connection from the DB and remove the ID file from disk.
  * Called when the user removes a session from the UI.
  */
@@ -683,4 +769,90 @@ export function deleteRegisteredConnection(connectionId: string): void {
     connectionId,
   ]);
   persist();
+}
+
+// ─── Skills & Instructions ─────────────────────────────────────────────────
+
+/**
+ * Map a raw SQL row from `skills_and_instructions` to a `SkillOrInstruction`.
+ * Column order: 0 id, 1 name, 2 type, 3 description, 4 content,
+ *               5 created_at, 6 updated_at
+ */
+function mapRowToSkillOrInstruction(row: SqlValue[]): SkillOrInstruction {
+  return {
+    id: row[0] as number,
+    name: row[1] as string,
+    type: row[2] as 'skill' | 'instruction',
+    description: row[3] as string,
+    content: row[4] as string,
+    createdAt: row[5] as string,
+    updatedAt: row[6] as string,
+  };
+}
+
+/** Upsert a skill or instruction. If a record with the same name exists, it is updated. */
+export function upsertSkillOrInstruction(data: {
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+}): SkillOrInstruction | null {
+  if (!db) return null;
+  db.run(
+    `INSERT INTO skills_and_instructions (name, type, description, content)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(name) DO UPDATE SET
+       type = excluded.type,
+       description = excluded.description,
+       content = excluded.content,
+       updated_at = CURRENT_TIMESTAMP`,
+    [data.name, data.type, data.description, data.content],
+  );
+  persist();
+  return getSkillOrInstructionByName(data.name);
+}
+
+/** List all skills and instructions, optionally filtered by type. */
+export function listSkillsAndInstructions(
+  filterType?: 'skill' | 'instruction',
+): SkillOrInstruction[] {
+  if (!db) return [];
+  const query = filterType
+    ? `SELECT id, name, type, description, content, created_at, updated_at
+       FROM skills_and_instructions WHERE type = ? ORDER BY name ASC`
+    : `SELECT id, name, type, description, content, created_at, updated_at
+       FROM skills_and_instructions ORDER BY name ASC`;
+  const params = filterType ? [filterType] : [];
+  const results = db.exec(query, params);
+  if (results.length === 0) return [];
+  return results[0].values.map(mapRowToSkillOrInstruction);
+}
+
+/** Get a single skill or instruction by name. */
+export function getSkillOrInstructionByName(
+  name: string,
+): SkillOrInstruction | null {
+  if (!db) return null;
+  const results = db.exec(
+    `SELECT id, name, type, description, content, created_at, updated_at
+     FROM skills_and_instructions WHERE name = ?`,
+    [name],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return null;
+  return mapRowToSkillOrInstruction(results[0].values[0]);
+}
+
+/** Delete a skill or instruction by name. Returns true if a row was deleted. */
+export function deleteSkillOrInstruction(name: string): boolean {
+  if (!db) return false;
+  const before = db.exec(
+    `SELECT COUNT(*) FROM skills_and_instructions WHERE name = ?`,
+    [name],
+  );
+  const existed = before.length > 0 && (before[0].values[0][0] as number) > 0;
+  if (existed) {
+    db.run(`DELETE FROM skills_and_instructions WHERE name = ?`, [name]);
+    persist();
+  }
+  return existed;
 }

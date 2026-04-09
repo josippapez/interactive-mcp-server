@@ -6,16 +6,17 @@ This document is the authoritative reference for all MCP tools registered by the
 
 ## Overview
 
-| Tool                                            | Purpose                                                    | Blocking                            |
-| ----------------------------------------------- | ---------------------------------------------------------- | ----------------------------------- |
-| [`register_connection`](#register_connection)   | Establish a named, persistent agent channel in the sidebar | No — returns immediately            |
-| [`request_user_input`](#request_user_input)     | Ask the user a question; await their reply                 | Yes — awaits user response          |
-| [`start_intensive_chat`](#start_intensive_chat) | Open a named multi-turn chat session                       | No — returns session ID immediately |
-| [`ask_intensive_chat`](#ask_intensive_chat)     | Ask a question inside an intensive chat session            | Yes — awaits user response          |
-| [`stop_intensive_chat`](#stop_intensive_chat)   | Close an active intensive chat session                     | No — returns immediately            |
-| [`push_session_status`](#push_session_status)   | Display a live status indicator in the UI                  | No — returns immediately            |
-| [`send_message`](#send_message)                 | Send a persistent informational message into the channel   | No — returns immediately            |
-| [`find_repo_docs`](#find_repo_docs)             | Search repository documentation by query                   | No — returns immediately            |
+| Tool                                                                | Purpose                                                                | Blocking                            |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------- |
+| [`register_connection`](#register_connection)                       | Establish a named, persistent agent channel in the sidebar             | No — returns immediately            |
+| [`request_user_input`](#request_user_input)                         | Ask the user a question; await their reply                             | Yes — awaits user response          |
+| [`start_intensive_chat`](#start_intensive_chat)                     | Open a named multi-turn chat session                                   | No — returns session ID immediately |
+| [`ask_intensive_chat`](#ask_intensive_chat)                         | Ask a question inside an intensive chat session                        | Yes — awaits user response          |
+| [`stop_intensive_chat`](#stop_intensive_chat)                       | Close an active intensive chat session                                 | No — returns immediately            |
+| [`push_session_status`](#push_session_status)                       | Display a live status indicator in the UI                              | No — returns immediately            |
+| [`send_message`](#send_message)                                     | Send a persistent informational message into the channel               | No — returns immediately            |
+| [`find_repo_docs`](#find_repo_docs)                                 | Search repository documentation by query                               | No — returns immediately            |
+| [`manage_skills_and_instructions`](#manage_skills_and_instructions) | Register, list, retrieve, or delete persistent skills and instructions | No — returns immediately            |
 
 ---
 
@@ -33,7 +34,7 @@ This document is the authoritative reference for all MCP tools registered by the
 
 | Parameter           | Type     | Required | Description                                                                                                                                                                                                                         |
 | ------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `agentName`         | `string` | Yes      | Human-readable name for this agent. Prefer unique names per active session (especially for parallel subagents) so channels are easy to distinguish in the sidebar.                                                                  |
+| `channelName`       | `string` | Yes      | Human-readable name for this agent. Prefer unique names per active session (especially for parallel subagents) so channels are easy to distinguish in the sidebar.                                                                  |
 | `projectName`       | `string` | Yes      | Name of the project or workspace this agent is working in.                                                                                                                                                                          |
 | `baseDirectory`     | `string` | No       | Absolute path to the working directory / repository root. Used for file autocomplete and for OpenCode session auto-detection.                                                                                                       |
 | `openCodeSessionId` | `string` | No       | Explicit OpenCode ACP session ID for this agent. When provided, takes precedence over auto-detection entirely. Subagents spawned via the Task tool should pass their own session ID explicitly to ensure correct context injection. |
@@ -45,9 +46,9 @@ Naming note:
 
 #### Return Value
 
-| Scenario | Content                                                                                                                                                                       |
-| -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Always   | `[{ type: 'text', text: '<JSON result string>' }]` where the JSON object contains at least `{ ok, connectionId, agentName, projectName, baseDirectory, idFilePath, message }` |
+| Scenario | Content                                                                                                                                                                         |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Always   | `[{ type: 'text', text: '<JSON result string>' }]` where the JSON object contains at least `{ ok, connectionId, channelName, projectName, baseDirectory, idFilePath, message }` |
 
 The JSON also includes `openCodeSessionId` when an OpenCode session was successfully detected or explicitly provided, and `parentSessionId` when the OpenCode API returned a parent session for this connection.
 
@@ -59,14 +60,14 @@ Identity note:
 
 #### Behavior
 
-1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `agentName`, `projectName`, `baseDirectory`, the detected `openCodeSessionId` (or `null`), and `parentSessionId` (or `null`).
+1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `channelName`, `projectName`, `baseDirectory`, the detected `openCodeSessionId` (or `null`), and `parentSessionId` (or `null`).
 2. Writes a JSON ID file to `/tmp/imcp-agent-<safe-name>.json` so the agent can recover its `connectionId` after a restart without re-registering.
-3. Renames the active channel in the `session_channels` table to `agentName`.
+3. Renames the active channel in the `session_channels` table to `channelName`.
 4. Sends a `connection-registered` IPC event to the renderer so the sidebar updates immediately.
 5. Resolves `openCodeSessionId`: if `openCodeSessionId` was passed explicitly it is used directly; otherwise `autoDetectOpenCodeSession(openCodePort, baseDirectory)` is called, which returns a `DetectedSession | null` object with `{ id: string; parentId: string | null }` (see [OpenCode auto-detection](#opencode-auto-detection)).
 6. Resolves `parentSessionId`: after the `openCodeSessionId` is known (whether explicit or auto-detected), the tool fetches `GET /session` and inspects the matched session's `parentID` field to identify the parent OpenCode session, if any.
 7. Triggers an immediate `session-tree-updated` refresh so the renderer reflects the new registration without waiting for the next poll.
-8. Returns `{ ok: true, connectionId, agentName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId?, parentSessionId? }`.
+8. Returns `{ ok: true, connectionId, channelName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId?, parentSessionId? }`.
 
 This tool has a hard 15-second deadline. If detection or parent lookup does not complete in time, the call fails so the agent can retry cleanly.
 
@@ -90,7 +91,7 @@ The `openCodePort` is configurable in Settings (default `4096`). See [`SETTINGS-
 ```json
 {
   "connectionId": "<uuid>",
-  "agentName": "Claude Code",
+  "channelName": "Claude Code",
   "projectName": "my-project",
   "baseDirectory": "/Users/me/projects/my-project",
   "parentSessionId": "<opencode-parent-session-id-or-null>"
@@ -101,7 +102,7 @@ The `openCodePort` is configurable in Settings (default `4096`). See [`SETTINGS-
 
 ```ts
 const result = await mcp.callTool('register_connection', {
-  agentName: 'Claude Code - my-project',
+  channelName: 'Claude Code - my-project',
   projectName: 'my-project',
   baseDirectory: '/Users/me/projects/my-project',
 });
@@ -109,7 +110,7 @@ const result = await mcp.callTool('register_connection', {
 // {
 //   "ok": true,
 //   "connectionId": "<uuid>",
-//   "agentName": "Claude Code - my-project",
+//   "channelName": "Claude Code - my-project",
 //   "projectName": "my-project",
 //   "baseDirectory": "/Users/me/projects/my-project",
 //   "openCodeSessionId": "ses_abc123",
@@ -544,6 +545,235 @@ const result = await mcp.callTool('find_repo_docs', {
 
 ---
 
+### `manage_skills_and_instructions`
+
+**File:** `desktop/src/main/tools/manage-skills-and-instructions.ts`
+
+**Description:** Manage skills and instructions stored in the Interactive MCP Desktop app. Skills and instructions are persistent knowledge entries that are automatically injected into every new agent session on `register_connection`, making the MCP server self-documenting. Use this tool to register, list, retrieve, or delete skills and instructions.
+
+> **Important notes:**
+>
+> - Skills and instructions are persisted across app restarts — they are stored in the local SQLite database.
+> - ALL registered skills and instructions are automatically injected into every new agent session when `register_connection` is called.
+> - Use `"skill"` type for reusable workflows, patterns, or automation recipes.
+> - Use `"instruction"` type for behavioral rules, policies, or guidelines that agents should follow.
+> - Names must be unique. Registering with an existing name will update (upsert) that entry.
+> - Content supports full Markdown formatting.
+
+#### Parameters
+
+| Parameter     | Type                                        | Required                            | Description                                                                                    |
+| ------------- | ------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `action`      | `'register' \| 'list' \| 'get' \| 'delete'` | Yes                                 | The operation to perform.                                                                      |
+| `name`        | `string`                                    | Yes for `register`, `get`, `delete` | Name/identifier for the skill or instruction. Must be unique across all entries.               |
+| `type`        | `'skill' \| 'instruction'`                  | Yes for `register`                  | Type of entry. `"skill"` for workflows/recipes; `"instruction"` for behavioral rules/policies. |
+| `description` | `string`                                    | Yes for `register`                  | Short summary of what the skill/instruction does.                                              |
+| `content`     | `string`                                    | Yes for `register`                  | Full Markdown content body.                                                                    |
+| `filterType`  | `'skill' \| 'instruction'`                  | No                                  | Optional filter for the `list` action — show only entries of the given type.                   |
+
+#### Actions
+
+##### `register` — Create or update a skill/instruction
+
+Required fields: `name`, `type`, `description`, `content`.
+
+If an entry with the same `name` already exists it is updated in-place (`updated_at` refreshes). After a successful upsert the renderer receives a `skills-updated` event so the UI updates live.
+
+###### Return value (success)
+
+```json
+{
+  "ok": true,
+  "action": "registered",
+  "entry": {
+    "name": "code-review",
+    "type": "skill",
+    "description": "Step-by-step code review workflow",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  },
+  "message": "Successfully registered skill \"code-review\". It will be automatically injected into all new agent sessions."
+}
+```
+
+###### Return value (error — missing fields)
+
+```json
+{
+  "error": "MISSING_FIELDS",
+  "message": "The \"register\" action requires: name, type, description, and content."
+}
+```
+
+###### Return value (error — database not initialized)
+
+```json
+{
+  "error": "DB_ERROR",
+  "message": "Failed to save the skill/instruction. Database may not be initialized."
+}
+```
+
+---
+
+##### `list` — List all registered skills and instructions
+
+Returns summary rows (no `content` field). Optionally filtered by `filterType`.
+
+###### Return value
+
+```json
+{
+  "ok": true,
+  "action": "list",
+  "count": 2,
+  "filter": "skill",
+  "entries": [
+    {
+      "name": "code-review",
+      "type": "skill",
+      "description": "...",
+      "updatedAt": "..."
+    },
+    {
+      "name": "debugging",
+      "type": "skill",
+      "description": "...",
+      "updatedAt": "..."
+    }
+  ]
+}
+```
+
+When `filterType` is omitted, `filter` is `null` and all entries are returned.
+
+---
+
+##### `get` — Retrieve a single skill or instruction by name
+
+Required fields: `name`.
+
+Returns two content blocks: the first is a JSON metadata object; the second is the raw Markdown `content` text.
+
+###### Return value (success) — content array
+
+```json
+[
+  {
+    "type": "text",
+    "text": "{\"ok\":true,\"action\":\"get\",\"entry\":{\"name\":\"code-review\",\"type\":\"skill\",\"description\":\"...\",\"createdAt\":\"...\",\"updatedAt\":\"...\"}}"
+  },
+  {
+    "type": "text",
+    "text": "# Code Review\n\n1. Check for..."
+  }
+]
+```
+
+###### Return value (error — not found)
+
+```json
+{
+  "error": "NOT_FOUND",
+  "message": "No skill or instruction found with name \"code-review\"."
+}
+```
+
+###### Return value (error — missing name)
+
+```json
+{
+  "error": "MISSING_NAME",
+  "message": "The \"get\" action requires a \"name\" parameter."
+}
+```
+
+---
+
+##### `delete` — Remove a skill or instruction by name
+
+Required fields: `name`.
+
+If the entry existed and was deleted, the renderer receives a `skills-updated` event. If no entry matched, `deleted` is `false` but no error is returned — the call succeeds.
+
+###### Return value
+
+```json
+{
+  "ok": true,
+  "action": "delete",
+  "name": "code-review",
+  "deleted": true,
+  "message": "Successfully deleted \"code-review\"."
+}
+```
+
+When the name is not found: `"deleted": false, "message": "No entry found with name \"code-review\" — nothing was deleted."`.
+
+###### Return value (error — missing name)
+
+```json
+{
+  "error": "MISSING_NAME",
+  "message": "The \"delete\" action requires a \"name\" parameter."
+}
+```
+
+---
+
+#### When to use
+
+- When you want to store reusable knowledge that should be available to all agent sessions
+- When you want to register the MCP server's own usage instructions as a plugin
+- When you need to embed workflow recipes, coding standards, or project-specific instructions
+- When you want to list or retrieve previously registered skills and instructions
+- When you want to remove outdated skills or instructions
+
+#### Example (pseudocode)
+
+```ts
+// Register a skill
+await mcp.callTool('manage_skills_and_instructions', {
+  action: 'register',
+  name: 'code-review',
+  type: 'skill',
+  description: 'Step-by-step code review workflow',
+  content: '# Code Review\n\n1. Check for correctness...',
+});
+
+// Register an instruction
+await mcp.callTool('manage_skills_and_instructions', {
+  action: 'register',
+  name: 'typescript-rules',
+  type: 'instruction',
+  description: 'TypeScript coding standards',
+  content: '# TypeScript Rules\n\n- No any types...',
+});
+
+// List all
+await mcp.callTool('manage_skills_and_instructions', { action: 'list' });
+
+// List only skills
+await mcp.callTool('manage_skills_and_instructions', {
+  action: 'list',
+  filterType: 'skill',
+});
+
+// Get one (returns metadata + full content)
+await mcp.callTool('manage_skills_and_instructions', {
+  action: 'get',
+  name: 'code-review',
+});
+
+// Delete one
+await mcp.callTool('manage_skills_and_instructions', {
+  action: 'delete',
+  name: 'code-review',
+});
+```
+
+---
+
 ## Prompt Lifecycle
 
 All blocking tools (`request_user_input`, `ask_intensive_chat`) share the same underlying `promptUser()` function defined in `desktop/src/main/ipc-prompt.ts`. This section documents the complete lifecycle.
@@ -681,18 +911,18 @@ Attachments are supported by both `request_user_input` and `ask_intensive_chat`.
 
 These Electron IPC events are used internally between the main process and the renderer. They are not part of the MCP tool surface but are documented here for completeness.
 
-| Channel                   | Direction       | Payload                                                                                              | Triggered by                                                                                         |
-| ------------------------- | --------------- | ---------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `prompt-request`          | main → renderer | `PromptData`                                                                                         | `request_user_input`, `ask_intensive_chat`                                                           |
-| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                                                                       | User submits a prompt reply                                                                          |
-| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                                                                 | `start_intensive_chat`                                                                               |
-| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                                                                        | `stop_intensive_chat`                                                                                |
-| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                                                                     | `push_session_status`                                                                                |
-| `agent-message`           | main → renderer | `{ connectionId, message }`                                                                          | `send_message`                                                                                       |
-| `connection-registered`   | main → renderer | `{ connectionId, agentName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                                                                |
-| `child-sessions-detected` | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                   | _(Deprecated — replaced by `session-tree-updated`.)_ Formerly fired by the background poller.        |
-| `session-tree-updated`    | main → renderer | `SessionTreeNode[]` (see [`IPC-API.md`](./IPC-API.md#session-tree))                                  | Session-tree manager (~2 s poll) delivers a full snapshot of all OpenCode sessions + MCP connections |
-| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string, attachments?: Attachment[])` (IPC invoke)              | `ChannelComposer` message send when OpenCode session is present                                      |
+| Channel                   | Direction       | Payload                                                                                                | Triggered by                                                                                         |
+| ------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `prompt-request`          | main → renderer | `PromptData`                                                                                           | `request_user_input`, `ask_intensive_chat`                                                           |
+| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                                                                         | User submits a prompt reply                                                                          |
+| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                                                                   | `start_intensive_chat`                                                                               |
+| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                                                                          | `stop_intensive_chat`                                                                                |
+| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                                                                       | `push_session_status`                                                                                |
+| `agent-message`           | main → renderer | `{ connectionId, message }`                                                                            | `send_message`                                                                                       |
+| `connection-registered`   | main → renderer | `{ connectionId, channelName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                                                                |
+| `child-sessions-detected` | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                     | _(Deprecated — replaced by `session-tree-updated`.)_ Formerly fired by the background poller.        |
+| `session-tree-updated`    | main → renderer | `SessionTreeNode[]` (see [`IPC-API.md`](./IPC-API.md#session-tree))                                    | Session-tree manager (~2 s poll) delivers a full snapshot of all OpenCode sessions + MCP connections |
+| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string, attachments?: Attachment[])` (IPC invoke)                | `ChannelComposer` message send when OpenCode session is present                                      |
 
 ---
 

@@ -1,26 +1,15 @@
 type InjectionResult = { ok: boolean; error?: string; noReply?: boolean };
 
-export function shouldDetectSessionForInjection(input: {
-  openCodeSessionId: string | null;
-  isDirectConnection: boolean;
-}): boolean {
-  return !input.openCodeSessionId && input.isDirectConnection;
-}
-
 /**
- * Resolves the OpenCode session ID to use as the injection target.
- *
- * Always injects into the node's own OpenCode session so that subagent
- * channels route messages directly to the subagent, not to the parent.
+ * Result shape returned by the main-process session resolver.
+ * Mirrors the preload `resolveSession` / `reResolveSession` return type.
  */
-export function resolveInjectionSessionId(
-  node: {
-    openCodeSessionId: string | null;
-  } | null,
-): string | null {
-  if (!node) return null;
-  return node.openCodeSessionId;
-}
+export type ResolvedSessionResult = {
+  providerSessionId: string | null;
+  parentSessionId: string | null;
+  resolvedVia: 'cached' | 're-resolved' | 'ambiguous' | 'none';
+  message?: string;
+};
 
 export function isRecoverableInjectionError(error?: string): boolean {
   if (!error) return false;
@@ -43,14 +32,30 @@ export function buildInjectionSuccessStatus(
     : 'Context injected (no reply)';
 }
 
+/**
+ * Inject a message into a provider session with one retry on stale-session errors.
+ *
+ * Flow:
+ * 1. Try injecting with `initialSessionId`.
+ * 2. If the error is recoverable (404 / expired / closed), call `reResolve`
+ *    to clear the cached session and re-detect via the main-process resolver.
+ * 3. If re-resolution yields a different session ID, retry injection once.
+ *
+ * The `reResolve` dependency maps to `window.api.reResolveSession()` which
+ * clears the DB cache and re-resolves atomically on the main process.
+ */
 export async function injectWithSessionRecovery(
   input: {
     initialSessionId: string;
+    connectionId: string;
     baseDirectory?: string;
   },
   deps: {
     inject: (sessionId: string) => Promise<InjectionResult>;
-    detect: (baseDirectory?: string) => Promise<string | null>;
+    reResolve: (
+      connectionId: string,
+      baseDirectory?: string,
+    ) => Promise<ResolvedSessionResult>;
   },
 ): Promise<{
   ok: boolean;
@@ -78,8 +83,17 @@ export async function injectWithSessionRecovery(
     };
   }
 
-  const detected = await deps.detect(input.baseDirectory);
-  if (!detected || detected === input.initialSessionId) {
+  // Stale session — ask the main-process resolver to clear cache and re-detect.
+  const resolved = await deps.reResolve(
+    input.connectionId,
+    input.baseDirectory,
+  );
+
+  if (
+    !resolved.providerSessionId ||
+    resolved.providerSessionId === input.initialSessionId
+  ) {
+    // Re-resolution found the same (or no) session — nothing to retry with.
     return {
       ok: false,
       retried: false,
@@ -88,12 +102,12 @@ export async function injectWithSessionRecovery(
     };
   }
 
-  const second = await deps.inject(detected);
+  const second = await deps.inject(resolved.providerSessionId);
   if (second.ok) {
     return {
       ok: true,
       retried: true,
-      sessionId: detected,
+      sessionId: resolved.providerSessionId,
       ...(second.noReply !== undefined ? { noReply: second.noReply } : {}),
     };
   }
@@ -101,7 +115,7 @@ export async function injectWithSessionRecovery(
   return {
     ok: false,
     retried: true,
-    sessionId: detected,
+    sessionId: resolved.providerSessionId,
     error: second.error,
   };
 }

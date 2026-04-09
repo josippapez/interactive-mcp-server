@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 
 type AppSettings = {
   port: number;
@@ -11,6 +11,8 @@ type AppSettings = {
   autoStartOpenCode: boolean;
   autoSyncOpencode: boolean;
   docContextDebug: boolean;
+  agentBackend: 'standalone' | 'opencode' | 'claude_sdk';
+  autoRegisterSubagents: boolean;
 };
 
 export default function SettingsView(): React.ReactElement {
@@ -18,12 +20,22 @@ export default function SettingsView(): React.ReactElement {
   const [initialSettings, setInitialSettings] = useState<AppSettings | null>(
     null,
   );
-  const [saved, setSaved] = useState(false);
+  const [saveState, setSaveState] = useState<
+    'idle' | 'saving' | 'saved' | 'error'
+  >('idle');
   const [portInput, setPortInput] = useState('');
   const [timeoutInput, setTimeoutInput] = useState('');
   const [openCodePortInput, setOpenCodePortInput] = useState('');
   const [syncStatus, setSyncStatus] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [dbResetStatus, setDbResetStatus] = useState<string | null>(null);
+  const [providerStatusText, setProviderStatusText] = useState<string | null>(
+    null,
+  );
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveStatusTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
 
   useEffect(() => {
     window.api.getSettings().then((s) => {
@@ -35,35 +47,29 @@ export default function SettingsView(): React.ReactElement {
     });
   }, []);
 
-  if (!settings || !initialSettings) {
-    return (
-      <div className="flex items-center justify-center h-full text-[var(--color-text-faint)] text-sm">
-        Loading settings…
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!settings) return;
+    let isActive = true;
 
-  const save = async (): Promise<void> => {
-    const port = parseInt(portInput, 10);
-    if (isNaN(port) || port < 1024 || port > 65535) return;
-    const timeout = parseInt(timeoutInput, 10);
-    if (isNaN(timeout) || timeout < 0) return;
-    const openCodePort = parseInt(openCodePortInput, 10);
-    if (isNaN(openCodePort) || openCodePort < 1024 || openCodePort > 65535)
-      return;
+    window.api
+      .getProviderStatus()
+      .then((status) => {
+        if (!isActive) return;
+        if (status.backend === 'claude_sdk' && status.runtime) {
+          setProviderStatusText(status.runtime.message);
+          return;
+        }
+        setProviderStatusText(null);
+      })
+      .catch(() => {
+        if (!isActive) return;
+        setProviderStatusText(null);
+      });
 
-    const updated = {
-      ...settings,
-      port,
-      promptTimeoutSeconds: timeout,
-      openCodePort,
+    return () => {
+      isActive = false;
     };
-    await window.api.saveSettings(updated);
-    setSettings(updated);
-    setInitialSettings(updated);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
-  };
+  }, [settings]);
 
   const port = parseInt(portInput, 10);
   const timeout = parseInt(timeoutInput, 10);
@@ -74,16 +80,105 @@ export default function SettingsView(): React.ReactElement {
     !isNaN(openCodePort) && openCodePort >= 1024 && openCodePort <= 65535;
   const isFormValid = isPortValid && isTimeoutValid && isOpenCodePortValid;
   const isDirty =
-    portInput !== String(initialSettings.port) ||
-    timeoutInput !== String(initialSettings.promptTimeoutSeconds) ||
-    openCodePortInput !== String(initialSettings.openCodePort) ||
-    settings.soundEnabled !== initialSettings.soundEnabled ||
-    settings.launchAtLogin !== initialSettings.launchAtLogin ||
-    settings.autoRestoreSessions !== initialSettings.autoRestoreSessions ||
-    settings.docIndexingEnabled !== initialSettings.docIndexingEnabled ||
-    settings.autoStartOpenCode !== initialSettings.autoStartOpenCode ||
-    settings.autoSyncOpencode !== initialSettings.autoSyncOpencode ||
-    settings.docContextDebug !== initialSettings.docContextDebug;
+    initialSettings !== null &&
+    settings !== null &&
+    (portInput !== String(initialSettings.port) ||
+      timeoutInput !== String(initialSettings.promptTimeoutSeconds) ||
+      openCodePortInput !== String(initialSettings.openCodePort) ||
+      settings.soundEnabled !== initialSettings.soundEnabled ||
+      settings.launchAtLogin !== initialSettings.launchAtLogin ||
+      settings.autoRestoreSessions !== initialSettings.autoRestoreSessions ||
+      settings.docIndexingEnabled !== initialSettings.docIndexingEnabled ||
+      settings.autoStartOpenCode !== initialSettings.autoStartOpenCode ||
+      settings.autoSyncOpencode !== initialSettings.autoSyncOpencode ||
+      settings.docContextDebug !== initialSettings.docContextDebug ||
+      settings.agentBackend !== initialSettings.agentBackend ||
+      settings.autoRegisterSubagents !== initialSettings.autoRegisterSubagents);
+
+  const nextSettings =
+    settings !== null && isFormValid
+      ? {
+          ...settings,
+          port,
+          promptTimeoutSeconds: timeout,
+          openCodePort,
+        }
+      : null;
+
+  useEffect(() => {
+    if (!nextSettings) {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      return;
+    }
+
+    if (!isDirty) {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      if (saveState === 'saved') {
+        saveStatusTimeoutRef.current = setTimeout(
+          () => setSaveState('idle'),
+          1500,
+        );
+      }
+      return;
+    }
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    saveTimeoutRef.current = setTimeout(() => {
+      setSaveState('saving');
+
+      void window.api
+        .saveSettings(nextSettings)
+        .then(() => {
+          setSettings(nextSettings);
+          setInitialSettings(nextSettings);
+          setSaveState('saved');
+
+          if (saveStatusTimeoutRef.current) {
+            clearTimeout(saveStatusTimeoutRef.current);
+          }
+          saveStatusTimeoutRef.current = setTimeout(
+            () => setSaveState('idle'),
+            1500,
+          );
+        })
+        .catch(() => setSaveState('error'));
+    }, 600);
+
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+    };
+  }, [isDirty, isFormValid, nextSettings, saveState]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  if (!settings || !initialSettings) {
+    return (
+      <div className="flex items-center justify-center h-full text-[var(--color-text-faint)] text-sm">
+        Loading settings…
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-y-auto p-6">
@@ -156,13 +251,13 @@ export default function SettingsView(): React.ReactElement {
           )}
         </div>
 
-        {/* OpenCode API Port */}
+        {/* Provider API Port */}
         <div>
           <label
             htmlFor="settings-opencode-port"
             className="block text-sm text-[var(--color-text-muted)] mb-1"
           >
-            OpenCode API Port
+            Provider API Port
           </label>
           <input
             id="settings-opencode-port"
@@ -179,11 +274,50 @@ export default function SettingsView(): React.ReactElement {
             id="settings-opencode-port-help"
             className="text-xs text-[var(--color-text-faint)] mt-1"
           >
-            Port used to inject context into OpenCode sessions.
+            Port used to inject context into provider sessions.
           </p>
           {!isOpenCodePortValid && (
             <p className="text-xs text-[var(--color-error)] mt-1">
               Enter a valid port between 1024 and 65535.
+            </p>
+          )}
+        </div>
+
+        {/* Agent backend */}
+        <div>
+          <label
+            htmlFor="settings-agent-backend"
+            className="block text-sm text-[var(--color-text-muted)] mb-1"
+          >
+            Agent Backend
+          </label>
+          <select
+            id="settings-agent-backend"
+            value={settings.agentBackend}
+            onChange={(e) =>
+              setSettings((s) =>
+                s
+                  ? {
+                      ...s,
+                      agentBackend: e.target
+                        .value as AppSettings['agentBackend'],
+                    }
+                  : s,
+              )
+            }
+            className="w-56 bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-tool)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-agent)]"
+          >
+            <option value="standalone">Standalone (no provider)</option>
+            <option value="opencode">OpenCode (provider)</option>
+            <option value="claude_sdk">Claude SDK (planned)</option>
+          </select>
+          <p className="text-xs text-[var(--color-text-faint)] mt-1">
+            Controls provider-specific session hierarchy and context injection
+            behavior. Standalone uses plain Interactive MCP mode.
+          </p>
+          {providerStatusText && (
+            <p className="text-xs text-[var(--color-warning,orange)] mt-1">
+              {providerStatusText}
             </p>
           )}
         </div>
@@ -362,11 +496,11 @@ export default function SettingsView(): React.ReactElement {
           </button>
         </div>
 
-        {/* Auto-start OpenCode serve */}
+        {/* Auto-start provider server */}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-[var(--color-text-muted)]">
-              Auto-start OpenCode server
+              Auto-start provider server
             </p>
             <p className="text-xs text-[var(--color-text-faint)]">
               Automatically run{' '}
@@ -385,7 +519,7 @@ export default function SettingsView(): React.ReactElement {
             }
             role="switch"
             aria-checked={settings.autoStartOpenCode}
-            aria-label="Auto-start OpenCode server"
+            aria-label="Auto-start provider server"
             className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
               settings.autoStartOpenCode
                 ? 'bg-[var(--color-agent)]'
@@ -400,11 +534,11 @@ export default function SettingsView(): React.ReactElement {
           </button>
         </div>
 
-        {/* Auto-sync OpenCode config */}
+        {/* Auto-sync provider config */}
         <div className="flex items-center justify-between">
           <div>
             <p className="text-sm text-[var(--color-text-muted)]">
-              Auto-sync OpenCode config
+              Auto-sync provider config
             </p>
             <p className="text-xs text-[var(--color-text-faint)]">
               Write a remote MCP entry into{' '}
@@ -423,7 +557,7 @@ export default function SettingsView(): React.ReactElement {
             }
             role="switch"
             aria-checked={settings.autoSyncOpencode}
-            aria-label="Auto-sync OpenCode config"
+            aria-label="Auto-sync provider config"
             className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
               settings.autoSyncOpencode
                 ? 'bg-[var(--color-agent)]'
@@ -438,8 +572,57 @@ export default function SettingsView(): React.ReactElement {
           </button>
         </div>
 
+        {/* Auto-register sessions */}
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm text-[var(--color-text-muted)]">
+              Auto-register sessions
+            </p>
+            <p className="text-xs text-[var(--color-text-faint)]">
+              Automatically add all OpenCode sessions (root and subagents) as
+              channels in the sidebar
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() =>
+              setSettings((s) =>
+                s
+                  ? { ...s, autoRegisterSubagents: !s.autoRegisterSubagents }
+                  : s,
+              )
+            }
+            role="switch"
+            aria-checked={settings.autoRegisterSubagents}
+            aria-label="Auto-register sessions"
+            className={`relative w-10 h-5 rounded-full transition-colors shrink-0 ${
+              settings.autoRegisterSubagents
+                ? 'bg-[var(--color-agent)]'
+                : 'bg-[var(--color-border)]'
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                settings.autoRegisterSubagents
+                  ? 'translate-x-5'
+                  : 'translate-x-0'
+              }`}
+            />
+          </button>
+        </div>
+
         {/* Manual sync button */}
         <div>
+          <p className="text-xs text-[var(--color-text-faint)] mb-2">
+            Registration is not automatic. After changing settings or restarting
+            OpenCode, click this button to register the desktop app as an MCP
+            server and update{' '}
+            <code className="text-[var(--color-text-muted)]">
+              opencode.json
+            </code>{' '}
+            with the correct timeout. Then restart OpenCode for the new config
+            to take effect.
+          </p>
           <button
             type="button"
             onClick={async () => {
@@ -454,18 +637,18 @@ export default function SettingsView(): React.ReactElement {
             }}
             className="px-3 py-1.5 rounded-sm border border-[var(--color-border)] text-sm text-[var(--color-text-muted)] hover:bg-[var(--color-surface-hover)] transition-colors"
           >
-            Register with OpenCode
+            Register provider config
           </button>
           {syncStatus && (
             <div className="text-xs mt-1 space-y-0.5" aria-live="polite">
               {syncStatus.includes('register=registered') && (
                 <p className="text-[var(--color-agent)]">
-                  Registered with OpenCode
+                  Provider registration succeeded
                 </p>
               )}
               {syncStatus.includes('register=unreachable') && (
                 <p className="text-[var(--color-warning,orange)]">
-                  OpenCode not reachable
+                  Provider not reachable
                 </p>
               )}
               {syncStatus.includes('config=updated') && (
@@ -492,26 +675,62 @@ export default function SettingsView(): React.ReactElement {
           )}
         </div>
 
-        {/* Save button */}
         <div className="pt-4">
-          <button
-            type="button"
-            onClick={save}
-            disabled={!isFormValid || !isDirty}
-            className="px-4 py-1.5 rounded-sm bg-[var(--color-agent)] text-black text-sm font-medium hover:opacity-90 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saved ? '✓ Saved' : 'Save Settings'}
-          </button>
           <p
             className="text-xs text-[var(--color-text-faint)] mt-2"
             aria-live="polite"
           >
-            {saved
-              ? 'Settings saved.'
-              : isDirty
-                ? 'Unsaved changes.'
-                : 'No unsaved changes.'}
+            {saveState === 'saving'
+              ? 'Saving changes...'
+              : saveState === 'saved'
+                ? 'Settings saved.'
+                : saveState === 'error'
+                  ? 'Failed to save settings.'
+                  : !isFormValid
+                    ? 'Fix invalid values to save changes.'
+                    : isDirty
+                      ? 'Changes auto-save after a short pause.'
+                      : 'All changes saved automatically.'}
           </p>
+        </div>
+
+        {/* Database reset */}
+        <div className="pt-4 border-t border-[var(--color-border)]">
+          <button
+            type="button"
+            onClick={async () => {
+              const confirmed = window.confirm(
+                'This will clear all session channels, registered connections, queued messages, and conversation history. Continue?',
+              );
+              if (!confirmed) return;
+
+              try {
+                const result = await window.api.resetDatabase();
+                if (result.ok) {
+                  setDbResetStatus(
+                    `Database cleared (${result.clearedTables.length} tables, ${result.removedIdFiles} id files removed).`,
+                  );
+                } else {
+                  setDbResetStatus('Database reset failed.');
+                }
+              } catch {
+                setDbResetStatus('Database reset failed.');
+              }
+              setTimeout(() => setDbResetStatus(null), 4000);
+            }}
+            className="px-3 py-1.5 rounded-sm border border-[var(--color-error)] text-sm text-[var(--color-error)] hover:bg-[var(--color-surface-hover)] transition-colors"
+          >
+            Clear Local Database
+          </button>
+          <p className="text-xs text-[var(--color-text-faint)] mt-1">
+            Use only for recovery/debugging. This permanently deletes local
+            desktop session state and history.
+          </p>
+          {dbResetStatus && (
+            <p className="text-xs text-[var(--color-warning,orange)] mt-1">
+              {dbResetStatus}
+            </p>
+          )}
         </div>
 
         {/* Info */}
@@ -528,7 +747,7 @@ export default function SettingsView(): React.ReactElement {
           <div className="mt-3">
             <div className="flex items-center gap-2 mb-1">
               <p className="text-xs text-[var(--color-text-faint)]">
-                OpenCode config snippet:
+                Provider config snippet:
               </p>
               <button
                 type="button"

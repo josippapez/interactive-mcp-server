@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Attachment, SessionNode } from '../types';
-import { resolveInjectionSessionId } from './opencode-injection-flow';
 import { getRemoveSessionTarget } from './remove-session-target';
 import { useChannelHistory } from './useChannelHistory';
 import { useIpcListeners } from './useIpcListeners';
-import { useOpenCodeInjection } from './useOpenCodeInjection';
+import { useProviderInjection } from './useProviderInjection';
 
 export function useConnections(onActivatePromptTab: () => void) {
   // ---------------------------------------------------------------------------
@@ -174,6 +173,57 @@ export function useConnections(onActivatePromptTab: () => void) {
     };
   }, []);
 
+  const clearAllNodes = useCallback(() => {
+    setNodes(new Map());
+  }, []);
+
+  // ---------------------------------------------------------------------------
+  // Startup — recover any prompts that arrived while the renderer was restarting.
+  // Main-process memory (activePrompts map) survives renderer restarts; we ask
+  // for the live set on mount and inject them into matching nodes.
+  // ---------------------------------------------------------------------------
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async (): Promise<void> => {
+      const activePrompts = await window.api.getActivePrompts?.();
+      if (!activePrompts || activePrompts.length === 0 || cancelled) return;
+
+      for (const promptData of activePrompts) {
+        // Skip prompts that have already expired.
+        if (promptData.expiresAt > 0 && Date.now() >= promptData.expiresAt) {
+          continue;
+        }
+
+        setNodes((prev) => {
+          let nodeId: string | null = null;
+          for (const [id, node] of prev) {
+            if (node.connectionId === promptData.connectionId) {
+              nodeId = id;
+              break;
+            }
+          }
+          if (!nodeId) return prev;
+          const node = prev.get(nodeId)!;
+          // Don't overwrite a fresher prompt that's already in state.
+          if (node.prompt && node.prompt.id !== promptData.id) return prev;
+          const next = new Map(prev);
+          next.set(nodeId, {
+            ...node,
+            prompt: promptData,
+            hasPendingPrompt: true,
+            baseDirectory: promptData.baseDirectory ?? node.baseDirectory,
+          });
+          return next;
+        });
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // When new nodes arrive via the session-tree snapshot, apply any buffered
   // startup history that couldn't be applied earlier (node didn't exist yet).
   const applyStartupHistoryBuffer = useCallback((connectionId: string) => {
@@ -211,11 +261,12 @@ export function useConnections(onActivatePromptTab: () => void) {
     setActiveId,
     setClientInfo,
     withNode,
+    clearAllNodes,
     loadChannelHistory,
     applyStartupHistoryBuffer,
   });
 
-  const { inject } = useOpenCodeInjection(nodes, withNode);
+  const { inject } = useProviderInjection(nodes, withNode);
 
   // ---------------------------------------------------------------------------
   // Side-effects
@@ -296,59 +347,82 @@ export function useConnections(onActivatePromptTab: () => void) {
 
   const handleSubmit = useCallback(
     (answer: string, attachments?: Attachment[]) => {
-      if (!activeNode?.prompt) return;
-      const { prompt } = activeNode;
-      appendAnswerMessage(activeNode.id, answer, attachments);
+      // Always read activeId from the ref (not the closure) so we get the
+      // freshest channel at call-time. This prevents two classes of stale
+      // closure bugs:
+      // 1. A prompt-clear IPC zeroing activeNode.prompt before the user clicks Send.
+      // 2. activeId still pointing at the parent session when the user is
+      //    replying to a subagent's prompt — which would route doc-context
+      //    injection into the parent's OpenCode session instead of the subagent's.
+      const currentId = activeIdRef.current;
+      const currentNode = currentId
+        ? (nodesRef.current.get(currentId) ?? null)
+        : null;
+      if (!currentNode?.prompt) return;
+      appendAnswerMessage(currentNode.id, answer, attachments);
 
-      // Inject relevant doc context into OpenCode before the prompt response
-      // so the agent receives repo docs in its context window.
-      const openCodeSessionId = resolveInjectionSessionId(activeNode);
-      if (
-        openCodeSessionId &&
-        activeNode.connectionId &&
-        activeNode.docContextEnabled !== false
-      ) {
+      // Inject relevant doc context into the provider session before the
+      // prompt response so the agent receives repo docs in its context window.
+      // Uses the node's in-memory openCodeSessionId (kept in sync by the
+      // main-process resolver via the DB).
+      const {
+        openCodeSessionId,
+        connectionId,
+        docContextEnabled,
+        baseDirectory,
+      } = currentNode;
+      if (openCodeSessionId && connectionId && docContextEnabled !== false) {
         void window.api.injectDocContext?.(
-          activeNode.connectionId,
+          connectionId,
           openCodeSessionId,
           answer,
-          activeNode.baseDirectory ?? undefined,
+          baseDirectory ?? undefined,
         );
       }
 
       window.api.sendPromptResponse({
-        id: prompt.id,
+        id: currentNode.prompt.id,
         answer,
         attachments: attachments?.length ? attachments : undefined,
       });
     },
-    [activeNode, appendAnswerMessage],
+    [appendAnswerMessage],
   );
 
   const handleSelectOption = useCallback(
     (option: string) => {
-      if (!activeNode?.prompt) return;
-      const { prompt } = activeNode;
-      appendAnswerMessage(activeNode.id, option);
+      // Same ref-first pattern as handleSubmit — read activeId from the ref
+      // so injection always targets the correct subagent session.
+      const currentId = activeIdRef.current;
+      const currentNode = currentId
+        ? (nodesRef.current.get(currentId) ?? null)
+        : null;
+      if (!currentNode?.prompt) return;
+      appendAnswerMessage(currentNode.id, option);
 
-      // Inject relevant doc context into OpenCode before the prompt response.
-      const openCodeSessionId = resolveInjectionSessionId(activeNode);
-      if (
-        openCodeSessionId &&
-        activeNode.connectionId &&
-        activeNode.docContextEnabled !== false
-      ) {
+      // Inject relevant doc context into the provider session before the
+      // prompt response. Uses the node's in-memory openCodeSessionId.
+      const {
+        openCodeSessionId,
+        connectionId,
+        docContextEnabled,
+        baseDirectory,
+      } = currentNode;
+      if (openCodeSessionId && connectionId && docContextEnabled !== false) {
         void window.api.injectDocContext?.(
-          activeNode.connectionId,
+          connectionId,
           openCodeSessionId,
           option,
-          activeNode.baseDirectory ?? undefined,
+          baseDirectory ?? undefined,
         );
       }
 
-      window.api.sendPromptResponse({ id: prompt.id, answer: option });
+      window.api.sendPromptResponse({
+        id: currentNode.prompt.id,
+        answer: option,
+      });
     },
-    [activeNode, appendAnswerMessage],
+    [appendAnswerMessage],
   );
 
   const handleDismissSession = useCallback((connectionId: string) => {
@@ -420,6 +494,47 @@ export function useConnections(onActivatePromptTab: () => void) {
     [],
   );
 
+  const handleReplyPermission = useCallback(
+    (
+      sessionID: string,
+      requestId: string,
+      reply: 'once' | 'always' | 'reject',
+    ) => {
+      // Optimistically remove from state immediately so the UI clears at once
+      setNodes((prev) => {
+        let nodeId: string | null = null;
+        for (const [id, node] of prev) {
+          if (node.pendingPermissions?.some((p) => p.requestId === requestId)) {
+            nodeId = id;
+            break;
+          }
+        }
+        if (!nodeId) return prev;
+        const node = prev.get(nodeId)!;
+        const next = new Map(prev);
+        next.set(nodeId, {
+          ...node,
+          pendingPermissions: node.pendingPermissions.filter(
+            (p) => p.requestId !== requestId,
+          ),
+        });
+        return next;
+      });
+      void window.api.replyPermission(sessionID, requestId, reply);
+    },
+    [setNodes],
+  );
+
+  /** Jump focus to the first channel that has a pending prompt, if any. */
+  const jumpToFirstPendingPrompt = useCallback(() => {
+    for (const [id, node] of nodesRef.current) {
+      if (node.hasPendingPrompt) {
+        setActiveId(id);
+        return;
+      }
+    }
+  }, []);
+
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
@@ -444,5 +559,7 @@ export function useConnections(onActivatePromptTab: () => void) {
     handleClearChannelMessages,
     handleRemoveSession,
     handleToggleDocContext,
+    handleReplyPermission,
+    jumpToFirstPendingPrompt,
   };
 }

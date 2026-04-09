@@ -41,6 +41,29 @@ describe('opencode-auto-register', () => {
     expect(register).toHaveBeenCalledWith({
       appPort: 3100,
       openCodePort: 4096,
+      promptTimeoutSeconds: undefined,
+    });
+  });
+
+  it('passes promptTimeoutSeconds when getPromptTimeoutSeconds is provided', async () => {
+    register.mockResolvedValue({ status: 'registered' });
+
+    startAutoRegisterWithOpenCode(
+      {
+        getAppPort: () => 3100,
+        getOpenCodePort: () => 4096,
+        getPromptTimeoutSeconds: () => 1201,
+      },
+      register,
+    );
+
+    await Promise.resolve();
+
+    expect(register).toHaveBeenCalledTimes(1);
+    expect(register).toHaveBeenCalledWith({
+      appPort: 3100,
+      openCodePort: 4096,
+      promptTimeoutSeconds: 1201,
     });
   });
 

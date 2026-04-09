@@ -51,6 +51,8 @@ Interactive MCP Desktop is an Electron application that acts as a desktop UI for
 │  │     stop_intensive_chat                                 │     │
 │  │   • push_session_status                                 │     │
 │  │   • send_message                                        │     │
+│  │   • find_repo_docs                                      │     │
+│  │   • manage_skills_and_instructions                      │     │
 │  └──────────────┬──────────────────────────────────────────┘     │
 │                 │ promptUser()                                    │
 │  ┌──────────────▼──────────────────────────────────────────┐     │
@@ -172,6 +174,11 @@ Registers all `ipcMain.handle` (request/response) and `ipcMain.on` (fire-and-for
 | `queue-session-message` (on)     | Persist a user-typed outbound message to `session_messages`                                                                  |
 | `inject-opencode-message`        | POST noReply message to OpenCode ACP `http://localhost:{openCodePort}/session/{id}/message`                                  |
 | `sync-opencode-config`           | Re-register with OpenCode and update fallback config file                                                                    |
+| `upsert-skill-or-instruction`    | Upsert a skill/instruction row in `skills_and_instructions`; fires `skills-updated` to renderer on success                   |
+| `list-skills-and-instructions`   | Return all rows from `skills_and_instructions`, optionally filtered by type                                                  |
+| `get-skill-or-instruction`       | Return a single row from `skills_and_instructions` by `name`                                                                 |
+| `delete-skill-or-instruction`    | Delete a row from `skills_and_instructions` by `name`; fires `skills-updated` to renderer if a row was deleted               |
+| `export-skills-markdown`         | Show a native save dialog; write all skills/instructions as a formatted Markdown file; return `{ saved, filePath? }`         |
 
 #### `database.ts`
 
@@ -211,6 +218,16 @@ session_channel_history (
   message_text TEXT NOT NULL,
   attachments  TEXT,                -- JSON array or NULL
   created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+
+skills_and_instructions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT    NOT NULL UNIQUE,
+  type        TEXT    NOT NULL,     -- 'skill' | 'instruction'
+  description TEXT    NOT NULL,
+  content     TEXT    NOT NULL,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 )
 
 registered_connections (
@@ -262,14 +279,15 @@ Creates a system tray icon using a 16×16 chat-bubble PNG encoded as a data URL.
 
 Each file exports one `register*` function called during `createMcpServerWithTools`. Tools are registered on the per-connection `McpServer` instance.
 
-| File                     | Tool(s) registered                                                  | Description                                                                                                                                                                                                                                                                                                 |
-| ------------------------ | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `register-connection.ts` | `register_connection`                                               | Registers a named agent channel. Upserts `registered_connections` in SQLite, writes a `/tmp` ID file, renames the session channel, auto-detects the active OpenCode session, and triggers doc indexing if enabled. Sends `connection-registered` IPC to the renderer.                                       |
-| `request-user-input.ts`  | `request_user_input`                                                | Sends a prompt to the user and waits for the typed response. Supports predefined option chips, file attachments, and `baseDirectory` for autocomplete.                                                                                                                                                      |
-| `notification.ts`        | `message_complete_notification`                                     | Fires a native OS notification (Electron `Notification` API). Non-blocking.                                                                                                                                                                                                                                 |
-| `intensive-chat.ts`      | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` | A three-tool lifecycle for persistent multi-question sessions. `start_intensive_chat` generates a UUID session ID and sends `intensive-chat-start` to the renderer. `ask_intensive_chat` routes through `promptUser` like a normal prompt. `stop_intensive_chat` cleans up and sends `intensive-chat-stop`. |
-| `session-channel.ts`     | `push_session_status`, `send_message`                               | `push_session_status`: sends a non-blocking status badge update to the renderer via `webContents.send('session-status-update', ...)`. `send_message`: persists an `agent_message` row to `session_channel_history` and fires `agent-message` IPC to the renderer for live display. Both return immediately. |
-| `find-repo-docs.ts`      | `find_repo_docs`                                                    | Searches repository documentation using hybrid keyword + semantic search. Returns ranked file paths, scores, and snippet previews. Only available when the agent registered with a `baseDirectory`. See [`TOOLS.md`](./TOOLS.md#find_repo_docs).                                                            |
+| File                                | Tool(s) registered                                                  | Description                                                                                                                                                                                                                                                                                                                                                                 |
+| ----------------------------------- | ------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `register-connection.ts`            | `register_connection`                                               | Registers a named agent channel. Upserts `registered_connections` in SQLite, writes a `/tmp` ID file, renames the session channel, auto-detects the active OpenCode session, and triggers doc indexing if enabled. Sends `connection-registered` IPC to the renderer.                                                                                                       |
+| `request-user-input.ts`             | `request_user_input`                                                | Sends a prompt to the user and waits for the typed response. Supports predefined option chips, file attachments, and `baseDirectory` for autocomplete.                                                                                                                                                                                                                      |
+| `notification.ts`                   | `message_complete_notification`                                     | Fires a native OS notification (Electron `Notification` API). Non-blocking.                                                                                                                                                                                                                                                                                                 |
+| `intensive-chat.ts`                 | `start_intensive_chat`, `ask_intensive_chat`, `stop_intensive_chat` | A three-tool lifecycle for persistent multi-question sessions. `start_intensive_chat` generates a UUID session ID and sends `intensive-chat-start` to the renderer. `ask_intensive_chat` routes through `promptUser` like a normal prompt. `stop_intensive_chat` cleans up and sends `intensive-chat-stop`.                                                                 |
+| `session-channel.ts`                | `push_session_status`, `send_message`                               | `push_session_status`: sends a non-blocking status badge update to the renderer via `webContents.send('session-status-update', ...)`. `send_message`: persists an `agent_message` row to `session_channel_history` and fires `agent-message` IPC to the renderer for live display. Both return immediately.                                                                 |
+| `find-repo-docs.ts`                 | `find_repo_docs`                                                    | Searches repository documentation using hybrid keyword + semantic search. Returns ranked file paths, scores, and snippet previews. Only available when the agent registered with a `baseDirectory`. See [`TOOLS.md`](./TOOLS.md#find_repo_docs).                                                                                                                            |
+| `manage-skills-and-instructions.ts` | `manage_skills_and_instructions`                                    | Register, list, retrieve, or delete persistent skills and instructions stored in the `skills_and_instructions` SQLite table. All entries are automatically injected into new agent sessions at `register_connection` time. Fires `skills-updated` IPC to the renderer after successful `register` or `delete`. See [`TOOLS.md`](./TOOLS.md#manage_skills_and_instructions). |
 
 ---
 
@@ -281,19 +299,20 @@ The preload script runs in a Node.js context with access to `ipcRenderer`, but i
 
 **Event listeners** (`ipcRenderer.on` wrappers) — the renderer registers callbacks once; the main process fires events at any time:
 
-| Channel                            | Direction       | Purpose                                                                                                                            |
-| ---------------------------------- | --------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `prompt-request`                   | main → renderer | Deliver a new prompt to display                                                                                                    |
-| `intensive-chat-start`             | main → renderer | Signal an intensive chat session has started                                                                                       |
-| `intensive-chat-stop`              | main → renderer | Signal an intensive chat session has ended                                                                                         |
-| `connection-opened`                | main → renderer | A new MCP session was established                                                                                                  |
-| `connection-closed`                | main → renderer | An MCP session was torn down                                                                                                       |
-| `session-channel-created`          | main → renderer | A session channel was created via REST API                                                                                         |
-| `session-channel-deleted`          | main → renderer | A session channel was deleted                                                                                                      |
-| `session-channel-messages-cleared` | main → renderer | Messages for a session were cleared                                                                                                |
-| `session-status-update`            | main → renderer | Agent pushed a status badge update                                                                                                 |
-| `connection-registered`            | main → renderer | `register_connection` completed; carries `connectionId`, `agentName`, `projectName`, `baseDirectory`, `label`, `openCodeSessionId` |
-| `agent-message`                    | main → renderer | `send_message` called; carries `{ connectionId, message }` for live render and persistence                                         |
+| Channel                            | Direction       | Purpose                                                                                                                              |
+| ---------------------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `prompt-request`                   | main → renderer | Deliver a new prompt to display                                                                                                      |
+| `intensive-chat-start`             | main → renderer | Signal an intensive chat session has started                                                                                         |
+| `intensive-chat-stop`              | main → renderer | Signal an intensive chat session has ended                                                                                           |
+| `connection-opened`                | main → renderer | A new MCP session was established                                                                                                    |
+| `connection-closed`                | main → renderer | An MCP session was torn down                                                                                                         |
+| `session-channel-created`          | main → renderer | A session channel was created via REST API                                                                                           |
+| `session-channel-deleted`          | main → renderer | A session channel was deleted                                                                                                        |
+| `session-channel-messages-cleared` | main → renderer | Messages for a session were cleared                                                                                                  |
+| `session-status-update`            | main → renderer | Agent pushed a status badge update                                                                                                   |
+| `connection-registered`            | main → renderer | `register_connection` completed; carries `connectionId`, `channelName`, `projectName`, `baseDirectory`, `label`, `openCodeSessionId` |
+| `agent-message`                    | main → renderer | `send_message` called; carries `{ connectionId, message }` for live render and persistence                                           |
+| `skills-updated`                   | main → renderer | A skill/instruction was created, updated, or deleted (by the MCP tool or renderer IPC). Renderer should re-fetch the list.           |
 
 **IPC invocations and sends** (`ipcRenderer.invoke` / `ipcRenderer.send` wrappers) — the renderer initiates these calls:
 
@@ -454,8 +473,9 @@ index.ts
  │       ├─ request-user-input.ts  (registerRequestUserInput)
  │       ├─ notification.ts        (registerNotificationTool)
  │       ├─ intensive-chat.ts      (registerIntensiveChatTools)
- │       ├─ session-channel.ts     (registerSessionChannelTools, registerSendMessageTool)
- │       └─ find-repo-docs.ts      (registerFindRepoDocsTool)
+│       ├─ session-channel.ts     (registerSessionChannelTools, registerSendMessageTool)
+│       ├─ find-repo-docs.ts      (registerFindRepoDocsTool)
+│       └─ manage-skills-and-instructions.ts (registerManageSkillsAndInstructionsTool)
  ├─ opencode-server.ts   (startOpenCodeServer, stopOpenCodeServer)
   ├─ session-tree-manager.ts (startSessionTreeManager, stopSessionTreeManager)
   ├─ session-reconnect.ts   (startup reconciliation for persisted registrations)

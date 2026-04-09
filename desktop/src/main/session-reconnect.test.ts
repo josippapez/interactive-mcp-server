@@ -24,7 +24,7 @@ const mockFetchSessions = fetchAllOpenCodeSessions as Mock;
 function makeConnection(
   overrides: Partial<{
     connectionId: string;
-    agentName: string;
+    channelName: string;
     projectName: string;
     baseDirectory: string | null;
     idFilePath: string;
@@ -36,7 +36,7 @@ function makeConnection(
 ) {
   return {
     connectionId: overrides.connectionId ?? 'conn-1',
-    agentName: overrides.agentName ?? 'agent-1',
+    channelName: overrides.channelName ?? 'agent-1',
     projectName: overrides.projectName ?? 'project-1',
     baseDirectory:
       'baseDirectory' in overrides ? overrides.baseDirectory : '/tmp/proj',

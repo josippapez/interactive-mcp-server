@@ -87,18 +87,25 @@ describe('injectOpenCodeMessage', () => {
     expect(lastRequest!.url).toBe('/session/session-abc/message');
   });
 
-  it('always sends noReply: true', async () => {
+  it('sends noReply: true by default', async () => {
     await injectOpenCodeMessage('s1', 'test', undefined, serverPort);
 
     const body = JSON.parse(lastRequest!.body);
     expect(body.noReply).toBe(true);
   });
 
-  it('sends noReply: true when explicitly set', async () => {
-    await injectOpenCodeMessage('s1', 'test', undefined, serverPort);
+  it('sends noReply: false when explicitly set to false', async () => {
+    await injectOpenCodeMessage(
+      's1',
+      'test',
+      undefined,
+      serverPort,
+      undefined,
+      false,
+    );
 
     const body = JSON.parse(lastRequest!.body);
-    expect(body.noReply).toBe(true);
+    expect(body.noReply).toBe(false);
   });
 
   it('includes the message text in parts[0].text', async () => {
@@ -207,4 +214,47 @@ describe('injectOpenCodeMessage', () => {
 
     expect(lastRequest!.headers['content-type']).toBe('application/json');
   });
+
+  it('returns ok: false when the server accepts the connection but never responds (timeout)', async () => {
+    // Simulate a server that accepts the TCP connection and receives the
+    // request but never writes a response — this is the "app restarting"
+    // scenario where the HTTP port is bound but the handler is frozen.
+    let hangServer: http.Server | null = null;
+    let hangPort = 0;
+
+    await new Promise<void>((resolve) => {
+      hangServer = http.createServer((_req, _res) => {
+        // Intentionally do nothing — never respond
+      });
+      hangServer.listen(0, '127.0.0.1', () => {
+        const addr = hangServer!.address();
+        if (addr && typeof addr === 'object') {
+          hangPort = addr.port;
+        }
+        resolve();
+      });
+    });
+
+    try {
+      const start = Date.now();
+      const result = await injectOpenCodeMessage(
+        's1',
+        'test',
+        undefined,
+        hangPort,
+      );
+      const elapsed = Date.now() - start;
+
+      // Must return an error (not hang indefinitely)
+      expect(result.ok).toBe(false);
+      expect(result.error).toBeDefined();
+      // Must time out within the 5s deadline (give 1s extra for CI jitter)
+      expect(elapsed).toBeLessThan(6_000);
+    } finally {
+      await new Promise<void>((resolve) => {
+        if (hangServer) hangServer.close(() => resolve());
+        else resolve();
+      });
+    }
+  }, 10_000);
 });

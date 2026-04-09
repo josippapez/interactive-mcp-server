@@ -11,6 +11,9 @@
 /** Default name for the MCP server entry in OpenCode. */
 const DEFAULT_MCP_NAME = 'interactive-desktop';
 
+/** Extra timeout buffer to outlast the user prompt window. */
+const MCP_TIMEOUT_BUFFER_MS = 60_000;
+
 /** Default timeout for the registration HTTP call (ms). */
 const DEFAULT_TIMEOUT_MS = 3000;
 
@@ -23,6 +26,12 @@ export interface McpRegistrationOptions {
   timeoutMs?: number;
   /** Name for the MCP server entry in OpenCode (default "interactive-desktop"). */
   mcpName?: string;
+  /** Prompt timeout in seconds used to derive the MCP transport timeout. */
+  promptTimeoutSeconds?: number;
+}
+
+function computeRemoteMcpTimeout(promptTimeoutSeconds = 800): number {
+  return promptTimeoutSeconds * 1000 + MCP_TIMEOUT_BUFFER_MS;
 }
 
 export interface McpRegistrationResult {
@@ -116,6 +125,7 @@ export async function registerMcpWithOpenCode(
     openCodePort,
     timeoutMs = DEFAULT_TIMEOUT_MS,
     mcpName = DEFAULT_MCP_NAME,
+    promptTimeoutSeconds,
   } = options;
 
   const url = `http://localhost:${openCodePort}/mcp`;
@@ -124,6 +134,7 @@ export async function registerMcpWithOpenCode(
     config: {
       type: 'remote',
       url: `http://localhost:${appPort}/mcp`,
+      timeout: computeRemoteMcpTimeout(promptTimeoutSeconds),
     },
   });
 

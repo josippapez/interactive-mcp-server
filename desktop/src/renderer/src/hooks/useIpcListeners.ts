@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { ChannelMessage, SessionNode } from '../types';
+import type { ChannelMessage, SessionNode, PendingPermission } from '../types';
 import { mergeSessionTreeSnapshot } from './session-tree-merge';
 
 type SessionStatusType = 'info' | 'working' | 'success' | 'error';
@@ -30,6 +30,7 @@ export function createDirectConnectionNode(
     hasPendingPrompt: false,
     sessionChannel,
     sessionStatuses: [],
+    pendingPermissions: [],
     baseDirectory: null,
   };
 }
@@ -47,6 +48,7 @@ type Opts = {
     React.SetStateAction<{ model?: string; mode?: string } | undefined>
   >;
   withNode: (id: string, updater: (node: SessionNode) => SessionNode) => void;
+  clearAllNodes: () => void;
   loadChannelHistory: (connectionId: string) => Promise<void>;
   /** Apply any startup-buffered history for a connectionId once its node arrives. */
   applyStartupHistoryBuffer: (connectionId: string) => void;
@@ -59,9 +61,18 @@ type Opts = {
 export function findKeyByConnectionId(
   nodes: Map<string, SessionNode>,
   connectionId: string,
+  openCodeSessionId?: string | null,
 ): string | null {
   for (const [id, node] of nodes) {
     if (node.connectionId === connectionId) return id;
+  }
+  // Fallback: after app restart the node's connectionId may still be
+  // "auto-{sessionId}" or a stale UUID from the previous MCP session.
+  // The openCodeSessionId (resolved from the DB by the main process)
+  // matches the map key for OpenCode-backed nodes, so a direct lookup
+  // resolves the correct node without a full scan.
+  if (openCodeSessionId && nodes.has(openCodeSessionId)) {
+    return openCodeSessionId;
   }
   return null;
 }
@@ -74,8 +85,9 @@ export function findKeyByConnectionId(
 export function findPromptTargetKey(
   nodes: Map<string, SessionNode>,
   connectionId: string,
+  openCodeSessionId?: string | null,
 ): string | null {
-  return findKeyByConnectionId(nodes, connectionId);
+  return findKeyByConnectionId(nodes, connectionId, openCodeSessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -129,6 +141,7 @@ export function useIpcListeners({
   setActiveId,
   setClientInfo,
   withNode,
+  clearAllNodes,
   loadChannelHistory,
   applyStartupHistoryBuffer,
 }: Opts): void {
@@ -239,7 +252,11 @@ export function useIpcListeners({
 
       setNodes((prev) => {
         // Route the prompt to the originating agent's own channel.
-        const nodeId = findPromptTargetKey(prev, data.connectionId);
+        const nodeId = findPromptTargetKey(
+          prev,
+          data.connectionId,
+          data.openCodeSessionId,
+        );
         if (!nodeId) return prev;
         const node = prev.get(nodeId)!;
         const next = new Map(prev);
@@ -262,10 +279,20 @@ export function useIpcListeners({
               ? node.unreadCount
               : node.unreadCount + 1,
         });
-        // Always switch the active channel to the node that has the prompt,
-        // so subagent prompts are visible in their own channel immediately.
-        setActiveId(nodeId);
-        activateRef.current();
+
+        // Only switch the active channel to this prompt's node if the
+        // currently active channel does NOT already have a pending prompt.
+        // This prevents a new prompt from agent B from hijacking focus
+        // while the user is in the middle of answering agent A's prompt.
+        const currentActiveNode = activeConnectionRef.current
+          ? prev.get(activeConnectionRef.current)
+          : null;
+        const activeChannelHasPrompt = Boolean(currentActiveNode?.prompt);
+        if (!activeChannelHasPrompt) {
+          setActiveId(nodeId);
+          activateRef.current();
+        }
+
         return next;
       });
     });
@@ -273,7 +300,11 @@ export function useIpcListeners({
     // Clear the prompt UI when a prompt times out (main process sends this).
     window.api.onPromptClear?.((data) => {
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(prev, data.connectionId);
+        const nodeId = findKeyByConnectionId(
+          prev,
+          data.connectionId,
+          data.openCodeSessionId,
+        );
         if (!nodeId) return prev;
         const node = prev.get(nodeId)!;
         // Only clear if it's still the same prompt (guard against races).
@@ -286,7 +317,11 @@ export function useIpcListeners({
 
     window.api.onIntensiveChatStart?.((data) => {
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(prev, data.connectionId);
+        const nodeId = findKeyByConnectionId(
+          prev,
+          data.connectionId,
+          data.openCodeSessionId,
+        );
         if (!nodeId) return prev;
         const next = new Map(prev);
         next.set(nodeId, {
@@ -301,7 +336,11 @@ export function useIpcListeners({
 
     window.api.onIntensiveChatStop?.((data) => {
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(prev, data.connectionId);
+        const nodeId = findKeyByConnectionId(
+          prev,
+          data.connectionId,
+          data.openCodeSessionId,
+        );
         if (!nodeId) return prev;
         const next = new Map(prev);
         next.set(nodeId, { ...prev.get(nodeId)!, activeSession: null });
@@ -314,7 +353,11 @@ export function useIpcListeners({
     // ------------------------------------------------------------------
     window.api.onSessionStatusUpdate?.((data) => {
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(prev, data.connectionId);
+        const nodeId = findKeyByConnectionId(
+          prev,
+          data.connectionId,
+          data.openCodeSessionId,
+        );
         if (!nodeId) return prev;
         const node = prev.get(nodeId)!;
         const next = new Map(prev);
@@ -336,7 +379,11 @@ export function useIpcListeners({
     window.api.onAgentMessage?.((data) => {
       // Use setNodes to find the map key, then use appendMessage for the actual update.
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(prev, data.connectionId);
+        const nodeId = findKeyByConnectionId(
+          prev,
+          data.connectionId,
+          data.openCodeSessionId,
+        );
         if (nodeId) {
           // Schedule the message append outside this updater.
           setTimeout(() => {
@@ -348,6 +395,61 @@ export function useIpcListeners({
           }, 0);
         }
         return prev;
+      });
+    });
+
+    // ------------------------------------------------------------------
+    // Permission events — push/remove pending permission requests
+    // ------------------------------------------------------------------
+    window.api.onPermissionAsked?.((data) => {
+      setNodes((prev) => {
+        const nodeId = findKeyByConnectionId(
+          prev,
+          data.connectionId,
+          data.openCodeSessionId,
+        );
+        if (!nodeId) return prev;
+        const node = prev.get(nodeId)!;
+        const permission: PendingPermission = {
+          requestId: data.requestId,
+          sessionID: data.sessionID,
+          permission: data.permission,
+          patterns: data.patterns,
+          always: data.always,
+          tool: data.tool,
+          metadata: data.metadata,
+        };
+        const next = new Map(prev);
+        next.set(nodeId, {
+          ...node,
+          pendingPermissions: [...node.pendingPermissions, permission],
+        });
+        return next;
+      });
+    });
+
+    window.api.onPermissionReplied?.((data) => {
+      setNodes((prev) => {
+        // Find the node that owns the session
+        let nodeId: string | null = null;
+        for (const [id, node] of prev) {
+          if (
+            node.pendingPermissions.some((p) => p.requestId === data.requestID)
+          ) {
+            nodeId = id;
+            break;
+          }
+        }
+        if (!nodeId) return prev;
+        const node = prev.get(nodeId)!;
+        const next = new Map(prev);
+        next.set(nodeId, {
+          ...node,
+          pendingPermissions: node.pendingPermissions.filter(
+            (p) => p.requestId !== data.requestID,
+          ),
+        });
+        return next;
       });
     });
 
@@ -414,6 +516,11 @@ export function useIpcListeners({
       });
     });
 
+    window.api.onDatabaseReset?.(() => {
+      clearAllNodes();
+      setActiveId(null);
+    });
+
     // No cleanup needed — app-lifetime registrations.
     // listenersRegistered guard prevents double-registration in StrictMode.
   }, [
@@ -424,5 +531,6 @@ export function useIpcListeners({
     setClientInfo,
     setNodes,
     withNode,
+    clearAllNodes,
   ]);
 }

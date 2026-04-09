@@ -34,7 +34,8 @@ export default function ShortcutHelpModal({
         <div className="space-y-2 text-xs">
           <ShortcutRow keys="⌘ + Enter" desc="Submit response" />
           <ShortcutRow keys="⌘ + 1" desc="Prompts tab" />
-          <ShortcutRow keys="⌘ + 2" desc="Settings tab" />
+          <ShortcutRow keys="⌘ + 2" desc="Skills tab" />
+          <ShortcutRow keys="⌘ + 3" desc="Settings tab" />
           <ShortcutRow keys="⌘ + /" desc="Toggle this help" />
           <ShortcutRow keys="⌘ + V" desc="Paste image" />
           <ShortcutRow keys="Esc" desc="Close autocomplete / overlay" />

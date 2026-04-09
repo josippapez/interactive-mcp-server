@@ -9,8 +9,13 @@ export type PromptRequest = {
   connectionId: string;
   connectionName: string;
   timeoutSeconds: number;
+  /** Unix ms timestamp when this prompt expires. 0 means no timeout. */
+  expiresAt: number;
   baseDirectory?: string;
   clientInfo?: { model?: string; mode?: string };
+  /** OpenCode session ID resolved from the DB — used by the renderer to find
+   *  the correct channel node after app restart when connectionIds may have changed. */
+  openCodeSessionId?: string | null;
 };
 
 export type Attachment = {
@@ -50,16 +55,46 @@ export type AppSettings = {
   autoStartOpenCode: boolean;
   autoSyncOpencode: boolean;
   docContextDebug: boolean;
+  agentBackend: 'standalone' | 'opencode' | 'claude_sdk';
+  autoRegisterSubagents: boolean;
+};
+
+export type ProviderStatus = {
+  backend: 'standalone' | 'opencode' | 'claude_sdk';
+  effectiveMode: 'standalone' | 'opencode' | 'claude_sdk' | 'standalone_compat';
+  supportsSessionHierarchy: boolean;
+  supportsProviderInjection: boolean;
+  runtime: {
+    available: boolean;
+    reason?: 'module_not_installed' | 'missing_api_key' | 'init_failed';
+    message: string;
+  } | null;
+};
+
+export type SkillOrInstructionRecord = {
+  id: number;
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 const api = {
   // Prompt handling
   onPromptRequest: (callback: (data: PromptRequest) => void) => {
+    ipcRenderer.removeAllListeners('prompt-request');
     ipcRenderer.on('prompt-request', (_event, data) => callback(data));
   },
   onPromptClear: (
-    callback: (data: { id: string; connectionId: string }) => void,
+    callback: (data: {
+      id: string;
+      connectionId: string;
+      openCodeSessionId?: string | null;
+    }) => void,
   ) => {
+    ipcRenderer.removeAllListeners('prompt-clear');
     ipcRenderer.on('prompt-clear', (_event, data) => callback(data));
   },
   sendPromptResponse: (response: {
@@ -76,13 +111,20 @@ const api = {
       sessionId: string;
       title: string;
       connectionId: string;
+      openCodeSessionId?: string | null;
     }) => void,
   ) => {
+    ipcRenderer.removeAllListeners('intensive-chat-start');
     ipcRenderer.on('intensive-chat-start', (_event, data) => callback(data));
   },
   onIntensiveChatStop: (
-    callback: (data: { sessionId: string; connectionId: string }) => void,
+    callback: (data: {
+      sessionId: string;
+      connectionId: string;
+      openCodeSessionId?: string | null;
+    }) => void,
   ) => {
+    ipcRenderer.removeAllListeners('intensive-chat-stop');
     ipcRenderer.on('intensive-chat-stop', (_event, data) => callback(data));
   },
 
@@ -100,13 +142,14 @@ const api = {
         updatedAt: number;
         depth: number;
         connectionId: string | null;
-        agentName: string | null;
+        channelName: string | null;
         hasMcpChannel: boolean;
         baseDirectory: string | null;
         registeredParentSessionId: string | null;
       }[],
     ) => void,
   ) => {
+    ipcRenderer.removeAllListeners('session-tree-updated');
     ipcRenderer.on('session-tree-updated', (_event, data) => callback(data));
   },
 
@@ -121,9 +164,11 @@ const api = {
       label?: string;
     }) => void,
   ) => {
+    ipcRenderer.removeAllListeners('connection-opened');
     ipcRenderer.on('connection-opened', (_event, data) => callback(data));
   },
   onConnectionClosed: (callback: (data: { connectionId: string }) => void) => {
+    ipcRenderer.removeAllListeners('connection-closed');
     ipcRenderer.on('connection-closed', (_event, data) => callback(data));
   },
 
@@ -131,6 +176,11 @@ const api = {
   getHistory: (): Promise<ConversationRecord[]> =>
     ipcRenderer.invoke('get-history'),
   clearHistory: (): Promise<boolean> => ipcRenderer.invoke('clear-history'),
+  resetDatabase: (): Promise<{
+    ok: boolean;
+    clearedTables: string[];
+    removedIdFiles: number;
+  }> => ipcRenderer.invoke('reset-database'),
 
   // Settings
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
@@ -144,9 +194,36 @@ const api = {
   // App version
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('get-app-version'),
 
+  // Provider backend status/capabilities
+  getProviderStatus: (): Promise<ProviderStatus> =>
+    ipcRenderer.invoke('get-provider-status'),
+
   // Detect the active OpenCode session on demand (best-effort)
   detectOpenCodeSession: (baseDirectory?: string): Promise<string | null> =>
     ipcRenderer.invoke('detect-opencode-session', baseDirectory),
+
+  // Provider-agnostic session resolution (connectionId -> provider session ID)
+  resolveSession: (
+    connectionId: string,
+    baseDirectory?: string,
+  ): Promise<{
+    providerSessionId: string | null;
+    parentSessionId: string | null;
+    resolvedVia: 'cached' | 're-resolved' | 'ambiguous' | 'none';
+    message?: string;
+  }> => ipcRenderer.invoke('resolve-session', { connectionId, baseDirectory }),
+
+  // Re-resolve a stale session (clears cache, retries once)
+  reResolveSession: (
+    connectionId: string,
+    baseDirectory?: string,
+  ): Promise<{
+    providerSessionId: string | null;
+    parentSessionId: string | null;
+    resolvedVia: 'cached' | 're-resolved' | 'ambiguous' | 'none';
+    message?: string;
+  }> =>
+    ipcRenderer.invoke('re-resolve-session', { connectionId, baseDirectory }),
 
   // File search for autocomplete
   searchFiles: (baseDirectory: string, query: string): Promise<string[]> =>
@@ -166,6 +243,10 @@ const api = {
   } | null> => ipcRenderer.invoke('read-file-for-attachment', filePath),
   forceTerminateChat: (connectionId: string): Promise<void> =>
     ipcRenderer.invoke('force-terminate-chat', connectionId),
+
+  // Return all currently-active prompts so the renderer can recover them on startup.
+  getActivePrompts: (): Promise<PromptRequest[]> =>
+    ipcRenderer.invoke('get-active-prompts'),
   dismissSession: (connectionId: string): Promise<void> =>
     ipcRenderer.invoke('dismiss-session', connectionId),
   restartMcpServer: (): Promise<boolean> =>
@@ -207,6 +288,24 @@ const api = {
       attachments,
     }),
 
+  injectClaudeMessage: (
+    connectionId: string,
+    message: string,
+    baseDirectory?: string,
+    attachments?: Attachment[],
+  ): Promise<{
+    ok: boolean;
+    sessionId?: string;
+    responseText?: string;
+    error?: string;
+  }> =>
+    ipcRenderer.invoke('inject-claude-message', {
+      connectionId,
+      message,
+      baseDirectory,
+      attachments,
+    }),
+
   // Inject relevant repository doc context into OpenCode before a user message
   injectDocContext: (
     connectionId: string,
@@ -227,8 +326,13 @@ const api = {
 
   // Fired when the agent sends a message via send_message tool
   onAgentMessage: (
-    callback: (data: { connectionId: string; message: string }) => void,
+    callback: (data: {
+      connectionId: string;
+      message: string;
+      openCodeSessionId?: string | null;
+    }) => void,
   ): void => {
+    ipcRenderer.removeAllListeners('agent-message');
     ipcRenderer.on('agent-message', (_event, data) => callback(data));
   },
 
@@ -236,6 +340,7 @@ const api = {
   onSessionChannelCreated: (
     callback: (data: { sessionId: string; label?: string }) => void,
   ): void => {
+    ipcRenderer.removeAllListeners('session-channel-created');
     ipcRenderer.on('session-channel-created', (_event, data) => callback(data));
   },
 
@@ -243,14 +348,27 @@ const api = {
   onSessionChannelDeleted: (
     callback: (data: { sessionId: string }) => void,
   ): void => {
+    ipcRenderer.removeAllListeners('session-channel-deleted');
     ipcRenderer.on('session-channel-deleted', (_event, data) => callback(data));
   },
   onSessionChannelMessagesCleared: (
     callback: (data: { sessionId: string }) => void,
   ): void => {
+    ipcRenderer.removeAllListeners('session-channel-messages-cleared');
     ipcRenderer.on('session-channel-messages-cleared', (_event, data) =>
       callback(data),
     );
+  },
+
+  onDatabaseReset: (
+    callback: (data: {
+      ok: boolean;
+      clearedTables: string[];
+      removedIdFiles: number;
+    }) => void,
+  ): void => {
+    ipcRenderer.removeAllListeners('database-reset');
+    ipcRenderer.on('database-reset', (_event, data) => callback(data));
   },
 
   // Agent-pushed status updates
@@ -259,10 +377,81 @@ const api = {
       connectionId: string;
       status: string;
       type: string;
+      openCodeSessionId?: string | null;
     }) => void,
   ): void => {
+    ipcRenderer.removeAllListeners('session-status-update');
     ipcRenderer.on('session-status-update', (_event, data) => callback(data));
   },
+
+  // Permission events from OpenCode bus
+  onPermissionAsked: (
+    callback: (data: {
+      connectionId: string;
+      requestId: string;
+      sessionID: string;
+      permission: string;
+      patterns?: string[];
+      always?: boolean;
+      tool?: { messageID: string; callID: string };
+      metadata?: Record<string, unknown>;
+      openCodeSessionId?: string | null;
+    }) => void,
+  ): void => {
+    ipcRenderer.removeAllListeners('permission-asked');
+    ipcRenderer.on('permission-asked', (_event, data) => callback(data));
+  },
+
+  onPermissionReplied: (
+    callback: (data: {
+      sessionID: string;
+      requestID: string;
+      reply: 'once' | 'always' | 'reject';
+    }) => void,
+  ): void => {
+    ipcRenderer.removeAllListeners('permission-replied');
+    ipcRenderer.on('permission-replied', (_event, data) => callback(data));
+  },
+
+  replyPermission: (
+    sessionID: string,
+    requestID: string,
+    reply: 'once' | 'always' | 'reject',
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('reply-permission', { sessionID, requestID, reply }),
+
+  // Skills & Instructions CRUD
+  upsertSkillOrInstruction: (data: {
+    name: string;
+    type: 'skill' | 'instruction';
+    description: string;
+    content: string;
+  }): Promise<SkillOrInstructionRecord | null> =>
+    ipcRenderer.invoke('upsert-skill-or-instruction', data),
+  listSkillsAndInstructions: (
+    filterType?: 'skill' | 'instruction',
+  ): Promise<SkillOrInstructionRecord[]> =>
+    ipcRenderer.invoke('list-skills-and-instructions', filterType),
+  getSkillOrInstruction: (
+    name: string,
+  ): Promise<SkillOrInstructionRecord | null> =>
+    ipcRenderer.invoke('get-skill-or-instruction', name),
+  deleteSkillOrInstruction: (name: string): Promise<boolean> =>
+    ipcRenderer.invoke('delete-skill-or-instruction', name),
+  onSkillsUpdated: (callback: () => void): void => {
+    ipcRenderer.removeAllListeners('skills-updated');
+    ipcRenderer.on('skills-updated', () => callback());
+  },
+  exportSkillsMarkdown: (): Promise<{ saved: boolean; filePath?: string }> =>
+    ipcRenderer.invoke('export-skills-markdown'),
+  exportSingleSkill: (
+    name: string,
+  ): Promise<{ saved: boolean; filePath?: string }> =>
+    ipcRenderer.invoke('export-single-skill', name),
+
+  // Manually re-seed the session tree cache from the OpenCode REST API
+  refreshSessionTree: (): Promise<void> =>
+    ipcRenderer.invoke('refresh-session-tree'),
 };
 
 contextBridge.exposeInMainWorld('api', api);

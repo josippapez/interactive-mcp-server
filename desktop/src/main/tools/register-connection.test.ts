@@ -14,6 +14,9 @@ vi.mock('../database', () => ({
   upsertRegisteredConnection: vi.fn(),
   createSessionChannel: vi.fn(),
   isOpenCodeSessionClaimed: vi.fn().mockReturnValue(false),
+  getConnectionClaimingSession: vi.fn().mockReturnValue(null),
+  clearConnectionOpenCodeSession: vi.fn(),
+  listSkillsAndInstructions: vi.fn().mockReturnValue([]),
 }));
 
 vi.mock('../opencode-session', () => ({
@@ -32,7 +35,7 @@ import { upsertRegisteredConnection, createSessionChannel } from '../database';
 import { autoDetectOpenCodeSession } from '../opencode-session';
 
 type RegisterConnectionInput = {
-  agentName: string;
+  channelName: string;
   projectName: string;
   baseDirectory?: string;
   openCodeSessionId?: string;
@@ -53,6 +56,7 @@ function getToolHandler(connectionId = 'conn-test'): RegisterConnectionHandler {
     connectionId,
     () => 4096,
     () => true,
+    () => 'opencode',
   );
 
   const toolCall = (server.registerTool as Mock).mock.calls[0];
@@ -86,7 +90,7 @@ describe('register_connection tool', () => {
 
     const handler = getToolHandler();
     const run = handler({
-      agentName: 'Agent A',
+      channelName: 'Agent A',
       projectName: 'proj',
       baseDirectory: '/repo',
     });
@@ -117,7 +121,7 @@ describe('register_connection tool', () => {
 
     const handler = getToolHandler('conn-ok');
     const result = await handler({
-      agentName: 'Agent A',
+      channelName: 'Agent A',
       projectName: 'proj',
       baseDirectory: '/repo',
     });

@@ -24,8 +24,12 @@ export type PromptData = {
   connectionId: string;
   connectionName: string;
   timeoutSeconds: number;
+  /** Unix ms timestamp when this prompt expires. 0 means no timeout. */
+  expiresAt: number;
   baseDirectory?: string;
   clientInfo?: { model?: string; mode?: string };
+  /** OpenCode session ID resolved from the DB for this connectionId. */
+  openCodeSessionId?: string | null;
 };
 
 export type MessageKind = 'question' | 'answer' | 'outbound' | 'agent_message';
@@ -44,6 +48,17 @@ export type SessionStatus = {
   status: string;
   type: 'info' | 'working' | 'success' | 'error';
   timestamp: Date;
+};
+
+/** A permission request from OpenCode awaiting the user's decision. */
+export type PendingPermission = {
+  requestId: string;
+  sessionID: string;
+  permission: string;
+  patterns?: string[];
+  always?: boolean;
+  tool?: { messageID: string; callID: string };
+  metadata?: Record<string, unknown>;
 };
 
 /**
@@ -112,6 +127,9 @@ export type SessionNode = {
 
   /** Status badge updates pushed by the agent. */
   sessionStatuses: SessionStatus[];
+
+  /** Pending permission requests from OpenCode awaiting the user's decision. */
+  pendingPermissions: PendingPermission[];
 
   /**
    * Per-session toggle for doc context injection.

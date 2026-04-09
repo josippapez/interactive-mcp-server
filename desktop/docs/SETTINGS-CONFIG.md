@@ -6,17 +6,19 @@ Reference documentation for the Interactive MCP Desktop application settings sys
 
 ## Settings Reference
 
-| Key                    | Type      | Default | UI Label                         | Description                                                                                                                                                                                                                                                      |
-| ---------------------- | --------- | ------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `port`                 | `number`  | `3100`  | MCP Server Port                  | TCP port the embedded MCP HTTP server listens on.                                                                                                                                                                                                                |
-| `soundEnabled`         | `boolean` | `true`  | Notification Sound               | Whether to play a system beep when a prompt arrives.                                                                                                                                                                                                             |
-| `launchAtLogin`        | `boolean` | `false` | Launch at Login                  | Whether the app registers itself as a login item.                                                                                                                                                                                                                |
-| `promptTimeoutSeconds` | `number`  | `800`   | Prompt Timeout (seconds)         | Seconds before an unanswered prompt resolves with a timeout error. `0` disables the timeout.                                                                                                                                                                     |
-| `autoRestoreSessions`  | `boolean` | `false` | Auto-restore unfinished sessions | Whether the renderer reopens persisted session tabs on startup.                                                                                                                                                                                                  |
-| `openCodePort`         | `number`  | `4096`  | OpenCode API Port                | Port the local OpenCode ACP HTTP server listens on. Used by `register_connection` to auto-detect the active OpenCode session, by the `inject-opencode-message` IPC handler to deliver messages, and by `opencode-server.ts` when auto-starting `opencode serve`. |
-| `docIndexingEnabled`   | `boolean` | `true`  | Repository Doc Indexing          | Whether to index repository markdown files and inject a doc manifest into the agent's OpenCode session when an agent calls `register_connection` with a `baseDirectory`. When disabled, `find_repo_docs` falls back to keyword-only search.                      |
-| `noReplyInjection`     | `boolean` | `true`  | Context-only messages            | When `true`, injected messages use `noReply: true` (context-only — the agent receives the message but does not generate a response). When `false`, injected messages trigger the agent to respond.                                                               |
-| `autoStartOpenCode`    | `boolean` | `false` | Auto-start OpenCode server       | When `true`, the app spawns `opencode serve --port {openCodePort}` as a managed child process on startup. The process is killed when the app quits. Requires the `opencode` binary to be installed and on `PATH` (or at `~/.opencode/bin/opencode`).             |
+| Key                     | Type      | Default    | UI Label                         | Description                                                                                                                                                                                                                                                      |
+| ----------------------- | --------- | ---------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `port`                  | `number`  | `3100`     | MCP Server Port                  | TCP port the embedded MCP HTTP server listens on.                                                                                                                                                                                                                |
+| `soundEnabled`          | `boolean` | `true`     | Notification Sound               | Whether to play a system beep when a prompt arrives.                                                                                                                                                                                                             |
+| `launchAtLogin`         | `boolean` | `false`    | Launch at Login                  | Whether the app registers itself as a login item.                                                                                                                                                                                                                |
+| `promptTimeoutSeconds`  | `number`  | `800`      | Prompt Timeout (seconds)         | Seconds before an unanswered prompt resolves with a timeout error. `0` disables the timeout.                                                                                                                                                                     |
+| `autoRestoreSessions`   | `boolean` | `false`    | Auto-restore unfinished sessions | Whether the renderer reopens persisted session tabs on startup.                                                                                                                                                                                                  |
+| `openCodePort`          | `number`  | `4096`     | OpenCode API Port                | Port the local OpenCode ACP HTTP server listens on. Used by `register_connection` to auto-detect the active OpenCode session, by the `inject-opencode-message` IPC handler to deliver messages, and by `opencode-server.ts` when auto-starting `opencode serve`. |
+| `docIndexingEnabled`    | `boolean` | `true`     | Repository Doc Indexing          | Whether to index repository markdown files and inject a doc manifest into the agent's OpenCode session when an agent calls `register_connection` with a `baseDirectory`. When disabled, `find_repo_docs` falls back to keyword-only search.                      |
+| `noReplyInjection`      | `boolean` | `true`     | Context-only messages            | When `true`, injected messages use `noReply: true` (context-only — the agent receives the message but does not generate a response). When `false`, injected messages trigger the agent to respond.                                                               |
+| `autoStartOpenCode`     | `boolean` | `false`    | Auto-start OpenCode server       | When `true`, the app spawns `opencode serve --port {openCodePort}` as a managed child process on startup. The process is killed when the app quits. Requires the `opencode` binary to be installed and on `PATH` (or at `~/.opencode/bin/opencode`).             |
+| `agentBackend`          | `string`  | `opencode` | Agent Backend                    | Active provider backend mode. `standalone` runs pure Interactive MCP behavior without provider session discovery; `opencode` enables OpenCode session discovery/hierarchy/injection; `claude_sdk` is reserved for upcoming Anthropic SDK integration.            |
+| `autoRegisterSubagents` | `boolean` | `true`     | Auto-register sessions           | When `true`, all OpenCode sessions (both root and subagents) are automatically registered as sidebar channels when detected. See [autoRegisterSubagents](#autoregistersubagents).                                                                                |
 
 ---
 
@@ -41,7 +43,9 @@ Settings are stored as pretty-printed JSON. The file is created automatically on
   "openCodePort": 4096,
   "docIndexingEnabled": true,
   "noReplyInjection": true,
-  "autoStartOpenCode": false
+  "autoStartOpenCode": false,
+  "agentBackend": "opencode",
+  "autoRegisterSubagents": true
 }
 ```
 
@@ -147,6 +151,27 @@ When **disabled** (default):
 
 - No child process is spawned. The user is expected to run `opencode serve` manually.
 
+### `autoRegisterSubagents`
+
+Controls whether all OpenCode sessions — both root sessions and subagent sessions — are automatically registered as sidebar channels when discovered. Despite the setting key name, it applies to **all** sessions, not only subagents.
+
+Default: `true`
+
+When **enabled** (default):
+
+- **SSE `session.created.1` events:** When a new OpenCode session is detected via live SSE, `autoRegisterSession(info)` is called for every session regardless of whether it has a `parentID`. This creates a `registered_connections` row with `connectionId = "auto-{sessionId}"` and a placeholder `channelName` of `"Subagent (connecting…)"` (or a name derived from the session).
+- **Startup seed (`seedCacheFromRest`):** When the session tree is seeded from the OpenCode REST API at startup (or when the user clicks the refresh button), `autoRegisterSession(info)` is called for each session in the results. Sessions already known to `registered_connections` are not duplicated.
+
+The setting is passed to `startSessionTreeManager` as `() => currentSettings.autoRegisterSubagents`.
+
+Agents do not need to call `register_connection` for their session to appear in the sidebar when this is enabled. Calling `register_connection` remains available as an opt-in tool to set a custom channel name, link a `baseDirectory`, or enable advanced features such as doc indexing and session context injection.
+
+When **disabled**:
+
+- No auto-registration occurs. Sessions must call `register_connection` manually to create a channel in the sidebar.
+
+See [SESSION-CHANNELS.md — Session-tree manager](./SESSION-CHANNELS.md#session-tree-manager) for the full auto-registration flow.
+
 ---
 
 ## Validation Rules
@@ -159,7 +184,7 @@ These rules are enforced in `SettingsView.tsx` before the save function is invok
 | `promptTimeoutSeconds` | Integer, `timeout ≥ 0`         | "Timeout must be 0 or greater."              |
 | `openCodePort`         | Integer, `1024 ≤ port ≤ 65535` | "Enter a valid port between 1024 and 65535." |
 
-Toggle fields (`soundEnabled`, `launchAtLogin`, `autoRestoreSessions`, `docIndexingEnabled`, `noReplyInjection`, `autoStartOpenCode`) have no validation; they are boolean and cannot be invalid.
+Toggle fields (`soundEnabled`, `launchAtLogin`, `autoRestoreSessions`, `docIndexingEnabled`, `noReplyInjection`, `autoStartOpenCode`, `autoRegisterSubagents`) have no validation; they are boolean and cannot be invalid.
 
 ---
 
@@ -169,8 +194,8 @@ Settings are accessed and mutated by the renderer exclusively through Electron I
 
 ### `get-settings`
 
-**Direction:** renderer → main  
-**Parameters:** none  
+**Direction:** renderer → main
+**Parameters:** none
 **Returns:** `AppSettings` — the current in-memory settings object (`currentSettings`).
 
 ```ts
@@ -181,8 +206,8 @@ The returned value reflects the live in-memory state, not a fresh read from disk
 
 ### `save-settings`
 
-**Direction:** renderer → main  
-**Parameters:** `AppSettings` — the full settings object to persist.  
+**Direction:** renderer → main
+**Parameters:** `AppSettings` — the full settings object to persist.
 **Returns:** `true`
 
 ```ts
@@ -202,15 +227,16 @@ The handler performs the following steps in order:
 
 ## Implementation Reference
 
-| Concern                    | File                                              | Symbol                                    |
-| -------------------------- | ------------------------------------------------- | ----------------------------------------- |
-| Type definition & defaults | `desktop/src/main/settings.ts`                    | `AppSettings`, `defaultSettings`          |
-| Load / save from disk      | `desktop/src/main/settings.ts`                    | `loadSettings()`, `saveSettings()`        |
-| Settings path              | `desktop/src/main/settings.ts`                    | `getSettingsPath()`                       |
-| Startup initialization     | `desktop/src/main/index.ts`                       | `currentSettings = loadSettings()`        |
-| IPC handlers               | `desktop/src/main/ipc-handlers.ts`                | `get-settings`, `save-settings`           |
-| Sound & timeout wiring     | `desktop/src/main/ipc-prompt.ts`                  | `setSoundEnabled()`, `setPromptTimeout()` |
-| Settings UI                | `desktop/src/renderer/src/pages/SettingsView.tsx` | `SettingsView`                            |
+| Concern                    | File                                              | Symbol                                                                       |
+| -------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Type definition & defaults | `desktop/src/main/settings.ts`                    | `AppSettings`, `defaultSettings`                                             |
+| Load / save from disk      | `desktop/src/main/settings.ts`                    | `loadSettings()`, `saveSettings()`                                           |
+| Settings path              | `desktop/src/main/settings.ts`                    | `getSettingsPath()`                                                          |
+| Startup initialization     | `desktop/src/main/index.ts`                       | `currentSettings = loadSettings()`                                           |
+| IPC handlers               | `desktop/src/main/ipc-handlers.ts`                | `get-settings`, `save-settings`                                              |
+| Sound & timeout wiring     | `desktop/src/main/ipc-prompt.ts`                  | `setSoundEnabled()`, `setPromptTimeout()`                                    |
+| Settings UI                | `desktop/src/renderer/src/pages/SettingsView.tsx` | `SettingsView`                                                               |
+| Auto-register wiring       | `desktop/src/main/session-tree-manager.ts`        | `startSessionTreeManager(openCodePort, onUpdate, getAutoRegisterSubagents?)` |
 
 ### Load behavior
 

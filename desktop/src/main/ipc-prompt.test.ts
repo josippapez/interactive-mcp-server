@@ -15,10 +15,12 @@ vi.mock('electron', () => ({
 vi.mock('./database', () => ({
   saveConversation: vi.fn(),
   appendSessionChannelMessage: vi.fn(),
+  getRegisteredConnection: vi.fn(() => null),
 }));
 
 import { ipcMain } from 'electron';
 import { promptUser, cancelActivePrompt, setPromptTimeout } from './ipc-prompt';
+import { saveConversation, appendSessionChannelMessage } from './database';
 import type { PromptData } from './ipc-prompt';
 
 // The IPC listener signature that ipcMain.on expects
@@ -91,17 +93,40 @@ describe('promptUser', () => {
     expect(result.answer).toContain('Error');
   });
 
-  it('resolves with null answer when prompt times out (silent timeout, clears UI)', async () => {
+  it('resolves with null answer when prompt times out', async () => {
     const win = createMockWindow();
     vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
 
     const promise = promptUser(win as never, createPromptData());
+
+    // Advance past the 5 s timeout — the promise should resolve with null.
     vi.advanceTimersByTime(6000);
     const result = await promise;
-    // Timeout resolves with null so the renderer can clear the prompt UI
-    // without surfacing a misleading error string to the agent.
     expect(result.answer).toBeNull();
-    // The renderer should also receive prompt-clear to dismiss the prompt UI.
+
+    // Expired prompts are cleared immediately so the UI does not accept stale replies.
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      'prompt-clear',
+      expect.objectContaining({ connectionId: 'conn-1' }),
+    );
+    expect(appendSessionChannelMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: 'conn-1',
+        messageType: 'agent_message',
+        messageText: expect.stringContaining('Prompt expired'),
+      }),
+    );
+  });
+
+  it('sends prompt-clear immediately when the prompt times out', async () => {
+    const win = createMockWindow();
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+    const promise = promptUser(win as never, createPromptData());
+
+    vi.advanceTimersByTime(6000);
+    await promise;
+
     expect(win.webContents.send).toHaveBeenCalledWith(
       'prompt-clear',
       expect.objectContaining({ connectionId: 'conn-1' }),
@@ -119,6 +144,107 @@ describe('promptUser', () => {
     cancelActivePrompt('conn-cancel');
     const result = await promise;
     expect(result.answer).toContain('superseded');
+  });
+
+  it('queues prompts for same connection instead of superseding', async () => {
+    const win = createMockWindow();
+    const handlers: IpcListener[] = [];
+
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        handlers.push(handler);
+        return ipcMain;
+      },
+    );
+
+    const first = promptUser(
+      win as never,
+      createPromptData({ id: 'prompt-a', connectionId: 'conn-shared' }),
+    );
+    const second = promptUser(
+      win as never,
+      createPromptData({ id: 'prompt-b', connectionId: 'conn-shared' }),
+    );
+
+    expect(win.webContents.send).toHaveBeenCalledTimes(1);
+    expect(win.webContents.send).toHaveBeenNthCalledWith(
+      1,
+      'prompt-request',
+      expect.objectContaining({ id: 'prompt-a', connectionId: 'conn-shared' }),
+    );
+
+    handlers[0]?.({} as IpcMainEvent, { id: 'prompt-a', answer: 'first' });
+    await expect(first).resolves.toEqual({
+      answer: 'first',
+      attachments: undefined,
+    });
+
+    // Second prompt is displayed only after the first settles.
+    // Call sequence: [1] prompt-request(a), [2] prompt-clear(a), [3] prompt-request(b)
+    expect(win.webContents.send).toHaveBeenCalledTimes(3);
+    expect(win.webContents.send).toHaveBeenNthCalledWith(
+      2,
+      'prompt-clear',
+      expect.objectContaining({ id: 'prompt-a', connectionId: 'conn-shared' }),
+    );
+    expect(win.webContents.send).toHaveBeenNthCalledWith(
+      3,
+      'prompt-request',
+      expect.objectContaining({ id: 'prompt-b', connectionId: 'conn-shared' }),
+    );
+
+    handlers[1]?.({} as IpcMainEvent, { id: 'prompt-b', answer: 'second' });
+    await expect(second).resolves.toEqual({
+      answer: 'second',
+      attachments: undefined,
+    });
+  });
+
+  it('cancels queued prompts when connection is cancelled', async () => {
+    const win = createMockWindow();
+    const handlers: IpcListener[] = [];
+
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        handlers.push(handler);
+        return ipcMain;
+      },
+    );
+
+    const first = promptUser(
+      win as never,
+      createPromptData({ id: 'prompt-c', connectionId: 'conn-close' }),
+    );
+    const second = promptUser(
+      win as never,
+      createPromptData({ id: 'prompt-d', connectionId: 'conn-close' }),
+    );
+
+    cancelActivePrompt('conn-close');
+
+    await expect(first).resolves.toEqual(
+      expect.objectContaining({
+        answer: expect.stringContaining('superseded'),
+      }),
+    );
+    await expect(second).resolves.toEqual(
+      expect.objectContaining({
+        answer: expect.stringContaining('cancelled before display'),
+      }),
+    );
+
+    // Queued prompt was never displayed.
+    // Call sequence: [1] prompt-request(c), [2] prompt-clear(c) from cancel path.
+    expect(win.webContents.send).toHaveBeenCalledTimes(2);
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      'prompt-request',
+      expect.objectContaining({ id: 'prompt-c' }),
+    );
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      'prompt-clear',
+      expect.objectContaining({ connectionId: 'conn-close' }),
+    );
+    expect(handlers).toHaveLength(1);
   });
 
   // ── AbortSignal tests ───────────────────────────────────────────────────

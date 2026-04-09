@@ -30,12 +30,12 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
    - [SessionChannelBar (AgentStatusBar)](#68-agentstatusbar)
    - [AutocompleteDropdown](#69-autocompletedropdown)
    - [AttachmentPreview](#610-attachmentpreview)
-   - [HistoryView](#611-historyview)
    - [SettingsView](#612-settingsview)
-   - [StatusBar](#613-statusbar)
-   - [MarkdownContent](#614-markdowncontent)
-   - [CollapsibleSection](#615-collapsiblesection)
-   - [ShortcutHelpModal](#616-shortcuthelpmodal)
+   - [SkillsView](#613-skillsview)
+   - [StatusBar](#614-statusbar)
+   - [MarkdownContent](#615-markdowncontent)
+   - [CollapsibleSection](#616-collapsiblesection)
+   - [ShortcutHelpModal](#617-shortcuthelpmodal)
 7. [Type Definitions](#7-type-definitions)
 8. [Data Flow: Prompt Lifecycle](#8-data-flow-prompt-lifecycle)
 
@@ -43,7 +43,7 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
 
 ## 1. App Structure Overview
 
-The renderer is a tab-based UI with two views: **Prompts** and **Settings**. All session/channel state lives in the `useConnections` hook and is threaded downward as props. The Prompts tab is always mounted (hidden with CSS when inactive) to avoid tearing live IPC state; the Settings tab is conditionally rendered.
+The renderer is a tab-based UI with three views: **Prompts**, **Skills**, and **Settings**. All session/channel state lives in the `useConnections` hook and is threaded downward as props. The Prompts tab is always mounted (hidden with CSS when inactive) to avoid tearing live IPC state; the Skills and Settings tabs are conditionally rendered.
 
 Sidebar selection is keyed by `openCodeSessionId ?? connectionId`. That renderer key is not always the same as the persisted session identifier used by destructive actions. Clear/remove/dismiss actions must resolve back to `sessionChannel.sessionId` (or `connectionId`) before calling main-process APIs.
 
@@ -60,7 +60,7 @@ React.StrictMode
 └── ThemeProvider                          (ThemeContext.tsx)
     └── App                                (App.tsx)
         ├── <header> titlebar
-        │   └── TabButton × 2             (inline in App.tsx)
+        │   └── TabButton × 3             (inline in App.tsx)
         ├── <main>
         │   ├── PromptView                 (always mounted, visibility via CSS)
         │   │   ├── ChannelSidebar         (pages/PromptView.tsx)
@@ -76,6 +76,8 @@ React.StrictMode
         │   │   └── ChannelComposer
         │   │       ├── AutocompleteDropdown (when suggestions active)
         │   │       └── AttachmentPreview    (when attachments present)
+        │   ├── SkillsView                 (conditional — tab === 'skills')
+        │   │                              (pages/SkillsView.tsx)
         │   └── SettingsView               (conditional — tab === 'settings')
         │                                  (pages/SettingsView.tsx)
         ├── StatusBar                      (always visible)
@@ -290,9 +292,9 @@ The root component. Owns tab state and orchestrates the top-level layout.
 
 #### State
 
-| State       | Type                     | Initial    | Description            |
-| ----------- | ------------------------ | ---------- | ---------------------- |
-| `activeTab` | `'prompt' \| 'settings'` | `'prompt'` | Currently visible tab. |
+| State       | Type                                 | Initial    | Description            |
+| ----------- | ------------------------------------ | ---------- | ---------------------- |
+| `activeTab` | `'prompt' \| 'skills' \| 'settings'` | `'prompt'` | Currently visible tab. |
 
 #### Key behaviors
 
@@ -300,7 +302,7 @@ The root component. Owns tab state and orchestrates the top-level layout.
 - Calls `useGlobalShortcuts({ onSwitchTab: switchTab })` to wire keyboard shortcuts.
 - Derives `hasAnyPrompt` by scanning `connections.values()` for any entry where `hasPendingPrompt === true`.
 - Renders the Prompts tab wrapped in a div that uses `className="hidden"` when inactive rather than unmounting, preserving all hook and IPC state.
-- `SettingsView` is conditionally rendered (`{activeTab === 'settings' && <SettingsView />}`), so it mounts/unmounts on tab switch.
+- `SkillsView` and `SettingsView` are conditionally rendered (`{activeTab === 'skills' && <SkillsView />}` / `{activeTab === 'settings' && <SettingsView />}`), so they mount/unmount on tab switch.
 - Shows a pulsing badge on the Prompts `TabButton` when `hasAnyPrompt && activeTab !== 'prompt'`.
 
 #### Internal: `TabButton`
@@ -613,7 +615,7 @@ Grid of attachment thumbnails shown above the textarea when the composer has pen
 
 ---
 
-### 6.11 `SettingsView`
+### 6.12 `SettingsView`
 
 **File:** `pages/SettingsView.tsx`
 
@@ -673,7 +675,76 @@ At the bottom, a read-only section shows:
 
 ---
 
-### 6.12 `StatusBar`
+### 6.13 `SkillsView`
+
+**File:** `pages/SkillsView.tsx`
+
+Full-page view for browsing, creating, editing, and deleting skills and instructions stored in the local SQLite database.
+
+#### State
+
+| State             | Type                         | Description                                                                |
+| ----------------- | ---------------------------- | -------------------------------------------------------------------------- |
+| `entries`         | `SkillOrInstruction[]`       | All entries returned by the current filter.                                |
+| `filter`          | `FilterType`                 | Active list filter: `'all'`, `'skill'`, or `'instruction'`.                |
+| `selected`        | `SkillOrInstruction \| null` | Currently selected entry shown in the detail pane.                         |
+| `isEditing`       | `boolean`                    | Whether the detail pane is in edit mode for an existing entry.             |
+| `isCreating`      | `boolean`                    | Whether the form is open for a brand-new entry.                            |
+| `formName`        | `string`                     | Name field value in the create/edit form.                                  |
+| `formType`        | `'skill' \| 'instruction'`   | Type selector value in the form.                                           |
+| `formDescription` | `string`                     | Description field value in the form.                                       |
+| `formContent`     | `string`                     | Content (Markdown) textarea value in the form.                             |
+| `saveStatus`      | `string \| null`             | Transient save feedback message, auto-cleared after 2–3 s.                 |
+| `deleteTarget`    | `string \| null`             | Name of the entry pending deletion; drives the `ConfirmDeleteModal`.       |
+| `exportStatus`    | `string \| null`             | Transient export feedback message ("Exported."), auto-cleared after 2.5 s. |
+
+#### `SkillOrInstruction` type
+
+```ts
+type SkillOrInstruction = {
+  id: number;
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+};
+```
+
+#### Key behaviors
+
+- **Live updates** — registers an `onSkillsUpdated` IPC listener (`window.api.onSkillsUpdated`) so the list refreshes automatically when an agent upserts or deletes an entry via the `manage_skills_and_instructions` tool.
+- **Filter** — a `<select>` in the sidebar header filters the list to Skills only, Instructions only, or All. The sidebar renders two labelled groups ("Skills (n)" / "Instructions (n)") when showing All.
+- **Create** — clicking "+ New" opens the form with blank fields. All fields are required; the name is set permanently on creation and cannot be changed via edit.
+- **Edit** — clicking "Edit" in the detail pane opens the same form pre-populated; the name field is disabled.
+- **Delete** — clicking the hover-revealed "x" on a sidebar item or the "Delete" button in the detail pane sets `deleteTarget`, which opens `ConfirmDeleteModal`. Confirmed deletes call `window.api.deleteSkillOrInstruction(name)`.
+- **Export** — the "Export" button in the sidebar header calls `window.api.exportSkillsMarkdown()`, which opens a native save dialog and writes all entries to a `.md` file. A brief "Exported." status message appears on success.
+
+#### IPC / `window.api` calls
+
+| Method                                   | When called                                          |
+| ---------------------------------------- | ---------------------------------------------------- |
+| `listSkillsAndInstructions(filterType?)` | On mount, on filter change, after any CRUD operation |
+| `upsertSkillOrInstruction(data)`         | On form save (create or edit)                        |
+| `deleteSkillOrInstruction(name)`         | After delete confirmation                            |
+| `exportSkillsMarkdown()`                 | On Export button click                               |
+| `onSkillsUpdated(callback)`              | Registered once on mount for live updates            |
+
+#### Sub-component: `SidebarItem`
+
+A co-located internal component (not exported). Renders a single entry in the sidebar list — name, description, and a hover-visible delete button. Props:
+
+| Prop         | Type                                  | Description                              |
+| ------------ | ------------------------------------- | ---------------------------------------- |
+| `entry`      | `SkillOrInstruction`                  | Entry data to display.                   |
+| `isSelected` | `boolean`                             | Whether this item is currently selected. |
+| `onSelect`   | `(entry: SkillOrInstruction) => void` | Selection callback.                      |
+| `onDelete`   | `(name: string) => void`              | Triggers delete confirmation modal.      |
+
+---
+
+### 6.14 `StatusBar`
 
 **File:** `components/StatusBar.tsx`
 
@@ -713,7 +784,7 @@ Persistent footer bar visible across all tabs.
 
 ---
 
-### 6.13 `MarkdownContent`
+### 6.15 `MarkdownContent`
 
 **File:** `components/MarkdownContent.tsx`
 
@@ -738,7 +809,7 @@ Renders a markdown string using `react-markdown` with GitHub Flavored Markdown a
 
 ---
 
-### 6.14 `CollapsibleSection`
+### 6.16 `CollapsibleSection`
 
 **File:** `components/CollapsibleSection.tsx`
 
@@ -761,7 +832,7 @@ The toggle button chevron (`▶`) rotates 90° when open via a CSS `transition-t
 
 ---
 
-### 6.15 `ShortcutHelpModal`
+### 6.17 `ShortcutHelpModal`
 
 **File:** `components/ShortcutHelpModal.tsx`
 

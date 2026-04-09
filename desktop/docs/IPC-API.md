@@ -73,6 +73,16 @@ type AppSettings = {
   autoStartOpenCode: boolean;
   autoSyncOpencode: boolean;
 };
+
+type SkillOrInstructionRecord = {
+  id: number;
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+  createdAt: string; // ISO 8601
+  updatedAt: string; // ISO 8601
+};
 ```
 
 ---
@@ -274,7 +284,13 @@ The `session-tree-updated` IPC event delivers a flat array of `SessionTreeNode` 
 
 **Source:** `desktop/src/main/session-tree-manager.ts`
 
-The session-tree manager polls the OpenCode ACP API every ~2 seconds and merges the results with the `registered_connections` SQLite table. It fires `session-tree-updated` with a full snapshot whenever the snapshot changes (or immediately after a `register_connection` / session removal).
+The session-tree manager subscribes to the OpenCode SSE stream (`GET /global/sync-event`) and maintains an in-memory session cache. On first connection it seeds the cache via the OpenCode REST API (`GET /session`). It fires `session-tree-updated` with a full snapshot whenever the cache changes (or immediately after a `register_connection` / session removal). If the SSE stream drops, it reconnects automatically after 2 s.
+
+#### Invoke Methods
+
+| Method               | Direction       | Signature             | Description                                                                                                                                                                                         |
+| -------------------- | --------------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `refreshSessionTree` | renderer → main | `() => Promise<void>` | Re-seeds the in-memory session cache from the OpenCode REST API (`GET /session`) and emits a fresh `session-tree-updated` snapshot. Called from the refresh button in the Sessions sidebar section. |
 
 #### `SessionTreeNode` type
 
@@ -288,7 +304,7 @@ type SessionTreeNode = {
   updatedAt: number; // Unix timestamp (ms)
   depth: number; // Tree depth (0 = root)
   connectionId: string | null; // MCP connectionId if registered, null otherwise
-  agentName: string | null; // Agent name from register_connection
+  channelName: string | null; // Channel name from register_connection
   hasMcpChannel: boolean; // Whether this session has an active MCP channel
   baseDirectory: string | null; // Base directory from register_connection
   registeredParentSessionId: string | null; // parentSessionId stored at registration
@@ -299,12 +315,46 @@ The renderer uses `depth` and `openCodeParentId` to render the sidebar hierarchy
 
 ---
 
+### Skills & Instructions
+
+Methods for managing persistent skills and instructions stored in the `skills_and_instructions` SQLite table. All entries are automatically injected into new agent sessions via `register_connection`.
+
+#### Invoke Methods
+
+| Method                      | Direction       | Signature                                                                                                                                     | Description                                                                                                                                                                                                                                                                               |
+| --------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `upsertSkillOrInstruction`  | renderer → main | `(data: { name: string; type: 'skill' \| 'instruction'; description: string; content: string }) => Promise<SkillOrInstructionRecord \| null>` | Creates or updates a skill/instruction row (upsert by `name`). Returns the full saved record on success or `null` if the database is unavailable. Fires `skills-updated` to all renderer listeners after a successful write.                                                              |
+| `listSkillsAndInstructions` | renderer → main | `(filterType?: 'skill' \| 'instruction') => Promise<SkillOrInstructionRecord[]>`                                                              | Returns all rows from `skills_and_instructions`, ordered by name. Pass `filterType` to restrict results to only skills or only instructions. Returns an empty array if the database is unavailable.                                                                                       |
+| `getSkillOrInstruction`     | renderer → main | `(name: string) => Promise<SkillOrInstructionRecord \| null>`                                                                                 | Returns the full record for the entry with the given `name`, or `null` if not found.                                                                                                                                                                                                      |
+| `deleteSkillOrInstruction`  | renderer → main | `(name: string) => Promise<boolean>`                                                                                                          | Deletes the entry with the given `name`. Returns `true` if a row was deleted, `false` if no matching entry was found. Fires `skills-updated` to all renderer listeners when a row is deleted.                                                                                             |
+| `exportSkillsMarkdown`      | renderer → main | `() => Promise<{ saved: boolean; filePath?: string }>`                                                                                        | Shows a native save dialog defaulting to `skills-and-instructions.md`. If the user confirms, writes all skills and instructions as a formatted Markdown file and returns `{ saved: true, filePath }`. Returns `{ saved: false }` if the dialog is cancelled or the window is unavailable. |
+
+#### Event Listeners
+
+| Method            | Direction       | Signature                        | Description                                                                                                                                                                                                               |
+| ----------------- | --------------- | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onSkillsUpdated` | main → renderer | `(callback: () => void) => void` | Fired whenever a skill or instruction is created, updated, or deleted — either via the `manage_skills_and_instructions` MCP tool or via the renderer IPC methods above. The renderer should re-fetch the list on receipt. |
+
+#### `SkillOrInstructionRecord` field notes
+
+| Field         | Type                       | Notes                                                                      |
+| ------------- | -------------------------- | -------------------------------------------------------------------------- |
+| `id`          | `number`                   | Auto-incremented primary key                                               |
+| `name`        | `string`                   | Unique identifier/name for the entry                                       |
+| `type`        | `'skill' \| 'instruction'` | Entry category: `"skill"` for workflows/recipes, `"instruction"` for rules |
+| `description` | `string`                   | Short summary shown in listings                                            |
+| `content`     | `string`                   | Full Markdown body — injected verbatim into agent sessions                 |
+| `createdAt`   | `string`                   | ISO 8601 timestamp, set once on creation                                   |
+| `updatedAt`   | `string`                   | ISO 8601 timestamp, refreshed on every upsert                              |
+
+---
+
 ## Quick Reference
 
 ### All methods grouped by IPC mechanism
 
-| Mechanism                                               | Methods                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ipcRenderer.invoke` (renderer → main, returns Promise) | `getHistory`, `clearHistory`, `getSettings`, `saveSettings`, `getServerStatus`, `getAppVersion`, `detectOpenCodeSession`, `searchFiles`, `openFileDialog`, `readFileForAttachment`, `forceTerminateChat`, `dismissSession`, `restartMcpServer`, `reconnectMcpServer`, `getPersistedSessionChannels`, `getSessionChannelHistory`, `clearSessionChannelMessages`, `removeSessionChannel`, `injectOpenCodeMessage`, `syncOpencodeConfig` |
-| `ipcRenderer.send` (renderer → main, fire-and-forget)   | `sendPromptResponse`, `queueSessionMessage`                                                                                                                                                                                                                                                                                                                                                                                           |
-| `ipcRenderer.on` (main → renderer, event listener)      | `onPromptRequest`, `onIntensiveChatStart`, `onIntensiveChatStop`, `onConnectionOpened`, `onConnectionClosed`, `onSessionChannelCreated`, `onSessionChannelDeleted`, `onSessionChannelMessagesCleared`, `onSessionStatusUpdate`, `onAgentMessage`, `onSessionTreeUpdated`                                                                                                                                                              |
+| Mechanism                                               | Methods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ipcRenderer.invoke` (renderer → main, returns Promise) | `getHistory`, `clearHistory`, `getSettings`, `saveSettings`, `getServerStatus`, `getAppVersion`, `detectOpenCodeSession`, `searchFiles`, `openFileDialog`, `readFileForAttachment`, `forceTerminateChat`, `dismissSession`, `restartMcpServer`, `reconnectMcpServer`, `getPersistedSessionChannels`, `getSessionChannelHistory`, `clearSessionChannelMessages`, `removeSessionChannel`, `injectOpenCodeMessage`, `syncOpencodeConfig`, `upsertSkillOrInstruction`, `listSkillsAndInstructions`, `getSkillOrInstruction`, `deleteSkillOrInstruction`, `exportSkillsMarkdown`, `refreshSessionTree` |
+| `ipcRenderer.send` (renderer → main, fire-and-forget)   | `sendPromptResponse`, `queueSessionMessage`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `ipcRenderer.on` (main → renderer, event listener)      | `onPromptRequest`, `onIntensiveChatStart`, `onIntensiveChatStop`, `onConnectionOpened`, `onConnectionClosed`, `onSessionChannelCreated`, `onSessionChannelDeleted`, `onSessionChannelMessagesCleared`, `onSessionStatusUpdate`, `onAgentMessage`, `onSessionTreeUpdated`, `onSkillsUpdated`                                                                                                                                                                                                                                                                                                       |

@@ -58,13 +58,13 @@ export async function reconcileSessionConnections(
     if (liveSessionIds.has(conn.openCodeSessionId)) {
       matched++;
       console.log(
-        `[session-reconnect] matched connection "${conn.agentName}" (${conn.connectionId}) → session ${conn.openCodeSessionId}`,
+        `[session-reconnect] matched connection "${conn.channelName}" (${conn.connectionId}) → session ${conn.openCodeSessionId}`,
       );
     } else {
       deleteRegisteredConnection(conn.connectionId);
       cleaned++;
       console.log(
-        `[session-reconnect] cleaned stale connection "${conn.agentName}" (${conn.connectionId}) — session ${conn.openCodeSessionId} no longer exists`,
+        `[session-reconnect] cleaned stale connection "${conn.channelName}" (${conn.connectionId}) — session ${conn.openCodeSessionId} no longer exists`,
       );
     }
   }

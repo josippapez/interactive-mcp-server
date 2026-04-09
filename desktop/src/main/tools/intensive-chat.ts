@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import type { PromptUserFn } from '../ipc-prompt';
 import { getPromptTimeoutSeconds } from '../ipc-prompt';
 import { staleConnectionError } from './connection-guard';
+import { getRegisteredConnection } from '../database';
 
 interface IntensiveChatSession {
   title: string;
@@ -101,10 +102,12 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 
       const sessionId = randomUUID();
       activeChatSessions.set(sessionId, { title: sessionTitle, baseDirectory });
+      const rc = getRegisteredConnection(connectionId);
       getWindow()?.webContents.send('intensive-chat-start', {
         sessionId,
         title: sessionTitle,
         connectionId,
+        openCodeSessionId: rc?.openCodeSessionId ?? null,
       });
 
       return {
@@ -133,6 +136,7 @@ Ask a new question in an active intensive chat session previously started with '
 - (!important!) **Use this repeatedly within the same response message** after 'start_intensive_chat' until all questions are asked.
 - (!important!) If response is empty or times out for required input, re-prompt and do not proceed with assumptions.
 - (!important!) Keep the loop active until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
+- (!important!) **Concrete enforcement on timeout**: When this tool returns a timeout (e.g. "User did not reply to question in intensive chat: Timeout occurred."), the ONLY valid next action is to call this tool again immediately. Emitting a plain-text-only turn after a timeout is a policy violation — keep calling until the user replies.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -330,9 +334,11 @@ Ask a new question in an active intensive chat session previously started with '
       }
 
       activeChatSessions.delete(sessionId);
+      const rc = getRegisteredConnection(connectionId);
       getWindow()?.webContents.send('intensive-chat-stop', {
         sessionId,
         connectionId,
+        openCodeSessionId: rc?.openCodeSessionId ?? null,
       });
 
       return {

@@ -57,7 +57,7 @@ describe('handleInjectDocContext', () => {
     const deps = makeDeps({
       getRegisteredConnection: vi.fn(() => ({
         connectionId: 'conn-123',
-        agentName: 'Test Agent',
+        channelName: 'Test Agent',
         projectName: 'my-project',
         baseDirectory: '/some/repo',
         idFilePath: '/tmp/agent.json',
@@ -250,7 +250,7 @@ describe('handleInjectDocContext', () => {
     const deps = makeDeps({
       getRegisteredConnection: vi.fn(() => ({
         connectionId: 'conn-123',
-        agentName: 'Agent',
+        channelName: 'Agent',
         projectName: 'proj',
         baseDirectory: '/db/repo',
         idFilePath: '/tmp/a.json',
@@ -272,8 +272,39 @@ describe('handleInjectDocContext', () => {
       '/supplied/repo',
       5,
     );
-    // Should not need to check DB when baseDirectory was supplied
-    expect(deps.getRegisteredConnection).not.toHaveBeenCalled();
+    // Always checks DB for parentSessionId even when baseDirectory was supplied
+    expect(deps.getRegisteredConnection).toHaveBeenCalledWith('conn-123');
+  });
+
+  it('skips injection for subagent sessions (parentSessionId set)', async () => {
+    const deps = makeDeps({
+      getRegisteredConnection: vi.fn(() => ({
+        connectionId: 'conn-123',
+        channelName: 'Subagent',
+        projectName: 'proj',
+        baseDirectory: '/my/repo',
+        idFilePath: '/tmp/a.json',
+        openCodeSessionId: 'ses_child',
+        parentSessionId: 'ses_parent', // <-- this triggers the skip
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+      })),
+      searchDocs: vi
+        .fn()
+        .mockResolvedValue([
+          { path: 'docs/api.md', score: 9, lineNumber: 0, snippet: '' },
+        ]),
+    });
+
+    const result = await handleInjectDocContext(
+      { ...BASE_INPUT, baseDirectory: '/my/repo' },
+      deps,
+    );
+
+    expect(result).toEqual({ ok: true, injectedCount: 0 });
+    expect(deps.searchDocs).not.toHaveBeenCalled();
+    expect(deps.injectOpenCodeMessage).not.toHaveBeenCalled();
+    expect(deps.sendAgentMessage).not.toHaveBeenCalled();
   });
 
   it('the visible summary lists each injected doc path', async () => {

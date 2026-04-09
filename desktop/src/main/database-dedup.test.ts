@@ -1,7 +1,7 @@
 /**
  * Tests for the upsertRegisteredConnection deduplication logic.
  *
- * Key scenario: two agents with the same agentName but different
+ * Key scenario: two agents with the same channelName but different
  * openCodeSessionIds (root + subagent both named "Claude Code") must NOT
  * delete each other's rows.
  */
@@ -25,20 +25,20 @@ describe('upsertRegisteredConnection deduplication', () => {
     await initDatabase();
   });
 
-  it('does NOT delete a sibling row with the same agentName but a different openCodeSessionId', async () => {
+  it('does NOT delete a sibling row with the same channelName but a different openCodeSessionId', async () => {
     // Root agent registers
     upsertRegisteredConnection({
       connectionId: 'root-conn-uuid',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
       openCodeSessionId: 'ses_root_abc',
     });
 
-    // Subagent registers with the same agentName but its own session ID
+    // Subagent registers with the same channelName but its own session ID
     upsertRegisteredConnection({
       connectionId: 'sub-conn-uuid',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
       openCodeSessionId: 'ses_sub_xyz',
@@ -52,11 +52,11 @@ describe('upsertRegisteredConnection deduplication', () => {
     expect(all).toHaveLength(2);
   });
 
-  it('DOES deduplicate rows with the same agentName AND same openCodeSessionId (same agent restarting)', async () => {
+  it('DOES deduplicate rows with the same channelName AND same openCodeSessionId (same agent restarting)', async () => {
     // First connect — transport UUID A
     upsertRegisteredConnection({
       connectionId: 'old-transport-uuid',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
       openCodeSessionId: 'ses_root_abc',
@@ -65,7 +65,7 @@ describe('upsertRegisteredConnection deduplication', () => {
     // Restart — same session, new transport UUID B
     upsertRegisteredConnection({
       connectionId: 'new-transport-uuid',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
       openCodeSessionId: 'ses_root_abc',
@@ -77,16 +77,16 @@ describe('upsertRegisteredConnection deduplication', () => {
     expect(all[0].connectionId).toBe('new-transport-uuid');
   });
 
-  it('DOES deduplicate rows with the same agentName when both have no openCodeSessionId', async () => {
+  it('DOES deduplicate rows with the same channelName when both have no openCodeSessionId', async () => {
     upsertRegisteredConnection({
       connectionId: 'old-conn',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
     });
 
     upsertRegisteredConnection({
       connectionId: 'new-conn',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
     });
 
@@ -100,7 +100,7 @@ describe('upsertRegisteredConnection deduplication', () => {
     // Root agent already registered with a session
     upsertRegisteredConnection({
       connectionId: 'root-conn',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
       openCodeSessionId: 'ses_root',
     });
@@ -108,7 +108,7 @@ describe('upsertRegisteredConnection deduplication', () => {
     // New agent with same name but no session ID (e.g. a tool-less MCP client)
     upsertRegisteredConnection({
       connectionId: 'anon-conn',
-      agentName: 'Claude Code',
+      channelName: 'Claude Code',
       projectName: 'my-project',
       openCodeSessionId: undefined,
     });

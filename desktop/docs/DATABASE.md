@@ -173,26 +173,23 @@ CREATE TABLE IF NOT EXISTS session_channel_history (
 Persists named agent connections registered via the `register_connection` MCP tool. One row per registered agent. Rows survive app restarts and are used to restore channel identity when an agent reconnects.
 
 ```sql
--- Base DDL (v1)
 CREATE TABLE IF NOT EXISTS registered_connections (
-  connection_id TEXT     PRIMARY KEY,
-  agent_name    TEXT     NOT NULL,
-  project_name  TEXT     NOT NULL,
-  base_directory TEXT,
-  id_file_path  TEXT     NOT NULL,
-  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+  connection_id        TEXT     PRIMARY KEY,
+  agent_name           TEXT     NOT NULL,
+  project_name         TEXT     NOT NULL,
+  base_directory       TEXT,
+  id_file_path         TEXT     NOT NULL,
+  open_code_session_id TEXT,
+  parent_session_id    TEXT,
+  created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
 );
--- Migration v2: open_code_session_id
-ALTER TABLE registered_connections ADD COLUMN open_code_session_id TEXT;
--- Migration v3: parent_session_id
-ALTER TABLE registered_connections ADD COLUMN parent_session_id TEXT;
 ```
 
 | Column                 | Type     | Nullable | Description                                                                                                                                                                                                                                   |
 | ---------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `connection_id`        | TEXT     | No       | The `connectionId` UUID for the MCP session (primary key).                                                                                                                                                                                    |
-| `agent_name`           | TEXT     | No       | Human-readable agent name supplied to `register_connection` (e.g. `"Claude Code - my-project"`).                                                                                                                                              |
+| `agent_name`           | TEXT     | No       | Human-readable channel name supplied to `register_connection` (e.g. `"Claude Code - my-project"`). **SQLite column name is `agent_name` (unchanged); the TypeScript `RegisteredConnection` interface exposes this field as `channelName`.**   |
 | `project_name`         | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                                                                               |
 | `base_directory`       | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied.                                                                                                                                                                    |
 | `id_file_path`         | TEXT     | No       | Absolute path to the `/tmp/imcp-agent-<name>.json` ID file written at registration time. Used for recovery after restarts.                                                                                                                    |
@@ -216,7 +213,49 @@ ALTER TABLE registered_connections ADD COLUMN parent_session_id TEXT;
 
 ---
 
-## Initialization and Migrations
+### `skills_and_instructions`
+
+Persists reusable skills and instructions that are automatically injected into every new agent session at `register_connection` time. Managed via the `manage_skills_and_instructions` MCP tool.
+
+```sql
+CREATE TABLE IF NOT EXISTS skills_and_instructions (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT    NOT NULL UNIQUE,
+  type        TEXT    NOT NULL CHECK(type IN ('skill', 'instruction')),
+  description TEXT    NOT NULL,
+  content     TEXT    NOT NULL,
+  created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+```
+
+| Column        | Type     | Nullable | Description                                                                                          |
+| ------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------- |
+| `id`          | INTEGER  | No       | Auto-incrementing primary key.                                                                       |
+| `name`        | TEXT     | No       | Unique name/identifier for the entry. Used as the primary lookup key.                                |
+| `type`        | TEXT     | No       | Either `'skill'` (reusable workflow/recipe) or `'instruction'` (behavioural rule/policy).            |
+| `description` | TEXT     | No       | Short summary shown in `list` action results.                                                        |
+| `content`     | TEXT     | No       | Full Markdown body of the skill or instruction.                                                      |
+| `created_at`  | DATETIME | No       | Row creation timestamp.                                                                              |
+| `updated_at`  | DATETIME | No       | Last upsert timestamp. Updated on every `register` call for a name that already exists in the table. |
+
+#### TypeScript interface
+
+```ts
+export interface SkillOrInstruction {
+  id: number;
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+```
+
+---
+
+## Initialization and Schema Versioning
 
 ### `initDatabase(): Promise<void>`
 
@@ -229,51 +268,43 @@ steps in order:
    `new SQL.Database(buffer)` to restore the existing database.
 4. If `dbPath` does not exist, creates a fresh in-memory database with
    `new SQL.Database()`.
-5. Runs `CREATE TABLE IF NOT EXISTS` for all four tables (order:
-   `conversations` → `session_channels` → `session_messages` →
-   `session_channel_history`).
-6. Runs the `attachments` column migration (see below).
-7. Calls `persist()` to ensure the file exists on disk even for a freshly created
+5. Reads `PRAGMA user_version` from the database.
+6. If the stored version does **not** match the expected `SCHEMA_VERSION` constant
+   (currently `2`), the database is wiped and recreated (see below).
+7. Runs `CREATE TABLE IF NOT EXISTS` for all six tables with the full column set
+   baked in — no incremental `ALTER TABLE` migrations.
+8. Writes `PRAGMA user_version = {SCHEMA_VERSION}`.
+9. Calls `persist()` to ensure the file exists on disk even for a freshly created
    database.
 
-### Migrations
+### Schema versioning strategy (`PRAGMA user_version`)
 
-#### `attachments` column (v1 → v2)
+The database uses SQLite's `PRAGMA user_version` as a simple schema version tag. The
+expected version is defined as `const SCHEMA_VERSION = 2` at the top of `database.ts`.
 
-The `attachments` column was added to the `conversations` table after the initial
-release. Existing databases created before this column existed are upgraded at startup:
+On startup, `initDatabase()` compares the stored version against `SCHEMA_VERSION`:
 
-```
-try {
-  db.exec("SELECT attachments FROM conversations LIMIT 0");
-} catch {
-  db.run("ALTER TABLE conversations ADD COLUMN attachments TEXT");
-}
-```
+- **Match** — the schema is compatible; proceed normally.
+- **Mismatch** (including version `0` from a legacy database) — the in-memory database
+  is closed and a fresh `new SQL.Database()` is created. All tables are recreated with
+  the current column definitions. The old file on disk is overwritten on the next
+  `persist()` call.
 
-If the `SELECT` throws (because the column does not exist), the `ALTER TABLE` statement
-adds the column. The `LIMIT 0` ensures no rows are scanned; this is purely a schema
-probe.
+This approach replaces the previous incremental migration system (v1-v7 `ALTER TABLE`
+blocks) which had accumulated data-destructive side effects. The trade-off is that a
+schema version bump will wipe existing data, which is acceptable for the current use
+case (session metadata and conversation history that is rebuilt on agent reconnection).
 
-New databases created after this change already include the column via the
-`CREATE TABLE IF NOT EXISTS` statement, so the migration is a no-op for them.
+### Adding new columns in the future
 
-#### `parent_session_id` column (v2 → v3)
+To add a new column:
 
-The `parent_session_id` column was added to the `registered_connections` table to
-support the sidebar parent-child tree view for subagent sessions. Existing databases
-without this column are upgraded at startup using the same probe pattern:
+1. Add the column to the relevant `CREATE TABLE IF NOT EXISTS` statement.
+2. Bump `SCHEMA_VERSION` (e.g. `1` → `2`).
+3. On the next startup, existing databases with version `1` will be wiped and recreated
+   with the new schema.
 
-```
-try {
-  db.exec("SELECT parent_session_id FROM registered_connections LIMIT 0");
-} catch {
-  db.run("ALTER TABLE registered_connections ADD COLUMN parent_session_id TEXT");
-}
-```
-
-New databases include the column via the `CREATE TABLE IF NOT EXISTS` DDL, making the
-migration a no-op for them.
+No `ALTER TABLE` migration code is needed.
 
 ---
 
@@ -610,6 +641,90 @@ none).
 
 ---
 
+### `upsertSkillOrInstruction`
+
+```ts
+export function upsertSkillOrInstruction(data: {
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+}): SkillOrInstruction | null;
+```
+
+Creates a new `skills_and_instructions` row, or updates the existing row with the same `name`. On conflict the `type`, `description`, `content`, and `updated_at` columns are overwritten; `created_at` is preserved.
+
+| Parameter          | Required | Description                           |
+| ------------------ | -------- | ------------------------------------- |
+| `data.name`        | Yes      | Unique name/identifier for the entry. |
+| `data.type`        | Yes      | `'skill'` or `'instruction'`.         |
+| `data.description` | Yes      | Short summary shown in list results.  |
+| `data.content`     | Yes      | Full Markdown body.                   |
+
+**Returns:** The saved `SkillOrInstruction` record (fetched via `getSkillOrInstructionByName` after the upsert), or `null` if the database is not initialised.
+
+**Side effects:** Upserts one row into `skills_and_instructions`; calls `persist()`.
+
+---
+
+### `listSkillsAndInstructions`
+
+```ts
+export function listSkillsAndInstructions(
+  filterType?: 'skill' | 'instruction',
+): SkillOrInstruction[];
+```
+
+Returns all rows from `skills_and_instructions`, ordered alphabetically by `name`.
+
+| Parameter    | Default | Description                                               |
+| ------------ | ------- | --------------------------------------------------------- |
+| `filterType` | —       | If provided, only rows whose `type` matches are returned. |
+
+**Returns:** Array of `SkillOrInstruction` objects (empty array if none or database not initialised).
+
+**No side effects.**
+
+---
+
+### `getSkillOrInstructionByName`
+
+```ts
+export function getSkillOrInstructionByName(
+  name: string,
+): SkillOrInstruction | null;
+```
+
+Looks up a single row by its unique `name`.
+
+| Parameter | Description            |
+| --------- | ---------------------- |
+| `name`    | Exact name to look up. |
+
+**Returns:** The matching `SkillOrInstruction`, or `null` if not found or database not initialised.
+
+**No side effects.**
+
+---
+
+### `deleteSkillOrInstruction`
+
+```ts
+export function deleteSkillOrInstruction(name: string): boolean;
+```
+
+Deletes the row with the given `name` from `skills_and_instructions`.
+
+| Parameter | Description           |
+| --------- | --------------------- |
+| `name`    | Exact name to delete. |
+
+**Returns:** `true` if a row was found and deleted; `false` if no matching row existed or the database is not initialised.
+
+**Side effects:** Deletes one row from `skills_and_instructions` if it exists; calls `persist()`.
+
+---
+
 ## Data Flow Diagrams
 
 ### Single-shot prompt (`request_user_input`)
@@ -706,13 +821,17 @@ Electron app 'ready' event
         ├─ existsSync(dbPath)?
         │     Yes → readFileSync → new SQL.Database(buffer)
         │     No  → new SQL.Database()
+        ├─ PRAGMA user_version → storedVersion
+        ├─ storedVersion !== SCHEMA_VERSION?
+        │     Yes → close db → new SQL.Database() (fresh)
+        │     No  → continue
         ├─ CREATE TABLE IF NOT EXISTS conversations
-        ├─ Migration: probe attachments column → ALTER TABLE if missing
         ├─ CREATE TABLE IF NOT EXISTS session_channels
         ├─ CREATE TABLE IF NOT EXISTS session_messages
         ├─ CREATE TABLE IF NOT EXISTS session_channel_history
+        ├─ CREATE TABLE IF NOT EXISTS skills_and_instructions
         ├─ CREATE TABLE IF NOT EXISTS registered_connections
-        ├─ Migration: probe parent_session_id column → ALTER TABLE if missing
+        ├─ PRAGMA user_version = SCHEMA_VERSION
         └─ persist()
 ```
 

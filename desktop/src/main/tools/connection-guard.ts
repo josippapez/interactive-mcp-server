@@ -39,11 +39,11 @@ export function staleConnectionError(
             'Your session was removed from the Interactive MCP Desktop app by the user. ' +
             'You must re-register before using any other tools.',
           action:
-            'Call the register_connection tool with your agentName, projectName, and baseDirectory to re-establish your channel.',
+            'Call the register_connection tool with your channelName, projectName, and baseDirectory to re-establish your channel.',
           example: {
             tool: 'register_connection',
             arguments: {
-              agentName: '<your agent name>',
+              channelName: '<your channel name>',
               projectName: '<your project name>',
               baseDirectory: '<absolute path to your working directory>',
             },

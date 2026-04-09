@@ -5,6 +5,7 @@ import type {
   Attachment,
   SessionStatus,
   SessionNode,
+  PendingPermission,
 } from '../types';
 import PromptMessage from '../components/prompt/PromptMessage';
 import ChatHistoryView from '../components/prompt/ChatHistoryView';
@@ -12,6 +13,7 @@ import AgentStatusBar from '../components/prompt/AgentStatusBar';
 import ChannelSidebar from '../components/prompt/ChannelSidebar';
 import ChannelHeader from '../components/prompt/ChannelHeader';
 import ChannelComposer from '../components/prompt/ChannelComposer';
+import PermissionPrompt from '../components/prompt/PermissionPrompt';
 import { resolveSessionActionTarget } from '../hooks/remove-session-target';
 
 type Props = {
@@ -24,6 +26,7 @@ type Props = {
   connectionId: string | null;
   sessionChannel: { sessionId: string; label?: string } | null;
   sessionStatuses: SessionStatus[];
+  pendingPermissions: PendingPermission[];
   docContextEnabled: boolean;
   onSubmit: (answer: string, attachments?: Attachment[]) => void;
   onSelectOption: (option: string) => void;
@@ -49,6 +52,7 @@ export default function PromptView({
   connectionId,
   sessionChannel,
   sessionStatuses,
+  pendingPermissions,
   docContextEnabled,
   onSubmit,
   onSelectOption,
@@ -63,7 +67,11 @@ export default function PromptView({
   const hasHistory = channelMessages.length > 0;
   const idle = !prompt && !activeSession && !hasHistory;
 
-  // Countdown timer — resets whenever a new prompt arrives
+  // Countdown timer — clock-based, survives channel tab switches.
+  // expiresAtRef stores the resolved expiry timestamp keyed by prompt ID so
+  // that when prompt goes null (switching channels) and comes back with the
+  // same ID, we use the original expiry rather than resetting.
+  const expiresAtRef = useRef<Map<string, number>>(new Map());
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
 
   // Error state for failed session removal
@@ -74,12 +82,35 @@ export default function PromptView({
       setSecondsLeft(null);
       return;
     }
-    setSecondsLeft(prompt.timeoutSeconds);
+
+    // Resolve expiry: prefer already-recorded value (survives null gaps),
+    // then use main-process-stamped expiresAt, then derive from timeoutSeconds
+    // (fallback for builds that pre-date the expiresAt field).
+    let expiry = expiresAtRef.current.get(prompt.id);
+    if (!expiry) {
+      if (prompt.expiresAt) {
+        expiry = prompt.expiresAt;
+      } else if (prompt.timeoutSeconds) {
+        expiry = Date.now() + prompt.timeoutSeconds * 1000;
+      }
+      if (expiry) {
+        expiresAtRef.current.set(prompt.id, expiry);
+      }
+    }
+
+    if (!expiry) {
+      setSecondsLeft(null);
+      return;
+    }
+
+    const resolvedExpiry = expiry;
+    const computeRemaining = (): number =>
+      Math.max(0, Math.round((resolvedExpiry - Date.now()) / 1000));
+
+    setSecondsLeft(computeRemaining());
+
     const interval = setInterval(() => {
-      setSecondsLeft((prev) => {
-        if (prev === null || prev <= 0) return 0;
-        return prev - 1;
-      });
+      setSecondsLeft(computeRemaining());
     }, 1000);
     return () => clearInterval(interval);
   }, [prompt?.id]); // re-run only when prompt identity changes
@@ -217,6 +248,10 @@ export default function PromptView({
                 connectionId={activeConnectionId}
                 onDismissStatus={onDismissStatus}
               />
+            )}
+
+            {pendingPermissions.length > 0 && (
+              <PermissionPrompt permissions={pendingPermissions} />
             )}
 
             <div className="flex items-center justify-end px-3 py-1 border-t border-[var(--color-border)] bg-[var(--color-surface-alt)]">

@@ -48,6 +48,7 @@ export async function injectOpenCodeMessage(
   attachments: Attachment[] | undefined,
   openCodePort: number,
   mcpServerPort?: number,
+  noReply = true,
 ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> {
   const url = `http://localhost:${openCodePort}/session/${encodeURIComponent(openCodeSessionId)}/message`;
 
@@ -80,19 +81,20 @@ export async function injectOpenCodeMessage(
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ noReply: true, parts }),
+      body: JSON.stringify({ noReply, parts }),
+      signal: AbortSignal.timeout(5000),
     });
     if (!res.ok) {
       const body = await res.text().catch(() => '');
       return {
         ok: false,
         error: `OpenCode API returned ${res.status}: ${body}`,
-        noReply: true,
+        noReply,
       };
     }
-    return { ok: true, noReply: true };
+    return { ok: true, noReply };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: msg, noReply: true };
+    return { ok: false, error: msg, noReply };
   }
 }

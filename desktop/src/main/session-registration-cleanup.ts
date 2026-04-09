@@ -10,7 +10,7 @@ function isDefaultAgentName(name: string): boolean {
 
 export function pickUnregisteredConnectionsForCleanup(
   entries: SessionRegistrationEntry[],
-  justRegistered: { connectionId: string; agentName: string },
+  justRegistered: { connectionId: string; channelName: string },
 ): string[] {
   return entries
     .filter((entry) => entry.connectionId !== justRegistered.connectionId)
@@ -18,7 +18,7 @@ export function pickUnregisteredConnectionsForCleanup(
       (entry) =>
         !entry.isRegistered &&
         (isDefaultAgentName(entry.connectionName) ||
-          entry.connectionName === justRegistered.agentName),
+          entry.connectionName === justRegistered.channelName),
     )
     .map((entry) => entry.connectionId);
 }
@@ -29,7 +29,7 @@ export function pickUnregisteredDefaultConnectionsForCleanup(
 ): string[] {
   return pickUnregisteredConnectionsForCleanup(entries, {
     connectionId: justRegisteredConnectionId,
-    agentName: '',
+    channelName: '',
   }).filter((connectionId) => {
     const entry = entries.find((e) => e.connectionId === connectionId);
     return !!entry && isDefaultAgentName(entry.connectionName);

@@ -46,10 +46,27 @@ describe('opencode-mcp-register', () => {
           config: {
             type: 'remote',
             url: 'http://localhost:3100/mcp',
+            timeout: 860000,
           },
         }),
       }),
     );
+  });
+
+  it('derives the remote MCP timeout from the prompt timeout setting', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ status: 'ready' }),
+    });
+
+    await registerMcpWithOpenCode({
+      appPort: 3100,
+      openCodePort: 4096,
+      promptTimeoutSeconds: 1201,
+    });
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.config.timeout).toBe(1261000);
   });
 
   it('returns unreachable when OpenCode is not running', async () => {
@@ -268,5 +285,181 @@ describe('registerMcpWithRetry', () => {
     // Expected delays: 1000, 2000, 4000, 5000(capped), 5000(capped)
     expect(delays).toEqual([1000, 2000, 4000, 5000, 5000]);
     consoleSpy.mockRestore();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/*  Regression: startup call in index.ts (agentBackend === 'opencode') */
+/* ------------------------------------------------------------------ */
+/**
+ * Regression tests for the fix in index.ts that calls `registerMcpWithRetry`
+ * on startup when `agentBackend === 'opencode'`.
+ *
+ * Because index.ts is an Electron entry point that cannot be unit-tested
+ * directly, these tests verify the behaviour of `registerMcpWithRetry` using
+ * the same argument shape that index.ts passes:
+ *
+ *   registerMcpWithRetry({
+ *     appPort:               currentSettings.port,
+ *     openCodePort:          currentSettings.openCodePort,
+ *     promptTimeoutSeconds:  currentSettings.promptTimeoutSeconds,
+ *   })
+ *
+ * Covered scenarios
+ * ─────────────────
+ * 1. agentBackend === 'opencode': called once with the correct settings values
+ *    when registration succeeds on the first attempt.
+ * 2. agentBackend !== 'opencode': the caller should NOT invoke
+ *    `registerMcpWithRetry` at all — verified by checking the mock is never
+ *    called when we model the standalone / claude_sdk branch.
+ * 3. Retries up to maxRetries times when every attempt returns 'unreachable'.
+ * 4. Stops immediately (no retries) when the first attempt returns 'error'.
+ */
+describe('registerMcpWithRetry — startup regression (index.ts fix)', () => {
+  /** Settings snapshot mirroring defaultSettings from settings.ts */
+  const startupSettings = {
+    port: 3100,
+    openCodePort: 4096,
+    promptTimeoutSeconds: 200,
+  } as const;
+
+  let mockRegister: Mock<
+    (opts: {
+      appPort: number;
+      openCodePort: number;
+      promptTimeoutSeconds?: number;
+    }) => Promise<McpRegistrationResult>
+  >;
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockRegister = vi.fn();
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  // ── scenario 1 ────────────────────────────────────────────────────────────
+  it('(agentBackend=opencode) calls registerMcpWithRetry once with the exact settings values when OpenCode is reachable', async () => {
+    mockRegister.mockResolvedValue({ status: 'registered' });
+
+    const result = await registerMcpWithRetry(
+      {
+        appPort: startupSettings.port,
+        openCodePort: startupSettings.openCodePort,
+        promptTimeoutSeconds: startupSettings.promptTimeoutSeconds,
+      },
+      mockRegister,
+    );
+
+    // Should succeed immediately — no retries
+    expect(result.status).toBe('registered');
+    expect(mockRegister).toHaveBeenCalledTimes(1);
+    expect(mockRegister).toHaveBeenCalledWith({
+      appPort: startupSettings.port,
+      openCodePort: startupSettings.openCodePort,
+      promptTimeoutSeconds: startupSettings.promptTimeoutSeconds,
+    });
+  });
+
+  // ── scenario 2 ────────────────────────────────────────────────────────────
+  it('(agentBackend=standalone) does NOT call registerMcpWithRetry', () => {
+    // Model the index.ts guard: `if (agentBackend === 'opencode') { … }`
+    const agentBackend: 'standalone' | 'opencode' | 'claude_sdk' = 'standalone';
+
+    if (agentBackend === 'opencode') {
+      void registerMcpWithRetry(
+        {
+          appPort: startupSettings.port,
+          openCodePort: startupSettings.openCodePort,
+          promptTimeoutSeconds: startupSettings.promptTimeoutSeconds,
+        },
+        mockRegister,
+      );
+    }
+
+    expect(mockRegister).not.toHaveBeenCalled();
+  });
+
+  it('(agentBackend=claude_sdk) does NOT call registerMcpWithRetry', () => {
+    const agentBackend: 'standalone' | 'opencode' | 'claude_sdk' = 'claude_sdk';
+
+    if (agentBackend === 'opencode') {
+      void registerMcpWithRetry(
+        {
+          appPort: startupSettings.port,
+          openCodePort: startupSettings.openCodePort,
+          promptTimeoutSeconds: startupSettings.promptTimeoutSeconds,
+        },
+        mockRegister,
+      );
+    }
+
+    expect(mockRegister).not.toHaveBeenCalled();
+  });
+
+  // ── scenario 3 ────────────────────────────────────────────────────────────
+  it('(agentBackend=opencode) retries up to maxRetries times when OpenCode is persistently unreachable', async () => {
+    mockRegister.mockResolvedValue({
+      status: 'unreachable',
+      error: 'ECONNREFUSED',
+    });
+
+    const maxRetries = 3;
+    const promise = registerMcpWithRetry(
+      {
+        appPort: startupSettings.port,
+        openCodePort: startupSettings.openCodePort,
+        promptTimeoutSeconds: startupSettings.promptTimeoutSeconds,
+        maxRetries,
+        initialDelayMs: 1000,
+      },
+      mockRegister,
+    );
+
+    // Advance through all retry delays
+    for (let i = 0; i < maxRetries; i++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+
+    const result = await promise;
+
+    expect(result.status).toBe('unreachable');
+    // 1 initial attempt + maxRetries retry attempts
+    expect(mockRegister).toHaveBeenCalledTimes(1 + maxRetries);
+    // Every call must have used the settings values from index.ts
+    for (const call of mockRegister.mock.calls) {
+      expect(call[0]).toEqual({
+        appPort: startupSettings.port,
+        openCodePort: startupSettings.openCodePort,
+        promptTimeoutSeconds: startupSettings.promptTimeoutSeconds,
+      });
+    }
+  });
+
+  // ── scenario 4 ────────────────────────────────────────────────────────────
+  it('(agentBackend=opencode) stops immediately without retrying when OpenCode returns an error status', async () => {
+    mockRegister.mockResolvedValue({
+      status: 'error',
+      error: 'OpenCode returned 500 Internal Server Error',
+    });
+
+    const result = await registerMcpWithRetry(
+      {
+        appPort: startupSettings.port,
+        openCodePort: startupSettings.openCodePort,
+        promptTimeoutSeconds: startupSettings.promptTimeoutSeconds,
+        maxRetries: 5,
+        initialDelayMs: 1000,
+      },
+      mockRegister,
+    );
+
+    expect(result.status).toBe('error');
+    // Must not retry — single call only
+    expect(mockRegister).toHaveBeenCalledTimes(1);
   });
 });

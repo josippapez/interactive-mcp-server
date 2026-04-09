@@ -17,6 +17,8 @@ export interface DetectedSession {
 export interface OpenCodeSession {
   id: string;
   parentID?: string | null;
+  title?: string;
+  directory?: string;
   time?: { created?: number; updated?: number };
 }
 

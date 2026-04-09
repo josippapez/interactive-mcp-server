@@ -6,11 +6,13 @@ import {
 export type RegisterWithOpenCode = (options: {
   appPort: number;
   openCodePort: number;
+  promptTimeoutSeconds?: number;
 }) => Promise<McpRegistrationResult>;
 
 export interface AutoRegisterOptions {
   getAppPort: () => number;
   getOpenCodePort: () => number;
+  getPromptTimeoutSeconds?: () => number;
   intervalMs?: number;
   shouldAttempt?: () => boolean | Promise<boolean>;
 }
@@ -51,7 +53,8 @@ export function startAutoRegisterWithOpenCode(
     try {
       const appPort = options.getAppPort();
       const openCodePort = options.getOpenCodePort();
-      await register({ appPort, openCodePort });
+      const promptTimeoutSeconds = options.getPromptTimeoutSeconds?.();
+      await register({ appPort, openCodePort, promptTimeoutSeconds });
     } finally {
       running = false;
       scheduleNext();

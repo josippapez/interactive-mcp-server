@@ -46,15 +46,23 @@ export async function handleInjectDocContext(
 ): Promise<InjectDocContextResult> {
   const { connectionId, openCodeSessionId, message, debug = false } = input;
 
-  // Resolve baseDirectory: use supplied value or look up from DB
+  // Resolve baseDirectory and check for parent session: use supplied value or look up from DB
   let baseDirectory: string | null = input.baseDirectory ?? null;
+  const conn = deps.getRegisteredConnection(connectionId);
   if (!baseDirectory) {
-    const conn = deps.getRegisteredConnection(connectionId);
     baseDirectory = conn?.baseDirectory ?? null;
   }
 
   if (!baseDirectory) {
     // No repo directory — nothing to inject
+    return { ok: true, injectedCount: 0 };
+  }
+
+  // Skip doc context injection for subagent/child sessions (parentSessionId set).
+  // Injecting a <system-reminder> into a child OpenCode session causes it to
+  // propagate up to the parent session via OpenCode's session hierarchy, leaking
+  // the reminder into the parent agent's context.
+  if (conn?.parentSessionId) {
     return { ok: true, injectedCount: 0 };
   }
 

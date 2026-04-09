@@ -59,7 +59,7 @@ function makeSnapshot(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
     directory: '/tmp',
     depth: 0,
     connectionId: null,
-    agentName: null,
+    channelName: null,
     hasMcpChannel: false,
     baseDirectory: null,
     registeredParentSessionId: null,
@@ -150,7 +150,7 @@ describe('mergeSessionTreeSnapshot', () => {
       makeSnapshot({
         openCodeSessionId: 'ses_main',
         connectionId: 'conn-123',
-        agentName: 'Claude Code',
+        channelName: 'Claude Code',
         hasMcpChannel: true,
       }),
     ];
@@ -240,12 +240,12 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(child.depth).toBe(1);
   });
 
-  it('prefers agentName over title when both are present in snapshot', () => {
+  it('prefers channelName over title when both are present in snapshot', () => {
     const snapshot = [
       makeSnapshot({
         openCodeSessionId: 'ses_1',
         title: 'OpenCode Title',
-        agentName: 'Claude Code',
+        channelName: 'Claude Code',
       }),
     ];
 
@@ -253,12 +253,12 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(result.get('ses_1')!.title).toBe('Claude Code');
   });
 
-  it('uses title when agentName is null', () => {
+  it('uses title when channelName is null', () => {
     const snapshot = [
       makeSnapshot({
         openCodeSessionId: 'ses_1',
         title: 'Auto-generated Title',
-        agentName: null,
+        channelName: null,
       }),
     ];
 
@@ -382,7 +382,7 @@ describe('partitionNodes', () => {
         openCodeSessionId: 'ses_main',
         openCodeParentId: null,
         connectionId: 'conn-1',
-        agentName: 'Claude Code',
+        channelName: 'Claude Code',
         hasMcpChannel: true,
       }),
     ];

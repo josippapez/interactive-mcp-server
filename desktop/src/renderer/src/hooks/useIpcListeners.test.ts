@@ -1,11 +1,16 @@
 import { describe, it, expect } from 'vitest';
-import { collectDescendantKeys } from './useIpcListeners';
+import {
+  collectDescendantKeys,
+  findKeyByConnectionId,
+  findPromptTargetKey,
+} from './useIpcListeners';
 import type { SessionNode } from '../types';
 
 function makeNode(
   id: string,
   openCodeSessionId: string | null,
   openCodeParentId: string | null,
+  connectionId?: string | null,
 ): SessionNode {
   return {
     id,
@@ -14,7 +19,7 @@ function makeNode(
     title: id,
     directory: '',
     depth: 0,
-    connectionId: null,
+    connectionId: connectionId ?? null,
     hasMcpChannel: false,
     isDirectConnection: false,
     prompt: null,
@@ -25,8 +30,96 @@ function makeNode(
     sessionChannel: null,
     sessionStatuses: [],
     baseDirectory: null,
+    pendingPermissions: [],
   };
 }
+
+// ---------------------------------------------------------------------------
+// findKeyByConnectionId
+// ---------------------------------------------------------------------------
+
+describe('findKeyByConnectionId', () => {
+  it('returns the map key when connectionId matches directly', () => {
+    const nodes = new Map([
+      ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
+    ]);
+    expect(findKeyByConnectionId(nodes, 'uuid-aaa')).toBe('ses_root');
+  });
+
+  it('returns null when no node matches and no openCodeSessionId hint', () => {
+    const nodes = new Map([
+      ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
+    ]);
+    expect(findKeyByConnectionId(nodes, 'uuid-unknown')).toBeNull();
+  });
+
+  it('falls back to openCodeSessionId when connectionId does not match any node', () => {
+    // Node is keyed by openCodeSessionId "ses_sub123" with a stale auto-connectionId.
+    // The new UUID doesn't match any node's connectionId, but the
+    // openCodeSessionId hint allows the fallback to find the correct node.
+    const nodes = new Map([
+      [
+        'ses_sub123',
+        makeNode('ses_sub123', 'ses_sub123', 'ses_root', 'auto-ses_sub123'),
+      ],
+    ]);
+    expect(findKeyByConnectionId(nodes, 'uuid-new', 'ses_sub123')).toBe(
+      'ses_sub123',
+    );
+  });
+
+  it('prefers direct connectionId match over openCodeSessionId fallback', () => {
+    // Two nodes: one with matching connectionId, another with matching openCodeSessionId key.
+    const nodes = new Map([
+      ['ses_a', makeNode('ses_a', 'ses_a', null, 'uuid-match')],
+      ['ses_b', makeNode('ses_b', 'ses_b', null, 'auto-ses_b')],
+    ]);
+    // Direct match wins even when openCodeSessionId hint points to ses_b
+    expect(findKeyByConnectionId(nodes, 'uuid-match', 'ses_b')).toBe('ses_a');
+  });
+
+  it('returns null when openCodeSessionId hint has no corresponding node', () => {
+    const nodes = new Map([
+      ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
+    ]);
+    expect(
+      findKeyByConnectionId(nodes, 'uuid-unknown', 'ses_nonexistent'),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// findPromptTargetKey
+// ---------------------------------------------------------------------------
+
+describe('findPromptTargetKey', () => {
+  it('returns the map key when connectionId matches directly', () => {
+    const nodes = new Map([
+      ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
+    ]);
+    expect(findPromptTargetKey(nodes, 'uuid-aaa')).toBe('ses_root');
+  });
+
+  it('falls back to openCodeSessionId when connectionId is stale', () => {
+    const nodes = new Map([
+      ['ses_sub', makeNode('ses_sub', 'ses_sub', 'ses_root', 'auto-ses_sub')],
+    ]);
+    expect(findPromptTargetKey(nodes, 'uuid-new', 'ses_sub')).toBe('ses_sub');
+  });
+
+  it('returns null when neither connectionId nor openCodeSessionId matches', () => {
+    const nodes = new Map([
+      ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
+    ]);
+    expect(
+      findPromptTargetKey(nodes, 'uuid-unknown', 'ses_nonexistent'),
+    ).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// collectDescendantKeys
+// ---------------------------------------------------------------------------
 
 describe('collectDescendantKeys', () => {
   it('returns an empty set when there are no children', () => {

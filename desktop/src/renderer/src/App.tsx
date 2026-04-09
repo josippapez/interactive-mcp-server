@@ -1,13 +1,14 @@
 import { useState, useCallback } from 'react';
 import PromptView from './pages/PromptView';
 import SettingsView from './pages/SettingsView';
+import SkillsView from './pages/SkillsView';
 import StatusBar from './components/StatusBar';
 import ShortcutHelpModal from './components/ShortcutHelpModal';
 import { useConnections } from './hooks/useConnections';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 
-type Tab = 'prompt' | 'settings';
-const TABS: Tab[] = ['prompt', 'settings'];
+type Tab = 'prompt' | 'skills' | 'settings';
+const TABS: Tab[] = ['prompt', 'skills', 'settings'];
 
 export default function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<Tab>('prompt');
@@ -28,9 +29,16 @@ export default function App(): React.ReactElement {
     handleClearChannelMessages,
     handleRemoveSession,
     handleToggleDocContext,
+    handleReplyPermission,
+    jumpToFirstPendingPrompt,
   } = useConnections(switchToPrompt);
 
-  const switchTab = useCallback((tab: 1 | 2) => {
+  const handlePromptTabClick = useCallback(() => {
+    setActiveTab('prompt');
+    jumpToFirstPendingPrompt();
+  }, [jumpToFirstPendingPrompt]);
+
+  const switchTab = useCallback((tab: 1 | 2 | 3) => {
     setActiveTab(TABS[tab - 1]);
   }, []);
 
@@ -41,13 +49,18 @@ export default function App(): React.ReactElement {
   const hasAnyPrompt = Array.from(connections.values()).some(
     (c) => c.hasPendingPrompt,
   );
+  // Show the badge whenever there is a pending prompt on a channel that is NOT
+  // currently visible — i.e. either we're on a different tab, or we're on the
+  // prompt tab but viewing a channel without a pending prompt.
+  const activeChannelHasPrompt = Boolean(activeConn?.hasPendingPrompt);
+  const showPromptBadge = hasAnyPrompt && !activeChannelHasPrompt;
   const connectionCount = connections.size;
 
   return (
     <div className="flex flex-col h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
       <header className="titlebar-drag flex items-center justify-between px-4 pt-8 pb-2 border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2">
-          <span className="text-[var(--color-agent)] text-sm">❯</span>
+          <span className="text-[var(--color-agent)] text-sm">&#x276F;</span>
           <h1 className="text-sm font-medium text-[var(--color-text-muted)] tracking-wide">
             Interactive MCP
           </h1>
@@ -55,16 +68,23 @@ export default function App(): React.ReactElement {
         <nav className="titlebar-no-drag flex gap-0.5">
           <TabButton
             active={activeTab === 'prompt'}
-            onClick={() => setActiveTab('prompt')}
-            badge={hasAnyPrompt && activeTab !== 'prompt'}
-            shortcut="⌘1"
+            onClick={handlePromptTabClick}
+            badge={showPromptBadge}
+            shortcut="&#x2318;1"
           >
             Prompts
           </TabButton>
           <TabButton
+            active={activeTab === 'skills'}
+            onClick={() => setActiveTab('skills')}
+            shortcut="&#x2318;2"
+          >
+            Skills
+          </TabButton>
+          <TabButton
             active={activeTab === 'settings'}
             onClick={() => setActiveTab('settings')}
-            shortcut="⌘2"
+            shortcut="&#x2318;3"
           >
             Settings
           </TabButton>
@@ -83,6 +103,7 @@ export default function App(): React.ReactElement {
             connectionId={activeConn?.connectionId ?? null}
             sessionChannel={activeConn?.sessionChannel ?? null}
             sessionStatuses={activeConn?.sessionStatuses ?? []}
+            pendingPermissions={activeConn?.pendingPermissions ?? []}
             docContextEnabled={activeConn?.docContextEnabled !== false}
             onSubmit={handleSubmit}
             onSelectOption={handleSelectOption}
@@ -96,6 +117,7 @@ export default function App(): React.ReactElement {
             }
           />
         </div>
+        {activeTab === 'skills' && <SkillsView />}
         {activeTab === 'settings' && <SettingsView />}
       </main>
 

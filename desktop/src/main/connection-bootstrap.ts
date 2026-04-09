@@ -1,7 +1,7 @@
 import type { RegisteredConnection } from './database';
 
 export interface ConnectionBootstrapProfile {
-  agentName: string;
+  channelName: string;
   projectName: string;
   baseDirectory: string | null;
 }
@@ -14,21 +14,21 @@ export function resolveConnectionBootstrapProfile(
 ): ConnectionBootstrapProfile {
   const preferMain = [...registeredConnections]
     .reverse()
-    .find((rc) => rc.agentName === DEFAULT_AGENT_NAME);
+    .find((rc) => rc.channelName === DEFAULT_AGENT_NAME);
   const latest =
     registeredConnections[registeredConnections.length - 1] ?? null;
   const picked = preferMain ?? latest;
 
   if (!picked) {
     return {
-      agentName: DEFAULT_AGENT_NAME,
+      channelName: DEFAULT_AGENT_NAME,
       projectName: DEFAULT_PROJECT_NAME,
       baseDirectory: null,
     };
   }
 
   return {
-    agentName: picked.agentName,
+    channelName: picked.channelName,
     projectName: picked.projectName,
     baseDirectory: picked.baseDirectory,
   };

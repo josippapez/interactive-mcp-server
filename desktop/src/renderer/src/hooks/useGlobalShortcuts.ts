@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 
 type ShortcutCallbacks = {
-  onSwitchTab: (tab: 1 | 2) => void;
+  onSwitchTab: (tab: 1 | 2 | 3) => void;
 };
 
 export function useGlobalShortcuts({ onSwitchTab }: ShortcutCallbacks) {
@@ -28,6 +28,11 @@ export function useGlobalShortcuts({ onSwitchTab }: ShortcutCallbacks) {
       if (meta && e.key === '2') {
         e.preventDefault();
         switchRef.current(2);
+        return;
+      }
+      if (meta && e.key === '3') {
+        e.preventDefault();
+        switchRef.current(3);
         return;
       }
       if (

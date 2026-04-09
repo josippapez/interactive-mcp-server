@@ -24,7 +24,7 @@ function unregisteredConnectionError(
             'You must call register_connection before using send_message. ' +
             'Without registration there is no channel to send to and the message will be lost.',
           action:
-            'Call the register_connection tool with your agentName, projectName, and baseDirectory first.',
+            'Call the register_connection tool with your channelName, projectName, and baseDirectory first.',
         }),
       },
     ],
@@ -102,6 +102,8 @@ Push a non-blocking status update to the UI. Returns immediately. Use to keep th
         connectionId,
         status,
         type,
+        openCodeSessionId:
+          getRegisteredConnection(connectionId)?.openCodeSessionId ?? null,
       });
 
       return {
@@ -180,6 +182,8 @@ Send a visible, persistent message directly into the desktop app channel history
       getWindow()?.webContents.send('agent-message', {
         connectionId,
         message,
+        openCodeSessionId:
+          getRegisteredConnection(connectionId)?.openCodeSessionId ?? null,
       });
 
       return {

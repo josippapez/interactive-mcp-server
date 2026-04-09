@@ -1,12 +1,14 @@
 import { app, ipcMain, dialog, BrowserWindow } from 'electron';
-import { readFileSync } from 'fs';
+import { readFileSync, writeFileSync } from 'fs';
 import { basename } from 'path';
+import JSZip from 'jszip';
 import { AppSettings, saveSettings } from './settings';
 import {
   injectOpenCodeMessage,
   SUPPORTED_FILE_EXTENSIONS,
 } from './opencode-injector';
 import { autoDetectOpenCodeSessionId } from './opencode-session';
+import { resolveSession, reResolveStaleSession } from './session-resolver';
 import {
   getConversationHistory,
   clearHistory,
@@ -17,6 +19,11 @@ import {
   deleteSessionChannel,
   deleteRegisteredConnection,
   getRegisteredConnection,
+  resetDatabase,
+  upsertSkillOrInstruction,
+  listSkillsAndInstructions,
+  getSkillOrInstructionByName,
+  deleteSkillOrInstruction,
 } from './database';
 import { searchDocs } from './doc-context-injector';
 import { handleInjectDocContext } from './inject-doc-context-handler';
@@ -28,16 +35,19 @@ import {
   closeSessionByConnectionId,
 } from './mcp-server';
 import { indexFiles, rankFileSuggestions } from './file-indexer';
-import { forceTerminateChat } from './ipc-prompt';
+import { forceTerminateChat, getActivePromptData } from './ipc-prompt';
 import { markConnectionDeleted } from './tools/connection-guard';
 import {
   triggerSessionTreeUpdate,
   tombstoneOpenCodeSession,
+  refreshSessionTreeCache,
 } from './session-tree-manager';
 import { startOpenCodeServer, stopOpenCodeServer } from './opencode-server';
 import { syncRemoteConfig } from './opencode-config-sync';
 import { registerMcpWithOpenCode } from './opencode-mcp-register';
 import { removePersistedSession } from './remove-persisted-session';
+import { getBackendAdapter } from './backend-adapter';
+import { injectClaudeMessageForConnection } from './claude-sdk-runtime';
 
 export interface IpcHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -53,19 +63,48 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     return true;
   });
 
+  ipcMain.handle('reset-database', async () => {
+    const result = resetDatabase();
+    const win = deps.getMainWindow();
+    win?.webContents.send('database-reset', result);
+    return result;
+  });
+
   ipcMain.handle('get-server-status', () => {
     return { running: true, port: deps.getSettings().port };
   });
 
   ipcMain.handle('get-app-version', () => app.getVersion());
 
+  ipcMain.handle('get-provider-status', async () => {
+    const settings = deps.getSettings();
+    const adapter = await getBackendAdapter(settings.agentBackend);
+    const effectiveMode =
+      settings.agentBackend === 'claude_sdk' &&
+      !adapter.supportsProviderInjection
+        ? 'standalone_compat'
+        : settings.agentBackend;
+
+    return {
+      backend: settings.agentBackend,
+      effectiveMode,
+      supportsSessionHierarchy: adapter.supportsSessionHierarchy,
+      supportsProviderInjection: adapter.supportsProviderInjection,
+      runtime: adapter.runtime,
+    };
+  });
+
   // Manually trigger MCP registration + config sync into OpenCode
   ipcMain.handle('sync-opencode-config', async () => {
     const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') {
+      return 'skipped: agentBackend is not opencode';
+    }
     // Try dynamic registration first
     const regResult = await registerMcpWithOpenCode({
       appPort: settings.port,
       openCodePort: settings.openCodePort,
+      promptTimeoutSeconds: settings.promptTimeoutSeconds,
     });
     // Also update config file as fallback
     const syncResult = syncRemoteConfig(
@@ -83,6 +122,36 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         deps.getSettings().openCodePort,
         baseDirectory,
       );
+    },
+  );
+
+  // Provider-agnostic session resolution: maps connectionId → provider session ID.
+  // Uses cached DB data first, then one re-resolve attempt if missing.
+  ipcMain.handle(
+    'resolve-session',
+    async (_event, data: { connectionId: string; baseDirectory?: string }) => {
+      const settings = deps.getSettings();
+      return resolveSession({
+        connectionId: data.connectionId,
+        backend: settings.agentBackend,
+        openCodePort: settings.openCodePort,
+        baseDirectory: data.baseDirectory,
+      });
+    },
+  );
+
+  // Re-resolve a stale provider session (clears cache, retries once).
+  // Call this after an injection failure suggests the session is gone.
+  ipcMain.handle(
+    're-resolve-session',
+    async (_event, data: { connectionId: string; baseDirectory?: string }) => {
+      const settings = deps.getSettings();
+      return reResolveStaleSession({
+        connectionId: data.connectionId,
+        backend: settings.agentBackend,
+        openCodePort: settings.openCodePort,
+        baseDirectory: data.baseDirectory,
+      });
     },
   );
 
@@ -107,10 +176,13 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         () => deps.getSettings().promptTimeoutSeconds * 1000,
         () => deps.getSettings().openCodePort,
         () => deps.getSettings().docIndexingEnabled,
+        () => deps.getSettings().agentBackend,
       );
     }
     // Start/stop OpenCode serve when the toggle or port changes
-    if (settings.autoStartOpenCode) {
+    const openCodeEnabled = settings.agentBackend === 'opencode';
+
+    if (openCodeEnabled && settings.autoStartOpenCode) {
       if (
         !prev.autoStartOpenCode ||
         settings.openCodePort !== prev.openCodePort
@@ -120,18 +192,17 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     } else if (prev.autoStartOpenCode) {
       stopOpenCodeServer();
     }
+
+    if (!openCodeEnabled) {
+      stopOpenCodeServer();
+    }
     // Re-sync remote MCP config when the prompt timeout or port changed
-    if (settings.autoSyncOpencode) {
+    if (openCodeEnabled && settings.autoSyncOpencode) {
       const timeoutChanged =
         settings.promptTimeoutSeconds !== prev.promptTimeoutSeconds;
       const justEnabled = !prev.autoSyncOpencode;
       if (timeoutChanged || justEnabled || portChanged) {
         syncRemoteConfig(settings.port, settings.promptTimeoutSeconds);
-        // Also re-register dynamically
-        void registerMcpWithOpenCode({
-          appPort: settings.port,
-          openCodePort: settings.openCodePort,
-        });
       }
     }
     return true;
@@ -214,6 +285,9 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     forceTerminateChat(connectionId);
   });
 
+  // Return all currently-active prompts so the renderer can recover them on restart.
+  ipcMain.handle('get-active-prompts', () => getActivePromptData());
+
   // Dismiss a session tab: cancel any pending prompt with "No reply" and remove the connection from the UI
   ipcMain.handle('dismiss-session', (_event, connectionId: string) => {
     forceTerminateChat(connectionId);
@@ -295,6 +369,36 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     },
   );
 
+  ipcMain.handle(
+    'inject-claude-message',
+    async (
+      _event,
+      data: {
+        connectionId: string;
+        message: string;
+        baseDirectory?: string;
+        attachments?: {
+          data: string;
+          mimeType: string;
+          name: string;
+          size: number;
+        }[];
+      },
+    ): Promise<{
+      ok: boolean;
+      sessionId?: string;
+      responseText?: string;
+      error?: string;
+    }> => {
+      return injectClaudeMessageForConnection({
+        connectionId: data.connectionId,
+        message: data.message,
+        baseDirectory: data.baseDirectory,
+        attachments: data.attachments,
+      });
+    },
+  );
+
   /**
    * Inject relevant repository documentation context into an OpenCode session
    * immediately before the user's outbound message. This is called from the
@@ -324,10 +428,173 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
             deps.getMainWindow()?.webContents.send('agent-message', {
               connectionId,
               message,
+              openCodeSessionId:
+                getRegisteredConnection(connectionId)?.openCodeSessionId ??
+                null,
             });
           },
         },
       );
+    },
+  );
+
+  // ─── Skills & Instructions CRUD ──────────────────────────────────────────
+
+  ipcMain.handle(
+    'upsert-skill-or-instruction',
+    (
+      _event,
+      data: {
+        name: string;
+        type: 'skill' | 'instruction';
+        description: string;
+        content: string;
+      },
+    ) => {
+      const result = upsertSkillOrInstruction(data);
+      if (result) {
+        deps.getMainWindow()?.webContents.send('skills-updated');
+      }
+      return result;
+    },
+  );
+
+  ipcMain.handle(
+    'list-skills-and-instructions',
+    (_event, filterType?: 'skill' | 'instruction') => {
+      return listSkillsAndInstructions(filterType);
+    },
+  );
+
+  ipcMain.handle('get-skill-or-instruction', (_event, name: string) => {
+    return getSkillOrInstructionByName(name);
+  });
+
+  ipcMain.handle('delete-skill-or-instruction', (_event, name: string) => {
+    const deleted = deleteSkillOrInstruction(name);
+    if (deleted) {
+      deps.getMainWindow()?.webContents.send('skills-updated');
+    }
+    return deleted;
+  });
+
+  // ─── Export skills & instructions as ZIP ─────────────────────────────────
+
+  ipcMain.handle(
+    'export-skills-markdown',
+    async (): Promise<{ saved: boolean; filePath?: string }> => {
+      const win = deps.getMainWindow();
+      if (!win) return { saved: false };
+
+      const result = await dialog.showSaveDialog(win, {
+        title: 'Export Skills & Instructions',
+        defaultPath: 'skills-and-instructions.zip',
+        filters: [{ name: 'ZIP Archive', extensions: ['zip'] }],
+      });
+      if (result.canceled || !result.filePath) return { saved: false };
+
+      const entries = listSkillsAndInstructions();
+      const skills = entries.filter((e) => e.type === 'skill');
+      const instructions = entries.filter((e) => e.type === 'instruction');
+
+      const zip = new JSZip();
+      const skillsFolder = zip.folder('skills');
+      for (const entry of skills) {
+        skillsFolder?.file(`${entry.name}.md`, entry.content);
+      }
+      const instructionsFolder = zip.folder('instructions');
+      for (const entry of instructions) {
+        instructionsFolder?.file(`${entry.name}.md`, entry.content);
+      }
+
+      const readmeLines = [
+        '# Skills & Instructions',
+        '',
+        `Exported on ${new Date().toISOString()}`,
+        '',
+      ];
+      if (skills.length > 0) {
+        readmeLines.push('## Skills', '');
+        for (const e of skills) {
+          readmeLines.push(`- **${e.name}** — ${e.description}`);
+        }
+        readmeLines.push('');
+      }
+      if (instructions.length > 0) {
+        readmeLines.push('## Instructions', '');
+        for (const e of instructions) {
+          readmeLines.push(`- **${e.name}** — ${e.description}`);
+        }
+        readmeLines.push('');
+      }
+      zip.file('README.md', readmeLines.join('\n'));
+
+      const buffer = await zip.generateAsync({ type: 'nodebuffer' });
+      writeFileSync(result.filePath, buffer);
+      return { saved: true, filePath: result.filePath };
+    },
+  );
+
+  // ─── Export single skill / instruction as Markdown ────────────────────────
+
+  ipcMain.handle(
+    'export-single-skill',
+    async (
+      _event,
+      name: string,
+    ): Promise<{ saved: boolean; filePath?: string }> => {
+      const win = deps.getMainWindow();
+      if (!win) return { saved: false };
+
+      const entry = getSkillOrInstructionByName(name);
+      if (!entry) return { saved: false };
+
+      const result = await dialog.showSaveDialog(win, {
+        title: `Export ${entry.name}`,
+        defaultPath: `${entry.name}.md`,
+        filters: [{ name: 'Markdown', extensions: ['md'] }],
+      });
+      if (result.canceled || !result.filePath) return { saved: false };
+
+      writeFileSync(result.filePath, entry.content, 'utf-8');
+      return { saved: true, filePath: result.filePath };
+    },
+  );
+
+  // ─── Refresh session tree cache on demand ────────────────────────────────
+
+  ipcMain.handle('refresh-session-tree', async () => {
+    await refreshSessionTreeCache();
+  });
+
+  // ─── Permission reply — forward agent decision to OpenCode ───────────────
+
+  ipcMain.handle(
+    'reply-permission',
+    async (
+      _event,
+      data: {
+        sessionID: string;
+        requestID: string;
+        reply: 'once' | 'always' | 'reject';
+      },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const { openCodePort } = deps.getSettings();
+      const url = `http://localhost:${openCodePort}/session/${data.sessionID}/permission/${data.requestID}`;
+      try {
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ reply: data.reply }),
+        });
+        if (!res.ok) {
+          return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
+        }
+        return { ok: true };
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        return { ok: false, error: message };
+      }
     },
   );
 }
