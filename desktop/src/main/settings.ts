@@ -47,11 +47,28 @@ export function getSettingsPath(): string {
   return join(app.getPath('userData'), 'settings.json');
 }
 
+/** Migrations applied after merging saved settings with defaults. */
+function migrateSettings(settings: AppSettings): AppSettings {
+  // v1 → v2: default was mistakenly set to 200s; migrate to 1200s.
+  if (settings.promptTimeoutSeconds === 200) {
+    return { ...settings, promptTimeoutSeconds: 1200 };
+  }
+  return settings;
+}
+
 export function loadSettings(): AppSettings {
   const path = getSettingsPath();
   if (!existsSync(path)) return { ...defaultSettings };
   try {
-    return { ...defaultSettings, ...JSON.parse(readFileSync(path, 'utf-8')) };
+    const merged = {
+      ...defaultSettings,
+      ...JSON.parse(readFileSync(path, 'utf-8')),
+    };
+    const migrated = migrateSettings(merged);
+    if (migrated !== merged) {
+      writeFileSync(path, JSON.stringify(migrated, null, 2));
+    }
+    return migrated;
   } catch {
     return { ...defaultSettings };
   }
