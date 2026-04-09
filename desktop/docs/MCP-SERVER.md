@@ -212,7 +212,7 @@ Client                          MCP Server                       Renderer (IPC)
 When `transport.onclose` fires (either from `DELETE /mcp` or from the transport detecting a dropped connection), the following cleanup sequence runs:
 
 1. Remove the session entry from the `sessions` map.
-2. Call `cancelActivePrompt(connectionId)` — cancels any pending `request_user_input` or intensive-chat prompts waiting on renderer responses.
+2. Call `cancelActivePrompt(connectionId)` — cancels any pending `request_user_input` or intensive-chat prompts waiting on renderer responses. This now also calls `state.sendPromptClear()` on the active `DurablePromptState` before settling, so the renderer always receives a `prompt-clear` event and can clean up its UI state.
 3. Call `deleteSessionChannel(connectionId)` — removes the session channel from the database.
 4. Call `clearSessionFile()` — deletes both session file paths (see [Session Files](#session-files)).
 5. Send `connection-closed` IPC to the renderer with `{ connectionId }`.
