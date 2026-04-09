@@ -139,17 +139,28 @@ Owns the Express app and all HTTP routes. REST API routes have been extracted to
 
 #### `ipc-prompt.ts`
 
-Implements the `promptUser()` function, which is the bridge between the MCP tool layer and the renderer UI:
+Implements the `promptUser()` function using a **durable prompt** design that survives HTTP transport drops.
 
-1. Brings the window to the foreground (`win.show()`, `win.focus()`).
-2. Optionally plays a beep sound (`shell.beep()`), throttled to at most once per 2 seconds.
-3. Sends `prompt-request` to the renderer via `webContents.send`, including the prompt text, predefined options, `connectionId`, timeout duration, and optional file-autocomplete `baseDirectory`.
-4. Simultaneously appends a `question` row to `session_channel_history` in SQLite.
-5. Registers a one-shot `ipcMain.on('prompt-response', handler)` listener that resolves the promise when the renderer sends the matching response ID.
-6. Stores a cancel/terminate handle in `activePrompts` (keyed by `connectionId`) so that connection drop or force-terminate can unblock the waiting promise immediately.
-7. Resolves with a timeout error string after `promptTimeoutSeconds` if no response arrives.
+Each call creates (or re-attaches to) a `DurablePromptState` stored in main-process memory, keyed by `connectionId`. The durable state holds the prompt data, a long-lived Promise/resolve pair, the `ipcMain` handler, expiry timer, diagnostic interval, and a `sendPromptClear()` closure.
+
+**Lifecycle:**
+
+1. If the MCP `AbortSignal` is already fired _before_ the prompt enters the queue (pre-queue abort), `promptUser` resolves immediately with an abort error and returns — no UI prompt is shown.
+2. Once active, `AbortSignal` fires are **completely ignored**. The durable promise keeps waiting regardless of TCP drops or transport reconnects.
+3. Brings the window to the foreground (`win.show()`, `win.focus()`).
+4. Optionally plays a beep sound (`shell.beep()`), throttled to at most once per 2 seconds.
+5. Sends `prompt-request` to the renderer via `webContents.send`, including the prompt text, predefined options, `connectionId`, timeout duration, and optional file-autocomplete `baseDirectory`.
+6. Simultaneously appends a `question` row to `session_channel_history` in SQLite.
+7. Registers a persistent `ipcMain.on('prompt-response', handler)` listener that resolves the durable promise when the renderer sends the matching response ID.
+8. Starts a per-prompt expiry timer (configured via `promptTimeoutSeconds`); the timer is **not** cancelled when the transport drops.
+
+**Transport reconnect (retry attach):** When the MCP transport drops mid-wait and the agent retries the same tool call, a new `promptUser()` call arrives. If a live `DurablePromptState` already exists for that `connectionId`, `promptUser` attaches the new outer resolver to the existing durable promise via `.then()` — no second UI prompt is spawned. The user's eventual reply is forwarded to whichever `promptUser` invocation is currently awaiting.
+
+**Settlement:** All cleanup (clear timers, remove IPC listener, delete from `activePrompts`, call `resolve()`) runs through the internal `_settlePrompt()` helper. `cancelActivePrompt()` calls `state.sendPromptClear()` before settling so the renderer always receives a `prompt-clear` event. `forceTerminateChat()` also goes through `_settlePrompt()`.
 
 On resolution, `promptUser` saves the conversation to the `conversations` table and appends an `answer` row to `session_channel_history`.
+
+Public exports: `promptUser`, `cancelActivePrompt`, `forceTerminateChat`, `getActivePromptData`, `setSoundEnabled`, `setPromptTimeout`, `getPromptTimeoutSeconds`.
 
 #### `ipc-handlers.ts`
 
@@ -408,13 +419,20 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
 
 3. Tool handler calls promptUser()
    └─ ipc-prompt.ts:promptUser(win, { id, message, projectName, connectionId, ... })
+      ├─ Pre-queue abort check: if signal already fired, resolve immediately and return
+      ├─ Durable-state check: if a live DurablePromptState already exists for this
+      │  connectionId (e.g. transport reconnect / agent retry), attach the new outer
+      │  resolver to the existing durable promise and return — no new UI prompt shown
       ├─ win.show() + win.focus()
       ├─ shell.beep()  (if soundEnabled and not rate-limited)
+      ├─ Creates DurablePromptState { promise, resolve, ipcHandler, timer,
+      │  diagInterval, sendPromptClear } stored in activePrompts keyed by connectionId
+      ├─ ipcMain.on('prompt-response', ipcHandler)  ← persistent listener
       ├─ webContents.send('prompt-request', promptData)
       ├─ appendSessionChannelMessage({ messageType: 'question', ... })  → SQLite
-      ├─ ipcMain.on('prompt-response', handler)  ← registers listener
-      └─ activePrompts.set(connectionId, { promptId, cancel, terminate })
-         └─ setTimeout(timeoutMs) registered
+      └─ setTimeout(timeoutMs) registered on durableState.timer
+         NOTE: timer is NOT cancelled when the MCP AbortSignal fires.
+         The prompt remains alive across transport drops and reconnects.
 
 4. Renderer receives prompt
    └─ ipcRenderer.on('prompt-request') fires in preload
@@ -534,9 +552,15 @@ Existing databases that predate the `attachments` column are migrated at startup
 
 `shell.beep()` is rate-limited to at most once every 2 seconds (`BEEP_COOLDOWN_MS = 2000`). Without this, agents that call `request_user_input` in rapid succession (e.g. inside a tight tool loop) would produce a flood of notification sounds.
 
-### Prompt supersession
+### Durable prompt state (transport-resilient prompts)
 
-If a new `promptUser` call arrives for the same `connectionId` while a previous prompt is still waiting, the old promise is immediately resolved with an error string (`'Error: Prompt superseded by a newer prompt.'`) and its `ipcMain` listener is removed. This prevents listener accumulation and ensures the renderer always shows only the most recent prompt.
+`promptUser()` backs each active prompt with a `DurablePromptState` held in main-process memory, independent of any HTTP connection. When the MCP transport's `AbortSignal` fires (TCP drop / agent-side timeout), the durable promise is **not** resolved — it keeps waiting. When the agent retries the tool call (via transparent session resurrection), the new `promptUser()` call detects the existing live state and attaches its outer resolver to the same durable promise. The user's reply is forwarded to the retry without spawning a second UI prompt.
+
+This breaks the coupling between "HTTP connection alive" and "prompt active" that previously caused `-32000 Connection closed` errors during long user-think times.
+
+### Prompt FIFO queue
+
+If a new `promptUser` call arrives for the same `connectionId` while a previous prompt is still waiting, the new prompt is placed in a per-connection FIFO queue and displayed only after the active prompt settles. If the connection drops before a queued prompt ever becomes active, `cancelActivePrompt` drains the queue and resolves each entry with a cancellation error string, preventing listener accumulation.
 
 ### Session file for external discovery
 

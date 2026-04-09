@@ -30,6 +30,8 @@ A separate (less common) scenario: the app is backgrounded long enough for the O
 
 **Fix (previously implemented)**: SSE keepalive heartbeat (15s `": keepalive\n\n"` comments on `GET /mcp`) + socket `close`/`error` listener that calls `cancelActivePrompt` when the SSE stream dies. Implemented in `src/main/mcp-server.ts` GET /mcp handler.
 
+> **Update (durable prompt rewrite):** The root problem — an HTTP connection drop killing the in-flight tool call and resolving `promptUser()` with a `-32000 Connection closed` error — is now solved by the **durable prompt system** in `ipc-prompt.ts`. Each active prompt is backed by a `DurablePromptState` held in main-process memory, independent of the HTTP transport. When the MCP `AbortSignal` fires mid-wait (TCP drop), the durable promise is **not** resolved; it keeps waiting. When the agent retries (transparent session resurrection), the new `promptUser()` call detects the existing live state and attaches to the same durable promise — no second UI prompt is spawned. The SSE keepalive heartbeat is still useful for maintaining server-initiated message delivery, but it is no longer required to keep tool calls alive during long user-think times.
+
 ### Affected code paths
 
 | File                                | Relevant location                                     | Notes                                                                             |
