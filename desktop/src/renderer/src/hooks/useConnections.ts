@@ -324,27 +324,6 @@ export function useConnections(onActivatePromptTab: () => void) {
     [],
   );
 
-  const appendAnswerMessage = useCallback(
-    (nodeId: string, text: string, attachments?: Attachment[]) => {
-      withNode(nodeId, (node) => ({
-        ...node,
-        channelMessages: [
-          ...node.channelMessages,
-          {
-            id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-            kind: 'answer' as const,
-            text,
-            timestamp: new Date(),
-            attachments,
-          },
-        ],
-        prompt: null,
-        hasPendingPrompt: false,
-      }));
-    },
-    [withNode],
-  );
-
   const handleSubmit = useCallback(
     (answer: string, attachments?: Attachment[]) => {
       // Always read activeId from the ref (not the closure) so we get the
@@ -359,7 +338,60 @@ export function useConnections(onActivatePromptTab: () => void) {
         ? (nodesRef.current.get(currentId) ?? null)
         : null;
       if (!currentNode?.prompt) return;
-      appendAnswerMessage(currentNode.id, answer, attachments);
+
+      // Clear the prompt and append the answer message.
+      // Use setNodes directly here (rather than appendAnswerMessage via withNode)
+      // so we can do a resilient lookup: if the node was absorbed into an
+      // OpenCode session tree entry since we last rendered (direct-connection →
+      // tree node promotion), its map key may have changed from connectionId to
+      // openCodeSessionId. A fallback search by connectionId prevents the clear
+      // from silently no-oping and leaving the prompt UI stuck.
+      const nodeConnectionId = currentNode.connectionId;
+      setNodes((prev) => {
+        // Primary lookup — the map key we expect.
+        let key: string | null = prev.has(currentNode.id)
+          ? currentNode.id
+          : null;
+        // Fallback: search by connectionId (handles direct→tree absorption).
+        if (!key && nodeConnectionId) {
+          for (const [k, n] of prev) {
+            if (n.connectionId === nodeConnectionId) {
+              key = k;
+              break;
+            }
+          }
+        }
+        if (!key) return prev;
+        const node = prev.get(key)!;
+        const next = new Map(prev);
+        next.set(key, {
+          ...node,
+          channelMessages: [
+            ...node.channelMessages,
+            {
+              id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+              kind: 'answer' as const,
+              text: answer,
+              timestamp: new Date(),
+              attachments,
+            },
+          ],
+          prompt: null,
+          hasPendingPrompt: false,
+        });
+        return next;
+      });
+
+      // Also update activeId to point at the (possibly new) map key so the
+      // channel stays visible after the promotion.
+      if (!nodesRef.current.has(currentNode.id) && nodeConnectionId) {
+        for (const [k, n] of nodesRef.current) {
+          if (n.connectionId === nodeConnectionId) {
+            setActiveId(k);
+            break;
+          }
+        }
+      }
 
       // Inject relevant doc context into the provider session before the
       // prompt response so the agent receives repo docs in its context window.
@@ -386,44 +418,81 @@ export function useConnections(onActivatePromptTab: () => void) {
         attachments: attachments?.length ? attachments : undefined,
       });
     },
-    [appendAnswerMessage],
+    [],
   );
 
-  const handleSelectOption = useCallback(
-    (option: string) => {
-      // Same ref-first pattern as handleSubmit — read activeId from the ref
-      // so injection always targets the correct subagent session.
-      const currentId = activeIdRef.current;
-      const currentNode = currentId
-        ? (nodesRef.current.get(currentId) ?? null)
-        : null;
-      if (!currentNode?.prompt) return;
-      appendAnswerMessage(currentNode.id, option);
+  const handleSelectOption = useCallback((option: string) => {
+    // Same ref-first pattern as handleSubmit — read activeId from the ref
+    // so injection always targets the correct subagent session.
+    const currentId = activeIdRef.current;
+    const currentNode = currentId
+      ? (nodesRef.current.get(currentId) ?? null)
+      : null;
+    if (!currentNode?.prompt) return;
 
-      // Inject relevant doc context into the provider session before the
-      // prompt response. Uses the node's in-memory openCodeSessionId.
-      const {
-        openCodeSessionId,
-        connectionId,
-        docContextEnabled,
-        baseDirectory,
-      } = currentNode;
-      if (openCodeSessionId && connectionId && docContextEnabled !== false) {
-        void window.api.injectDocContext?.(
-          connectionId,
-          openCodeSessionId,
-          option,
-          baseDirectory ?? undefined,
-        );
+    // Use the same resilient clear as handleSubmit (fallback by connectionId).
+    const nodeConnectionId = currentNode.connectionId;
+    setNodes((prev) => {
+      let key: string | null = prev.has(currentNode.id) ? currentNode.id : null;
+      if (!key && nodeConnectionId) {
+        for (const [k, n] of prev) {
+          if (n.connectionId === nodeConnectionId) {
+            key = k;
+            break;
+          }
+        }
       }
-
-      window.api.sendPromptResponse({
-        id: currentNode.prompt.id,
-        answer: option,
+      if (!key) return prev;
+      const node = prev.get(key)!;
+      const next = new Map(prev);
+      next.set(key, {
+        ...node,
+        channelMessages: [
+          ...node.channelMessages,
+          {
+            id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            kind: 'answer' as const,
+            text: option,
+            timestamp: new Date(),
+          },
+        ],
+        prompt: null,
+        hasPendingPrompt: false,
       });
-    },
-    [appendAnswerMessage],
-  );
+      return next;
+    });
+
+    if (!nodesRef.current.has(currentNode.id) && nodeConnectionId) {
+      for (const [k, n] of nodesRef.current) {
+        if (n.connectionId === nodeConnectionId) {
+          setActiveId(k);
+          break;
+        }
+      }
+    }
+
+    // Inject relevant doc context into the provider session before the
+    // prompt response. Uses the node's in-memory openCodeSessionId.
+    const {
+      openCodeSessionId,
+      connectionId,
+      docContextEnabled,
+      baseDirectory,
+    } = currentNode;
+    if (openCodeSessionId && connectionId && docContextEnabled !== false) {
+      void window.api.injectDocContext?.(
+        connectionId,
+        openCodeSessionId,
+        option,
+        baseDirectory ?? undefined,
+      );
+    }
+
+    window.api.sendPromptResponse({
+      id: currentNode.prompt.id,
+      answer: option,
+    });
+  }, []);
 
   const handleDismissSession = useCallback((connectionId: string) => {
     void window.api.dismissSession?.(connectionId);

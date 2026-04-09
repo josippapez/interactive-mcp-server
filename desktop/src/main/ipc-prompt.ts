@@ -7,7 +7,7 @@ import {
 } from './database';
 
 let _getSoundEnabled: () => boolean = () => true;
-let _getPromptTimeoutMs: () => number = () => 200_000;
+let _getPromptTimeoutMs: () => number = () => 1_200_000;
 
 export function setSoundEnabled(fn: () => boolean): void {
   _getSoundEnabled = fn;
