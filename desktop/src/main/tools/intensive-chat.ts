@@ -57,7 +57,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 - Renders markdown prompts, including code/diff snippets, for richer question context
 - Preserves markdown links, including VS Code file links (for example: "vscode://file/<abs-path>:<line>:<column>") in prompt content
 - Supports option mode + free-text mode while asking follow-up questions
-- Configurable timeout for each question (set via -t/--timeout, defaults to 1200 seconds)
+- Configurable timeout for each question (set via -t/--timeout, defaults to ${getPromptTimeoutSeconds()} seconds)
 - Returns a session ID for subsequent interactions
 - Keeps full chat history visible to the user
 - Maintains state between questions
@@ -227,7 +227,7 @@ Ask a new question in an active intensive chat session previously started with '
 
       const { answer, attachments } = result;
 
-      if (!answer) {
+      if (answer === null || answer === undefined) {
         return {
           content: [
             {

@@ -776,17 +776,18 @@ export async function startMcpServer(
     writeMcpConfigHint(port);
   });
 
-  // Keep HTTP connections alive long enough to outlast even the longest
-  // possible prompt timeout. Without this, the OS or a local proxy can kill
-  // an idle TCP socket mid-tool-call, producing a -32000 "Connection closed"
-  // error on the agent side even though the user may have answered.
+  // Keep HTTP connections alive long enough to outlast any user-configured
+  // prompt timeout. Without this, the OS or a local proxy can kill an idle
+  // TCP socket mid-tool-call, producing a -32000 "Connection closed" error
+  // on the agent side even though the user may have answered.
   //
-  // We use a fixed 2-hour ceiling rather than reading getPromptTimeoutMs()
-  // here, because the user can change the timeout in Settings at any time and
-  // the HTTP server is only created once. The prompt's own setTimeout handles
-  // actual expiry — the HTTP layer should never be the limiting factor.
+  // The prompt timeout is a free-form number input with no upper bound — users
+  // can set it to hours or more. We use the maximum safe Node.js setTimeout
+  // value (2^31 - 1 ms ≈ 24.8 days) as the ceiling so the HTTP layer never
+  // becomes the limiting factor regardless of what the user configures.
+  // The prompt's own setTimeout in ipc-prompt.ts handles actual expiry.
   // headersTimeout must be strictly greater than keepAliveTimeout (Node docs).
-  const HTTP_KEEPALIVE_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const HTTP_KEEPALIVE_MS = 2_147_483_647; // 2^31 - 1 ms ≈ 24.8 days (max safe setTimeout value)
   httpServer.keepAliveTimeout = HTTP_KEEPALIVE_MS;
   httpServer.headersTimeout = HTTP_KEEPALIVE_MS + 1_000;
 
