@@ -20,7 +20,12 @@ vi.mock('./database', () => ({
 }));
 
 import { ipcMain } from 'electron';
-import { promptUser, cancelActivePrompt, setPromptTimeout } from './ipc-prompt';
+import {
+  promptUser,
+  cancelActivePrompt,
+  forceTerminateChat,
+  setPromptTimeout,
+} from './ipc-prompt';
 import { saveConversation, appendSessionChannelMessage } from './database';
 import type { PromptData } from './ipc-prompt';
 
@@ -401,5 +406,128 @@ describe('promptUser', () => {
         expect.any(Function),
       );
     });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Additional durable-prompt coverage
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('forceTerminateChat', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setPromptTimeout(() => 5000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('resolves an active prompt with USER_FORCE_TERMINATED message', async () => {
+    const win = createMockWindow();
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+    const promise = promptUser(
+      win as never,
+      createPromptData({ connectionId: 'conn-force' }),
+    );
+
+    // Let the queue run so the durable state is established
+    await Promise.resolve();
+    await Promise.resolve();
+
+    forceTerminateChat('conn-force');
+
+    const result = await promise;
+    expect(result.answer).toContain('USER_FORCE_TERMINATED');
+  });
+
+  it('is a no-op when there is no active prompt for the connection', () => {
+    // Should not throw when called for an unknown connectionId
+    expect(() => forceTerminateChat('conn-nonexistent')).not.toThrow();
+  });
+});
+
+describe('timeout does not fire after normal answer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setPromptTimeout(() => 5000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('does not call appendSessionChannelMessage with agent_message after the user answers', async () => {
+    const win = createMockWindow();
+    let capturedHandler: IpcListener | undefined;
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        capturedHandler = handler;
+        return ipcMain;
+      },
+    );
+
+    vi.mocked(appendSessionChannelMessage).mockClear();
+
+    const promise = promptUser(
+      win as never,
+      createPromptData({ id: 'prompt-timer', connectionId: 'conn-timer' }),
+    );
+
+    // User answers before the timeout fires
+    capturedHandler?.({} as IpcMainEvent, {
+      id: 'prompt-timer',
+      answer: 'answered',
+    });
+    await promise;
+
+    // Now advance past the configured 5 s timeout — the timer should have
+    // been cleared and the expiry callback should NOT run.
+    vi.advanceTimersByTime(10_000);
+
+    const agentMessageCalls = vi
+      .mocked(appendSessionChannelMessage)
+      .mock.calls.filter((call) => call[0]?.messageType === 'agent_message');
+    expect(agentMessageCalls).toHaveLength(0);
+  });
+});
+
+describe('cancelActivePrompt sends prompt-clear to renderer', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setPromptTimeout(() => 5000);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('calls win.webContents.send with prompt-clear when cancelling an active prompt', async () => {
+    const win = createMockWindow();
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+    const promise = promptUser(
+      win as never,
+      createPromptData({
+        id: 'prompt-cancel-clear',
+        connectionId: 'conn-cancel-clear',
+      }),
+    );
+
+    // Let the queue run so the durable state is fully established
+    await Promise.resolve();
+    await Promise.resolve();
+
+    cancelActivePrompt('conn-cancel-clear');
+    await promise;
+
+    expect(win.webContents.send).toHaveBeenCalledWith(
+      'prompt-clear',
+      expect.objectContaining({ connectionId: 'conn-cancel-clear' }),
+    );
   });
 });
