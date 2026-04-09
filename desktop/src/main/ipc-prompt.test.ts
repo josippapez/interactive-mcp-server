@@ -254,12 +254,27 @@ describe('promptUser', () => {
     expect(handlers).toHaveLength(1);
   });
 
-  // ── Durable prompt re-attach tests ──────────────────────────────────────────
+  // ── AbortSignal tests ───────────────────────────────────────────────────────
 
-  describe('durable prompt re-attach', () => {
-    it('attaches to existing durable prompt when a retry call arrives', async () => {
-      // Simulate: first call starts a prompt, transport drops, agent retries —
-      // second call should attach to the same durable prompt.
+  describe('AbortSignal support', () => {
+    it('resolves with abort error when signal is already aborted (before prompt is active)', async () => {
+      const win = createMockWindow();
+      vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+      const abortController = new AbortController();
+      abortController.abort();
+
+      const result = await promptUser(
+        win as never,
+        createPromptData({ connectionId: 'conn-pre-aborted' }),
+        abortController.signal,
+      );
+      expect(result.answer).toContain('aborted');
+    });
+
+    it('attaches to existing durable prompt when signal fires and new call arrives', async () => {
+      // Simulate: first call starts a prompt, transport drops (signal aborts),
+      // agent retries — second call should attach to the same durable prompt.
       const win = createMockWindow();
       const handlers: IpcListener[] = [];
       vi.mocked(ipcMain.on).mockImplementation(
@@ -269,21 +284,23 @@ describe('promptUser', () => {
         },
       );
 
+      const abortController = new AbortController();
       const data = createPromptData({
         id: 'durable-prompt',
         connectionId: 'conn-durable',
       });
 
       // First call: sets up the durable prompt
-      const first = promptUser(win as never, data);
+      const first = promptUser(win as never, data, abortController.signal);
 
       // Let the queue run so the durable state is established
       await Promise.resolve();
       await Promise.resolve();
 
       // Second call: same connectionId + same prompt still active
-      // (transport dropped and agent retried)
-      const second = promptUser(win as never, data);
+      // (transport dropped and agent retried with a new signal)
+      const abortController2 = new AbortController();
+      const second = promptUser(win as never, data, abortController2.signal);
 
       // Prompt should only have been sent to renderer once (not twice)
       expect(win.webContents.send).toHaveBeenCalledTimes(1);
@@ -303,7 +320,42 @@ describe('promptUser', () => {
       expect(r2).toEqual({ answer: 'Hello from user', attachments: undefined });
     });
 
-    it('basic prompt resolves correctly', async () => {
+    it('does not double-resolve if signal aborts after normal response', async () => {
+      const win = createMockWindow();
+
+      let capturedHandler: IpcListener | undefined;
+      vi.mocked(ipcMain.on).mockImplementation(
+        (_channel: string, handler: IpcListener) => {
+          capturedHandler = handler;
+          return ipcMain;
+        },
+      );
+
+      const abortController = new AbortController();
+
+      const promise = promptUser(
+        win as never,
+        createPromptData({
+          id: 'prompt-no-double',
+          connectionId: 'conn-no-double',
+        }),
+        abortController.signal,
+      );
+
+      // User responds first
+      capturedHandler?.({} as IpcMainEvent, {
+        id: 'prompt-no-double',
+        answer: 'Hello',
+      });
+
+      // Then signal aborts (should be a no-op)
+      abortController.abort();
+
+      const result = await promise;
+      expect(result).toEqual({ answer: 'Hello', attachments: undefined });
+    });
+
+    it('prompt without signal still works (backward compatible)', async () => {
       const win = createMockWindow();
 
       let capturedHandler: IpcListener | undefined;
@@ -495,10 +547,11 @@ describe('durable prompt — transport resilience', () => {
     vi.restoreAllMocks();
   });
 
-  it('prompt survives transport drop and delivers answer to retry call', async () => {
-    // Scenario: Agent calls promptUser. Transport drops. Agent retries via
-    // transparent reinit, calls promptUser again. The durable prompt stays
-    // alive and both calls get the answer when the user finally replies.
+  it('prompt survives AbortSignal fire and delivers answer to retry call', async () => {
+    // Scenario: Agent calls promptUser with signal1. Transport drops — signal1
+    // aborts. Agent retries via transparent reinit, calls promptUser again with
+    // signal2. The durable prompt stays alive and both calls get the answer
+    // when the user finally replies.
     const win = createMockWindow();
     const handlers: IpcListener[] = [];
     vi.mocked(ipcMain.on).mockImplementation(
@@ -508,18 +561,28 @@ describe('durable prompt — transport resilience', () => {
       },
     );
 
+    const abort1 = new AbortController();
     const data = createPromptData({
       id: 'transport-survive-1',
       connectionId: 'conn-transport-survive',
     });
 
     // First call — starts the durable prompt
-    const first = promptUser(win as never, data);
+    const first = promptUser(win as never, data, abort1.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Simulate transport drop — abort the signal
+    abort1.abort();
+
+    // The prompt should NOT be resolved by the abort — it stays alive
+    // Advance time a bit to ensure no resolution
     await Promise.resolve();
     await Promise.resolve();
 
     // Agent retries — calls promptUser again (transparent reinit path)
-    const second = promptUser(win as never, data);
+    const abort2 = new AbortController();
+    const second = promptUser(win as never, data, abort2.signal);
     await Promise.resolve();
     await Promise.resolve();
 
@@ -600,17 +663,28 @@ describe('durable prompt — transport resilience', () => {
     });
 
     // First call
-    const first = promptUser(win as never, data);
+    const abort1 = new AbortController();
+    const first = promptUser(win as never, data, abort1.signal);
     await Promise.resolve();
     await Promise.resolve();
 
-    // Second call (retry 1 — transport dropped and agent retried)
-    const second = promptUser(win as never, data);
+    // Transport drops
+    abort1.abort();
+    await Promise.resolve();
+
+    // Second call (retry 1)
+    const abort2 = new AbortController();
+    const second = promptUser(win as never, data, abort2.signal);
     await Promise.resolve();
     await Promise.resolve();
 
-    // Third call (retry 2 — transport dropped again)
-    const third = promptUser(win as never, data);
+    // Transport drops again
+    abort2.abort();
+    await Promise.resolve();
+
+    // Third call (retry 2)
+    const abort3 = new AbortController();
+    const third = promptUser(win as never, data, abort3.signal);
     await Promise.resolve();
     await Promise.resolve();
 

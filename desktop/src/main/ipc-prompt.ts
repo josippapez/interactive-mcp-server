@@ -51,6 +51,7 @@ export interface PromptResponse {
 export type PromptUserFn = (
   win: BrowserWindow | null,
   data: PromptData,
+  signal?: AbortSignal,
 ) => Promise<PromptResponse>;
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,11 +63,11 @@ export type PromptUserFn = (
 // user's reply, by a force-terminate, by a connection cancel, or by the
 // per-prompt timeout.
 //
-// When the MCP transport drops (TCP disconnect / agent-side timeout), the
-// durable promise is NOT resolved. Instead the tool handler simply awaits
-// the same durable promise on the next retry, so the user's eventual reply
-// is forwarded to the agent regardless of how many times the HTTP connection
-// dropped while the user was thinking.
+// When the MCP transport's AbortSignal fires (TCP drop / agent-side timeout),
+// we do NOT resolve the durable promise. Instead the tool handler simply
+// awaits the same durable promise on the next retry, so the user's eventual
+// reply is forwarded to the agent regardless of how many times the HTTP
+// connection dropped while the user was thinking.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DurablePromptState = {
@@ -193,12 +194,13 @@ export function forceTerminateChat(connectionId: string): void {
  * ## Transport-resilient design
  *
  * The returned Promise is backed by a *durable* in-process state object that
- * survives HTTP connection drops. When the MCP transport drops (TCP disconnect
- * / agent-side timeout), the durable promise is NOT resolved — it keeps
- * waiting. When the agent retries the same tool call (transparent reinit path
- * in mcp-server.ts), the tool handler calls promptUser() again. If a durable
- * state already exists for this connectionId, we return the same underlying
- * Promise directly so the retry sees the user's reply as soon as it arrives.
+ * survives HTTP connection drops. When the MCP transport fires its AbortSignal
+ * (TCP disconnect / agent-side timeout), this function does NOT resolve the
+ * promise — it simply detaches from the signal and keeps waiting. When the
+ * agent retries the same tool call (transparent reinit path in mcp-server.ts),
+ * the tool handler calls promptUser() again. If a durable state already exists
+ * for this connectionId, we return the same underlying Promise directly so the
+ * retry sees the user's reply as soon as it arrives.
  *
  * This breaks the coupling between "HTTP connection alive" and "prompt active"
  * that caused the -32000 Connection closed errors.
@@ -206,11 +208,23 @@ export function forceTerminateChat(connectionId: string): void {
 export function promptUser(
   win: BrowserWindow | null,
   data: PromptData,
+  signal?: AbortSignal,
 ): Promise<PromptResponse> {
   return new Promise<PromptResponse>((resolveOuter) => {
     _enqueuePrompt(data.connectionId, {
       resolve: resolveOuter,
       run: async () => {
+        // If the AbortSignal is already fired before we even start, there is
+        // no point displaying the prompt. Resolve with a lightweight error and
+        // yield to the queue so the next prompt can run.
+        if (signal?.aborted) {
+          resolveOuter({
+            answer:
+              'Error: Tool call aborted — the MCP session was closed or the request was cancelled.',
+          });
+          return;
+        }
+
         if (!win || win.isDestroyed()) {
           resolveOuter({
             answer: 'Error: Application window is not available.',
@@ -350,6 +364,7 @@ export function promptUser(
         }, 10_000);
 
         // ── Per-prompt expiry timer ───────────────────────────────────────────
+        // The timer is intentionally NOT cancelled when the AbortSignal fires.
         // The prompt stays alive across transport reconnects; only the
         // user-configured timeout or an explicit cancel/terminate ends it.
         if (safeTimeoutMs > 0) {

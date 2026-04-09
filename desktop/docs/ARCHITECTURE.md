@@ -2,7 +2,7 @@
 
 ## Overview
 
-Interactive MCP Desktop is an Electron application that acts as a desktop UI for the Interactive MCP Server. It exposes an HTTP endpoint (`POST /mcp`) that speaks the [MCP Streamable HTTP transport](https://modelcontextprotocol.io) protocol, allowing AI agents (MCP clients) to send tool calls that surface as interactive prompts in a native desktop window. The transport uses `enableJsonResponse: true` on the `StreamableHTTPServerTransport`, which means tool results are delivered as plain JSON HTTP responses rather than SSE streams — the HTTP POST blocks until the tool handler resolves (user replies or timeout fires). The `GET /mcp` SSE endpoint still exists for server-initiated notifications. The user types a response; the answer is returned to the agent as the tool result. The app also persists all conversation history and session state in an embedded SQLite database, and provides a system tray icon so it can run continuously in the background.
+Interactive MCP Desktop is an Electron application that acts as a desktop UI for the Interactive MCP Server. It exposes an HTTP endpoint (`POST /mcp`) that speaks the [MCP Streamable HTTP transport](https://modelcontextprotocol.io) protocol, allowing AI agents (MCP clients) to send tool calls that surface as interactive prompts in a native desktop window. The user types a response; the answer is returned to the agent as the tool result. The app also persists all conversation history and session state in an embedded SQLite database, and provides a system tray icon so it can run continuously in the background.
 
 **Tech stack:**
 
@@ -125,12 +125,12 @@ The main process is the application's Node.js runtime. It bootstraps in `index.t
 Owns the Express app and all HTTP routes. REST API routes have been extracted to `api-routes.ts`. Key responsibilities:
 
 - **Session map** — an in-memory `Record<sessionId, { transport, server, connectionId, connectionName }>` tracking every live MCP session.
-- **Session creation** — when `POST /mcp` arrives with an `initialize` body, a new `McpServer` is created (one per connection), a `StreamableHTTPServerTransport` is instantiated with a random UUID session ID and `enableJsonResponse: true`, and all tools are registered via the `register*` helpers. The `enableJsonResponse` flag means tool results are returned as plain JSON HTTP responses (the POST blocks until the handler resolves), eliminating the SSE stream drop problem that previously caused `-32000` errors during long user-think times. The `GET /mcp` SSE endpoint remains available for server-initiated notifications.
+- **Session creation** — when `POST /mcp` arrives with an `initialize` body, a new `McpServer` is created (one per connection), a `StreamableHTTPServerTransport` is instantiated with a random UUID session ID, and all tools are registered via the `register*` helpers.
 - **Default channel bootstrap** — new connections are auto-registered into `registered_connections`, auto-bound to an OpenCode session when detectable, and given a stable session channel label before the first user-facing activity. The `baseDirectory` for the auto-registration is derived from `process.cwd()` but guarded: if `process.cwd()` returns `/` or an empty string (which happens when the app is launched from the macOS Dock or as a login item), it falls back to `process.env.HOME ?? process.env.USERPROFILE` to prevent the doc indexer from traversing the entire filesystem.
 - **Transparent session resurrection** — when a request arrives with a stale (unknown) `Mcp-Session-Id` header and a non-`initialize` body (e.g. a tool call from a reconnecting agent), the server silently creates a new session, runs the full MCP protocol handshake internally using synthetic request/response objects, patches the `Mcp-Session-Id` response header, and then replays the original request body. The client never receives an error.
 - **Soft restart** — `softRestartMcpServer()` clears all in-memory MCP sessions (transports, servers, active prompts) without stopping the HTTP listener. The next client request triggers a fresh initialize handshake or transparent reinit. Accessible via `POST /api/reconnect` and the `reconnect-mcp-server` IPC handler.
 - **Session file** — on every new connection, session metadata is written to `/tmp/imcp-session.json`, `<cwd>/.imcp-session`, and `/tmp/imcp-mcp-config.json` (MCP config hint with remote HTTP entry). See `session-file.ts`.
-- **Session teardown** — `transport.onclose` fires when a transport closes, which deletes the session channel from SQLite, removes the session file, and sends both `connection-closed` and `session-channel-deleted` to the renderer. Critically, `transport.onclose` does **not** cancel active prompts — this is intentional. The durable prompt pattern (see `ipc-prompt.ts`) keeps prompts alive across transport reconnections, so cleaning up the transport must not interfere with in-flight user prompts. Prompts are only cancelled by explicit actions: `DELETE /mcp`, `forceTerminateChat`, `_clearAllSessions` (soft restart), or timeout expiry.
+- **Session teardown** — `transport.onclose` fires when a transport closes, which cancels any pending prompt (via `cancelActivePrompt`), deletes the session channel from SQLite, removes the session file, and sends both `connection-closed` and `session-channel-deleted` to the renderer.
 - **Attachment serving** — image attachments are persisted under `<userData>/attachments` and exposed locally via `GET /attachments/:filename`.
 - **REST API** (`/api/sessions/*`, `/api/reconnect`) — extracted to `api-routes.ts`. A separate set of endpoints that let external processes create, poll, and delete session channels. The `/api/reconnect` endpoint triggers the soft restart.
 - **`/health`** — returns active client count and the list of registered tool names.
@@ -141,12 +141,12 @@ Owns the Express app and all HTTP routes. REST API routes have been extracted to
 
 Implements the `promptUser()` function using a **durable prompt** design that survives HTTP transport drops.
 
-Each call creates (or re-attaches to) a `DurablePromptState` stored in main-process memory, keyed by `connectionId`. The durable state holds the prompt data, a long-lived Promise/resolve pair, the `ipcMain` handler, expiry timer, diagnostic interval, and a `sendPromptClear()` closure. The `DurablePromptState` is independent of any HTTP connection or SSE socket — it exists purely in main-process memory and is only removed through explicit settlement.
+Each call creates (or re-attaches to) a `DurablePromptState` stored in main-process memory, keyed by `connectionId`. The durable state holds the prompt data, a long-lived Promise/resolve pair, the `ipcMain` handler, expiry timer, diagnostic interval, and a `sendPromptClear()` closure.
 
 **Lifecycle:**
 
-1. If the window is null or destroyed, `promptUser` resolves immediately with an error and returns — no UI prompt is shown.
-2. If a live `DurablePromptState` already exists for this `connectionId` (e.g. transport reconnected and agent retried), the new call attaches to the existing durable promise and returns — no second UI prompt is spawned.
+1. If the MCP `AbortSignal` is already fired _before_ the prompt enters the queue (pre-queue abort), `promptUser` resolves immediately with an abort error and returns — no UI prompt is shown.
+2. Once active, `AbortSignal` fires are **completely ignored**. The durable promise keeps waiting regardless of TCP drops or transport reconnects.
 3. Brings the window to the foreground (`win.show()`, `win.focus()`).
 4. Optionally plays a beep sound (`shell.beep()`), throttled to at most once per 2 seconds.
 5. Sends `prompt-request` to the renderer via `webContents.send`, including the prompt text, predefined options, `connectionId`, timeout duration, and optional file-autocomplete `baseDirectory`.
@@ -155,15 +155,6 @@ Each call creates (or re-attaches to) a `DurablePromptState` stored in main-proc
 8. Starts a per-prompt expiry timer (configured via `promptTimeoutSeconds`); the timer is **not** cancelled when the transport drops.
 
 **Transport reconnect (retry attach):** When the MCP transport drops mid-wait and the agent retries the same tool call, a new `promptUser()` call arrives. If a live `DurablePromptState` already exists for that `connectionId`, `promptUser` attaches the new outer resolver to the existing durable promise via `.then()` — no second UI prompt is spawned. The user's eventual reply is forwarded to whichever `promptUser` invocation is currently awaiting.
-
-**Cancellation policy:** Prompts are only cancelled by explicit actions — never by transport or socket lifecycle events. `cancelActivePrompt` is **not** called from `transport.onclose` or SSE socket close handlers. The following are the only triggers that cancel a durable prompt:
-
-- `DELETE /mcp` — explicit MCP session teardown by the client
-- `forceTerminateChat(connectionId)` — user clicks "Force Terminate" in the UI
-- `_clearAllSessions()` — soft restart clears all sessions
-- Timeout expiry — the per-prompt timer fires after `promptTimeoutSeconds`
-
-This separation is intentional: transport close cleans up HTTP/SSE resources, while durable prompts live independently until explicitly resolved or cancelled.
 
 **Settlement:** All cleanup (clear timers, remove IPC listener, delete from `activePrompts`, call `resolve()`) runs through the internal `_settlePrompt()` helper. `cancelActivePrompt()` calls `state.sendPromptClear()` before settling so the renderer always receives a `prompt-clear` event. `forceTerminateChat()` also goes through `_settlePrompt()`.
 
@@ -428,19 +419,20 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
 
 3. Tool handler calls promptUser()
    └─ ipc-prompt.ts:promptUser(win, { id, message, projectName, connectionId, ... })
-       ├─ Window check: if win is null or destroyed, resolve with error and return
-       ├─ Durable-state check: if a live DurablePromptState already exists for this
-       │  connectionId (e.g. transport reconnect / agent retry), attach the new outer
-       │  resolver to the existing durable promise and return — no new UI prompt shown
-       ├─ win.show() + win.focus()
-       ├─ shell.beep()  (if soundEnabled and not rate-limited)
-       ├─ Creates DurablePromptState { promise, resolve, ipcHandler, timer,
-       │  diagInterval, sendPromptClear } stored in activePrompts keyed by connectionId
-       ├─ ipcMain.on('prompt-response', ipcHandler)  ← persistent listener
-       ├─ webContents.send('prompt-request', promptData)
-       ├─ appendSessionChannelMessage({ messageType: 'question', ... })  → SQLite
-       └─ setTimeout(timeoutMs) registered on durableState.timer
-          The prompt remains alive across transport drops and reconnects.
+      ├─ Pre-queue abort check: if signal already fired, resolve immediately and return
+      ├─ Durable-state check: if a live DurablePromptState already exists for this
+      │  connectionId (e.g. transport reconnect / agent retry), attach the new outer
+      │  resolver to the existing durable promise and return — no new UI prompt shown
+      ├─ win.show() + win.focus()
+      ├─ shell.beep()  (if soundEnabled and not rate-limited)
+      ├─ Creates DurablePromptState { promise, resolve, ipcHandler, timer,
+      │  diagInterval, sendPromptClear } stored in activePrompts keyed by connectionId
+      ├─ ipcMain.on('prompt-response', ipcHandler)  ← persistent listener
+      ├─ webContents.send('prompt-request', promptData)
+      ├─ appendSessionChannelMessage({ messageType: 'question', ... })  → SQLite
+      └─ setTimeout(timeoutMs) registered on durableState.timer
+         NOTE: timer is NOT cancelled when the MCP AbortSignal fires.
+         The prompt remains alive across transport drops and reconnects.
 
 4. Renderer receives prompt
    └─ ipcRenderer.on('prompt-request') fires in preload
@@ -467,8 +459,7 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
 
 7. Tool returns result to agent
    └─ request_user_input returns { content: [{ type: 'text', text: 'User replied: ...' }] }
-      └─ Plain JSON HTTP response sent back to the MCP client
-         (enableJsonResponse: true — the POST blocked until the handler resolved)
+      └─ HTTP response sent back to the MCP client
 ```
 
 ---
@@ -563,9 +554,9 @@ Existing databases that predate the `attachments` column are migrated at startup
 
 ### Durable prompt state (transport-resilient prompts)
 
-`promptUser()` backs each active prompt with a `DurablePromptState` held in main-process memory, independent of any HTTP connection. When the MCP transport drops (TCP disconnect / agent-side timeout), the durable promise is **not** resolved — it keeps waiting. When the agent retries the tool call (via transparent session resurrection), the new `promptUser()` call detects the existing live state and attaches its outer resolver to the same durable promise. The user's reply is forwarded to the retry without spawning a second UI prompt.
+`promptUser()` backs each active prompt with a `DurablePromptState` held in main-process memory, independent of any HTTP connection. When the MCP transport's `AbortSignal` fires (TCP drop / agent-side timeout), the durable promise is **not** resolved — it keeps waiting. When the agent retries the tool call (via transparent session resurrection), the new `promptUser()` call detects the existing live state and attaches its outer resolver to the same durable promise. The user's reply is forwarded to the retry without spawning a second UI prompt.
 
-This breaks the coupling between "HTTP connection alive" and "prompt active" that previously caused `-32000 Connection closed` errors during long user-think times. Combined with `enableJsonResponse: true` on the transport (which delivers tool results as plain JSON HTTP responses instead of SSE streams), the SSE stream drop problem is fully eliminated. `transport.onclose` and SSE socket close handlers clean up session resources but intentionally do **not** call `cancelActivePrompt` — prompts are only cancelled by explicit actions (`DELETE /mcp`, `forceTerminateChat`, `_clearAllSessions`, or timeout expiry).
+This breaks the coupling between "HTTP connection alive" and "prompt active" that previously caused `-32000 Connection closed` errors during long user-think times.
 
 ### Prompt FIFO queue
 
