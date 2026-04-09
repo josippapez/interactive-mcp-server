@@ -46,7 +46,7 @@ describe('opencode-mcp-register', () => {
           config: {
             type: 'remote',
             url: 'http://localhost:3100/mcp',
-            timeout: 860000,
+            timeout: 1260000,
           },
         }),
       }),
@@ -320,7 +320,7 @@ describe('registerMcpWithRetry — startup regression (index.ts fix)', () => {
   const startupSettings = {
     port: 3100,
     openCodePort: 4096,
-    promptTimeoutSeconds: 200,
+    promptTimeoutSeconds: 1200,
   } as const;
 
   let mockRegister: Mock<

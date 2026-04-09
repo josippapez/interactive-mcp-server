@@ -32,7 +32,7 @@ export const defaultSettings: AppSettings = {
   port: 3100,
   soundEnabled: true,
   launchAtLogin: false,
-  promptTimeoutSeconds: 200,
+  promptTimeoutSeconds: 1200,
   autoRestoreSessions: false,
   openCodePort: 4096,
   docIndexingEnabled: true,

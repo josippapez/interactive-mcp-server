@@ -30,7 +30,7 @@ export interface McpRegistrationOptions {
   promptTimeoutSeconds?: number;
 }
 
-function computeRemoteMcpTimeout(promptTimeoutSeconds = 800): number {
+function computeRemoteMcpTimeout(promptTimeoutSeconds = 1200): number {
   return promptTimeoutSeconds * 1000 + MCP_TIMEOUT_BUFFER_MS;
 }
 
