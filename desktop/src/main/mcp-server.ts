@@ -460,7 +460,8 @@ export async function startMcpServer(
           if (sid && sessions[sid]) {
             const { connectionId: connId } = sessions[sid];
             delete sessions[sid];
-            cancelActivePrompt(connId);
+            // NOTE: We intentionally do NOT cancel active prompts here.
+            // See the comment in the POST /mcp handler's transport.onclose.
             deleteSessionChannel(connId);
             clearSessionFile();
             getWindow()?.webContents.send('connection-closed', {
@@ -627,7 +628,11 @@ export async function startMcpServer(
         if (sid && sessions[sid]) {
           const { connectionId: connId } = sessions[sid];
           delete sessions[sid];
-          cancelActivePrompt(connId);
+          // NOTE: We intentionally do NOT cancel active prompts here.
+          // transport.onclose fires when the HTTP/SSE connection drops, but
+          // the prompt should survive transport reconnections (durable prompt
+          // pattern). Prompts are only cancelled by explicit user/agent
+          // actions: DELETE /mcp, force-terminate, or _clearAllSessions.
           deleteSessionChannel(connId);
           clearSessionFile();
           getWindow()?.webContents.send('connection-closed', {
@@ -702,12 +707,13 @@ export async function startMcpServer(
 
     // ── Part 2: Dead-stream detection ────────────────────────────────────────
     // When the SSE client socket closes (OS killed connection, app backgrounded,
-    // etc.) without a clean DELETE /mcp, abort any active prompt for this
-    // connection so the waiting tool call can resolve and the POST stream can
-    // drain, which in turn lets transport.onclose fire for full cleanup.
+    // etc.) we clean up the keepalive interval but intentionally do NOT cancel
+    // the active prompt. The durable prompt pattern keeps the prompt alive in
+    // main-process memory so it can be delivered when the agent reconnects
+    // (transparent reinit). Prompts are only cancelled by explicit user/agent
+    // actions: DELETE /mcp, force-terminate, or _clearAllSessions.
     const onSocketGone = (): void => {
       clearInterval(keepaliveInterval);
-      cancelActivePrompt(connectionId);
     };
 
     res.socket?.once('close', onSocketGone);
@@ -776,17 +782,18 @@ export async function startMcpServer(
     writeMcpConfigHint(port);
   });
 
-  // Keep HTTP connections alive long enough to outlast even the longest
-  // possible prompt timeout. Without this, the OS or a local proxy can kill
-  // an idle TCP socket mid-tool-call, producing a -32000 "Connection closed"
-  // error on the agent side even though the user may have answered.
+  // Keep HTTP connections alive long enough to outlast any user-configured
+  // prompt timeout. Without this, the OS or a local proxy can kill an idle
+  // TCP socket mid-tool-call, producing a -32000 "Connection closed" error
+  // on the agent side even though the user may have answered.
   //
-  // We use a fixed 2-hour ceiling rather than reading getPromptTimeoutMs()
-  // here, because the user can change the timeout in Settings at any time and
-  // the HTTP server is only created once. The prompt's own setTimeout handles
-  // actual expiry — the HTTP layer should never be the limiting factor.
+  // The prompt timeout is a free-form number input with no upper bound — users
+  // can set it to hours or more. We use the maximum safe Node.js setTimeout
+  // value (2^31 - 1 ms ≈ 24.8 days) as the ceiling so the HTTP layer never
+  // becomes the limiting factor regardless of what the user configures.
+  // The prompt's own setTimeout in ipc-prompt.ts handles actual expiry.
   // headersTimeout must be strictly greater than keepAliveTimeout (Node docs).
-  const HTTP_KEEPALIVE_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const HTTP_KEEPALIVE_MS = 2_147_483_647; // 2^31 - 1 ms ≈ 24.8 days (max safe setTimeout value)
   httpServer.keepAliveTimeout = HTTP_KEEPALIVE_MS;
   httpServer.headersTimeout = HTTP_KEEPALIVE_MS + 1_000;
 

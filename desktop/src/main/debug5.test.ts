@@ -255,6 +255,9 @@ describe('debug5 — full flow', () => {
       '[test] cancelActivePrompt calls:',
       vi.mocked(cancelActivePrompt).mock.calls.length,
     );
-    expect(cancelActivePrompt).toHaveBeenCalled();
+    // Durable prompt pattern: SSE socket close does NOT cancel prompts.
+    // Prompts survive transport disconnects and are only cancelled by
+    // explicit DELETE /mcp, force-terminate, or _clearAllSessions.
+    expect(cancelActivePrompt).not.toHaveBeenCalled();
   });
 });

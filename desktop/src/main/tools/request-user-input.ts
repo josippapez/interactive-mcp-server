@@ -62,6 +62,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - Preserves markdown links, including VS Code file links (for example: "vscode://file/<abs-path>:<line>:<column>") when provided in the prompt text
 - Supports option mode + free-text input mode when predefinedOptions are provided
 - Returns user response or timeout notification (timeout defaults to ${getPromptTimeoutSeconds()} seconds)
+- Backend-agnostic contract: same request/response behavior regardless of the active UI backend
 - Maintains context across user interactions
 - Handles empty responses gracefully
 - Shows project context in the prompt header/title
@@ -88,7 +89,6 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - message: The specific question for the user (prompt body text)
 - predefinedOptions: Predefined options for the user to choose from (optional)
 - baseDirectory: Required absolute path to the current repository root (must be a git repo root)
-- clientInfo: Optional metadata about the MCP client (model name, mode)
 </parameters>
 
 <examples>
@@ -121,27 +121,17 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
           .describe(
             'Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope)',
           ),
-        clientInfo: z
-          .object({
-            model: z
-              .string()
-              .optional()
-              .describe('Model name (e.g., Claude Opus 4.6)'),
-            mode: z.string().optional().describe('Mode (e.g., Plan, Code)'),
-          })
-          .optional()
-          .describe('Optional metadata about the MCP client'),
       },
     },
     async (
-      { projectName, message, predefinedOptions, baseDirectory, clientInfo },
+      { projectName, message, predefinedOptions, baseDirectory },
       extra,
     ): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
 
       const promptId = randomUUID();
-      const result = await promptFn(
+      const { answer, attachments } = await promptFn(
         getWindow(),
         {
           id: promptId,
@@ -152,12 +142,9 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
           connectionId,
           connectionName,
           timeoutSeconds: getPromptTimeoutSeconds(),
-          clientInfo,
         },
         extra.signal,
       );
-
-      const { answer, attachments } = result;
 
       if (answer === null || answer === undefined) {
         return {

@@ -76,6 +76,17 @@ export function mergeSessionTreeSnapshot(
     // direct-connection node, then defaults.
     const mergeSource = existing ?? directNode;
 
+    // Prompt state is live/ephemeral and must NOT be pulled from a direct-connection
+    // node that is being absorbed for the first time IF an existing tree node is
+    // already in the map.  When `existing` is present, its prompt reflects the
+    // latest renderer state (possibly already cleared by handleSubmit).  Pulling
+    // `directNode.prompt` on top of that would resurrect a prompt the user already
+    // dismissed — the session-tree-updated race condition.
+    //
+    // Rule: prompt/hasPendingPrompt always come from `existing` when it exists;
+    // only fall back to `directNode` (first-time absorption) or null otherwise.
+    const promptSource = existing ?? directNode;
+
     next.set(id, {
       id,
       openCodeSessionId: snap.openCodeSessionId,
@@ -99,11 +110,11 @@ export function mergeSessionTreeSnapshot(
             }
           : (mergeSource?.sessionChannel ?? null),
       // Runtime state: preserved from merge source or defaulted
-      prompt: mergeSource?.prompt ?? null,
+      prompt: promptSource?.prompt ?? null,
       activeSession: mergeSource?.activeSession ?? null,
       channelMessages: mergeSource?.channelMessages ?? [],
       unreadCount: mergeSource?.unreadCount ?? 0,
-      hasPendingPrompt: mergeSource?.hasPendingPrompt ?? false,
+      hasPendingPrompt: promptSource?.hasPendingPrompt ?? false,
       sessionStatuses: mergeSource?.sessionStatuses ?? [],
       pendingPermissions: mergeSource?.pendingPermissions ?? [],
     });
