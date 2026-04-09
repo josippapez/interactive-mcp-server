@@ -209,21 +209,17 @@ Ask a new question in an active intensive chat session previously started with '
       }
 
       const promptId = randomUUID();
-      const result = await promptFn(
-        getWindow(),
-        {
-          id: promptId,
-          message: question,
-          projectName: session.title,
-          predefinedOptions,
-          baseDirectory: baseDirectory || session.baseDirectory,
-          sessionId,
-          connectionId,
-          connectionName,
-          timeoutSeconds: getPromptTimeoutSeconds(),
-        },
-        extra.signal,
-      );
+      const result = await promptFn(getWindow(), {
+        id: promptId,
+        message: question,
+        projectName: session.title,
+        predefinedOptions,
+        baseDirectory: baseDirectory || session.baseDirectory,
+        sessionId,
+        connectionId,
+        connectionName,
+        timeoutSeconds: getPromptTimeoutSeconds(),
+      });
 
       const { answer, attachments } = result;
 

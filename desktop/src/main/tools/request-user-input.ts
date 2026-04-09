@@ -131,20 +131,16 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
       if (staleErr) return staleErr;
 
       const promptId = randomUUID();
-      const { answer, attachments } = await promptFn(
-        getWindow(),
-        {
-          id: promptId,
-          message,
-          projectName,
-          predefinedOptions,
-          baseDirectory,
-          connectionId,
-          connectionName,
-          timeoutSeconds: getPromptTimeoutSeconds(),
-        },
-        extra.signal,
-      );
+      const { answer, attachments } = await promptFn(getWindow(), {
+        id: promptId,
+        message,
+        projectName,
+        predefinedOptions,
+        baseDirectory,
+        connectionId,
+        connectionName,
+        timeoutSeconds: getPromptTimeoutSeconds(),
+      });
 
       if (answer === null || answer === undefined) {
         return {

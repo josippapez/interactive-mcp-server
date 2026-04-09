@@ -10,6 +10,22 @@ The Interactive MCP Desktop app exposes an [MCP (Model Context Protocol)](https:
 
 One `McpServer` instance is created **per client connection**. Each server instance has all tools registered against it, is bound to its own `StreamableHTTPServerTransport`, and is torn down when the session ends. Multiple simultaneous client connections are supported via an in-memory `sessions` map keyed by MCP session ID.
 
+### JSON Response Mode
+
+The transport is created with `enableJsonResponse: true`. This means `POST` requests carrying tool calls return a **synchronous JSON response** — the HTTP POST blocks until the tool handler resolves and the result is written to the response body. The server does **not** use an SSE stream to deliver tool results for POST requests.
+
+This is a deliberate architectural choice: SSE streams are susceptible to silent drops (network hiccups, proxy timeouts, load-balancer idle limits). By blocking the POST until the tool completes, the response is delivered atomically over the same HTTP connection that carried the request, eliminating an entire class of "tool call completed but result never arrived" bugs.
+
+### HTTP Keep-Alive
+
+`keepAliveTimeout` on the HTTP server is set to `2^31 - 1` ms (~24.8 days):
+
+```ts
+httpServer.keepAliveTimeout = 2 ** 31 - 1;
+```
+
+This ensures the HTTP layer never becomes the limiting factor for long-lived connections. Without this, Node's default 5-second keep-alive timeout could close idle connections before the client sends its next request — particularly problematic for agents that pause between tool calls while waiting for LLM inference.
+
 ---
 
 ## Startup
@@ -97,7 +113,9 @@ Two sub-cases reach this point:
 
 Opens a Server-Sent Events (SSE) stream. The `mcp-session-id` header must match a live session; otherwise returns `404 { error: "Session not found or expired" }`.
 
-The stream is managed entirely by `StreamableHTTPServerTransport` — the server emits tool results and notifications over this channel.
+The stream is managed entirely by `StreamableHTTPServerTransport` — the server emits notifications over this channel.
+
+> **Note:** Because the transport uses `enableJsonResponse: true`, tool results are returned synchronously in the POST response body, not over the SSE stream. The SSE stream carries only server-initiated notifications. An SSE socket close triggers `transport.onclose` cleanup (see [Session Close](#session-close)) but does **not** cancel active prompts — this supports the durable prompt pattern where prompts survive transport reconnections.
 
 ---
 
@@ -193,12 +211,12 @@ Client                          MCP Server                       Renderer (IPC)
   │<─ 200 (Mcp-Session-Id: newId) ───│                                 │
   │                                  │                                 │
   │── POST /mcp (tool call) ────────>│                                 │
-  │   mcp-session-id: newId          │                                 │
+  │   mcp-session-id: newId          │── (blocks until tool resolves)  │
   │                                  │── transport.handleRequest       │
-  │<─ 200 (tool result) ─────────────│                                 │
+  │<─ 200 JSON (tool result) ────────│                                 │
   │                                  │                                 │
   │── GET /mcp (SSE) ───────────────>│                                 │
-  │<═══════════════════════ SSE ════>│                                 │
+  │<═══════ SSE (notifications) ════>│                                 │
   │                                  │                                 │
   │── DELETE /mcp ──────────────────>│                                 │
   │   mcp-session-id: newId          │                                 │
@@ -212,14 +230,28 @@ Client                          MCP Server                       Renderer (IPC)
 When `transport.onclose` fires (either from `DELETE /mcp` or from the transport detecting a dropped connection), the following cleanup sequence runs:
 
 1. Remove the session entry from the `sessions` map.
-2. Call `cancelActivePrompt(connectionId)` — cancels any pending `request_user_input` or intensive-chat prompts waiting on renderer responses. This now also calls `state.sendPromptClear()` on the active `DurablePromptState` before settling, so the renderer always receives a `prompt-clear` event and can clean up its UI state.
-3. Call `deleteSessionChannel(connectionId)` — removes the session channel from the database.
-4. Call `clearSessionFile()` — deletes both session file paths (see [Session Files](#session-files)).
-5. Send `connection-closed` IPC to the renderer with `{ connectionId }`.
-6. Send `session-channel-deleted` IPC to the renderer with `{ sessionId: connectionId }`.
-7. Call `server.close()` to shut down the per-connection `McpServer`.
+2. Call `deleteSessionChannel(connectionId)` — removes the session channel from the database.
+3. Call `clearSessionFile()` — deletes both session file paths (see [Session Files](#session-files)).
+4. Send `connection-closed` IPC to the renderer with `{ connectionId }`.
+5. Send `session-channel-deleted` IPC to the renderer with `{ sessionId: connectionId }`.
+6. Call `server.close()` to shut down the per-connection `McpServer`.
 
-The `transport.onclose` cleanup path does **not** delete `registered_connections`; explicit user/session removal paths handle that separately.
+**Important:** `transport.onclose` does **not** call `cancelActivePrompt`. This is the **durable prompt pattern** — active prompts intentionally survive transport reconnections. When a client's SSE socket drops and reconnects (common with network hiccups, laptop sleep/wake, or proxy timeouts), the prompt remains live and the client can resume the session without losing the pending user interaction. Prompt cancellation is only performed by explicit teardown paths; see [Prompt Cancellation Policy](#prompt-cancellation-policy).
+
+The `transport.onclose` cleanup path also does **not** delete `registered_connections`; explicit user/session removal paths handle that separately.
+
+### Prompt Cancellation Policy
+
+`cancelActivePrompt(connectionId)` is deliberately excluded from the transport close path to support the durable prompt pattern. It is only invoked from these four call sites:
+
+| Call site              | Trigger                                                                                                         |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `DELETE /mcp` handler  | Explicit client teardown — the client has intentionally ended the session                                       |
+| `_clearAllSessions()`  | Server restart or soft restart (`restartMcpServer` / `softRestartMcpServer`) — all sessions are being discarded |
+| `forceTerminateChat()` | User force-terminates from the Desktop UI (e.g., clicking the "stop" button on an active prompt)                |
+| Prompt timeout timer   | The prompt's own timeout expires (configured via the `getPromptTimeoutMs` setting accessor)                     |
+
+When `cancelActivePrompt` fires, it calls `state.sendPromptClear()` on the active `DurablePromptState` before settling, so the renderer always receives a `prompt-clear` event and can clean up its UI state.
 
 ---
 
