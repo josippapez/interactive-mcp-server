@@ -531,3 +531,182 @@ describe('cancelActivePrompt sends prompt-clear to renderer', () => {
     );
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Durable prompt — transport resilience
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('durable prompt — transport resilience', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setPromptTimeout(() => 60_000); // 60 s — long enough to simulate reconnects
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('prompt survives AbortSignal fire and delivers answer to retry call', async () => {
+    // Scenario: Agent calls promptUser with signal1. Transport drops — signal1
+    // aborts. Agent retries via transparent reinit, calls promptUser again with
+    // signal2. The durable prompt stays alive and both calls get the answer
+    // when the user finally replies.
+    const win = createMockWindow();
+    const handlers: IpcListener[] = [];
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        handlers.push(handler);
+        return ipcMain;
+      },
+    );
+
+    const abort1 = new AbortController();
+    const data = createPromptData({
+      id: 'transport-survive-1',
+      connectionId: 'conn-transport-survive',
+    });
+
+    // First call — starts the durable prompt
+    const first = promptUser(win as never, data, abort1.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Simulate transport drop — abort the signal
+    abort1.abort();
+
+    // The prompt should NOT be resolved by the abort — it stays alive
+    // Advance time a bit to ensure no resolution
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Agent retries — calls promptUser again (transparent reinit path)
+    const abort2 = new AbortController();
+    const second = promptUser(win as never, data, abort2.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Only ONE prompt-request should have been sent to the renderer
+    const promptRequests = vi
+      .mocked(win.webContents.send)
+      .mock.calls.filter((c) => c[0] === 'prompt-request');
+    expect(promptRequests).toHaveLength(1);
+
+    // User finally replies
+    handlers[0]?.({} as IpcMainEvent, {
+      id: 'transport-survive-1',
+      answer: 'After reconnect',
+    });
+
+    const [r1, r2] = await Promise.all([first, second]);
+    expect(r1).toEqual({
+      answer: 'After reconnect',
+      attachments: undefined,
+    });
+    expect(r2).toEqual({
+      answer: 'After reconnect',
+      attachments: undefined,
+    });
+  });
+
+  it('prompt with zero timeout (infinite) stays alive indefinitely', async () => {
+    setPromptTimeout(() => 0); // 0 = no timeout (infinite)
+
+    const win = createMockWindow();
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        // capture but don't auto-reply
+        return ipcMain;
+      },
+    );
+
+    const data = createPromptData({
+      id: 'infinite-timeout',
+      connectionId: 'conn-infinite',
+    });
+
+    const promise = promptUser(win as never, data);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Advance time by a very large amount — prompt should NOT time out
+    vi.advanceTimersByTime(86_400_000); // 24 hours
+    await Promise.resolve();
+
+    // The promise should still be pending (not resolved)
+    let resolved = false;
+    void promise.then(() => {
+      resolved = true;
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(resolved).toBe(false);
+
+    // Clean up — cancel to prevent hanging test
+    cancelActivePrompt('conn-infinite');
+    await promise;
+  });
+
+  it('multiple transport drops — prompt survives all and delivers to last caller', async () => {
+    const win = createMockWindow();
+    const handlers: IpcListener[] = [];
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        handlers.push(handler);
+        return ipcMain;
+      },
+    );
+
+    const data = createPromptData({
+      id: 'multi-drop',
+      connectionId: 'conn-multi-drop',
+    });
+
+    // First call
+    const abort1 = new AbortController();
+    const first = promptUser(win as never, data, abort1.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Transport drops
+    abort1.abort();
+    await Promise.resolve();
+
+    // Second call (retry 1)
+    const abort2 = new AbortController();
+    const second = promptUser(win as never, data, abort2.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Transport drops again
+    abort2.abort();
+    await Promise.resolve();
+
+    // Third call (retry 2)
+    const abort3 = new AbortController();
+    const third = promptUser(win as never, data, abort3.signal);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Only one prompt-request sent total
+    const promptRequests = vi
+      .mocked(win.webContents.send)
+      .mock.calls.filter((c) => c[0] === 'prompt-request');
+    expect(promptRequests).toHaveLength(1);
+
+    // User finally answers
+    handlers[0]?.({} as IpcMainEvent, {
+      id: 'multi-drop',
+      answer: 'Third time is the charm',
+    });
+
+    const [r1, r2, r3] = await Promise.all([first, second, third]);
+    const expected = {
+      answer: 'Third time is the charm',
+      attachments: undefined,
+    };
+    expect(r1).toEqual(expected);
+    expect(r2).toEqual(expected);
+    expect(r3).toEqual(expected);
+  });
+});

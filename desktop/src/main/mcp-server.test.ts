@@ -381,7 +381,7 @@ describe('GET /mcp — dead-stream detection', () => {
 
   // ── Tests ──────────────────────────────────────────────────────────────────
 
-  it('calls cancelActivePrompt when the SSE socket emits close', async () => {
+  it('does NOT call cancelActivePrompt when the SSE socket emits close (durable prompt survives)', async () => {
     const { socket } = await openSseStream();
 
     // Simulate OS killing the TCP connection.
@@ -389,17 +389,20 @@ describe('GET /mcp — dead-stream detection', () => {
 
     await Promise.resolve();
 
-    expect(cancelActivePrompt).toHaveBeenCalledWith(expect.any(String));
+    // Durable prompt pattern: prompts survive SSE disconnects.
+    // cancelActivePrompt is only called on explicit DELETE /mcp or server restart.
+    expect(cancelActivePrompt).not.toHaveBeenCalled();
   });
 
-  it('calls cancelActivePrompt when the SSE socket emits error', async () => {
+  it('does NOT call cancelActivePrompt when the SSE socket emits error (durable prompt survives)', async () => {
     const { socket } = await openSseStream();
 
     socket.emit('error', new Error('ECONNRESET'));
 
     await Promise.resolve();
 
-    expect(cancelActivePrompt).toHaveBeenCalledWith(expect.any(String));
+    // Durable prompt pattern: prompts survive SSE disconnects.
+    expect(cancelActivePrompt).not.toHaveBeenCalled();
   });
 
   it('does NOT call cancelActivePrompt after res close removes socket listeners', async () => {

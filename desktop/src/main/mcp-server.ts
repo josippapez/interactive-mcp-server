@@ -460,7 +460,8 @@ export async function startMcpServer(
           if (sid && sessions[sid]) {
             const { connectionId: connId } = sessions[sid];
             delete sessions[sid];
-            cancelActivePrompt(connId);
+            // NOTE: We intentionally do NOT cancel active prompts here.
+            // See the comment in the POST /mcp handler's transport.onclose.
             deleteSessionChannel(connId);
             clearSessionFile();
             getWindow()?.webContents.send('connection-closed', {
@@ -627,7 +628,11 @@ export async function startMcpServer(
         if (sid && sessions[sid]) {
           const { connectionId: connId } = sessions[sid];
           delete sessions[sid];
-          cancelActivePrompt(connId);
+          // NOTE: We intentionally do NOT cancel active prompts here.
+          // transport.onclose fires when the HTTP/SSE connection drops, but
+          // the prompt should survive transport reconnections (durable prompt
+          // pattern). Prompts are only cancelled by explicit user/agent
+          // actions: DELETE /mcp, force-terminate, or _clearAllSessions.
           deleteSessionChannel(connId);
           clearSessionFile();
           getWindow()?.webContents.send('connection-closed', {
@@ -702,12 +707,13 @@ export async function startMcpServer(
 
     // ── Part 2: Dead-stream detection ────────────────────────────────────────
     // When the SSE client socket closes (OS killed connection, app backgrounded,
-    // etc.) without a clean DELETE /mcp, abort any active prompt for this
-    // connection so the waiting tool call can resolve and the POST stream can
-    // drain, which in turn lets transport.onclose fire for full cleanup.
+    // etc.) we clean up the keepalive interval but intentionally do NOT cancel
+    // the active prompt. The durable prompt pattern keeps the prompt alive in
+    // main-process memory so it can be delivered when the agent reconnects
+    // (transparent reinit). Prompts are only cancelled by explicit user/agent
+    // actions: DELETE /mcp, force-terminate, or _clearAllSessions.
     const onSocketGone = (): void => {
       clearInterval(keepaliveInterval);
-      cancelActivePrompt(connectionId);
     };
 
     res.socket?.once('close', onSocketGone);
