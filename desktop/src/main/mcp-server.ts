@@ -439,6 +439,7 @@ export async function startMcpServer(
       (resolve) => {
         const t = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
+          enableJsonResponse: true,
           onsessioninitialized: (id) => {
             newSessionId = id;
             sessions[id] = {
@@ -604,6 +605,7 @@ export async function startMcpServer(
 
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: true,
         onsessioninitialized: (id) => {
           sessions[id] = {
             transport,
