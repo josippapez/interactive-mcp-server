@@ -69,6 +69,19 @@ export interface AppSettings {
    * Default: [] (empty — only predefined tools shown initially).
    */
   discoveredTools: string[];
+  /**
+   * Default state of the Reply toggle in the composer.
+   * When true, messages are queued without triggering agent response (noReply mode).
+   * When false, messages trigger agent response.
+   * Default: true (noReply mode — queue only).
+   */
+  defaultNoReply: boolean;
+  /**
+   * Default state of the "Expand All Tools" toggle in the channel header.
+   * When true, tool call outputs are expanded by default.
+   * Default: false (collapsed).
+   */
+  defaultExpandAllTools: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -88,6 +101,8 @@ export const defaultSettings: AppSettings = {
   compactMode: false,
   toolAutoExpandExclusions: [],
   discoveredTools: [],
+  defaultNoReply: true,
+  defaultExpandAllTools: false,
 };
 
 export function getSettingsPath(): string {

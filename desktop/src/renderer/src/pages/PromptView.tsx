@@ -20,6 +20,7 @@ import { useTodos } from '../hooks/useTodos';
 import { useVcsInfo } from '../hooks/useVcsInfo';
 import { useConversation } from '../hooks/useConversation';
 import { useSessionModelId } from '../hooks/useSessionModelId';
+import { useSessionStatus } from '../hooks/useSessionStatus';
 
 type Props = {
   connections: Map<string, SessionNode>;
@@ -108,6 +109,13 @@ export default function PromptView({
     isOpenCodeSession,
   );
 
+  // Fetch session status (busy/idle) for the active OpenCode session
+  const { getStatus } = useSessionStatus(isOpenCodeSession);
+  const sessionBusy =
+    openCodeSessionId && isOpenCodeSession
+      ? getStatus(openCodeSessionId) === 'busy'
+      : false;
+
   // Calculate idle state after fetching conversation messages
   const hasHistory = channelMessages.length > 0;
   const hasConversation = conversationMessages.length > 0;
@@ -124,12 +132,14 @@ export default function PromptView({
   const [removeError, setRemoveError] = useState<string | null>(null);
 
   // noReply toggle state - controls whether messages trigger agent response
+  // Loaded from settings on mount, persisted on change
   const [noReply, setNoReply] = useState(true);
 
   // Collapsible right sidebar (tasks panel)
   const [tasksSidebarCollapsed, setTasksSidebarCollapsed] = useState(false);
 
   // Toggle for expanding all tool calls in the conversation view
+  // Loaded from settings on mount, persisted on change
   const [expandAllTools, setExpandAllTools] = useState(false);
 
   // Tool exclusions from settings (tools that should NOT auto-expand)
@@ -137,13 +147,40 @@ export default function PromptView({
     string[]
   >([]);
 
-  // Load tool exclusions from settings on mount and poll for changes
+  // Load settings on mount (noReply, expandAllTools, toolAutoExpandExclusions)
+  useEffect(() => {
+    const loadSettings = async () => {
+      const settings = await window.api.getSettings();
+      setNoReply(settings.defaultNoReply ?? true);
+      setExpandAllTools(settings.defaultExpandAllTools ?? false);
+      setToolAutoExpandExclusions(settings.toolAutoExpandExclusions ?? []);
+    };
+    loadSettings();
+  }, []);
+
+  // Persist noReply toggle changes to settings
+  const handleNoReplyChange = async (value: boolean) => {
+    setNoReply(value);
+    const settings = await window.api.getSettings();
+    await window.api.saveSettings({ ...settings, defaultNoReply: value });
+  };
+
+  // Persist expandAllTools toggle changes to settings
+  const handleExpandAllToolsChange = async (value: boolean) => {
+    setExpandAllTools(value);
+    const settings = await window.api.getSettings();
+    await window.api.saveSettings({
+      ...settings,
+      defaultExpandAllTools: value,
+    });
+  };
+
+  // Poll for tool exclusions changes (in case user updates from SettingsView)
   useEffect(() => {
     const loadExclusions = async () => {
       const settings = await window.api.getSettings();
       setToolAutoExpandExclusions(settings.toolAutoExpandExclusions ?? []);
     };
-    loadExclusions();
     // Poll for settings changes (in case user updates from SettingsView)
     const interval = setInterval(loadExclusions, 2000);
     return () => clearInterval(interval);
@@ -261,7 +298,7 @@ export default function PromptView({
                 modelId={currentModelId}
                 expandAllTools={expandAllTools}
                 onToggleExpandAllTools={() =>
-                  setExpandAllTools((prev) => !prev)
+                  handleExpandAllToolsChange(!expandAllTools)
                 }
               />
 
@@ -378,6 +415,18 @@ export default function PromptView({
                 </button>
               </div>
 
+              {/* Busy indicator - shows when agent is working */}
+              {sessionBusy && isOpenCodeSession && (
+                <div className="flex items-center gap-2 px-3 py-1.5 border-t border-[var(--color-border)] bg-[var(--color-surface-alt)]">
+                  <span className="flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-user)] animate-pulse" />
+                    <span className="text-[10px] text-[var(--color-text-muted)]">
+                      Agent is working...
+                    </span>
+                  </span>
+                </div>
+              )}
+
               {prompt ? (
                 <ChannelComposer
                   enabled
@@ -430,7 +479,7 @@ export default function PromptView({
                       );
                   }}
                   noReply={noReply}
-                  onNoReplyChange={setNoReply}
+                  onNoReplyChange={handleNoReplyChange}
                 />
               )}
             </>

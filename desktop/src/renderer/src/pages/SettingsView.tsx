@@ -17,6 +17,8 @@ type AppSettings = {
   compactMode: boolean;
   toolAutoExpandExclusions: string[];
   discoveredTools: string[];
+  defaultNoReply: boolean;
+  defaultExpandAllTools: boolean;
 };
 
 /**

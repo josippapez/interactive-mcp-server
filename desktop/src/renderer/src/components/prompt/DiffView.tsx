@@ -1,4 +1,10 @@
 import React, { memo, useMemo, useState, useEffect, useRef } from 'react';
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import {
+  oneDark,
+  oneLight,
+} from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useTheme } from '../../ThemeContext';
 import {
   isEditToolCall,
   parseEditToolInput,
@@ -17,21 +23,71 @@ type DiffViewProps = {
 const SIDE_BY_SIDE_MIN_WIDTH = 600;
 
 /**
+ * Map file extensions to Prism language identifiers.
+ */
+function getLanguageFromPath(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+  const langMap: Record<string, string> = {
+    ts: 'typescript',
+    tsx: 'tsx',
+    js: 'javascript',
+    jsx: 'jsx',
+    py: 'python',
+    rb: 'ruby',
+    rs: 'rust',
+    go: 'go',
+    java: 'java',
+    kt: 'kotlin',
+    swift: 'swift',
+    c: 'c',
+    cpp: 'cpp',
+    h: 'c',
+    hpp: 'cpp',
+    cs: 'csharp',
+    php: 'php',
+    html: 'html',
+    css: 'css',
+    scss: 'scss',
+    less: 'less',
+    json: 'json',
+    yaml: 'yaml',
+    yml: 'yaml',
+    xml: 'xml',
+    md: 'markdown',
+    sql: 'sql',
+    sh: 'bash',
+    bash: 'bash',
+    zsh: 'bash',
+    dockerfile: 'docker',
+    makefile: 'makefile',
+    toml: 'toml',
+    ini: 'ini',
+    env: 'bash',
+  };
+  return langMap[ext] || 'text';
+}
+
+/**
  * Render a single diff line with TUI-style inline formatting (unified view).
+ * Uses syntax highlighting based on the file language.
  */
 const UnifiedDiffLine = memo(function UnifiedDiffLine({
   line,
+  language,
+  isDark,
 }: {
   line: DiffLine;
+  language: string;
+  isDark: boolean;
 }): React.ReactElement | null {
   if (line.type === 'header' || line.type === 'hunk') return null;
 
-  const typeStyles: Record<DiffLine['type'], string> = {
+  const bgStyles: Record<DiffLine['type'], string> = {
     header: '',
     hunk: '',
-    context: 'text-[var(--color-text-muted)]',
-    addition: 'text-[var(--color-success)] bg-[var(--color-success)]/10',
-    removal: 'text-[var(--color-error)] bg-[var(--color-error)]/10',
+    context: '',
+    addition: 'bg-[var(--color-success)]/10',
+    removal: 'bg-[var(--color-error)]/10',
   };
 
   const linePrefix: Record<DiffLine['type'], string> = {
@@ -42,14 +98,45 @@ const UnifiedDiffLine = memo(function UnifiedDiffLine({
     removal: '-',
   };
 
+  const prefixColor: Record<DiffLine['type'], string> = {
+    header: '',
+    hunk: '',
+    context: 'text-[var(--color-text-muted)]',
+    addition: 'text-[var(--color-success)]',
+    removal: 'text-[var(--color-error)]',
+  };
+
   return (
     <div
-      className={`font-mono text-[11px] leading-snug px-2 ${typeStyles[line.type]}`}
+      className={`font-mono text-[11px] leading-snug flex ${bgStyles[line.type]}`}
     >
-      <span className="select-none opacity-60 mr-1">
+      <span
+        className={`select-none w-4 text-center shrink-0 ${prefixColor[line.type]}`}
+      >
         {linePrefix[line.type]}
       </span>
-      <span className="whitespace-pre-wrap">{line.content}</span>
+      <SyntaxHighlighter
+        language={language}
+        style={isDark ? oneDark : oneLight}
+        customStyle={{
+          margin: 0,
+          padding: '0 0.5rem',
+          background: 'transparent',
+          fontSize: '11px',
+          lineHeight: '1.4',
+          flex: 1,
+          overflow: 'visible',
+        }}
+        codeTagProps={{
+          style: {
+            whiteSpace: 'pre-wrap',
+            wordBreak: 'break-word',
+          },
+        }}
+        PreTag="span"
+      >
+        {line.content || ' '}
+      </SyntaxHighlighter>
     </div>
   );
 });
@@ -107,61 +194,98 @@ function groupLinesForSideBySide(
 }
 
 /**
- * Render a side-by-side diff line.
+ * Render a side-by-side diff line with syntax highlighting.
  */
 const SideBySideLine = memo(function SideBySideLine({
   left,
   right,
+  language,
+  isDark,
 }: {
   left: DiffLine | null;
   right: DiffLine | null;
+  language: string;
+  isDark: boolean;
 }): React.ReactElement {
-  const leftStyle =
-    left?.type === 'removal'
-      ? 'bg-[var(--color-error)]/10 text-[var(--color-error)]'
-      : left?.type === 'context'
-        ? 'text-[var(--color-text-muted)]'
-        : 'text-[var(--color-text-faint)]';
+  const leftBg = left?.type === 'removal' ? 'bg-[var(--color-error)]/10' : '';
 
-  const rightStyle =
-    right?.type === 'addition'
-      ? 'bg-[var(--color-success)]/10 text-[var(--color-success)]'
-      : right?.type === 'context'
-        ? 'text-[var(--color-text-muted)]'
-        : 'text-[var(--color-text-faint)]';
+  const rightBg =
+    right?.type === 'addition' ? 'bg-[var(--color-success)]/10' : '';
 
   return (
     <div className="flex font-mono text-[10px] leading-snug">
       {/* Left side (old) */}
       <div
-        className={`flex-1 px-2 py-0.5 border-r border-[var(--color-border)]/50 overflow-hidden ${leftStyle}`}
+        className={`flex-1 flex border-r border-[var(--color-border)]/50 overflow-hidden ${leftBg}`}
       >
         {left ? (
           <>
-            <span className="select-none opacity-50 mr-1">
+            <span
+              className={`select-none w-4 text-center shrink-0 ${left.type === 'removal' ? 'text-[var(--color-error)]' : 'text-[var(--color-text-muted)]'}`}
+            >
               {left.type === 'removal' ? '-' : ' '}
             </span>
-            <span className="whitespace-pre-wrap break-all">
-              {left.content}
-            </span>
+            <SyntaxHighlighter
+              language={language}
+              style={isDark ? oneDark : oneLight}
+              customStyle={{
+                margin: 0,
+                padding: '0 0.25rem',
+                background: 'transparent',
+                fontSize: '10px',
+                lineHeight: '1.4',
+                flex: 1,
+                overflow: 'visible',
+              }}
+              codeTagProps={{
+                style: {
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                },
+              }}
+              PreTag="span"
+            >
+              {left.content || ' '}
+            </SyntaxHighlighter>
           </>
         ) : (
-          <span className="opacity-30">—</span>
+          <span className="opacity-30 px-2">—</span>
         )}
       </div>
       {/* Right side (new) */}
-      <div className={`flex-1 px-2 py-0.5 overflow-hidden ${rightStyle}`}>
+      <div className={`flex-1 flex overflow-hidden ${rightBg}`}>
         {right ? (
           <>
-            <span className="select-none opacity-50 mr-1">
+            <span
+              className={`select-none w-4 text-center shrink-0 ${right.type === 'addition' ? 'text-[var(--color-success)]' : 'text-[var(--color-text-muted)]'}`}
+            >
               {right.type === 'addition' ? '+' : ' '}
             </span>
-            <span className="whitespace-pre-wrap break-all">
-              {right.content}
-            </span>
+            <SyntaxHighlighter
+              language={language}
+              style={isDark ? oneDark : oneLight}
+              customStyle={{
+                margin: 0,
+                padding: '0 0.25rem',
+                background: 'transparent',
+                fontSize: '10px',
+                lineHeight: '1.4',
+                flex: 1,
+                overflow: 'visible',
+              }}
+              codeTagProps={{
+                style: {
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word',
+                },
+              }}
+              PreTag="span"
+            >
+              {right.content || ' '}
+            </SyntaxHighlighter>
           </>
         ) : (
-          <span className="opacity-30">—</span>
+          <span className="opacity-30 px-2">—</span>
         )}
       </div>
     </div>
@@ -182,6 +306,8 @@ const DiffView = memo(function DiffView({
 }: DiffViewProps): React.ReactElement | null {
   const containerRef = useRef<HTMLDivElement>(null);
   const [useSideBySide, setUseSideBySide] = useState(false);
+  const { theme } = useTheme();
+  const isDark = theme === 'dark';
 
   // Parse the diff data from tool input
   const diffData = useMemo(() => {
@@ -206,6 +332,7 @@ const DiffView = memo(function DiffView({
 
     return {
       filePath: parsed.filePath,
+      language: getLanguageFromPath(parsed.filePath),
       lines: diffLines,
       sideBySideLines: groupLinesForSideBySide(diffLines),
     };
@@ -264,6 +391,8 @@ const DiffView = memo(function DiffView({
                 key={`sbs-${idx}`}
                 left={pair.left}
                 right={pair.right}
+                language={diffData.language}
+                isDark={isDark}
               />
             ))}
           </div>
@@ -274,6 +403,8 @@ const DiffView = memo(function DiffView({
               <UnifiedDiffLine
                 key={`${line.type}-${idx}-${line.content.slice(0, 20)}`}
                 line={line}
+                language={diffData.language}
+                isDark={isDark}
               />
             ))}
           </div>

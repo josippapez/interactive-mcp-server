@@ -81,17 +81,15 @@ export default function ChannelComposer({
   const submit = useCallback(() => {
     const text = value.trim();
     if (!enabled || (!text && attachments.length === 0)) return;
-    onSubmit(text, attachments.length > 0 ? attachments : undefined);
-    setValue('');
-    setAttachments([]);
-    clearSuggestions();
-  }, [enabled, value, attachments, onSubmit, setAttachments, clearSuggestions]);
 
-  const submitWithReply = useCallback(() => {
-    const text = value.trim();
-    if (!enabled || (!text && attachments.length === 0) || !onSubmitWithReply)
-      return;
-    onSubmitWithReply(text, attachments.length > 0 ? attachments : undefined);
+    // If Reply toggle is ON and we have the reply handler, use it
+    // Otherwise use the regular submit (noReply mode)
+    if (!noReply && onSubmitWithReply) {
+      onSubmitWithReply(text, attachments.length > 0 ? attachments : undefined);
+    } else {
+      onSubmit(text, attachments.length > 0 ? attachments : undefined);
+    }
+
     setValue('');
     setAttachments([]);
     clearSuggestions();
@@ -99,6 +97,8 @@ export default function ChannelComposer({
     enabled,
     value,
     attachments,
+    noReply,
+    onSubmit,
     onSubmitWithReply,
     setAttachments,
     clearSuggestions,
@@ -248,27 +248,25 @@ export default function ChannelComposer({
                 </button>
               </label>
             )}
-            <div className="flex gap-1">
-              {showReplyButton && onSubmitWithReply && (
-                <button
-                  type="button"
-                  onClick={submitWithReply}
-                  disabled={disabled}
-                  title="Send and trigger agent response (noReply=false)"
-                  className="px-2 py-2 rounded-sm bg-[var(--color-user)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-                >
-                  ↵
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={submit}
-                disabled={disabled}
-                className="px-3 py-2 rounded-sm bg-[var(--color-agent)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-              >
-                {submitLabel}
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={submit}
+              disabled={disabled}
+              title={
+                showReplyButton
+                  ? noReply
+                    ? 'Queue message (no agent response)'
+                    : 'Send and trigger agent response'
+                  : undefined
+              }
+              className={`px-3 py-2 rounded-sm text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors ${
+                showReplyButton && !noReply
+                  ? 'bg-[var(--color-user)]'
+                  : 'bg-[var(--color-agent)]'
+              }`}
+            >
+              {submitLabel}
+            </button>
           </div>
         </div>
       </div>
