@@ -1,5 +1,10 @@
 import { useEffect, useRef } from 'react';
-import type { ChannelMessage, SessionNode, PendingPermission } from '../types';
+import type {
+  ChannelMessage,
+  SessionNode,
+  PendingPermission,
+  ProviderType,
+} from '../types';
 import { mergeSessionTreeSnapshot } from './session-tree-merge';
 
 type SessionStatusType = 'info' | 'working' | 'success' | 'error';
@@ -12,6 +17,7 @@ export function createDirectConnectionNode(
   connectionId: string,
   name: string,
   sessionChannel: { sessionId: string; label?: string } | null,
+  providerType?: ProviderType | null,
 ): SessionNode {
   return {
     id: connectionId,
@@ -23,15 +29,18 @@ export function createDirectConnectionNode(
     connectionId,
     hasMcpChannel: true,
     isDirectConnection: true,
+    providerType: providerType ?? null,
     prompt: null,
     activeSession: null,
     channelMessages: [],
     unreadCount: 0,
+    lastReadMessageId: null,
     hasPendingPrompt: false,
     sessionChannel,
     sessionStatuses: [],
     pendingPermissions: [],
     baseDirectory: null,
+    vcsInfo: null,
   };
 }
 
@@ -63,17 +72,72 @@ export function findKeyByConnectionId(
   connectionId: string,
   openCodeSessionId?: string | null,
 ): string | null {
+  // DEBUG: Log all nodes' connectionIds for diagnosis
+  console.log(
+    '[findKeyByConnectionId] Looking for connectionId:',
+    connectionId,
+    'openCodeSessionId:',
+    openCodeSessionId,
+  );
+  // console.log(
+  //   '[findKeyByConnectionId] Available nodes:',
+  //   Array.from(nodes.entries()).map(([key, node]) => ({
+  //     key,
+  //     nodeConnectionId: node.connectionId,
+  //     nodeOpenCodeSessionId: node.openCodeSessionId,
+  //     title: node.title,
+  //   })),
+  // );
+
+  // PRIMARY: When openCodeSessionId is provided, match by that FIRST.
+  // This is critical for OpenCode's shared MCP client where multiple sessions
+  // share the same connectionId (transport UUID). The openCodeSessionId is the
+  // unique identifier for each agent session.
+  if (openCodeSessionId) {
+    // Direct map key lookup
+    if (nodes.has(openCodeSessionId)) {
+      console.log(
+        '[findKeyByConnectionId] MATCH by openCodeSessionId as key:',
+        openCodeSessionId,
+      );
+      return openCodeSessionId;
+    }
+
+    // Search by node.openCodeSessionId field
+    for (const [id, node] of nodes) {
+      if (node.openCodeSessionId === openCodeSessionId) {
+        console.log(
+          '[findKeyByConnectionId] MATCH by node.openCodeSessionId field! Returning key:',
+          id,
+        );
+        return id;
+      }
+    }
+  }
+
+  // FALLBACK 1: match by node.connectionId field
+  // Only used when openCodeSessionId is not provided or not found
   for (const [id, node] of nodes) {
-    if (node.connectionId === connectionId) return id;
+    if (node.connectionId === connectionId) {
+      console.log(
+        '[findKeyByConnectionId] FALLBACK 1: MATCH by connectionId! Returning key:',
+        id,
+      );
+      return id;
+    }
   }
-  // Fallback: after app restart the node's connectionId may still be
-  // "auto-{sessionId}" or a stale UUID from the previous MCP session.
-  // The openCodeSessionId (resolved from the DB by the main process)
-  // matches the map key for OpenCode-backed nodes, so a direct lookup
-  // resolves the correct node without a full scan.
-  if (openCodeSessionId && nodes.has(openCodeSessionId)) {
-    return openCodeSessionId;
+
+  // FALLBACK 2: direct map key lookup by connectionId
+  // For direct connections, the map key IS the connectionId.
+  if (nodes.has(connectionId)) {
+    console.log(
+      '[findKeyByConnectionId] FALLBACK 2: Direct key match by connectionId:',
+      connectionId,
+    );
+    return connectionId;
   }
+
+  console.log('[findKeyByConnectionId] NO MATCH FOUND!');
   return null;
 }
 
@@ -181,8 +245,29 @@ export function useIpcListeners({
     // Merges topology; preserves live runtime state.
     // ------------------------------------------------------------------
     window.api.onSessionTreeUpdated?.((snapshotNodes) => {
+      console.log(
+        '[onSessionTreeUpdated] Received snapshot:',
+        snapshotNodes.map((n) => ({
+          id: n.id,
+          connectionId: n.connectionId,
+          openCodeSessionId: n.openCodeSessionId,
+          title: n.title,
+        })),
+      );
+
       setNodes((prev) => {
         const next = mergeSessionTreeSnapshot(prev, snapshotNodes);
+
+        // Log the merge result
+        console.log(
+          '[onSessionTreeUpdated] After merge, nodes:',
+          Array.from(next.entries()).map(([key, node]) => ({
+            key,
+            connectionId: node.connectionId,
+            openCodeSessionId: node.openCodeSessionId,
+            title: node.title,
+          })),
+        );
 
         // Load history once per connectionId for any newly-connected nodes.
         // Also drain any startup-buffered history for nodes that just appeared.
@@ -221,6 +306,7 @@ export function useIpcListeners({
             data.sessionId
               ? { sessionId: data.sessionId, label: data.label }
               : null,
+            data.providerType,
           ),
         );
         return next;
@@ -244,10 +330,40 @@ export function useIpcListeners({
       setActiveId((prev) => (prev === data.connectionId ? null : prev));
     });
 
+    window.api.onChannelLabelUpdated?.((data) => {
+      setNodes((prev) => {
+        // Standalone nodes are keyed by connectionId; OpenCode nodes are keyed
+        // by openCodeSessionId. Search by field when the direct key lookup fails.
+        let targetKey: string | undefined = prev.has(data.connectionId)
+          ? data.connectionId
+          : undefined;
+        if (!targetKey) {
+          for (const [key, node] of prev) {
+            if (node.connectionId === data.connectionId) {
+              targetKey = key;
+              break;
+            }
+          }
+        }
+        if (!targetKey) return prev;
+        const node = prev.get(targetKey)!;
+        const next = new Map(prev);
+        next.set(targetKey, { ...node, title: data.name });
+        return next;
+      });
+    });
+
     // ------------------------------------------------------------------
     // Prompt events — keyed by connectionId
     // ------------------------------------------------------------------
     window.api.onPromptRequest((data) => {
+      console.log('[onPromptRequest] Received prompt:', {
+        connectionId: data.connectionId,
+        openCodeSessionId: data.openCodeSessionId,
+        message: data.message?.substring(0, 50) + '...',
+        id: data.id,
+      });
+
       if (data.clientInfo) setClientInfo(data.clientInfo);
 
       setNodes((prev) => {
@@ -257,8 +373,24 @@ export function useIpcListeners({
           data.connectionId,
           data.openCodeSessionId,
         );
-        if (!nodeId) return prev;
+        console.log(
+          '[onPromptRequest] findPromptTargetKey returned nodeId:',
+          nodeId,
+        );
+
+        if (!nodeId) {
+          console.log('[onPromptRequest] NO NODE FOUND! Prompt will be lost.');
+          return prev;
+        }
+
         const node = prev.get(nodeId)!;
+        console.log('[onPromptRequest] Routing prompt to node:', {
+          nodeId,
+          nodeTitle: node.title,
+          nodeConnectionId: node.connectionId,
+          nodeOpenCodeSessionId: node.openCodeSessionId,
+        });
+
         const next = new Map(prev);
         next.set(nodeId, {
           ...node,
@@ -289,8 +421,13 @@ export function useIpcListeners({
           : null;
         const activeChannelHasPrompt = Boolean(currentActiveNode?.prompt);
         if (!activeChannelHasPrompt) {
+          console.log('[onPromptRequest] Switching active channel to:', nodeId);
           setActiveId(nodeId);
           activateRef.current();
+        } else {
+          console.log(
+            '[onPromptRequest] NOT switching channel - current channel has pending prompt',
+          );
         }
 
         return next;
@@ -500,6 +637,7 @@ export function useIpcListeners({
             ...direct,
             channelMessages: [],
             unreadCount: 0,
+            lastReadMessageId: null,
           });
           return next;
         }
@@ -511,6 +649,7 @@ export function useIpcListeners({
           ...prev.get(nodeId)!,
           channelMessages: [],
           unreadCount: 0,
+          lastReadMessageId: null,
         });
         return next;
       });

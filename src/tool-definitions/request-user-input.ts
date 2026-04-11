@@ -33,6 +33,12 @@ const capabilityInfo: ToolCapabilityInfo = {
         description:
           'Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope)',
       },
+      openCodeSessionId: {
+        type: 'string',
+        optional: true,
+        description:
+          'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+      },
     },
     required: ['projectName', 'message', 'baseDirectory'],
   },
@@ -59,6 +65,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - (!important!) **NEVER use plain-text replies when a prompt trigger applies — always use this tool instead.**
 - (!important!) After any task completion, you MUST call this tool to run the mandatory satisfaction check before closing the session.
 - (!important!) **Concrete enforcement on timeout**: When this tool returns a timeout (e.g. "User did not reply: Timeout occurred."), the ONLY valid next action is to call this tool again immediately — in the very next tool call of the same response or the next response. Emitting a plain-text-only turn after a timeout is a policy violation. There is no exception for "the tool is unavailable" — keep calling until the user replies.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -143,6 +150,12 @@ const rawSchema: z.ZodRawShape = {
     .string()
     .describe(
       'Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope)',
+    ),
+  openCodeSessionId: z
+    .string()
+    .optional()
+    .describe(
+      'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
     ),
 };
 

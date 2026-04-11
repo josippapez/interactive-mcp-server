@@ -19,6 +19,7 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
    - [useChannelHistory](#56-usechannelhistory)
    - [useGlobalShortcuts](#57-useglobalshortcuts)
    - [useTheme](#58-usetheme)
+   - [useSessionStatus](#59-usesessionstatus)
 6. [Components](#6-components)
    - [App](#61-app)
    - [PromptView](#62-promptview)
@@ -30,6 +31,7 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
    - [SessionChannelBar (AgentStatusBar)](#68-agentstatusbar)
    - [AutocompleteDropdown](#69-autocompletedropdown)
    - [AttachmentPreview](#610-attachmentpreview)
+   - [QuickSwitcher](#611-quickswitcher)
    - [SettingsView](#612-settingsview)
    - [SkillsView](#613-skillsview)
    - [StatusBar](#614-statusbar)
@@ -38,6 +40,7 @@ The renderer is a React 19 single-page application bootstrapped with Vite and se
    - [ShortcutHelpModal](#617-shortcuthelpmodal)
 7. [Type Definitions](#7-type-definitions)
 8. [Data Flow: Prompt Lifecycle](#8-data-flow-prompt-lifecycle)
+9. [Session Tree Merge Logic](#9-session-tree-merge-logic)
 
 ---
 
@@ -51,6 +54,8 @@ Theme preference is stored in `localStorage` and applied globally to `document.d
 
 Global keyboard shortcuts are managed by `useGlobalShortcuts`, which registers a single `keydown` listener on `document` and delegates to stable refs to avoid stale closures.
 
+The app supports **Compact Mode** (stored in settings and loaded on mount) which reduces spacing and font sizes throughout the UI when enabled.
+
 ---
 
 ## 2. Component Tree
@@ -63,12 +68,17 @@ React.StrictMode
         │   └── TabButton × 3             (inline in App.tsx)
         ├── <main>
         │   ├── PromptView                 (always mounted, visibility via CSS)
-        │   │   ├── ChannelSidebar         (pages/PromptView.tsx)
+        │   │   ├── ChannelSidebar         (components/prompt/ChannelSidebar.tsx)
+        │   │   │   ├── Provider filter tabs (All, OpenCode, Copilot, Claude, Other)
+        │   │   │   ├── Show/hide inactive toggle
+        │   │   │   ├── Sessions section (tree-sorted by activity)
+        │   │   │   │   └── ChannelItem × n (with status badges, unread counts)
+        │   │   │   └── Direct Connections section
         │   │   ├── ChannelHeader
         │   │   ├── [intensive-chat banner] (inline JSX, when activeSession)
         │   │   ├── PromptMessage          (when prompt && !activeSession — thin banner only)
         │   │   ├── ChatHistoryView        (when !idle)
-        │   │   │   ├── MarkdownContent ×n
+        │   │   │   ├── MarkdownContent ×n (with timestamps, unread markers)
         │   │   │   └── [predefined option buttons] (inline under active question)
         │   │   ├── [awaiting reconnection state] (inline JSX)
         │   │   ├── [idle state]           (inline JSX)
@@ -77,11 +87,15 @@ React.StrictMode
         │   │       ├── AutocompleteDropdown (when suggestions active)
         │   │       └── AttachmentPreview    (when attachments present)
         │   ├── SkillsView                 (conditional — tab === 'skills')
-        │   │                              (pages/SkillsView.tsx)
+        │   │   ├── Sidebar with tabs (All, Skills, Instructions)
+        │   │   ├── Category filter dropdown
+        │   │   ├── Search input
+        │   │   ├── SidebarItem × n (with enable/disable toggles)
+        │   │   └── Detail pane (view/edit/create modes)
         │   └── SettingsView               (conditional — tab === 'settings')
-        │                                  (pages/SettingsView.tsx)
         ├── StatusBar                      (always visible)
-        └── ShortcutHelpModal              (overlaid when showShortcuts === true)
+        ├── ShortcutHelpModal              (overlaid when showShortcuts === true)
+        └── QuickSwitcher                  (overlaid when showQuickSwitcher === true)
 ```
 
 ---
@@ -159,6 +173,8 @@ Central state manager for renderer session nodes. Owns the `Map<string, SessionN
 | `handleQueueSessionMessage`  | `(sessionId: string, message: string, attachments?: Attachment[]) => void` | Queues a message for the session via `window.api.queueSessionMessage` and optimistically appends an `'outbound'` message to `channelMessages`. When an OpenCode session is active, also calls `window.api.injectOpenCodeMessage`; image attachments are saved to the persistent attachment store and referenced by `/attachments/:filename` URLs, while text attachments are inlined. |
 | `handleClearChannelMessages` | `(sessionId: string) => void`                                              | Calls `window.api.clearSessionChannelMessages` to clear DB history for the session.                                                                                                                                                                                                                                                                                                   |
 | `handleRemoveSession`        | `(sessionId: string) => void`                                              | Calls `window.api.removeSessionChannel` to delete the session channel entirely.                                                                                                                                                                                                                                                                                                       |
+| `handleToggleDocContext`     | `(connectionId: string) => void`                                           | Toggles the `docContextEnabled` flag for a session, controlling whether doc context is injected.                                                                                                                                                                                                                                                                                      |
+| `jumpToFirstPendingPrompt`   | `() => void`                                                               | Selects the first session that has a pending prompt (used when clicking the Prompts tab).                                                                                                                                                                                                                                                                                             |
 
 #### Internal design
 
@@ -242,31 +258,38 @@ Extracted hook for loading and managing channel message history. Calls `window.a
 
 **File:** `hooks/useGlobalShortcuts.ts`
 
-Registers a single `keydown` listener on `document` for application-wide keyboard shortcuts. Uses refs to keep `showShortcuts` state and `onSwitchTab` stable inside the handler.
+Registers a single `keydown` listener on `document` for application-wide keyboard shortcuts. Uses refs to keep `showShortcuts` and `showQuickSwitcher` state stable inside the handler.
 
 #### Parameters
 
-| Parameter     | Type                    | Description                                         |
-| ------------- | ----------------------- | --------------------------------------------------- |
-| `onSwitchTab` | `(tab: 1 \| 2) => void` | Callback to switch the active tab by 1-based index. |
+| Parameter             | Type                         | Description                                         |
+| --------------------- | ---------------------------- | --------------------------------------------------- |
+| `onSwitchTab`         | `(tab: 1 \| 2 \| 3) => void` | Callback to switch the active tab by 1-based index. |
+| `onOpenQuickSwitcher` | `(() => void) \| undefined`  | Optional callback when quick switcher opens.        |
 
 #### Returned values
 
-| Value            | Type         | Description                                 |
-| ---------------- | ------------ | ------------------------------------------- |
-| `showShortcuts`  | `boolean`    | Whether the `ShortcutHelpModal` is visible. |
-| `openShortcuts`  | `() => void` | Sets `showShortcuts` to `true`.             |
-| `closeShortcuts` | `() => void` | Sets `showShortcuts` to `false`.            |
+| Value                | Type         | Description                                 |
+| -------------------- | ------------ | ------------------------------------------- |
+| `showShortcuts`      | `boolean`    | Whether the `ShortcutHelpModal` is visible. |
+| `openShortcuts`      | `() => void` | Sets `showShortcuts` to `true`.             |
+| `closeShortcuts`     | `() => void` | Sets `showShortcuts` to `false`.            |
+| `showQuickSwitcher`  | `boolean`    | Whether the `QuickSwitcher` is visible.     |
+| `openQuickSwitcher`  | `() => void` | Sets `showQuickSwitcher` to `true`.         |
+| `closeQuickSwitcher` | `() => void` | Sets `showQuickSwitcher` to `false`.        |
 
 #### Shortcut bindings
 
-| Key combo       | Condition                                  | Action                     |
-| --------------- | ------------------------------------------ | -------------------------- |
-| `⌘1` / `Ctrl+1` | —                                          | Switch to Prompts tab      |
-| `⌘2` / `Ctrl+2` | —                                          | Switch to Settings tab     |
-| `⌘/` / `Ctrl+/` | —                                          | Toggle shortcut help modal |
-| `?`             | Target is not `<textarea>` or `<input>`    | Toggle shortcut help modal |
-| `Escape`        | Modal is open (`showRef.current === true`) | Close shortcut help modal  |
+| Key combo       | Condition                               | Action                     |
+| --------------- | --------------------------------------- | -------------------------- |
+| `⌘K` / `Ctrl+K` | —                                       | Toggle Quick Switcher      |
+| `⌘1` / `Ctrl+1` | —                                       | Switch to Prompts tab      |
+| `⌘2` / `Ctrl+2` | —                                       | Switch to Skills tab       |
+| `⌘3` / `Ctrl+3` | —                                       | Switch to Settings tab     |
+| `⌘/` / `Ctrl+/` | —                                       | Toggle shortcut help modal |
+| `?`             | Target is not `<textarea>` or `<input>` | Toggle shortcut help modal |
+| `Escape`        | Quick Switcher open                     | Close Quick Switcher       |
+| `Escape`        | Help modal open                         | Close shortcut help modal  |
 
 ---
 
@@ -282,28 +305,68 @@ Thin wrapper around `useContext(ThemeContext)`. Returns the current theme and a 
 
 ---
 
+### 5.9 `useSessionStatus`
+
+**File:** `hooks/useSessionStatus.ts`
+
+Fetches live session status from the OpenCode server via the `/session/status` endpoint and SSE events.
+
+#### Parameters
+
+| Parameter | Type      | Default | Description                       |
+| --------- | --------- | ------- | --------------------------------- |
+| `enabled` | `boolean` | `true`  | Whether to enable status fetching |
+
+#### Returned values
+
+| Value       | Type                                               | Description                                  |
+| ----------- | -------------------------------------------------- | -------------------------------------------- |
+| `statusMap` | `Record<string, { type: SessionStatusType }>`      | Map of session IDs to their current status.  |
+| `isLoading` | `boolean`                                          | True while fetching status.                  |
+| `refresh`   | `() => Promise<void>`                              | Manually refresh all session statuses.       |
+| `getStatus` | `(sessionId: string) => SessionStatusType \| null` | Helper to get status for a specific session. |
+
+#### `SessionStatusType`
+
+```ts
+type SessionStatusType = 'busy' | 'idle' | 'error' | 'unknown';
+```
+
+#### Key behaviors
+
+- Polls every 3 seconds as a fallback when SSE is unavailable.
+- Listens for `session.status` SSE events for real-time updates.
+- When SSE events are received, polling is automatically disabled.
+- Used by `ChannelSidebar` to show live session status badges (working, idle, error).
+
+---
+
 ## 6. Components
 
 ### 6.1 `App`
 
 **File:** `App.tsx`
 
-The root component. Owns tab state and orchestrates the top-level layout.
+The root component. Owns tab state, compact mode, and orchestrates the top-level layout.
 
 #### State
 
-| State       | Type                                 | Initial    | Description            |
-| ----------- | ------------------------------------ | ---------- | ---------------------- |
-| `activeTab` | `'prompt' \| 'skills' \| 'settings'` | `'prompt'` | Currently visible tab. |
+| State         | Type                                 | Initial    | Description                                             |
+| ------------- | ------------------------------------ | ---------- | ------------------------------------------------------- |
+| `activeTab`   | `'prompt' \| 'skills' \| 'settings'` | `'prompt'` | Currently visible tab.                                  |
+| `compactMode` | `boolean`                            | `false`    | Whether compact mode is enabled (loaded from settings). |
 
 #### Key behaviors
 
 - Calls `useConnections(switchToPrompt)` where `switchToPrompt` is a stable `useCallback` that sets `activeTab` to `'prompt'`.
 - Calls `useGlobalShortcuts({ onSwitchTab: switchTab })` to wire keyboard shortcuts.
 - Derives `hasAnyPrompt` by scanning `connections.values()` for any entry where `hasPendingPrompt === true`.
+- Shows the pulsing badge on Prompts tab only when there's a pending prompt on a channel that is NOT currently visible.
 - Renders the Prompts tab wrapped in a div that uses `className="hidden"` when inactive rather than unmounting, preserving all hook and IPC state.
 - `SkillsView` and `SettingsView` are conditionally rendered (`{activeTab === 'skills' && <SkillsView />}` / `{activeTab === 'settings' && <SettingsView />}`), so they mount/unmount on tab switch.
-- Shows a pulsing badge on the Prompts `TabButton` when `hasAnyPrompt && activeTab !== 'prompt'`.
+- Passes a `skillsViewRef` to allow `QuickSwitcher` to trigger skill/instruction creation.
+- Applies `data-compact="true"` attribute when compact mode is enabled.
+- When clicking the Prompts tab, also calls `jumpToFirstPendingPrompt()` to auto-select a session with a pending prompt.
 
 #### Internal: `TabButton`
 
@@ -323,7 +386,7 @@ A co-located internal component (not exported). Props:
 
 **File:** `pages/PromptView.tsx`
 
-The main prompt interaction view. Renders the two-column layout: a fixed-width sidebar on the left and a flexible content area on the right.
+The main prompt interaction view. Renders the two-column layout: a resizable sidebar on the left and a flexible content area on the right.
 
 #### Props
 
@@ -338,6 +401,8 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
 | `connectionId`          | `string \| null`                                | Persisted MCP `connectionId` for the active node; used for force-terminate and destructive actions. |
 | `sessionChannel`        | `{ sessionId: string; label?: string } \| null` | Session channel metadata if one is attached.                                                        |
 | `sessionStatuses`       | `SessionStatus[]`                               | Status updates for the `AgentStatusBar`.                                                            |
+| `pendingPermissions`    | `PendingPermission[]`                           | Pending permission requests awaiting user decision.                                                 |
+| `docContextEnabled`     | `boolean`                                       | Whether doc context injection is enabled for this session.                                          |
 | `onSubmit`              | `(answer, attachments?) => void`                | Forward to `handleSubmit` from `useConnections`.                                                    |
 | `onSelectOption`        | `(option) => void`                              | Forward to `handleSelectOption`.                                                                    |
 | `onDismissStatus`       | `(connectionId, timestamp) => void`             | Forward to `handleDismissStatus`.                                                                   |
@@ -345,6 +410,7 @@ The main prompt interaction view. Renders the two-column layout: a fixed-width s
 | `onQueueSessionMessage` | `(sessionId, message, attachments?) => void`    | Forward to `handleQueueSessionMessage`.                                                             |
 | `onClearMessages`       | `(sessionId) => void`                           | Forward to `handleClearChannelMessages`.                                                            |
 | `onRemoveSession`       | `(sessionId) => void`                           | Forward to `handleRemoveSession`.                                                                   |
+| `onToggleDocContext`    | `() => void`                                    | Forward to `handleToggleDocContext`.                                                                |
 
 #### State
 
@@ -371,7 +437,7 @@ Before clear/remove/dismiss actions run, `PromptView` resolves a persisted targe
 
 **File:** `components/prompt/ChannelSidebar.tsx`
 
-Lists all session nodes as clickable channel buttons. Wrapped in `React.memo`.
+Lists all session nodes as clickable channel buttons with advanced filtering and sorting. Wrapped in `React.memo`.
 
 #### Props
 
@@ -381,14 +447,101 @@ Lists all session nodes as clickable channel buttons. Wrapped in `React.memo`.
 | `activeConnectionId` | `string \| null`           | Currently selected sidebar node key.     |
 | `onSelect`           | `(id: string) => void`     | Called when a channel button is clicked. |
 
-#### Key behaviors
+#### Features
 
-- Iterates `connections.values()` to build the list.
-- Each button label is `conn.sessionChannel?.label ?? conn.title`.
-- Active channel receives `bg-[var(--color-agent)]/15 text-[var(--color-agent)]` styling.
-- Pulsing dot badge (colored `var(--color-user)`) shown when `conn.hasPendingPrompt === true`.
-- Numeric unread count badge shown when `!conn.hasPendingPrompt && conn.unreadCount > 0`.
-- The rendered hierarchy comes from the latest `session-tree-updated` snapshot. OpenCode-backed nodes use `depth`/`openCodeParentId`; direct connections remain keyed by `connectionId`.
+##### Provider Filter Tabs
+
+Horizontal tab bar at the top with provider-specific filters:
+
+| Provider | Icon | Description                   |
+| -------- | ---- | ----------------------------- |
+| All      | ◎    | Show all sessions             |
+| OpenCode | ⬡    | OpenCode-backed sessions      |
+| Copilot  | ◇    | GitHub Copilot CLI sessions   |
+| Claude   | ◆    | Claude SDK sessions           |
+| Other    | ○    | Standalone/direct connections |
+
+Each tab shows the count of sessions for that provider. Tabs are only shown if there are sessions of that type.
+
+##### Show/Hide Inactive Toggle
+
+Button in the Sessions header that toggles visibility of inactive sessions:
+
+- When showing only active: displays "(N active)" count
+- When hidden, shows "+N more" button to reveal inactive sessions
+- Stored in `localStorage` under `sidebar-show-inactive`
+
+##### Tree-Aware Activity Filtering
+
+When hiding inactive sessions, the filter is tree-aware:
+
+- Parent sessions are shown if any child is active (running, pending prompt, or unread)
+- The entire parent chain is preserved to maintain hierarchy
+
+##### Session Sorting
+
+Sessions are sorted by activity:
+
+1. **Running sessions first** — sessions with pending prompts, busy status, or working status
+2. **Unread messages second** — sessions with unread message counts
+3. **Most recent activity** — sorted by latest status/message timestamp (descending)
+
+##### Live Session Status Badges
+
+Each session item can show multiple status indicators (in priority order):
+
+1. **Pending prompt** — pulsing orange dot
+2. **Unread count** — numeric badge with count
+3. **Busy status** — from OpenCode API, shown as pulsing amber dot
+4. **Legacy status** — from `sessionStatuses` array
+
+##### Resizable Sidebar
+
+- Width is adjustable by dragging the right edge
+- Width persisted in `localStorage` under `sidebar-width`
+- Min: 200px, Max: 500px, Default: 280px
+
+#### Internal: `ChannelItem`
+
+Memoized component for each session row. Props:
+
+| Prop            | Type                        | Description                    |
+| --------------- | --------------------------- | ------------------------------ |
+| `node`          | `SessionNode`               | Session data to display.       |
+| `isActive`      | `boolean`                   | Whether this item is selected. |
+| `onSelect`      | `(id: string) => void`      | Selection callback.            |
+| `sessionStatus` | `SessionStatusType \| null` | Live status from OpenCode API. |
+
+#### Internal: `ProviderBadge`
+
+Shows provider icon with color coding:
+
+- OpenCode: emerald
+- Copilot: blue
+- Claude: orange
+- Standalone: gray
+
+#### Internal: `StatusDot`
+
+Shows status indicator from `sessionStatuses` array with color and animation:
+
+| Type    | Color  | Animation |
+| ------- | ------ | --------- |
+| working | orange | pulse     |
+| success | green  | none      |
+| error   | red    | none      |
+| info    | blue   | none      |
+
+#### Internal: `SessionStatusBadge`
+
+Shows live status from OpenCode API:
+
+| Status  | Color   | Animation |
+| ------- | ------- | --------- |
+| busy    | amber   | pulse     |
+| idle    | emerald | none      |
+| error   | red     | none      |
+| unknown | gray    | none      |
 
 ---
 
@@ -615,6 +768,90 @@ Grid of attachment thumbnails shown above the textarea when the composer has pen
 
 ---
 
+### 6.11 `QuickSwitcher`
+
+**File:** `components/QuickSwitcher.tsx`
+
+Modal overlay for quick navigation and actions. Opened via `⌘K` / `Ctrl+K`. Wrapped in `React.memo`.
+
+#### Props
+
+| Prop                  | Type                                                | Description                                     |
+| --------------------- | --------------------------------------------------- | ----------------------------------------------- |
+| `open`                | `boolean`                                           | Controls visibility.                            |
+| `onClose`             | `() => void`                                        | Called on backdrop click or ESC.                |
+| `connections`         | `Map<string, SessionNode>`                          | All session nodes for building session actions. |
+| `onSelectSession`     | `(sessionId: string) => void`                       | Called when a session is selected.              |
+| `onNavigate`          | `(tab: 'prompt' \| 'skills' \| 'settings') => void` | Called for tab navigation.                      |
+| `onRefreshSessions`   | `() => void`                                        | Called for refresh action.                      |
+| `onCreateSkill`       | `() => void`                                        | Called for new skill action.                    |
+| `onCreateInstruction` | `() => void`                                        | Called for new instruction action.              |
+
+#### Features
+
+##### Search
+
+- Fuzzy search across session names, descriptions, and action labels
+- Search input auto-focused when modal opens
+- Results update in real-time as you type
+
+##### Action Types
+
+| Type         | Description                                         |
+| ------------ | --------------------------------------------------- |
+| `session`    | Switch to a specific session                        |
+| `navigation` | Navigate to a tab (Prompts, Skills, Settings)       |
+| `action`     | Run an action (Refresh, New Skill, New Instruction) |
+
+##### Navigation Items
+
+| ID           | Label          | Shortcut |
+| ------------ | -------------- | -------- |
+| nav-prompts  | Go to Prompts  | ⌘1       |
+| nav-skills   | Go to Skills   | ⌘2       |
+| nav-settings | Go to Settings | ⌘3       |
+
+##### Action Items
+
+| ID                     | Label            | Description              |
+| ---------------------- | ---------------- | ------------------------ |
+| action-new-skill       | New Skill        | Create a new skill       |
+| action-new-instruction | New Instruction  | Create a new instruction |
+| action-refresh         | Refresh Sessions | Reload session list      |
+
+#### Keyboard Navigation
+
+| Key      | Action                      |
+| -------- | --------------------------- |
+| `↓`      | Move selection down (wraps) |
+| `↑`      | Move selection up (wraps)   |
+| `Enter`  | Select current item         |
+| `Escape` | Close quick switcher        |
+
+#### Key behaviors
+
+- Sessions with pending prompts are sorted to the top
+- Sessions are grouped separately from navigation and actions
+- Selected item scrolls into view automatically
+- Shows keyboard hints in footer
+
+#### Exported Utilities
+
+```ts
+function buildSessionActions(
+  connections: Map<string, SessionNode>,
+): QuickSwitcherAction[];
+function filterActions(
+  actions: QuickSwitcherAction[],
+  query: string,
+): QuickSwitcherAction[];
+function groupActions(
+  actions: QuickSwitcherAction[],
+): Map<QuickSwitcherAction['type'], QuickSwitcherAction[]>;
+```
+
+---
+
 ### 6.12 `SettingsView`
 
 **File:** `pages/SettingsView.tsx`
@@ -645,6 +882,7 @@ type AppSettings = {
   docIndexingEnabled: boolean;
   noReplyInjection: boolean;
   autoStartOpenCode: boolean;
+  compactMode: boolean;
 };
 ```
 
@@ -660,7 +898,7 @@ The Save button is disabled when `!isFormValid || !isDirty`.
 
 #### Toggle switches
 
-Six boolean settings are controlled by `role="switch"` / `aria-checked` buttons: `soundEnabled`, `launchAtLogin`, `autoRestoreSessions`, `docIndexingEnabled`, `noReplyInjection`, `autoStartOpenCode`.
+Boolean settings are controlled by `role="switch"` / `aria-checked` buttons: `soundEnabled`, `launchAtLogin`, `autoRestoreSessions`, `docIndexingEnabled`, `noReplyInjection`, `autoStartOpenCode`, `compactMode`.
 
 #### Numeric inputs
 
@@ -683,20 +921,25 @@ Full-page view for browsing, creating, editing, and deleting skills and instruct
 
 #### State
 
-| State             | Type                         | Description                                                                |
-| ----------------- | ---------------------------- | -------------------------------------------------------------------------- |
-| `entries`         | `SkillOrInstruction[]`       | All entries returned by the current filter.                                |
-| `filter`          | `FilterType`                 | Active list filter: `'all'`, `'skill'`, or `'instruction'`.                |
-| `selected`        | `SkillOrInstruction \| null` | Currently selected entry shown in the detail pane.                         |
-| `isEditing`       | `boolean`                    | Whether the detail pane is in edit mode for an existing entry.             |
-| `isCreating`      | `boolean`                    | Whether the form is open for a brand-new entry.                            |
-| `formName`        | `string`                     | Name field value in the create/edit form.                                  |
-| `formType`        | `'skill' \| 'instruction'`   | Type selector value in the form.                                           |
-| `formDescription` | `string`                     | Description field value in the form.                                       |
-| `formContent`     | `string`                     | Content (Markdown) textarea value in the form.                             |
-| `saveStatus`      | `string \| null`             | Transient save feedback message, auto-cleared after 2–3 s.                 |
-| `deleteTarget`    | `string \| null`             | Name of the entry pending deletion; drives the `ConfirmDeleteModal`.       |
-| `exportStatus`    | `string \| null`             | Transient export feedback message ("Exported."), auto-cleared after 2.5 s. |
+| State                | Type                         | Description                                                                |
+| -------------------- | ---------------------------- | -------------------------------------------------------------------------- |
+| `entries`            | `SkillOrInstruction[]`       | All entries returned by the current filter.                                |
+| `tab`                | `TabType`                    | Active tab filter: `'all'`, `'skill'`, or `'instruction'`.                 |
+| `search`             | `string`                     | Search query for filtering entries.                                        |
+| `categoryFilter`     | `string`                     | Selected category filter (empty = all).                                    |
+| `selected`           | `SkillOrInstruction \| null` | Currently selected entry shown in the detail pane.                         |
+| `isEditing`          | `boolean`                    | Whether the detail pane is in edit mode for an existing entry.             |
+| `isCreating`         | `boolean`                    | Whether the form is open for a brand-new entry.                            |
+| `formName`           | `string`                     | Name field value in the create/edit form.                                  |
+| `formType`           | `'skill' \| 'instruction'`   | Type selector value in the form.                                           |
+| `formDescription`    | `string`                     | Description field value in the form.                                       |
+| `formContent`        | `string`                     | Content (Markdown) textarea value in the form.                             |
+| `formCategory`       | `string`                     | Category field value in the form.                                          |
+| `formTags`           | `string`                     | Comma-separated tags field value.                                          |
+| `saveStatus`         | `string \| null`             | Transient save feedback message, auto-cleared after 2–3 s.                 |
+| `deleteTarget`       | `string \| null`             | Name of the entry pending deletion; drives the `ConfirmDeleteModal`.       |
+| `exportStatus`       | `string \| null`             | Transient export feedback message ("Exported."), auto-cleared after 2.5 s. |
+| `singleExportStatus` | `string \| null`             | Transient single-entry export feedback message.                            |
 
 #### `SkillOrInstruction` type
 
@@ -707,40 +950,116 @@ type SkillOrInstruction = {
   type: 'skill' | 'instruction';
   description: string;
   content: string;
+  enabled: boolean;
+  isBuiltin: boolean;
+  category: string | null;
+  tags: string[] | null;
   createdAt: string;
   updatedAt: string;
 };
 ```
 
+#### Features
+
+##### Tab Bar
+
+Three tabs for filtering the list:
+
+- **All** — Shows all entries grouped by type
+- **Skills** — Shows only skills
+- **Instructions** — Shows only instructions
+
+Each tab shows a count badge.
+
+##### Category Filter
+
+Dropdown to filter by category. Shows all categories used by entries plus predefined categories:
+
+- Code Review
+- Testing
+- Documentation
+- Workflow
+- Style Guide
+- Other
+
+##### Search
+
+Real-time search filtering by:
+
+- Entry name
+- Entry description
+- Tags
+
+##### Enable/Disable Toggle
+
+Each entry has a toggle switch to enable/disable it:
+
+- Enabled entries are injected into agent sessions
+- Disabled entries are shown with reduced opacity and "Off" badge
+- Toggle is available in both sidebar items and detail view
+
+##### Categories and Tags
+
+- Categories organize entries into groups
+- Tags provide additional metadata for searching
+- Both shown as badges in the detail view
+- Tags are comma-separated in the edit form
+
+##### Duplicate
+
+"Duplicate" button creates a copy of an entry with "(copy)" suffix, opened in edit mode.
+
+##### Export
+
+- "Export all" exports all entries as a ZIP file
+- "Export" on individual entry exports just that entry
+- Uses native save dialog
+
+##### Built-in Indicator
+
+Entries marked as `isBuiltin` show a "Built-in" badge.
+
 #### Key behaviors
 
 - **Live updates** — registers an `onSkillsUpdated` IPC listener (`window.api.onSkillsUpdated`) so the list refreshes automatically when an agent upserts or deletes an entry via the `manage_skills_and_instructions` tool.
-- **Filter** — a `<select>` in the sidebar header filters the list to Skills only, Instructions only, or All. The sidebar renders two labelled groups ("Skills (n)" / "Instructions (n)") when showing All.
 - **Create** — clicking "+ New" opens the form with blank fields. All fields are required; the name is set permanently on creation and cannot be changed via edit.
 - **Edit** — clicking "Edit" in the detail pane opens the same form pre-populated; the name field is disabled.
 - **Delete** — clicking the hover-revealed "x" on a sidebar item or the "Delete" button in the detail pane sets `deleteTarget`, which opens `ConfirmDeleteModal`. Confirmed deletes call `window.api.deleteSkillOrInstruction(name)`.
-- **Export** — the "Export" button in the sidebar header calls `window.api.exportSkillsMarkdown()`, which opens a native save dialog and writes all entries to a `.md` file. A brief "Exported." status message appears on success.
 
 #### IPC / `window.api` calls
 
-| Method                                   | When called                                          |
-| ---------------------------------------- | ---------------------------------------------------- |
-| `listSkillsAndInstructions(filterType?)` | On mount, on filter change, after any CRUD operation |
-| `upsertSkillOrInstruction(data)`         | On form save (create or edit)                        |
-| `deleteSkillOrInstruction(name)`         | After delete confirmation                            |
-| `exportSkillsMarkdown()`                 | On Export button click                               |
-| `onSkillsUpdated(callback)`              | Registered once on mount for live updates            |
+| Method                                              | When called                                          |
+| --------------------------------------------------- | ---------------------------------------------------- |
+| `listSkillsAndInstructions(filterType?, category?)` | On mount, on filter change, after any CRUD operation |
+| `upsertSkillOrInstruction(data)`                    | On form save (create or edit)                        |
+| `deleteSkillOrInstruction(name)`                    | After delete confirmation                            |
+| `toggleSkillOrInstructionEnabled(name, enabled)`    | When toggle is clicked                               |
+| `duplicateSkillOrInstruction(name)`                 | When duplicate button is clicked                     |
+| `exportSkillsMarkdown()`                            | On Export all button click                           |
+| `exportSingleSkill(name)`                           | On single-entry Export button click                  |
+| `onSkillsUpdated(callback)`                         | Registered once on mount for live updates            |
 
 #### Sub-component: `SidebarItem`
 
-A co-located internal component (not exported). Renders a single entry in the sidebar list — name, description, and a hover-visible delete button. Props:
+A co-located internal component (not exported). Renders a single entry in the sidebar list. Props:
 
-| Prop         | Type                                  | Description                              |
-| ------------ | ------------------------------------- | ---------------------------------------- |
-| `entry`      | `SkillOrInstruction`                  | Entry data to display.                   |
-| `isSelected` | `boolean`                             | Whether this item is currently selected. |
-| `onSelect`   | `(entry: SkillOrInstruction) => void` | Selection callback.                      |
-| `onDelete`   | `(name: string) => void`              | Triggers delete confirmation modal.      |
+| Prop              | Type                                              | Description                              |
+| ----------------- | ------------------------------------------------- | ---------------------------------------- |
+| `entry`           | `SkillOrInstruction`                              | Entry data to display.                   |
+| `isSelected`      | `boolean`                                         | Whether this item is currently selected. |
+| `onSelect`        | `(entry: SkillOrInstruction) => void`             | Selection callback.                      |
+| `onDelete`        | `(name: string) => void`                          | Triggers delete confirmation modal.      |
+| `onToggleEnabled` | `(name: string, currentEnabled: boolean) => void` | Toggle enable/disable.                   |
+
+Shows:
+
+- Entry name with "Built-in" badge if applicable
+- "Off" badge if disabled
+- Category badge
+- First 2 tags (with "+N" indicator for more)
+- Description (truncated)
+- Enable/disable toggle
+- Hover-revealed delete button
 
 ---
 
@@ -849,9 +1168,11 @@ Modal overlay listing all keyboard shortcuts. Returns `null` when `open === fals
 
 | Keys          | Description                  |
 | ------------- | ---------------------------- |
+| `⌘ + K`       | Quick Switcher               |
 | `⌘ + Enter`   | Submit response              |
 | `⌘ + 1`       | Prompts tab                  |
-| `⌘ + 2`       | Settings tab                 |
+| `⌘ + 2`       | Skills tab                   |
+| `⌘ + 3`       | Settings tab                 |
 | `⌘ + /`       | Toggle this help             |
 | `⌘ + V`       | Paste image                  |
 | `Esc`         | Close autocomplete / overlay |
@@ -890,8 +1211,10 @@ type PromptData = {
   connectionId: string;
   connectionName: string;
   timeoutSeconds: number;
+  expiresAt: number; // Unix ms timestamp when this prompt expires. 0 means no timeout.
   baseDirectory?: string;
   clientInfo?: { model?: string; mode?: string };
+  openCodeSessionId?: string | null; // OpenCode session ID resolved from the DB
 };
 ```
 
@@ -917,6 +1240,7 @@ type ChannelMessage = {
   text: string;
   timestamp: Date;
   attachments?: Attachment[];
+  sent?: boolean; // True once an outbound message has been successfully injected
 };
 ```
 
@@ -937,6 +1261,37 @@ type SessionStatus = {
 };
 ```
 
+### `PendingPermission`
+
+```ts
+type PendingPermission = {
+  requestId: string;
+  sessionID: string;
+  permission: string;
+  patterns?: string[];
+  always?: boolean;
+  tool?: { messageID: string; callID: string };
+  metadata?: Record<string, unknown>;
+};
+```
+
+### `ProviderType`
+
+```ts
+type ProviderType = 'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone';
+```
+
+### `VcsInfo`
+
+```ts
+type VcsInfo = {
+  branch: string | null; // Git branch name
+  additions: number; // Lines added
+  deletions: number; // Lines deleted
+  files: number; // Files changed
+};
+```
+
 ### `SessionNode`
 
 ```ts
@@ -950,32 +1305,42 @@ type SessionNode = {
   connectionId: string | null;
   hasMcpChannel: boolean;
   isDirectConnection: boolean;
+  providerType: ProviderType | null;
   prompt: PromptData | null;
   activeSession: { id: string; title: string } | null;
   baseDirectory: string | null;
   channelMessages: ChannelMessage[];
   unreadCount: number;
+  lastReadMessageId: string | null;
   hasPendingPrompt: boolean;
   sessionChannel: { sessionId: string; label?: string } | null;
   sessionStatuses: SessionStatus[];
+  pendingPermissions: PendingPermission[];
+  docContextEnabled?: boolean;
+  vcsInfo: VcsInfo | null;
 };
 ```
 
-| Field               | Description                                                                                                                              |
-| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`                | Renderer node key: `openCodeSessionId ?? connectionId`.                                                                                  |
-| `openCodeSessionId` | OpenCode session ID for tree-backed nodes, otherwise `null`.                                                                             |
-| `openCodeParentId`  | Parent OpenCode session ID used for sidebar hierarchy, otherwise `null`.                                                                 |
-| `title`             | Display label from registration or OpenCode session metadata.                                                                            |
-| `connectionId`      | Persisted MCP/session-channel identifier. This is the value destructive actions and REST endpoints use.                                  |
-| `sessionChannel`    | Renderer-visible session-channel metadata. `sessionChannel.sessionId` is the persisted identifier to use for clear/remove/queue actions. |
-| `prompt`            | The currently pending `PromptData`, or `null` when idle.                                                                                 |
-| `activeSession`     | Non-null while an intensive-chat session is in progress.                                                                                 |
-| `baseDirectory`     | Working directory for file autocomplete and repo-doc search, if known.                                                                   |
-| `channelMessages`   | Ordered list of all messages in the channel.                                                                                             |
-| `unreadCount`       | Messages received while this connection was not the active selection.                                                                    |
-| `hasPendingPrompt`  | Derived indicator used for sidebar badge and tab badge logic.                                                                            |
-| `sessionStatuses`   | Ordered list of status push updates for `AgentStatusBar`.                                                                                |
+| Field                | Description                                                                                                                              |
+| -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`                 | Renderer node key: `openCodeSessionId ?? connectionId`.                                                                                  |
+| `openCodeSessionId`  | OpenCode session ID for tree-backed nodes, otherwise `null`.                                                                             |
+| `openCodeParentId`   | Parent OpenCode session ID used for sidebar hierarchy, otherwise `null`.                                                                 |
+| `title`              | Display label from registration or OpenCode session metadata.                                                                            |
+| `connectionId`       | Persisted MCP/session-channel identifier. This is the value destructive actions and REST endpoints use.                                  |
+| `providerType`       | Provider type (opencode, copilot-cli, claude-sdk, standalone).                                                                           |
+| `sessionChannel`     | Renderer-visible session-channel metadata. `sessionChannel.sessionId` is the persisted identifier to use for clear/remove/queue actions. |
+| `prompt`             | The currently pending `PromptData`, or `null` when idle.                                                                                 |
+| `activeSession`      | Non-null while an intensive-chat session is in progress.                                                                                 |
+| `baseDirectory`      | Working directory for file autocomplete and repo-doc search, if known.                                                                   |
+| `channelMessages`    | Ordered list of all messages in the channel.                                                                                             |
+| `unreadCount`        | Messages received while this connection was not the active selection.                                                                    |
+| `lastReadMessageId`  | ID of the last message read by the user (for unread markers).                                                                            |
+| `hasPendingPrompt`   | Derived indicator used for sidebar badge and tab badge logic.                                                                            |
+| `sessionStatuses`    | Ordered list of status push updates for `AgentStatusBar`.                                                                                |
+| `pendingPermissions` | Permission requests from OpenCode awaiting user decision.                                                                                |
+| `docContextEnabled`  | Per-session toggle for doc context injection (default true).                                                                             |
+| `vcsInfo`            | Git information (branch, change stats) if available.                                                                                     |
 
 Identity summary:
 
@@ -1059,4 +1424,69 @@ ChannelComposer.submit()
             ├─ window.api.queueSessionMessage(sessionId, message)
             ├─ withNode → appends 'outbound' ChannelMessage (optimistic)
             └─ window.api.injectOpenCodeMessage(...) when an `openCodeSessionId` is available
+```
+
+---
+
+## 9. Session Tree Merge Logic
+
+**File:** `hooks/session-tree-merge.ts`
+
+Pure functions for merging session-tree snapshots into the renderer's SessionNode map and for partitioning nodes into SESSIONS vs DIRECT CONNECTIONS. Extracted for unit testing without React, Electron, or IPC.
+
+### `mergeSessionTreeSnapshot`
+
+Merges a session-tree snapshot into the existing SessionNode map.
+
+**Rules:**
+
+1. Every snapshot node becomes a tree entry keyed by `openCodeSessionId`.
+2. If a snapshot node's `connectionId` matches an existing direct-connection node, that direct-connection's runtime state (messages, prompts, unread) is absorbed into the tree node and the direct-connection is removed.
+3. Direct-connection nodes whose `connectionId` is NOT claimed by any snapshot node are preserved.
+4. Topology fields always come from the snapshot; runtime state is preserved from existing nodes (or absorbed direct-connection nodes).
+
+### `partitionNodes`
+
+Partitions SessionNode map into two ordered lists:
+
+- `openCodeTree`: root OpenCode sessions with their subagents in depth-first order
+- `directConnections`: MCP agents with no associated OpenCode session
+
+#### Sorting
+
+Roots are sorted by:
+
+1. **Running subtrees first** — sessions where the node or any descendant has `hasPendingPrompt`, busy status, or working status
+2. **Unread subtrees second** — sessions where the node or any descendant has unread messages
+3. **Most recent subtree activity** — sorted by latest status/message timestamp across the entire subtree (descending)
+
+Children stay grouped under their parents in depth-first order, sorted alphabetically within each level.
+
+### Helper functions
+
+| Function                       | Description                                                      |
+| ------------------------------ | ---------------------------------------------------------------- |
+| `getLatestActivityTime`        | Get most recent activity timestamp from a single node            |
+| `getSubtreeLatestActivityTime` | Get most recent activity across entire subtree (node + children) |
+| `isSubtreeRunning`             | Check if node or any descendant is running                       |
+| `hasSubtreeUnread`             | Check if node or any descendant has unread messages              |
+| `collectSubtree`               | Recursively collect children in depth-first order                |
+
+### `SnapshotNode` type
+
+```ts
+interface SnapshotNode {
+  openCodeSessionId: string;
+  openCodeParentId: string | null;
+  title: string;
+  directory: string;
+  depth: number;
+  connectionId: string | null;
+  channelName: string | null;
+  hasMcpChannel: boolean;
+  baseDirectory: string | null;
+  registeredParentSessionId: string | null;
+  providerType: ProviderType | null;
+  vcsInfo: VcsInfo | null;
+}
 ```

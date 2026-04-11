@@ -14,38 +14,141 @@ import {
   setSoundEnabled,
   setPromptTimeout,
   cancelActivePrompt,
-} from './ipc-prompt';
+} from './ipc/prompt';
 import { registerRequestUserInput } from './tools/request-user-input';
 import { registerIntensiveChatTools } from './tools/intensive-chat';
 import {
   registerSessionChannelTools,
   registerSendMessageTool,
 } from './tools/session-channel';
-import { registerConnectionTool } from './tools/register-connection';
+import {
+  registerConnectionTool,
+  type ProviderType,
+} from './tools/register-connection';
 import { registerFindRepoDocsTool } from './tools/find-repo-docs';
 import { registerManageSkillsAndInstructionsTool } from './tools/manage-skills-and-instructions';
+import { registerPollContextInjectionsTool } from './tools/poll-context-injections';
 import {
   createSessionChannel,
   deleteSessionChannel,
   getAllRegisteredConnections,
   upsertRegisteredConnection,
-  getConnectionClaimingSession,
-  clearConnectionOpenCodeSession,
+  getRegisteredConnectionBySessionId,
+  updateConnectionId,
+  deleteContextInjectionsForConnection,
 } from './database';
 import {
   writeSessionFile,
   clearSessionFile,
   writeMcpConfigHint,
   MCP_CONFIG_FILE,
-} from './session-file';
+} from './session/file';
 import { createApiRouter } from './api-routes';
 import { cleanupOldAttachments } from './attachment-store';
-import { pickUnregisteredConnectionsForCleanup } from './session-registration-cleanup';
-import { autoDetectOpenCodeSession } from './opencode-session';
-import { triggerSessionTreeUpdate } from './session-tree-manager';
+import { pickUnregisteredConnectionsForCleanup } from './session/registration-cleanup';
+import { autoDetectOpenCodeSession } from './opencode/session';
+import { triggerSessionTreeUpdate } from './session/tree-manager';
 import type { AgentBackend } from './settings';
 
 const DEFAULT_MAIN_CHANNEL_NAME = 'OpenCode - Main Channel';
+
+/**
+ * Parse a provider string into a ProviderType.
+ * Handles various aliases and normalizes to canonical values.
+ */
+function parseProviderString(value: string | undefined): ProviderType | null {
+  const normalized = value?.toLowerCase()?.trim();
+  switch (normalized) {
+    case 'opencode':
+      return 'opencode';
+    case 'copilot-cli':
+    case 'copilot':
+      return 'copilot-cli';
+    case 'claude-sdk':
+    case 'claude':
+      return 'claude-sdk';
+    case 'standalone':
+      return 'standalone';
+    default:
+      return null;
+  }
+}
+
+/**
+ * Detect provider type from HTTP request headers.
+ * This allows different AI providers to be identified automatically
+ * without manual switching in the desktop app settings.
+ *
+ * OpenCode MCP config example:
+ * ```json
+ * {
+ *   "mcp": {
+ *     "interactive-desktop": {
+ *       "type": "remote",
+ *       "url": "http://localhost:3100/mcp",
+ *       "headers": { "X-IMCP-Provider": "opencode" }
+ *     }
+ *   }
+ * }
+ * ```
+ *
+ * Copilot CLI MCP config example:
+ * ```json
+ * {
+ *   "mcpServers": {
+ *     "interactive-desktop": {
+ *       "url": "http://localhost:3100/mcp",
+ *       "headers": { "X-IMCP-Provider": "copilot-cli" }
+ *     }
+ *   }
+ * }
+ * ```
+ */
+function detectProviderFromHeaders(
+  headers: Record<string, string | string[] | undefined>,
+): ProviderType | null {
+  // Check for X-IMCP-Provider header (case-insensitive header name)
+  const headerValue =
+    headers['x-imcp-provider'] ??
+    headers['X-IMCP-Provider'] ??
+    headers['X-Imcp-Provider'];
+  if (typeof headerValue === 'string') {
+    return parseProviderString(headerValue);
+  }
+  if (Array.isArray(headerValue) && headerValue.length > 0) {
+    return parseProviderString(headerValue[0]);
+  }
+  return null;
+}
+
+/**
+ * Determine the effective provider type for a connection.
+ * Priority order:
+ * 1. X-IMCP-Provider HTTP header (per-connection identification)
+ * 2. Global agentBackend setting (fallback for backwards compatibility)
+ */
+function getEffectiveProvider(
+  globalBackend: AgentBackend,
+  requestHeaders?: Record<string, string | string[] | undefined>,
+): ProviderType {
+  // 1. Try HTTP header first (per-connection provider identification)
+  if (requestHeaders) {
+    const headerProvider = detectProviderFromHeaders(requestHeaders);
+    if (headerProvider) {
+      return headerProvider;
+    }
+  }
+
+  // 2. Fall back to global setting mapping
+  switch (globalBackend) {
+    case 'opencode':
+      return 'opencode';
+    case 'claude_sdk':
+      return 'claude-sdk';
+    default:
+      return 'standalone';
+  }
+}
 
 let httpServer: Server | null = null;
 let _sessionCleanup: ((connectionId: string) => Promise<boolean>) | null = null;
@@ -79,18 +182,29 @@ function createMcpServerWithTools(
     isRegistered: boolean;
   }>,
   cleanupConnection: (connectionId: string) => Promise<boolean>,
-  isConnectionLive: (id: string) => boolean,
+  requestHeaders?: Record<string, string | string[] | undefined>,
 ): McpServer {
   const server = new McpServer(
     { name: 'Interactive MCP Desktop', version: '1.0.0' },
     { capabilities: { tools: {} } },
   );
+  const requireSessionId = getAgentBackend() === 'opencode';
+
+  // Detect provider type once per connection at tool registration time.
+  // This captures the X-IMCP-Provider header value at connection creation.
+  const detectedProvider = getEffectiveProvider(
+    getAgentBackend(),
+    requestHeaders,
+  );
+  const getDetectedProvider = (): ProviderType => detectedProvider;
+
   registerRequestUserInput(
     server,
     getWindow,
     promptUser,
     connectionId,
     connectionName,
+    requireSessionId,
   );
   registerIntensiveChatTools(
     server,
@@ -98,9 +212,15 @@ function createMcpServerWithTools(
     promptUser,
     connectionId,
     connectionName,
+    requireSessionId,
   );
-  registerSessionChannelTools(server, getWindow, connectionId);
-  registerSendMessageTool(server, getWindow, connectionId);
+  registerSessionChannelTools(
+    server,
+    getWindow,
+    connectionId,
+    requireSessionId,
+  );
+  registerSendMessageTool(server, getWindow, connectionId, requireSessionId);
   registerConnectionTool(
     server,
     getWindow,
@@ -108,6 +228,7 @@ function createMcpServerWithTools(
     getOpenCodePort,
     getDocIndexingEnabled,
     getAgentBackend,
+    getDetectedProvider,
     async (registeredConnectionId) => {
       const channelName =
         getSessionEntries().find(
@@ -120,11 +241,17 @@ function createMcpServerWithTools(
       for (const staleConnectionId of toCleanup) {
         await cleanupConnection(staleConnectionId);
       }
+      // Sync the sidebar label: the auto-registered name ('OpenCode - Main
+      // Channel' or 'Agent N') may differ from the name the agent provided.
+      getWindow()?.webContents.send('channel-label-updated', {
+        connectionId: registeredConnectionId,
+        name: channelName,
+      });
     },
-    isConnectionLive,
   );
-  registerFindRepoDocsTool(server, connectionId);
+  registerFindRepoDocsTool(server, connectionId, requireSessionId);
   registerManageSkillsAndInstructionsTool(server, getWindow, connectionId);
+  registerPollContextInjectionsTool(server, connectionId, requireSessionId);
   return server;
 }
 
@@ -159,6 +286,7 @@ export async function startMcpServer(
       server: McpServer;
       connectionId: string;
       connectionName: string;
+      providerType: ProviderType;
     }
   > = {};
   const findSessionByConnectionId = (connectionId: string): string | null => {
@@ -170,22 +298,29 @@ export async function startMcpServer(
 
   const getSessionEntries = () => {
     const registeredConnections = getAllRegisteredConnections();
-    const registeredById = new Map(
-      registeredConnections.map((rc) => [rc.connectionId, rc]),
+    // Build a lookup by connection_id (transport handle). Filter out nulls.
+    const registeredByConnectionId = new Map(
+      registeredConnections
+        .filter(
+          (rc): rc is typeof rc & { connectionId: string } =>
+            rc.connectionId !== null,
+        )
+        .map((rc) => [rc.connectionId, rc]),
     );
 
     return Object.values(sessions).map((entry) => ({
       connectionId: entry.connectionId,
       connectionName:
-        registeredById.get(entry.connectionId)?.channelName ??
+        registeredByConnectionId.get(entry.connectionId)?.channelName ??
         entry.connectionName,
-      isRegistered: registeredById.has(entry.connectionId),
+      isRegistered: registeredByConnectionId.has(entry.connectionId),
     }));
   };
 
   const autoRegisterDefaultConnection = async (
     connectionId: string,
     channelName: string,
+    providerType: ProviderType,
   ): Promise<void> => {
     // process.cwd() is '/' when the app is launched from the macOS Dock or at
     // login item, which would cause the doc indexer to traverse the entire
@@ -200,11 +335,8 @@ export async function startMcpServer(
     const openCodeEnabled = backend === 'opencode';
 
     // Only auto-detect the OpenCode session for the main channel. Subagent
-    // connections (channelName !== DEFAULT_MAIN_CHANNEL_NAME, i.e. "Agent N")
-    // ALWAYS call register_connection explicitly with their own openCodeSessionId.
-    // Auto-detecting here for subagents would incorrectly assign the root/parent
-    // session ID to their connectionId (because autoDetectOpenCodeSession prefers
-    // root sessions), causing their prompts to appear in the parent's channel.
+    // connections ALWAYS call register_connection explicitly with their own
+    // openCodeSessionId so we do not auto-detect for them here.
     const isMainChannel = channelName === DEFAULT_MAIN_CHANNEL_NAME;
     let detected: Awaited<ReturnType<typeof autoDetectOpenCodeSession>> = null;
     if (openCodeEnabled && isMainChannel) {
@@ -218,38 +350,43 @@ export async function startMcpServer(
       }
     }
 
-    // Guard: if the detected session is already claimed by another connection
-    // (e.g. a previous main-channel binding that survived a soft restart),
-    // do NOT re-bind this new connection to the same session. Two connections
-    // sharing the same openCodeSessionId causes their prompts and channels to
-    // collide in the renderer's session tree.
-    //
-    // If the claiming connection is no longer live (stale DB record), clear it
-    // and allow this new connection to take over.
     if (detected) {
-      const claimingId = getConnectionClaimingSession(
+      // Phase 2: providerSessionId with composite PK. The SSE handler may have
+      // already written the row (via autoRegisterSession). If so, just bind
+      // this MCP transport's connectionId to the existing row.
+      const existing = getRegisteredConnectionBySessionId(
         detected.id,
-        connectionId,
+        'opencode',
       );
-      if (claimingId != null) {
-        if (findSessionByConnectionId(claimingId) != null) {
-          // Still live — do not steal the session
-          detected = null;
-        } else {
-          // Stale claim — release it so this connection can bind
-          clearConnectionOpenCodeSession(claimingId);
-        }
+      if (existing) {
+        updateConnectionId(detected.id, connectionId, 'opencode');
+        createSessionChannel(connectionId, channelName);
+        void triggerSessionTreeUpdate(getWindow);
+        return;
       }
+      // Fallback: SSE row not yet written (race or first connect).
+      upsertRegisteredConnection({
+        providerSessionId: detected.id,
+        providerType: 'opencode',
+        connectionId,
+        channelName,
+        projectName,
+        baseDirectory,
+        parentSessionId: detected.parentId ?? undefined,
+      });
+    } else {
+      // No OpenCode session detected — use connectionId as a synthetic session
+      // ID so non-OpenCode clients continue to work.
+      // Use the detected provider type for isolation.
+      upsertRegisteredConnection({
+        providerSessionId: connectionId,
+        providerType,
+        connectionId,
+        channelName,
+        projectName,
+        baseDirectory,
+      });
     }
-
-    upsertRegisteredConnection({
-      connectionId,
-      channelName,
-      projectName,
-      baseDirectory,
-      openCodeSessionId: detected?.id ?? undefined,
-      parentSessionId: detected?.parentId ?? undefined,
-    });
 
     createSessionChannel(connectionId, channelName);
 
@@ -270,7 +407,7 @@ export async function startMcpServer(
       // connection-opened here would create a redundant direct-connection node
       // that the snapshot cannot yet absorb (race). Skip it; the snapshot is
       // sufficient.
-      void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
+      void triggerSessionTreeUpdate(getWindow);
     } else {
       // No OpenCode session detected — emit connection-opened so the renderer
       // shows a direct-connection node immediately (classic non-OC path).
@@ -279,9 +416,10 @@ export async function startMcpServer(
         name: channelName,
         sessionId: connectionId,
         label: channelName,
+        providerType,
       });
       if (openCodeEnabled) {
-        void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
+        void triggerSessionTreeUpdate(getWindow);
       }
     }
   };
@@ -306,6 +444,9 @@ export async function startMcpServer(
     return true;
   };
 
+  let connectionCounter = 0;
+  let mainChannelAssignedInRuntime = false;
+
   /**
    * Clear all in-memory MCP sessions without stopping the HTTP listener.
    * Each session's transport and server are closed, active prompts are cancelled,
@@ -320,6 +461,7 @@ export async function startMcpServer(
       delete sessions[sid];
       cancelActivePrompt(entry.connectionId);
       deleteSessionChannel(entry.connectionId);
+      deleteContextInjectionsForConnection(entry.connectionId);
       // Close the MCP server first so the SDK aborts in-flight tool handler
       // AbortControllers (via Protocol._onclose), then close the transport.
       // This ensures tool handlers see the abort signal before the HTTP
@@ -344,11 +486,12 @@ export async function startMcpServer(
       cleared++;
     }
     clearSessionFile();
+    // Reset so the next connecting agent gets 'OpenCode - Main Channel'
+    // instead of 'Agent N' after a soft restart.
+    connectionCounter = 0;
+    mainChannelAssignedInRuntime = false;
     return cleared;
   };
-
-  let connectionCounter = 0;
-  let mainChannelAssignedInRuntime = false;
 
   const resolveConnectionName = (): string => {
     if (!mainChannelAssignedInRuntime) {
@@ -371,6 +514,8 @@ export async function startMcpServer(
     connectionCounter++;
     const connectionId = randomUUID();
     const connectionName = resolveConnectionName();
+    // Detect provider type from request headers at connection creation time.
+    const providerType = getEffectiveProvider(getAgentBackend(), req.headers);
     const server = createMcpServerWithTools(
       getWindow,
       connectionId,
@@ -380,8 +525,7 @@ export async function startMcpServer(
       getAgentBackend,
       getSessionEntries,
       async (connId: string) => _sessionCleanup?.(connId) ?? false,
-      (id: string) =>
-        Object.values(sessions).some((s) => s.connectionId === id),
+      req.headers,
     );
 
     // Factory for a no-op response stub used for synthetic MCP handshake requests.
@@ -447,9 +591,14 @@ export async function startMcpServer(
               server,
               connectionId,
               connectionName,
+              providerType,
             };
 
-            void autoRegisterDefaultConnection(connectionId, connectionName);
+            void autoRegisterDefaultConnection(
+              connectionId,
+              connectionName,
+              providerType,
+            );
             writeSessionFile(connectionId, port, getPromptTimeoutMs());
 
             resolve(t);
@@ -464,6 +613,7 @@ export async function startMcpServer(
             // NOTE: We intentionally do NOT cancel active prompts here.
             // See the comment in the POST /mcp handler's transport.onclose.
             deleteSessionChannel(connId);
+            deleteContextInjectionsForConnection(connId);
             clearSessionFile();
             getWindow()?.webContents.send('connection-closed', {
               connectionId: connId,
@@ -590,6 +740,8 @@ export async function startMcpServer(
       connectionCounter++;
       const connectionId = randomUUID();
       const connectionName = resolveConnectionName();
+      // Detect provider type from request headers at connection creation time.
+      const providerType = getEffectiveProvider(getAgentBackend(), req.headers);
       const server = createMcpServerWithTools(
         getWindow,
         connectionId,
@@ -599,8 +751,7 @@ export async function startMcpServer(
         getAgentBackend,
         getSessionEntries,
         async (connId: string) => _sessionCleanup?.(connId) ?? false,
-        (id: string) =>
-          Object.values(sessions).some((s) => s.connectionId === id),
+        req.headers,
       );
 
       const transport = new StreamableHTTPServerTransport({
@@ -612,6 +763,7 @@ export async function startMcpServer(
             server,
             connectionId,
             connectionName,
+            providerType,
           };
 
           // Auto-register a stable named channel so reconnects do not stay as
@@ -620,7 +772,11 @@ export async function startMcpServer(
           // only when no OpenCode session is detected, to avoid a race where
           // both a direct-connection node and a session-tree snapshot node are
           // created simultaneously (dual-entry bug).
-          void autoRegisterDefaultConnection(connectionId, connectionName);
+          void autoRegisterDefaultConnection(
+            connectionId,
+            connectionName,
+            providerType,
+          );
           writeSessionFile(connectionId, port, getPromptTimeoutMs());
         },
       });
@@ -636,6 +792,7 @@ export async function startMcpServer(
           // pattern). Prompts are only cancelled by explicit user/agent
           // actions: DELETE /mcp, force-terminate, or _clearAllSessions.
           deleteSessionChannel(connId);
+          deleteContextInjectionsForConnection(connId);
           clearSessionFile();
           getWindow()?.webContents.send('connection-closed', {
             connectionId: connId,
@@ -686,8 +843,6 @@ export async function startMcpServer(
       res.status(404).json({ error: 'Session not found or expired' });
       return;
     }
-
-    const { connectionId } = sessions[sessionId];
 
     // Let the transport set up the SSE stream first.
     await sessions[sessionId].transport.handleRequest(req, res);

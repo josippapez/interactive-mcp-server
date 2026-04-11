@@ -2,8 +2,10 @@
  * Tests for the upsertRegisteredConnection deduplication logic.
  *
  * Key scenario: two agents with the same channelName but different
- * openCodeSessionIds (root + subagent both named "Claude Code") must NOT
- * delete each other's rows.
+ * providerSessionIds (root + subagent both named "Claude Code") must NOT
+ * delete each other's rows. With (provider_type, provider_session_id) as the
+ * composite PK, each agent's row is identified by its session ID within its
+ * provider namespace — channelName is not part of the PK.
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, unlinkSync } from 'fs';
@@ -12,6 +14,9 @@ import {
   initDatabase,
   upsertRegisteredConnection,
   getAllRegisteredConnections,
+  isProviderSessionClaimed,
+  isOpenCodeSessionClaimed,
+  getRegisteredConnection,
 } from './database';
 
 const TEST_DB_PATH = join('/tmp', 'conversations.db');
@@ -25,99 +30,248 @@ describe('upsertRegisteredConnection deduplication', () => {
     await initDatabase();
   });
 
-  it('does NOT delete a sibling row with the same channelName but a different openCodeSessionId', async () => {
-    // Root agent registers
+  it('does NOT delete a sibling row with the same channelName but a different providerSessionId', async () => {
+    // Root agent registers with its own session ID (PK)
     upsertRegisteredConnection({
+      providerSessionId: 'ses_root_abc',
+      providerType: 'opencode',
       connectionId: 'root-conn-uuid',
       channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
-      openCodeSessionId: 'ses_root_abc',
     });
 
-    // Subagent registers with the same channelName but its own session ID
+    // Subagent registers with the same channelName but its own session ID (PK)
     upsertRegisteredConnection({
+      providerSessionId: 'ses_sub_xyz',
+      providerType: 'opencode',
       connectionId: 'sub-conn-uuid',
       channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
-      openCodeSessionId: 'ses_sub_xyz',
     });
 
     const all = getAllRegisteredConnections();
-    const ids = all.map((r) => r.connectionId);
+    const sessionIds = all.map((r) => r.providerSessionId);
 
-    expect(ids).toContain('root-conn-uuid');
-    expect(ids).toContain('sub-conn-uuid');
+    expect(sessionIds).toContain('ses_root_abc');
+    expect(sessionIds).toContain('ses_sub_xyz');
     expect(all).toHaveLength(2);
   });
 
-  it('DOES deduplicate rows with the same channelName AND same openCodeSessionId (same agent restarting)', async () => {
-    // First connect — transport UUID A
+  it('DOES update the row when the same providerSessionId re-registers (same agent restarting)', async () => {
+    // First connect — old transport UUID
     upsertRegisteredConnection({
+      providerSessionId: 'ses_root_abc',
+      providerType: 'opencode',
       connectionId: 'old-transport-uuid',
       channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
-      openCodeSessionId: 'ses_root_abc',
     });
 
-    // Restart — same session, new transport UUID B
+    // Restart — same session, new transport UUID (PK conflict → UPDATE)
     upsertRegisteredConnection({
+      providerSessionId: 'ses_root_abc',
+      providerType: 'opencode',
       connectionId: 'new-transport-uuid',
       channelName: 'Claude Code',
       projectName: 'my-project',
       baseDirectory: '/repo',
-      openCodeSessionId: 'ses_root_abc',
     });
 
     const all = getAllRegisteredConnections();
 
     expect(all).toHaveLength(1);
+    expect(all[0].providerSessionId).toBe('ses_root_abc');
     expect(all[0].connectionId).toBe('new-transport-uuid');
   });
 
-  it('DOES deduplicate rows with the same channelName when both have no openCodeSessionId', async () => {
+  it('allows same providerSessionId with different providerTypes (multi-provider isolation)', async () => {
     upsertRegisteredConnection({
-      connectionId: 'old-conn',
+      providerSessionId: 'shared-session-id',
+      providerType: 'opencode',
       channelName: 'Claude Code',
       projectName: 'my-project',
     });
 
     upsertRegisteredConnection({
-      connectionId: 'new-conn',
+      providerSessionId: 'shared-session-id',
+      providerType: 'copilot-cli',
       channelName: 'Claude Code',
       projectName: 'my-project',
     });
 
     const all = getAllRegisteredConnections();
 
-    expect(all).toHaveLength(1);
-    expect(all[0].connectionId).toBe('new-conn');
+    // Two distinct (providerType, providerSessionId) composite keys → two rows
+    expect(all).toHaveLength(2);
+    expect(all.map((r) => r.providerType)).toContain('opencode');
+    expect(all.map((r) => r.providerType)).toContain('copilot-cli');
   });
 
-  it('does NOT delete a sibling when new registration has no openCodeSessionId but existing does', async () => {
+  it('does NOT delete a sibling when new registration has a different session ID', async () => {
     // Root agent already registered with a session
     upsertRegisteredConnection({
+      providerSessionId: 'ses_root',
+      providerType: 'opencode',
       connectionId: 'root-conn',
       channelName: 'Claude Code',
       projectName: 'my-project',
-      openCodeSessionId: 'ses_root',
     });
 
-    // New agent with same name but no session ID (e.g. a tool-less MCP client)
+    // New agent with same name but a different session ID
     upsertRegisteredConnection({
+      providerSessionId: 'ses_anon',
+      providerType: 'opencode',
       connectionId: 'anon-conn',
       channelName: 'Claude Code',
       projectName: 'my-project',
-      openCodeSessionId: undefined,
     });
 
     const all = getAllRegisteredConnections();
-    const ids = all.map((r) => r.connectionId);
+    const sessionIds = all.map((r) => r.providerSessionId);
 
-    // Both should be present — they're different instances
-    expect(ids).toContain('root-conn');
-    expect(ids).toContain('anon-conn');
+    // Both should be present — they're different sessions (different PKs)
+    expect(sessionIds).toContain('ses_root');
+    expect(sessionIds).toContain('ses_anon');
+    expect(all).toHaveLength(2);
+  });
+});
+
+describe('isProviderSessionClaimed', () => {
+  beforeEach(async () => {
+    if (existsSync(TEST_DB_PATH)) {
+      unlinkSync(TEST_DB_PATH);
+    }
+    await initDatabase();
+  });
+
+  it('returns false when no row exists for the given session ID', () => {
+    const result = isProviderSessionClaimed('ses_nonexistent', 'opencode');
+    expect(result).toBe(false);
+  });
+
+  it('returns true when a row exists for the given session ID and provider', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_existing',
+      providerType: 'opencode',
+      connectionId: 'conn-a',
+      channelName: 'Agent A',
+      projectName: 'proj',
+    });
+
+    const result = isProviderSessionClaimed('ses_existing', 'opencode');
+    expect(result).toBe(true);
+  });
+
+  it('returns false for a different session ID even if another session exists', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_other',
+      providerType: 'opencode',
+      connectionId: 'conn-b',
+      channelName: 'Agent B',
+      projectName: 'proj',
+    });
+
+    const result = isProviderSessionClaimed('ses_nonexistent', 'opencode');
+    expect(result).toBe(false);
+  });
+
+  it('isolates claims by provider type', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_shared',
+      providerType: 'opencode',
+      channelName: 'OpenCode Agent',
+      projectName: 'proj',
+    });
+
+    // Same session ID but different provider → not claimed for copilot-cli
+    expect(isProviderSessionClaimed('ses_shared', 'opencode')).toBe(true);
+    expect(isProviderSessionClaimed('ses_shared', 'copilot-cli')).toBe(false);
+  });
+
+  it('still returns true after a session is updated via upsert (idempotent)', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_stable',
+      providerType: 'opencode',
+      connectionId: 'conn-old',
+      channelName: 'Agent',
+      projectName: 'proj',
+    });
+
+    // Re-register same session with new transport UUID
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_stable',
+      providerType: 'opencode',
+      connectionId: 'conn-new',
+      channelName: 'Agent',
+      projectName: 'proj',
+    });
+
+    expect(isProviderSessionClaimed('ses_stable', 'opencode')).toBe(true);
+  });
+});
+
+describe('isOpenCodeSessionClaimed (deprecated wrapper)', () => {
+  beforeEach(async () => {
+    if (existsSync(TEST_DB_PATH)) {
+      unlinkSync(TEST_DB_PATH);
+    }
+    await initDatabase();
+  });
+
+  it('defaults to opencode provider type', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_compat',
+      providerType: 'opencode',
+      channelName: 'Compat Agent',
+      projectName: 'proj',
+    });
+
+    // isOpenCodeSessionClaimed internally calls isProviderSessionClaimed with 'opencode'
+    expect(isOpenCodeSessionClaimed('ses_compat')).toBe(true);
+  });
+});
+
+describe('getRegisteredConnection secondary lookup by connection_id', () => {
+  beforeEach(async () => {
+    if (existsSync(TEST_DB_PATH)) {
+      unlinkSync(TEST_DB_PATH);
+    }
+    await initDatabase();
+  });
+
+  it('returns the connection when looked up by connectionId', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_lookup',
+      providerType: 'opencode',
+      connectionId: 'conn-lookup-uuid',
+      channelName: 'Lookup Agent',
+      projectName: 'proj',
+    });
+
+    const result = getRegisteredConnection('conn-lookup-uuid');
+    expect(result).not.toBeNull();
+    expect(result?.providerSessionId).toBe('ses_lookup');
+    expect(result?.connectionId).toBe('conn-lookup-uuid');
+  });
+
+  it('returns null when looking up an unknown connectionId', () => {
+    const result = getRegisteredConnection('unknown-conn-id');
+    expect(result).toBeNull();
+  });
+
+  it('returns null for connection_id when it is null (no transport bound yet)', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_no_transport',
+      providerType: 'opencode',
+      channelName: 'No Transport Agent',
+      projectName: 'proj',
+    });
+
+    // connectionId is null — cannot look up by it
+    const result = getRegisteredConnection('ses_no_transport');
+    expect(result).toBeNull();
   });
 });

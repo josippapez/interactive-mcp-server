@@ -18,7 +18,10 @@
     "interactive-desktop": {
       "url": "http://localhost:3100/mcp",
       "type": "http",
-      "timeout": 1210000
+      "timeout": 1210000,
+      "headers": {
+        "X-IMCP-Provider": "copilot-cli"
+      }
     },
     "interactive": {
       "command": "npx",

@@ -3,10 +3,15 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
-import type { PromptUserFn } from '../ipc-prompt';
-import { getPromptTimeoutSeconds } from '../ipc-prompt';
-import { staleConnectionError } from './connection-guard';
-import { getRegisteredConnection } from '../database';
+import type { PromptUserFn } from '../ipc/prompt';
+import { getPromptTimeoutSeconds } from '../ipc/prompt';
+import {
+  staleConnectionError,
+  missingSessionIdError,
+  missingSessionIdParamError,
+} from './connection-guard';
+import { resolveOpenCodeSessionId } from '../session/resolver';
+import { sendIntensiveChatStart, sendIntensiveChatStop } from '../ipc/channel';
 
 interface IntensiveChatSession {
   title: string;
@@ -21,6 +26,7 @@ export function registerIntensiveChatTools(
   promptFn: PromptUserFn,
   connectionId: string,
   connectionName: string,
+  requireSessionId = false,
 ): void {
   // ─── Tool: start_intensive_chat ───
   server.registerTool(
@@ -41,6 +47,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 - (!important!) Continue the prompt loop until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
 - (!important!) **NEVER use plain-text replies when a prompt trigger applies — use ask_intensive_chat to continue the session.**
 - (!important!) After all questions in the session are asked, close with stop_intensive_chat and then run the mandatory satisfaction check via request_user_input.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -94,21 +101,42 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
           .describe(
             'Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session)',
           ),
+        openCodeSessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing.',
+          ),
       },
     },
-    async ({ sessionTitle, baseDirectory }): Promise<CallToolResult> => {
+    async ({
+      sessionTitle,
+      baseDirectory,
+      openCodeSessionId,
+    }): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
 
+      const missingErr = missingSessionIdError(connectionId, requireSessionId);
+      if (missingErr) return missingErr;
+
+      const missingParamErr = missingSessionIdParamError(
+        openCodeSessionId,
+        requireSessionId,
+      );
+      if (missingParamErr) return missingParamErr;
+
       const sessionId = randomUUID();
       activeChatSessions.set(sessionId, { title: sessionTitle, baseDirectory });
-      const rc = getRegisteredConnection(connectionId);
-      getWindow()?.webContents.send('intensive-chat-start', {
-        sessionId,
-        title: sessionTitle,
+
+      // Use the centralized IPC channel abstraction
+      sendIntensiveChatStart(
+        getWindow(),
         connectionId,
-        openCodeSessionId: rc?.openCodeSessionId ?? null,
-      });
+        openCodeSessionId,
+        sessionId,
+        sessionTitle,
+      );
 
       return {
         content: [
@@ -137,6 +165,7 @@ Ask a new question in an active intensive chat session previously started with '
 - (!important!) If response is empty or times out for required input, re-prompt and do not proceed with assumptions.
 - (!important!) Keep the loop active until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
 - (!important!) **Concrete enforcement on timeout**: When this tool returns a timeout (e.g. "User did not reply to question in intensive chat: Timeout occurred."), the ONLY valid next action is to call this tool again immediately. Emitting a plain-text-only turn after a timeout is a policy violation — keep calling until the user replies.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -190,12 +219,33 @@ Ask a new question in an active intensive chat session previously started with '
           .describe(
             'Required absolute path to the current repository root (must be a git repo root; autocomplete/search scope for this question)',
           ),
+        openCodeSessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing.',
+          ),
       },
     },
     async (
-      { sessionId, question, predefinedOptions, baseDirectory },
+      {
+        sessionId,
+        question,
+        predefinedOptions,
+        baseDirectory,
+        openCodeSessionId,
+      },
       extra,
     ): Promise<CallToolResult> => {
+      const missingErr = missingSessionIdError(connectionId, requireSessionId);
+      if (missingErr) return missingErr;
+
+      const missingParamErr = missingSessionIdParamError(
+        openCodeSessionId,
+        requireSessionId,
+      );
+      if (missingParamErr) return missingParamErr;
+
       const session = activeChatSessions.get(sessionId);
       if (!session) {
         return {
@@ -209,6 +259,13 @@ Ask a new question in an active intensive chat session previously started with '
       }
 
       const promptId = randomUUID();
+      const timeoutSeconds = getPromptTimeoutSeconds();
+      const expiresAt =
+        timeoutSeconds > 0 ? Date.now() + timeoutSeconds * 1000 : 0;
+      const resolvedSessionId = resolveOpenCodeSessionId(
+        connectionId,
+        openCodeSessionId,
+      );
       const result = await promptFn(
         getWindow(),
         {
@@ -220,7 +277,9 @@ Ask a new question in an active intensive chat session previously started with '
           sessionId,
           connectionId,
           connectionName,
-          timeoutSeconds: getPromptTimeoutSeconds(),
+          timeoutSeconds,
+          expiresAt,
+          openCodeSessionId: resolvedSessionId,
         },
         extra.signal,
       );
@@ -286,6 +345,7 @@ Ask a new question in an active intensive chat session previously started with '
 - (!important!) Frees up system resources.
 - (!important!) **Should always be called** as the final step when finished with an intensive chat session, typically at the end of the response message where 'start_intensive_chat' was called.
 - (!important!) Only stop the session when the user explicitly wants to end prompting, such as with "Stop prompting", "End session", or "Don't ask anymore".
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -318,9 +378,24 @@ Ask a new question in an active intensive chat session previously started with '
         sessionId: z
           .string()
           .describe('ID of the intensive chat session to stop'),
+        openCodeSessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing.',
+          ),
       },
     },
-    async ({ sessionId }): Promise<CallToolResult> => {
+    async ({ sessionId, openCodeSessionId }): Promise<CallToolResult> => {
+      const missingErr = missingSessionIdError(connectionId, requireSessionId);
+      if (missingErr) return missingErr;
+
+      const missingParamErr = missingSessionIdParamError(
+        openCodeSessionId,
+        requireSessionId,
+      );
+      if (missingParamErr) return missingParamErr;
+
       const session = activeChatSessions.get(sessionId);
       if (!session) {
         return {
@@ -334,12 +409,14 @@ Ask a new question in an active intensive chat session previously started with '
       }
 
       activeChatSessions.delete(sessionId);
-      const rc = getRegisteredConnection(connectionId);
-      getWindow()?.webContents.send('intensive-chat-stop', {
-        sessionId,
+
+      // Use the centralized IPC channel abstraction
+      sendIntensiveChatStop(
+        getWindow(),
         connectionId,
-        openCodeSessionId: rc?.openCodeSessionId ?? null,
-      });
+        openCodeSessionId,
+        sessionId,
+      );
 
       return {
         content: [

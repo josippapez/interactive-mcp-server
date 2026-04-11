@@ -11,6 +11,14 @@ type Props = {
   placeholder: string;
   submitLabel?: string;
   onSubmit: (text: string, attachments?: Attachment[]) => void;
+  /** Show "Send with Reply" button for triggering agent response (OpenCode only) */
+  showReplyButton?: boolean;
+  /** Called when "Send with Reply" is clicked (noReply=false) */
+  onSubmitWithReply?: (text: string, attachments?: Attachment[]) => void;
+  /** Current noReply toggle state (controlled from parent) */
+  noReply?: boolean;
+  /** Called when noReply toggle changes */
+  onNoReplyChange?: (noReply: boolean) => void;
 };
 
 export default function ChannelComposer({
@@ -19,6 +27,10 @@ export default function ChannelComposer({
   placeholder,
   submitLabel = 'Send',
   onSubmit,
+  showReplyButton = false,
+  onSubmitWithReply,
+  noReply = true,
+  onNoReplyChange,
 }: Props): React.ReactElement {
   const [value, setValue] = useState('');
   const [expandedImage, setExpandedImage] = useState<{
@@ -75,17 +87,38 @@ export default function ChannelComposer({
     clearSuggestions();
   }, [enabled, value, attachments, onSubmit, setAttachments, clearSuggestions]);
 
+  const submitWithReply = useCallback(() => {
+    const text = value.trim();
+    if (!enabled || (!text && attachments.length === 0) || !onSubmitWithReply)
+      return;
+    onSubmitWithReply(text, attachments.length > 0 ? attachments : undefined);
+    setValue('');
+    setAttachments([]);
+    clearSuggestions();
+  }, [
+    enabled,
+    value,
+    attachments,
+    onSubmitWithReply,
+    setAttachments,
+    clearSuggestions,
+  ]);
+
   const disabled = useMemo(
     () => !enabled || (!value.trim() && attachments.length === 0),
     [enabled, value, attachments.length],
   );
 
-  // Auto-grow textarea
+  // Auto-grow textarea - use minHeight instead of min-h class to avoid scrollHeight issues
+  // Maximum height is 1000px or 60% of viewport height, whichever is smaller
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
-    ta.style.height = 'auto';
-    ta.style.height = `${ta.scrollHeight}px`;
+    // Reset to minimum height first, then expand to content
+    ta.style.height = '2.5rem'; // ~40px, matches rows={1} with padding
+    const maxHeight = Math.min(1000, window.innerHeight * 0.6);
+    const newHeight = Math.max(40, Math.min(ta.scrollHeight, maxHeight));
+    ta.style.height = `${newHeight}px`;
   }, [value]);
 
   return (
@@ -159,12 +192,14 @@ export default function ChannelComposer({
                 }
               }}
               placeholder={placeholder}
-              className="w-full bg-[var(--color-surface-alt)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:border-[var(--color-tool)] focus:outline-none resize-none overflow-hidden min-h-[4rem] max-h-[40vh] disabled:opacity-60"
+              className="w-full bg-[var(--color-surface-alt)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:border-[var(--color-tool)] focus:outline-none resize-none overflow-hidden max-h-[1000px] disabled:opacity-60"
               rows={1}
+              style={{ height: '2.5rem' }}
             />
           </div>
           <div className="flex flex-col gap-1 self-end">
             <button
+              type="button"
               onClick={handleFilePicker}
               disabled={!enabled}
               title="Attach file"
@@ -172,13 +207,68 @@ export default function ChannelComposer({
             >
               📎
             </button>
-            <button
-              onClick={submit}
-              disabled={disabled}
-              className="px-3 py-2 rounded-sm bg-[var(--color-agent)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
-            >
-              {submitLabel}
-            </button>
+            {/* Reply toggle switch - only show when reply button is available */}
+            {showReplyButton && onNoReplyChange && (
+              <label
+                className="flex items-center gap-1.5 cursor-pointer select-none"
+                title={
+                  noReply
+                    ? 'Reply OFF — message will be queued without triggering agent response'
+                    : 'Reply ON — message will trigger agent response'
+                }
+              >
+                <span
+                  className={`text-[10px] font-medium transition-colors ${
+                    noReply
+                      ? 'text-[var(--color-text-muted)]'
+                      : 'text-[var(--color-text-secondary)]'
+                  }`}
+                >
+                  Reply
+                </span>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={!noReply}
+                  onClick={() => onNoReplyChange(!noReply)}
+                  disabled={!enabled}
+                  className={`relative w-8 h-4 rounded-full transition-colors disabled:opacity-40 ${
+                    noReply
+                      ? 'bg-[var(--color-background-tertiary)] border border-[var(--color-border-primary)]'
+                      : 'bg-[var(--color-success)]'
+                  }`}
+                >
+                  <span
+                    className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
+                      noReply
+                        ? 'left-0.5 bg-[var(--color-text-muted)]'
+                        : 'left-4 bg-white'
+                    }`}
+                  />
+                </button>
+              </label>
+            )}
+            <div className="flex gap-1">
+              {showReplyButton && onSubmitWithReply && (
+                <button
+                  type="button"
+                  onClick={submitWithReply}
+                  disabled={disabled}
+                  title="Send and trigger agent response (noReply=false)"
+                  className="px-2 py-2 rounded-sm bg-[var(--color-user)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                  ↵
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={submit}
+                disabled={disabled}
+                className="px-3 py-2 rounded-sm bg-[var(--color-agent)] text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              >
+                {submitLabel}
+              </button>
+            </div>
           </div>
         </div>
       </div>

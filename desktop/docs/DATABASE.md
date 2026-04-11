@@ -172,44 +172,57 @@ CREATE TABLE IF NOT EXISTS session_channel_history (
 
 Persists named agent connections registered via the `register_connection` MCP tool. One row per registered agent. Rows survive app restarts and are used to restore channel identity when an agent reconnects.
 
+Uses a **composite primary key** `(provider_type, provider_session_id)` to isolate connections from different AI providers.
+
 ```sql
 CREATE TABLE IF NOT EXISTS registered_connections (
-  connection_id        TEXT     PRIMARY KEY,
+  provider_type        TEXT     NOT NULL DEFAULT 'standalone' CHECK(provider_type IN ('opencode', 'copilot-cli', 'claude-sdk', 'standalone')),
+  provider_session_id  TEXT     NOT NULL,
+  connection_id        TEXT,
   agent_name           TEXT     NOT NULL,
   project_name         TEXT     NOT NULL,
   base_directory       TEXT,
   id_file_path         TEXT     NOT NULL,
-  open_code_session_id TEXT,
   parent_session_id    TEXT,
   created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+  updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (provider_type, provider_session_id)
 );
 ```
 
-| Column                 | Type     | Nullable | Description                                                                                                                                                                                                                                   |
-| ---------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `connection_id`        | TEXT     | No       | The `connectionId` UUID for the MCP session (primary key).                                                                                                                                                                                    |
-| `agent_name`           | TEXT     | No       | Human-readable channel name supplied to `register_connection` (e.g. `"Claude Code - my-project"`). **SQLite column name is `agent_name` (unchanged); the TypeScript `RegisteredConnection` interface exposes this field as `channelName`.**   |
-| `project_name`         | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                                                                               |
-| `base_directory`       | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied.                                                                                                                                                                    |
-| `id_file_path`         | TEXT     | No       | Absolute path to the `/tmp/imcp-agent-<name>.json` ID file written at registration time. Used for recovery after restarts.                                                                                                                    |
-| `open_code_session_id` | TEXT     | Yes      | The OpenCode ACP session ID auto-detected at registration time. Used by `inject-opencode-message` to route noReply injections. `NULL` if OpenCode was not reachable or returned no sessions.                                                  |
-| `parent_session_id`    | TEXT     | Yes      | The OpenCode session ID of the parent session that spawned this agent (i.e. the `parentID` field returned by the OpenCode API for this session). Used to nest the subagent channel under its parent in the sidebar. `NULL` if not a subagent. |
-| `created_at`           | DATETIME | No       | Row creation timestamp.                                                                                                                                                                                                                       |
-| `updated_at`           | DATETIME | No       | Last upsert timestamp (updated on every `register_connection` call for this connection).                                                                                                                                                      |
+| Column                | Type     | Nullable | Description                                                                                                                                                                                                                     |
+| --------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `provider_type`       | TEXT     | No       | Provider type for this connection: `'opencode'`, `'copilot-cli'`, `'claude-sdk'`, or `'standalone'`. Combined with `provider_session_id` forms the composite primary key.                                                       |
+| `provider_session_id` | TEXT     | No       | Provider-specific session ID. For `'opencode'`: the OpenCode session ID (e.g., `ses_xxx`). For other providers: the MCP connectionId (UUID). Combined with `provider_type` forms the composite primary key.                     |
+| `connection_id`       | TEXT     | Yes      | The MCP transport connectionId (UUID), bound at MCP initialize time. Used as a secondary lookup key.                                                                                                                            |
+| `agent_name`          | TEXT     | No       | Human-readable channel name supplied to `register_connection` (e.g. `"Claude Code - my-project"`). **SQLite column name is `agent_name`; the TypeScript `RegisteredConnection` interface exposes this field as `channelName`.** |
+| `project_name`        | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                                                                 |
+| `base_directory`      | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied.                                                                                                                                                      |
+| `id_file_path`        | TEXT     | No       | Absolute path to the `/tmp/imcp-agent-<provider>-<name>-<session>.json` ID file written at registration time. Used for recovery after restarts.                                                                                 |
+| `parent_session_id`   | TEXT     | Yes      | The OpenCode session ID of the parent session that spawned this agent. Used to nest the subagent channel under its parent in the sidebar. `NULL` if not a subagent.                                                             |
+| `created_at`          | DATETIME | No       | Row creation timestamp.                                                                                                                                                                                                         |
+| `updated_at`          | DATETIME | No       | Last upsert timestamp (updated on every `register_connection` call for this connection).                                                                                                                                        |
 
-#### `open_code_session_id` lifecycle
+#### Provider types
 
-- **Set** during `register_connection`: `autoDetectOpenCodeSession(openCodePort, baseDirectory)` queries `GET /session?directory={baseDirectory}` (with fallback to `GET /session`) and stores the most recently created session ID (sorted by `time.created` DESC, not `time.updated`).
-- **Cleared** (`NULL`) when the OpenCode API is unreachable (2-second timeout) or returns no sessions.
-- **Used** by the `inject-opencode-message` IPC handler whenever the user sends a message from `ChannelComposer`.
-- **Not automatically refreshed** — if the OpenCode session ID changes after registration, the agent should call `register_connection` again.
+| Provider Type | Description                                                            |
+| ------------- | ---------------------------------------------------------------------- |
+| `opencode`    | OpenCode sessions with session hierarchy and context injection support |
+| `copilot-cli` | GitHub Copilot CLI connections                                         |
+| `claude-sdk`  | Anthropic Claude SDK connections                                       |
+| `standalone`  | Direct MCP connections without provider-specific features (default)    |
+
+#### `provider_session_id` lifecycle
+
+- **Set** during `register_connection`: For OpenCode providers, this is the session ID passed via `openCodeSessionId`. For other providers, this is typically the MCP `connectionId`.
+- **Used** as the primary lookup key (combined with `provider_type`) for all connection operations.
+- **Backwards compatibility**: The `openCodeSessionId` field in the TypeScript interface mirrors `providerSessionId` for compatibility with existing code.
 
 #### `parent_session_id` lifecycle
 
-- **Set** during `register_connection`: after `open_code_session_id` is resolved (whether explicitly provided or auto-detected), the tool fetches `GET /session` and reads the `parentID` field of the matched session.
-- **`NULL`** for top-level agents that were not spawned by another OpenCode session (i.e. `parentID` is absent or `null` in the API response).
-- **Used** by the renderer's `ChannelSidebar` to build the parent-child tree view: a connection whose `parentSessionId` matches another connection's `openCodeSessionId` is displayed as a child entry indented under its parent.
+- **Set** during `register_connection`: after `provider_session_id` is resolved, the tool looks up the parent session for nested subagents.
+- **`NULL`** for top-level agents that were not spawned by another session.
+- **Used** by the renderer's `ChannelSidebar` to build the parent-child tree view.
 
 ---
 
@@ -224,20 +237,28 @@ CREATE TABLE IF NOT EXISTS skills_and_instructions (
   type        TEXT    NOT NULL CHECK(type IN ('skill', 'instruction')),
   description TEXT    NOT NULL,
   content     TEXT    NOT NULL,
+  category    TEXT,
+  tags        TEXT,
+  enabled     INTEGER NOT NULL DEFAULT 1,
+  is_builtin  INTEGER NOT NULL DEFAULT 0,
   created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
-| Column        | Type     | Nullable | Description                                                                                          |
-| ------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------- |
-| `id`          | INTEGER  | No       | Auto-incrementing primary key.                                                                       |
-| `name`        | TEXT     | No       | Unique name/identifier for the entry. Used as the primary lookup key.                                |
-| `type`        | TEXT     | No       | Either `'skill'` (reusable workflow/recipe) or `'instruction'` (behavioural rule/policy).            |
-| `description` | TEXT     | No       | Short summary shown in `list` action results.                                                        |
-| `content`     | TEXT     | No       | Full Markdown body of the skill or instruction.                                                      |
-| `created_at`  | DATETIME | No       | Row creation timestamp.                                                                              |
-| `updated_at`  | DATETIME | No       | Last upsert timestamp. Updated on every `register` call for a name that already exists in the table. |
+| Column        | Type     | Nullable | Description                                                                                            |
+| ------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------ |
+| `id`          | INTEGER  | No       | Auto-incrementing primary key.                                                                         |
+| `name`        | TEXT     | No       | Unique name/identifier for the entry. Used as the primary lookup key.                                  |
+| `type`        | TEXT     | No       | Either `'skill'` (reusable workflow/recipe) or `'instruction'` (behavioural rule/policy).              |
+| `description` | TEXT     | No       | Short summary shown in `list` action results.                                                          |
+| `content`     | TEXT     | No       | Full Markdown body of the skill or instruction.                                                        |
+| `category`    | TEXT     | Yes      | Category for organizing entries (e.g., "Code Review", "Testing", "Documentation"). Used for filtering. |
+| `tags`        | TEXT     | Yes      | JSON-serialised `string[]` of tags for categorization (e.g., `["typescript", "react"]`), or `NULL`.    |
+| `enabled`     | INTEGER  | No       | Boolean encoded as int: `1` = enabled (injected into sessions), `0` = disabled. Default is `1`.        |
+| `is_builtin`  | INTEGER  | No       | Boolean encoded as int: `1` = built-in template shipped with app, `0` = user-created. Default is `0`.  |
+| `created_at`  | DATETIME | No       | Row creation timestamp.                                                                                |
+| `updated_at`  | DATETIME | No       | Last upsert timestamp. Updated on every `register` call for a name that already exists in the table.   |
 
 #### TypeScript interface
 
@@ -248,8 +269,56 @@ export interface SkillOrInstruction {
   type: 'skill' | 'instruction';
   description: string;
   content: string;
+  category: string | null;
+  tags: string[] | null;
+  enabled: boolean;
+  isBuiltin: boolean;
   createdAt: string;
   updatedAt: string;
+}
+```
+
+---
+
+### `pending_context_injections`
+
+Queues noReply context injections for delivery to agents (used primarily for Copilot CLI / standalone mode). Injections are claimed atomically and delivered via the `poll_context_injections` MCP tool or auto-prepended to `request_user_input` responses.
+
+```sql
+CREATE TABLE IF NOT EXISTS pending_context_injections (
+  id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+  connection_id TEXT     NOT NULL,
+  source        TEXT     NOT NULL DEFAULT 'manual',
+  replace_key   TEXT,
+  payload       TEXT     NOT NULL,
+  claimed       INTEGER  DEFAULT 0,
+  delivered     INTEGER  DEFAULT 0,
+  created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_pci_connection_delivered
+  ON pending_context_injections (connection_id, delivered);
+```
+
+| Column          | Type     | Nullable | Description                                                                                                         |
+| --------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------- |
+| `id`            | INTEGER  | No       | Auto-incrementing primary key.                                                                                      |
+| `connection_id` | TEXT     | No       | The MCP connectionId this injection is destined for.                                                                |
+| `source`        | TEXT     | No       | Source identifier for the injection (e.g., `'manual'`, `'docs'`, `'skills'`). Default is `'manual'`.                |
+| `replace_key`   | TEXT     | Yes      | When provided, existing undelivered injections with the same (connectionId, replaceKey) are replaced (latest wins). |
+| `payload`       | TEXT     | No       | The injection payload content (typically Markdown context to inject).                                               |
+| `claimed`       | INTEGER  | No       | Boolean encoded as int: `1` = claimed by a poll operation, `0` = unclaimed.                                         |
+| `delivered`     | INTEGER  | No       | Boolean encoded as int: `1` = successfully delivered to agent, `0` = pending delivery.                              |
+| `created_at`    | DATETIME | No       | Row creation timestamp.                                                                                             |
+
+#### TypeScript interface
+
+```ts
+export interface ContextInjection {
+  id: number;
+  source: string;
+  payload: string;
+  createdAt: string;
 }
 ```
 
@@ -270,8 +339,8 @@ steps in order:
    `new SQL.Database()`.
 5. Reads `PRAGMA user_version` from the database.
 6. If the stored version does **not** match the expected `SCHEMA_VERSION` constant
-   (currently `2`), the database is wiped and recreated (see below).
-7. Runs `CREATE TABLE IF NOT EXISTS` for all six tables with the full column set
+   (currently `9`), the database is wiped and recreated (see below).
+7. Runs `CREATE TABLE IF NOT EXISTS` for all seven tables with the full column set
    baked in — no incremental `ALTER TABLE` migrations.
 8. Writes `PRAGMA user_version = {SCHEMA_VERSION}`.
 9. Calls `persist()` to ensure the file exists on disk even for a freshly created
@@ -280,7 +349,7 @@ steps in order:
 ### Schema versioning strategy (`PRAGMA user_version`)
 
 The database uses SQLite's `PRAGMA user_version` as a simple schema version tag. The
-expected version is defined as `const SCHEMA_VERSION = 2` at the top of `database.ts`.
+expected version is defined as `const SCHEMA_VERSION = 9` at the top of `database.ts`.
 
 On startup, `initDatabase()` compares the stored version against `SCHEMA_VERSION`:
 
@@ -343,6 +412,22 @@ Initialises or loads the database and runs all DDL and migration statements.
 Must be awaited before any other database function is called. Calling other functions
 before `initDatabase` resolves is safe (they guard on `if (!db) return`), but they will
 silently do nothing.
+
+---
+
+### `getDbInstance`
+
+```ts
+export function getDbInstance(): SqlJsDatabase | null;
+```
+
+Returns the internal sql.js database reference for modules that need direct SQL access.
+
+|             |                                                              |
+| ----------- | ------------------------------------------------------------ |
+| **Returns** | The sql.js `Database` instance, or `null` if not initialised |
+
+**No side effects.**
 
 ---
 
@@ -417,6 +502,28 @@ export function clearHistory(): void;
 Deletes all rows from the `conversations` table. Does not affect session tables.
 
 **Side effects:** Truncates `conversations`; calls `persist()`.
+
+---
+
+### `resetDatabase`
+
+```ts
+export function resetDatabase(): {
+  ok: boolean;
+  clearedTables: string[];
+  removedIdFiles: number;
+};
+```
+
+Resets the entire database by clearing all tables and removing ID files from disk. Used for full app reset.
+
+**Returns:** Object with:
+
+- `ok`: `true` if successful, `false` if database not initialised.
+- `clearedTables`: Array of table names that were cleared.
+- `removedIdFiles`: Count of ID files successfully removed from disk.
+
+**Side effects:** Deletes all rows from all tables; removes ID files from `/tmp`; calls `persist()`.
 
 ---
 
@@ -524,7 +631,7 @@ calls `persist()`.
 ```ts
 export function appendSessionChannelMessage(data: {
   sessionId: string;
-  messageType: 'question' | 'answer' | 'outbound';
+  messageType: 'question' | 'answer' | 'outbound' | 'agent_message';
   messageText: string;
   attachments?: {
     data: string;
@@ -536,15 +643,15 @@ export function appendSessionChannelMessage(data: {
 ```
 
 Appends a single message to the session history log without queuing it for delivery.
-Used when recording inbound messages from the user (`'answer'`) or prompts sent to the
-user (`'question'`).
+Used when recording inbound messages from the user (`'answer'`), prompts sent to the
+user (`'question'`), or agent informational messages (`'agent_message'`).
 
-| Parameter          | Required | Description                                                 |
-| ------------------ | -------- | ----------------------------------------------------------- |
-| `data.sessionId`   | Yes      | Target session ID.                                          |
-| `data.messageType` | Yes      | `'question'`, `'answer'`, or `'outbound'`.                  |
-| `data.messageText` | Yes      | Full message content.                                       |
-| `data.attachments` | No       | Attachment array; stored as JSON or `NULL` if absent/empty. |
+| Parameter          | Required | Description                                                   |
+| ------------------ | -------- | ------------------------------------------------------------- |
+| `data.sessionId`   | Yes      | Target session ID.                                            |
+| `data.messageType` | Yes      | `'question'`, `'answer'`, `'outbound'`, or `'agent_message'`. |
+| `data.messageText` | Yes      | Full message content.                                         |
+| `data.attachments` | No       | Attachment array; stored as JSON or `NULL` if absent/empty.   |
 
 **Side effects:** Inserts one row into `session_channel_history`; calls `persist()`.
 
@@ -572,7 +679,7 @@ Returns the message history for a session ordered by insertion order (`id ASC`).
 interface SessionChannelMessageRecord {
   id: number;
   sessionId: string;
-  messageType: 'question' | 'answer' | 'outbound';
+  messageType: 'question' | 'answer' | 'outbound' | 'agent_message';
   messageText: string;
   attachments: string | null; // raw JSON string; caller must JSON.parse
   createdAt: string;
@@ -649,17 +756,21 @@ export function upsertSkillOrInstruction(data: {
   type: 'skill' | 'instruction';
   description: string;
   content: string;
+  category?: string | null;
+  tags?: string[] | null;
 }): SkillOrInstruction | null;
 ```
 
-Creates a new `skills_and_instructions` row, or updates the existing row with the same `name`. On conflict the `type`, `description`, `content`, and `updated_at` columns are overwritten; `created_at` is preserved.
+Creates a new `skills_and_instructions` row, or updates the existing row with the same `name`. On conflict the `type`, `description`, `content`, `category`, `tags`, and `updated_at` columns are overwritten; `created_at`, `enabled`, and `is_builtin` are preserved.
 
-| Parameter          | Required | Description                           |
-| ------------------ | -------- | ------------------------------------- |
-| `data.name`        | Yes      | Unique name/identifier for the entry. |
-| `data.type`        | Yes      | `'skill'` or `'instruction'`.         |
-| `data.description` | Yes      | Short summary shown in list results.  |
-| `data.content`     | Yes      | Full Markdown body.                   |
+| Parameter          | Required | Description                                                |
+| ------------------ | -------- | ---------------------------------------------------------- |
+| `data.name`        | Yes      | Unique name/identifier for the entry.                      |
+| `data.type`        | Yes      | `'skill'` or `'instruction'`.                              |
+| `data.description` | Yes      | Short summary shown in list results.                       |
+| `data.content`     | Yes      | Full Markdown body.                                        |
+| `data.category`    | No       | Category for organizing entries (e.g., "Code Review").     |
+| `data.tags`        | No       | Array of tags for categorization (e.g., `["typescript"]`). |
 
 **Returns:** The saved `SkillOrInstruction` record (fetched via `getSkillOrInstructionByName` after the upsert), or `null` if the database is not initialised.
 
@@ -672,14 +783,16 @@ Creates a new `skills_and_instructions` row, or updates the existing row with th
 ```ts
 export function listSkillsAndInstructions(
   filterType?: 'skill' | 'instruction',
+  filterCategory?: string,
 ): SkillOrInstruction[];
 ```
 
 Returns all rows from `skills_and_instructions`, ordered alphabetically by `name`.
 
-| Parameter    | Default | Description                                               |
-| ------------ | ------- | --------------------------------------------------------- |
-| `filterType` | —       | If provided, only rows whose `type` matches are returned. |
+| Parameter        | Default | Description                                                   |
+| ---------------- | ------- | ------------------------------------------------------------- |
+| `filterType`     | —       | If provided, only rows whose `type` matches are returned.     |
+| `filterCategory` | —       | If provided, only rows whose `category` matches are returned. |
 
 **Returns:** Array of `SkillOrInstruction` objects (empty array if none or database not initialised).
 
@@ -722,6 +835,469 @@ Deletes the row with the given `name` from `skills_and_instructions`.
 **Returns:** `true` if a row was found and deleted; `false` if no matching row existed or the database is not initialised.
 
 **Side effects:** Deletes one row from `skills_and_instructions` if it exists; calls `persist()`.
+
+---
+
+### `toggleSkillOrInstructionEnabled`
+
+```ts
+export function toggleSkillOrInstructionEnabled(
+  name: string,
+  enabled: boolean,
+): SkillOrInstruction | null;
+```
+
+Toggles the enabled status of a skill or instruction.
+
+| Parameter | Description                            |
+| --------- | -------------------------------------- |
+| `name`    | Exact name of the entry to update.     |
+| `enabled` | New enabled state (`true` or `false`). |
+
+**Returns:** The updated `SkillOrInstruction` record, or `null` if not found or database not initialised.
+
+**Side effects:** Updates one row in `skills_and_instructions`; calls `persist()`.
+
+---
+
+### `duplicateSkillOrInstruction`
+
+```ts
+export function duplicateSkillOrInstruction(
+  name: string,
+): SkillOrInstruction | null;
+```
+
+Duplicates a skill or instruction with a new name. The new name will be `"{original-name}-copy"` or `"{original-name}-copy-2"`, etc.
+
+| Parameter | Description                           |
+| --------- | ------------------------------------- |
+| `name`    | Exact name of the entry to duplicate. |
+
+**Returns:** The newly created `SkillOrInstruction` record, or `null` if the original doesn't exist or database not initialised.
+
+**Side effects:** Inserts one row into `skills_and_instructions`; calls `persist()`.
+
+---
+
+### `seedBuiltinTemplates`
+
+```ts
+export function seedBuiltinTemplates(
+  templates: {
+    name: string;
+    type: 'skill' | 'instruction';
+    category: string;
+    description: string;
+    content: string;
+  }[],
+): number;
+```
+
+Seeds built-in templates into the database. Only inserts templates that don't already exist (by name).
+
+| Parameter   | Description                        |
+| ----------- | ---------------------------------- |
+| `templates` | Array of template objects to seed. |
+
+**Returns:** The count of templates that were newly inserted.
+
+**Side effects:** Inserts rows into `skills_and_instructions` for new templates; calls `persist()`.
+
+---
+
+### `resetBuiltinTemplates`
+
+```ts
+export function resetBuiltinTemplates(
+  templates: {
+    name: string;
+    type: 'skill' | 'instruction';
+    category: string;
+    description: string;
+    content: string;
+  }[],
+): number;
+```
+
+Resets built-in templates to their default content. Re-inserts any missing built-in templates and updates existing ones to match the original content.
+
+| Parameter   | Description                            |
+| ----------- | -------------------------------------- |
+| `templates` | Array of template objects to reset to. |
+
+**Returns:** The count of templates that were reset or inserted.
+
+**Side effects:** Updates/inserts rows in `skills_and_instructions`; calls `persist()`.
+
+---
+
+### `getMissingBuiltinCount`
+
+```ts
+export function getMissingBuiltinCount(templateNames: string[]): number;
+```
+
+Gets count of missing built-in templates.
+
+| Parameter       | Description                           |
+| --------------- | ------------------------------------- |
+| `templateNames` | Array of template names to check for. |
+
+**Returns:** How many of the provided template names don't exist in the database.
+
+**No side effects.**
+
+---
+
+## Context Injection Functions
+
+### `upsertContextInjection`
+
+```ts
+export function upsertContextInjection(
+  connectionId: string,
+  payload: string,
+  source?: string,
+  replaceKey?: string,
+): void;
+```
+
+Queues a noReply context injection for delivery to a standalone (Copilot CLI) agent. When `replaceKey` is provided, any existing undelivered injection with the same (connectionId, replaceKey) is replaced — useful for doc context where latest wins.
+
+| Parameter      | Default    | Description                                                           |
+| -------------- | ---------- | --------------------------------------------------------------------- |
+| `connectionId` | —          | The MCP connectionId for the target agent.                            |
+| `payload`      | —          | The injection payload content to queue.                               |
+| `source`       | `'manual'` | Source identifier for the injection.                                  |
+| `replaceKey`   | —          | Optional key; if provided, replaces existing injection with same key. |
+
+**Side effects:** Inserts (or replaces) a row in `pending_context_injections`; calls `persist()`.
+
+---
+
+### `claimContextInjections`
+
+```ts
+export function claimContextInjections(
+  connectionId: string,
+): ContextInjection[];
+```
+
+Atomically claims and returns all undelivered injections for a connection. Marks them as delivered immediately. Safe in single-threaded Node.js/sql.js.
+
+| Parameter      | Description                                   |
+| -------------- | --------------------------------------------- |
+| `connectionId` | The MCP connectionId to claim injections for. |
+
+**Returns:** Array of `ContextInjection` objects (empty array if none).
+
+**Side effects:** Updates `delivered = 1` on claimed rows; calls `persist()`.
+
+---
+
+### `deleteContextInjectionsForConnection`
+
+```ts
+export function deleteContextInjectionsForConnection(
+  connectionId: string,
+): void;
+```
+
+Removes all context injections (delivered or not) for a connection.
+
+| Parameter      | Description                                    |
+| -------------- | ---------------------------------------------- |
+| `connectionId` | The MCP connectionId to delete injections for. |
+
+**Side effects:** Deletes rows from `pending_context_injections`; calls `persist()`.
+
+---
+
+## Registered Connection Functions
+
+### `agentIdFilePath`
+
+```ts
+export function agentIdFilePath(
+  channelName: string,
+  providerSessionId: string,
+  providerType?: RegisteredConnection['providerType'],
+): string;
+```
+
+Returns the path for a per-agent connection ID file in `/tmp`. Includes provider type to prevent collisions between providers.
+
+| Parameter           | Default        | Description                   |
+| ------------------- | -------------- | ----------------------------- |
+| `channelName`       | —              | Human-readable channel name.  |
+| `providerSessionId` | —              | Provider-specific session ID. |
+| `providerType`      | `'standalone'` | Provider type.                |
+
+**Returns:** Absolute path like `/tmp/imcp-agent-<provider>-<name>-<session>.json`.
+
+**No side effects.**
+
+---
+
+### `upsertRegisteredConnection`
+
+```ts
+export function upsertRegisteredConnection(data: {
+  providerSessionId?: string;
+  openCodeSessionId?: string; // deprecated, use providerSessionId
+  channelName: string;
+  projectName: string;
+  connectionId?: string | null;
+  baseDirectory?: string;
+  parentSessionId?: string | null;
+  providerType?: RegisteredConnection['providerType'];
+}): string;
+```
+
+Upserts a registered connection. Writes the ID file to /tmp and persists the record to the database.
+
+Uses composite primary key `(provider_type, provider_session_id)`. This ensures connections from different providers cannot overwrite each other.
+
+| Parameter           | Required | Description                                                             |
+| ------------------- | -------- | ----------------------------------------------------------------------- |
+| `providerSessionId` | Yes\*    | Provider-specific session ID. For OpenCode, use the session ID.         |
+| `openCodeSessionId` | No       | **Deprecated.** Falls back to this if `providerSessionId` not provided. |
+| `channelName`       | Yes      | Human-readable channel name.                                            |
+| `projectName`       | Yes      | Project name.                                                           |
+| `connectionId`      | No       | MCP transport connectionId (UUID).                                      |
+| `baseDirectory`     | No       | Absolute path to working directory.                                     |
+| `parentSessionId`   | No       | Parent session ID for subagents.                                        |
+| `providerType`      | No       | Provider type. Defaults to `'standalone'`.                              |
+
+\* Either `providerSessionId` or `openCodeSessionId` must be provided.
+
+**Returns:** The path to the ID file written to `/tmp`.
+
+**Side effects:** Writes ID file to disk; upserts row in `registered_connections`; calls `persist()`.
+
+---
+
+### `getAllRegisteredConnections`
+
+```ts
+export function getAllRegisteredConnections(): RegisteredConnection[];
+```
+
+Returns all registered connections, ordered by creation time.
+
+**Returns:** Array of `RegisteredConnection` objects (empty array if none).
+
+**No side effects.**
+
+---
+
+### `getRegisteredConnection`
+
+```ts
+export function getRegisteredConnection(
+  connectionId: string,
+): RegisteredConnection | null;
+```
+
+Looks up a registered connection by transport connectionId (secondary lookup). Searches the `connection_id` column.
+
+| Parameter      | Description                 |
+| -------------- | --------------------------- |
+| `connectionId` | MCP transport connectionId. |
+
+**Returns:** The matching `RegisteredConnection`, or `null` if not found.
+
+**No side effects.**
+
+---
+
+### `getRegisteredConnectionBySessionId`
+
+```ts
+export function getRegisteredConnectionBySessionId(
+  providerSessionId: string,
+  providerType?: RegisteredConnection['providerType'],
+): RegisteredConnection | null;
+```
+
+Primary lookup: find a registered connection by its composite key (providerType, providerSessionId).
+
+| Parameter           | Default      | Description                   |
+| ------------------- | ------------ | ----------------------------- |
+| `providerSessionId` | —            | Provider-specific session ID. |
+| `providerType`      | `'opencode'` | Provider type.                |
+
+**Returns:** The matching `RegisteredConnection`, or `null` if not found.
+
+**No side effects.**
+
+---
+
+### `getRegisteredConnectionByOpenCodeSessionId` _(deprecated)_
+
+```ts
+export function getRegisteredConnectionByOpenCodeSessionId(
+  openCodeSessionId: string,
+): RegisteredConnection | null;
+```
+
+**Deprecated.** Use `getRegisteredConnectionBySessionId` with explicit `providerType` instead.
+
+Legacy lookup that searches across all provider types but only returns the first match.
+
+**No side effects.**
+
+---
+
+### `updateConnectionId`
+
+```ts
+export function updateConnectionId(
+  providerSessionId: string,
+  connectionId: string,
+  providerType?: RegisteredConnection['providerType'],
+): void;
+```
+
+Binds a transport connectionId to an existing registered connection row. Called at MCP initialize time when the SSE row already exists.
+
+| Parameter           | Default      | Description                   |
+| ------------------- | ------------ | ----------------------------- |
+| `providerSessionId` | —            | Provider-specific session ID. |
+| `connectionId`      | —            | MCP transport connectionId.   |
+| `providerType`      | `'opencode'` | Provider type.                |
+
+**Side effects:** Updates row in `registered_connections`; calls `persist()`.
+
+---
+
+### `getRegisteredConnectionByName`
+
+```ts
+export function getRegisteredConnectionByName(
+  channelName: string,
+): RegisteredConnection | null;
+```
+
+Looks up a registered connection by channel name. Returns the most recently updated match.
+
+| Parameter     | Description                  |
+| ------------- | ---------------------------- |
+| `channelName` | Human-readable channel name. |
+
+**Returns:** The matching `RegisteredConnection`, or `null` if not found.
+
+**No side effects.**
+
+---
+
+### `isProviderSessionClaimed`
+
+```ts
+export function isProviderSessionClaimed(
+  providerSessionId: string,
+  providerType?: RegisteredConnection['providerType'],
+): boolean;
+```
+
+Returns true if the given provider session already has a registered connection row.
+
+| Parameter           | Default      | Description                   |
+| ------------------- | ------------ | ----------------------------- |
+| `providerSessionId` | —            | Provider-specific session ID. |
+| `providerType`      | `'opencode'` | Provider type.                |
+
+**Returns:** `true` if claimed, `false` otherwise.
+
+**No side effects.**
+
+---
+
+### `isOpenCodeSessionClaimed` _(deprecated)_
+
+```ts
+export function isOpenCodeSessionClaimed(openCodeSessionId: string): boolean;
+```
+
+**Deprecated.** Use `isProviderSessionClaimed` with `providerType` instead.
+
+---
+
+### `getRegisteredConnectionsByProvider`
+
+```ts
+export function getRegisteredConnectionsByProvider(
+  providerType: RegisteredConnection['providerType'],
+): RegisteredConnection[];
+```
+
+Returns all registered connections filtered by provider type.
+
+| Parameter      | Description                 |
+| -------------- | --------------------------- |
+| `providerType` | Provider type to filter by. |
+
+**Returns:** Array of `RegisteredConnection` objects (empty array if none).
+
+**No side effects.**
+
+---
+
+### `updateConnectionProviderSession`
+
+```ts
+export function updateConnectionProviderSession(
+  connectionId: string,
+  newProviderSessionId: string,
+  newProviderType?: RegisteredConnection['providerType'],
+): void;
+```
+
+Updates the provider session ID on an existing registered connection. Used by the SSE auto-bind logic to attach a just-created OpenCode child session to the MCP connection.
+
+With the composite PK, this creates a new row with the new session ID and deletes the old row (if it was a temporary connectionId-based row).
+
+| Parameter              | Default      | Description                         |
+| ---------------------- | ------------ | ----------------------------------- |
+| `connectionId`         | —            | MCP transport connectionId to find. |
+| `newProviderSessionId` | —            | New provider session ID.            |
+| `newProviderType`      | `'opencode'` | Provider type for the new row.      |
+
+**Side effects:** May delete old row and insert new row; calls `persist()`.
+
+---
+
+### `updateConnectionOpenCodeSession` _(deprecated)_
+
+```ts
+export function updateConnectionOpenCodeSession(
+  connectionId: string,
+  openCodeSessionId: string,
+): void;
+```
+
+**Deprecated.** Use `updateConnectionProviderSession` instead.
+
+---
+
+### `deleteRegisteredConnection`
+
+```ts
+export function deleteRegisteredConnection(
+  providerSessionId: string,
+  providerType?: RegisteredConnection['providerType'],
+): void;
+```
+
+Deletes a registered connection from the DB and removes the ID file from disk.
+
+| Parameter           | Default      | Description                   |
+| ------------------- | ------------ | ----------------------------- |
+| `providerSessionId` | —            | Provider-specific session ID. |
+| `providerType`      | `'opencode'` | Provider type.                |
+
+**Side effects:** Removes ID file from disk; deletes row from `registered_connections`; calls `persist()`.
 
 ---
 
@@ -831,6 +1407,8 @@ Electron app 'ready' event
         ├─ CREATE TABLE IF NOT EXISTS session_channel_history
         ├─ CREATE TABLE IF NOT EXISTS skills_and_instructions
         ├─ CREATE TABLE IF NOT EXISTS registered_connections
+        ├─ CREATE TABLE IF NOT EXISTS pending_context_injections
+        ├─ CREATE INDEX IF NOT EXISTS idx_pci_connection_delivered
         ├─ PRAGMA user_version = SCHEMA_VERSION
         └─ persist()
 ```

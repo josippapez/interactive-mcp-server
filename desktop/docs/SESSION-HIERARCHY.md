@@ -8,15 +8,21 @@ included for each major phase.
 
 ## Glossary
 
-| Term                           | Meaning                                                                                          |
-| ------------------------------ | ------------------------------------------------------------------------------------------------ |
-| `connectionId`                 | UUID generated per MCP transport connection (changes on every reconnect)                         |
-| `openCodeSessionId`            | Stable ID of an OpenCode session (e.g. `ses_abc123`). Survives reconnects.                       |
-| `parentSessionId`              | The `openCodeSessionId` of the parent OpenCode session (from the OpenCode API)                   |
-| `session_channels`             | SQLite table — one row per active MCP transport session                                          |
-| `registered_connections`       | SQLite table — the durable identity record binding `connectionId` → `openCodeSessionId`          |
-| `DEFAULT_MAIN_CHANNEL_NAME`    | `"OpenCode - Main Channel"` — the hard-coded name for the first connection per server lifetime   |
-| `mainChannelAssignedInRuntime` | Boolean flag in the `startMcpServer` closure — resets to `false` on every `softRestartMcpServer` |
+| Term                           | Meaning                                                                                                         |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------- |
+| `connectionId`                 | UUID generated per MCP transport connection (changes on every reconnect)                                        |
+| `openCodeSessionId`            | Stable ID of an OpenCode session (e.g. `ses_abc123`). Survives reconnects. **Primary key for session identity** |
+| `openCodeParentId`             | The `openCodeSessionId` of the parent session — establishes the tree hierarchy                                  |
+| `parentSessionId`              | Alias for `openCodeParentId` in the `registered_connections` table                                              |
+| `SessionNode`                  | Renderer-side data structure representing one session with topology + runtime state                             |
+| `SessionNodeData`              | Main-process data structure emitted over IPC (topology only, no runtime state)                                  |
+| `session_channels`             | SQLite table — one row per active MCP transport session                                                         |
+| `registered_connections`       | SQLite table — the durable identity record binding `connectionId` → `openCodeSessionId`                         |
+| `isDirectConnection`           | Boolean flag on `SessionNode` — true for MCP agents with no associated OpenCode session                         |
+| `partitionNodes()`             | Pure function that splits the SessionNode map into `openCodeTree` + `directConnections`                         |
+| `mergeSessionTreeSnapshot()`   | Pure function that merges main-process snapshots into the renderer's SessionNode map                            |
+| `DEFAULT_MAIN_CHANNEL_NAME`    | `"OpenCode - Main Channel"` — the hard-coded name for the first connection per server lifetime                  |
+| `mainChannelAssignedInRuntime` | Boolean flag in the `startMcpServer` closure — resets to `false` on every `softRestartMcpServer`                |
 
 ---
 
@@ -244,6 +250,192 @@ sequenceDiagram
     note over DB: registered_connections row updated<br/>openCodeSessionId = "ses_xyz" ✓
     STM->>STM: scheduleSnapshot() → session-tree-updated IPC
 ```
+
+---
+
+## Phase 6 — Session Node Structure and Tree Management
+
+The renderer maintains an in-memory `Map<string, SessionNode>` representing all
+sessions. Each `SessionNode` contains both topology and runtime state.
+
+### SessionNode Type
+
+```typescript
+type SessionNode = {
+  // ─── Identity ───────────────────────────────────────────────────────
+  id: string; // Primary key (openCodeSessionId or connectionId)
+  openCodeSessionId: string | null; // OpenCode session ID, null for direct connections
+  openCodeParentId: string | null; // Parent's session ID, null for roots
+
+  // ─── Display ────────────────────────────────────────────────────────
+  title: string; // Human-readable name
+  directory: string; // Working directory
+  depth: number; // 0 = root, 1+ = subagent depth
+
+  // ─── MCP Connection ─────────────────────────────────────────────────
+  connectionId: string | null; // MCP transport UUID
+  hasMcpChannel: boolean; // True when register_connection was called
+  isDirectConnection: boolean; // True for MCP agents with no OpenCode session
+  providerType: ProviderType | null; // 'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone'
+  baseDirectory: string | null; // For file autocomplete
+
+  // ─── Runtime State ──────────────────────────────────────────────────
+  prompt: PromptData | null; // Active prompt awaiting response
+  activeSession: { id: string; title: string } | null; // Intensive chat session
+  channelMessages: ChannelMessage[]; // Message history
+  unreadCount: number; // Messages received while inactive
+  lastReadMessageId: string | null; // For "New messages" divider
+  hasPendingPrompt: boolean; // True when prompt needs attention
+  sessionStatuses: SessionStatus[]; // Status badge updates
+  pendingPermissions: PendingPermission[]; // OpenCode permission requests
+
+  // ─── Session Channel ────────────────────────────────────────────────
+  sessionChannel: { sessionId: string; label?: string } | null;
+
+  // ─── VCS Info ───────────────────────────────────────────────────────
+  vcsInfo: VcsInfo | null; // Git branch, additions, deletions, files
+};
+```
+
+### Parent-Child Relationships
+
+Sessions form a tree structure via `openCodeParentId`:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│ Root Session (openCodeParentId = null, depth = 0)               │
+│ └── Child Session A (openCodeParentId = root.id, depth = 1)     │
+│     └── Grandchild (openCodeParentId = childA.id, depth = 2)    │
+│ └── Child Session B (openCodeParentId = root.id, depth = 1)     │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+The `depth` field is computed by walking the `parentID` chain in the main
+process (`session-tree-manager.ts:computeDepth`).
+
+---
+
+## Phase 7 — Tree Merge Logic (Renderer)
+
+The renderer's `session-tree-merge.ts` contains pure functions for merging
+main-process snapshots into the local `SessionNode` map.
+
+### Snapshot Merge Rules
+
+When `session-tree-updated` IPC arrives:
+
+1. **Snapshot nodes become tree entries** — keyed by `openCodeSessionId`.
+2. **Direct-connection absorption** — if a snapshot node's `connectionId`
+   matches an existing direct-connection node, that node's runtime state
+   (messages, prompts, unread) is absorbed into the tree node.
+3. **Orphan preservation** — direct-connection nodes whose `connectionId` is
+   NOT claimed by any snapshot node are preserved.
+4. **Topology vs runtime split** — topology fields always come from the
+   snapshot; runtime state is preserved from existing nodes.
+
+```mermaid
+flowchart LR
+    SNAP[Snapshot from main process] --> MERGE[mergeSessionTreeSnapshot]
+    PREV[Existing SessionNode map] --> MERGE
+    MERGE --> NEXT[New SessionNode map]
+
+    subgraph "Merge Logic"
+        MERGE --> A{Snapshot node has connectionId?}
+        A -->|yes| B{Matching direct-connection exists?}
+        B -->|yes| C[Absorb runtime state]
+        B -->|no| D[Use existing tree node or defaults]
+        A -->|no| D
+    end
+```
+
+### Prompt State Handling
+
+Prompt state (`prompt`, `hasPendingPrompt`) is ephemeral and requires special
+handling to avoid race conditions:
+
+- When an existing tree node is present, its prompt reflects the latest
+  renderer state (possibly cleared by `handleSubmit`).
+- Pulling `directNode.prompt` on top would resurrect a dismissed prompt.
+- **Rule**: prompt/hasPendingPrompt always come from `existing` when it exists;
+  only fall back to `directNode` (first-time absorption) otherwise.
+
+---
+
+## Phase 8 — Tree Partitioning and Sorting
+
+The `partitionNodes()` function separates the session map into two ordered
+lists for sidebar rendering:
+
+### Partition Logic
+
+```typescript
+function partitionNodes(nodes: Map<string, SessionNode>): {
+  openCodeTree: SessionNode[]; // Hierarchical OpenCode sessions
+  directConnections: SessionNode[]; // MCP agents with no OpenCode session
+};
+```
+
+### Subtree-Aware Sorting Algorithm
+
+Root sessions are sorted by activity in their **entire subtree**, not just the
+root node itself. The sort priority is:
+
+1. **Running subtrees first** — any node in the subtree has `hasPendingPrompt`
+   or a `working` status.
+2. **Unread subtrees second** — any node in the subtree has `unreadCount > 0`.
+3. **Most recent activity** — the latest timestamp from any node in the subtree
+   (newest first).
+
+```mermaid
+flowchart TD
+    ROOTS[Root sessions] --> SORT{Sort by}
+    SORT --> RUN[1. isSubtreeRunning]
+    SORT --> UNREAD[2. hasSubtreeUnread]
+    SORT --> TIME[3. getSubtreeLatestActivityTime]
+
+    RUN --> |recursive| CHILDREN[Check all children]
+    UNREAD --> |recursive| CHILDREN
+    TIME --> |recursive| CHILDREN
+
+    subgraph "Activity Check"
+        CHILDREN --> LEAF{Is leaf?}
+        LEAF -->|yes| LEAF_CHECK[Return node's activity]
+        LEAF -->|no| RECURSE[Max of node + children]
+    end
+```
+
+### Tree Construction
+
+After sorting roots, children are collected depth-first:
+
+```typescript
+for (const root of sortedRoots) {
+  openCodeTree.push({ ...root, depth: 0 });
+  openCodeTree.push(...collectSubtree(ocNodes, root.openCodeSessionId, 1));
+}
+```
+
+Children at each level are sorted alphabetically by title.
+
+---
+
+## Phase 9 — Tree-Aware Filtering
+
+When the sidebar has a search filter active, the filtering logic is
+**tree-aware** — parents are included when any of their children pass the
+filter, ensuring visible children aren't orphaned in the UI.
+
+```mermaid
+flowchart TD
+    FILTER[User types search query] --> MATCH{Node matches?}
+    MATCH -->|yes| SHOW[Include node]
+    MATCH -->|no| CHILD{Any descendant matches?}
+    CHILD -->|yes| SHOW_PARENT[Include parent as context]
+    CHILD -->|no| HIDE[Exclude node]
+```
+
+This is implemented in the sidebar component by pre-computing which session IDs
+have matching descendants before rendering.
 
 ---
 

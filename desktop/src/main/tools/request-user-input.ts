@@ -3,9 +3,14 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import { randomUUID } from 'crypto';
-import type { PromptUserFn } from '../ipc-prompt';
-import { getPromptTimeoutSeconds } from '../ipc-prompt';
-import { staleConnectionError } from './connection-guard';
+import type { PromptUserFn } from '../ipc/prompt';
+import { getPromptTimeoutSeconds } from '../ipc/prompt';
+import {
+  staleConnectionError,
+  missingSessionIdError,
+  missingSessionIdParamError,
+} from './connection-guard';
+import { claimContextInjections } from '../database';
 
 export function registerRequestUserInput(
   server: McpServer,
@@ -13,6 +18,7 @@ export function registerRequestUserInput(
   promptFn: PromptUserFn,
   connectionId: string,
   connectionName: string,
+  requireSessionId = false,
 ): void {
   server.registerTool(
     'request_user_input',
@@ -35,6 +41,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 - (!important!) **NEVER use plain-text replies when a prompt trigger applies — always use this tool instead.**
 - (!important!) After any task completion, you MUST call this tool to run the mandatory satisfaction check before closing the session.
 - (!important!) **Concrete enforcement on timeout**: When this tool returns a timeout (e.g. "User did not reply: Timeout occurred."), the ONLY valid next action is to call this tool again immediately — in the very next tool call of the same response or the next response. Emitting a plain-text-only turn after a timeout is a policy violation. There is no exception for "the tool is unavailable" — keep calling until the user replies.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -121,16 +128,40 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
           .describe(
             'Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope)',
           ),
+        openCodeSessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct message routing in multi-agent scenarios.',
+          ),
       },
     },
     async (
-      { projectName, message, predefinedOptions, baseDirectory },
+      {
+        projectName,
+        message,
+        predefinedOptions,
+        baseDirectory,
+        openCodeSessionId,
+      },
       extra,
     ): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
 
+      const missingErr = missingSessionIdError(connectionId, requireSessionId);
+      if (missingErr) return missingErr;
+
+      const missingParamErr = missingSessionIdParamError(
+        openCodeSessionId,
+        requireSessionId,
+      );
+      if (missingParamErr) return missingParamErr;
+
       const promptId = randomUUID();
+      const timeoutSeconds = getPromptTimeoutSeconds();
+      const expiresAt =
+        timeoutSeconds > 0 ? Date.now() + timeoutSeconds * 1000 : 0;
       const { answer, attachments } = await promptFn(
         getWindow(),
         {
@@ -141,7 +172,9 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
           baseDirectory,
           connectionId,
           connectionName,
-          timeoutSeconds: getPromptTimeoutSeconds(),
+          timeoutSeconds,
+          expiresAt,
+          openCodeSessionId,
         },
         extra.signal,
       );
@@ -164,9 +197,19 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
         };
       }
 
-      const content: CallToolResult['content'] = [
-        { type: 'text' as const, text: `User replied: ${answer}` },
-      ];
+      const content: CallToolResult['content'] = [];
+
+      // Auto-prepend any pending context injections as system notifications
+      const injectionKey = openCodeSessionId ?? connectionId;
+      const injections = claimContextInjections(injectionKey);
+      for (const injection of injections) {
+        content.push({
+          type: 'text' as const,
+          text: `<system_notification>\n${injection.payload}\n</system_notification>`,
+        });
+      }
+
+      content.push({ type: 'text' as const, text: `User replied: ${answer}` });
 
       if (attachments?.length) {
         for (const att of attachments) {

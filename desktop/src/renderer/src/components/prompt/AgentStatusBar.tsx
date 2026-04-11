@@ -13,6 +13,8 @@ type Props = {
   sessionStatuses: SessionStatus[];
   connectionId: string;
   onDismissStatus: (connectionId: string, timestamp: Date) => void;
+  /** When true, renders inline without border/background wrapper */
+  inline?: boolean;
 };
 
 function StatusDot({ type }: { type: string }): React.ReactElement {
@@ -35,9 +37,50 @@ export default function AgentStatusBar({
   sessionStatuses,
   connectionId,
   onDismissStatus,
+  inline = false,
 }: Props): React.ReactElement {
   const latestStatus = sessionStatuses.at(-1);
 
+  // Inline mode: render compact, no wrapper
+  if (inline) {
+    return (
+      <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+        {/* Session label */}
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="w-1.5 h-1.5 rounded-full bg-[var(--color-agent)] shrink-0" />
+          <span className="text-[10px] font-medium text-[var(--color-text-muted)] whitespace-nowrap">
+            {sessionChannel.label ?? sessionChannel.sessionId}
+          </span>
+        </div>
+        {/* Latest status */}
+        {latestStatus && (
+          <>
+            <span className="text-[var(--color-text-faint)] shrink-0">│</span>
+            <div
+              className="flex items-center gap-1.5 text-[10px] min-w-0"
+              style={{
+                color: STATUS_COLORS[latestStatus.type] ?? STATUS_COLORS.info,
+              }}
+            >
+              <StatusDot type={latestStatus.type} />
+              <span className="truncate">{latestStatus.status}</span>
+              <button
+                onClick={() =>
+                  onDismissStatus(connectionId, latestStatus.timestamp)
+                }
+                className="ml-1 shrink-0 opacity-50 hover:opacity-100 transition-opacity"
+                title="Dismiss"
+              >
+                ×
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    );
+  }
+
+  // Block mode: original layout with borders
   return (
     <div className="border-t shrink-0 border-[var(--color-border)] bg-[var(--color-surface-alt)]">
       <div className="flex items-center gap-1.5 px-3 py-1">

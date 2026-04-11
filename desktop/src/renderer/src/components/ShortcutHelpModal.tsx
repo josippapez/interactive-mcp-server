@@ -32,6 +32,7 @@ export default function ShortcutHelpModal({
           </button>
         </div>
         <div className="space-y-2 text-xs">
+          <ShortcutRow keys="⌘ + K" desc="Quick switcher" />
           <ShortcutRow keys="⌘ + Enter" desc="Submit response" />
           <ShortcutRow keys="⌘ + 1" desc="Prompts tab" />
           <ShortcutRow keys="⌘ + 2" desc="Skills tab" />

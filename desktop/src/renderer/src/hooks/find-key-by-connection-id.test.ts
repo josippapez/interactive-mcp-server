@@ -17,14 +17,18 @@ function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
     connectionId: null,
     hasMcpChannel: false,
     isDirectConnection: false,
+    providerType: null,
     prompt: null,
     activeSession: null,
     channelMessages: [],
     unreadCount: 0,
+    lastReadMessageId: null,
     hasPendingPrompt: false,
     sessionChannel: null,
     sessionStatuses: [],
     baseDirectory: null,
+    pendingPermissions: [],
+    vcsInfo: null,
     ...overrides,
   };
 }

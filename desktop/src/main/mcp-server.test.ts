@@ -49,7 +49,7 @@ vi.mock('express', async (importOriginal) => {
   ): ReturnType<typeof originalFactory> {
     const app = originalFactory(...args);
     // Replace listen with a stub that captures the app but never binds a port.
-    app.listen = function (..._listenArgs: unknown[]) {
+    app.listen = function (..._: unknown[]) {
       capturedApp.current = app;
       return serverStub as unknown as ReturnType<typeof app.listen>;
     } as typeof app.listen;
@@ -85,10 +85,12 @@ vi.mock('./database', () => ({
   getAllRegisteredConnections: vi.fn(() => []),
   upsertRegisteredConnection: vi.fn(),
   isOpenCodeSessionClaimed: vi.fn(() => false),
+  getRegisteredConnectionBySessionId: vi.fn(() => null),
+  updateConnectionId: vi.fn(),
 }));
 
 // ── Mock session-file ─────────────────────────────────────────────────────────
-vi.mock('./session-file', () => ({
+vi.mock('./session/file', () => ({
   writeSessionFile: vi.fn(),
   clearSessionFile: vi.fn(),
   writeMcpConfigHint: vi.fn(),
@@ -101,17 +103,17 @@ vi.mock('./attachment-store', () => ({
 }));
 
 // ── Mock session-registration-cleanup ────────────────────────────────────────
-vi.mock('./session-registration-cleanup', () => ({
+vi.mock('./session/registration-cleanup', () => ({
   pickUnregisteredConnectionsForCleanup: vi.fn(() => []),
 }));
 
 // ── Mock opencode-session ─────────────────────────────────────────────────────
-vi.mock('./opencode-session', () => ({
+vi.mock('./opencode/session', () => ({
   autoDetectOpenCodeSession: vi.fn(() => Promise.resolve(null)),
 }));
 
 // ── Mock session-tree-manager ─────────────────────────────────────────────────
-vi.mock('./session-tree-manager', () => ({
+vi.mock('./session/tree-manager', () => ({
   triggerSessionTreeUpdate: vi.fn(),
 }));
 
@@ -143,6 +145,7 @@ vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
       connect: vi.fn(() => Promise.resolve()),
       close: vi.fn(() => Promise.resolve()),
       tool: vi.fn(),
+      registerTool: vi.fn(),
     };
   }),
 }));
@@ -195,7 +198,7 @@ vi.mock('./api-routes', () => ({
 }));
 
 // ── Mock ipc-prompt ───────────────────────────────────────────────────────────
-vi.mock('./ipc-prompt', () => ({
+vi.mock('./ipc/prompt', () => ({
   cancelActivePrompt: vi.fn(),
   promptUser: vi.fn(),
   setSoundEnabled: vi.fn(),
@@ -209,7 +212,7 @@ vi.mock('./ipc-prompt', () => ({
 // ─────────────────────────────────────────────────────────────────────────────
 import express from 'express';
 import { startMcpServer, stopMcpServer } from './mcp-server';
-import { cancelActivePrompt } from './ipc-prompt';
+import { cancelActivePrompt } from './ipc/prompt';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers

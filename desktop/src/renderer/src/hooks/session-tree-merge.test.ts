@@ -21,14 +21,18 @@ function makeSessionNode(overrides: Partial<SessionNode> = {}): SessionNode {
     connectionId: null,
     hasMcpChannel: false,
     isDirectConnection: false,
+    providerType: null,
     prompt: null,
     activeSession: null,
     channelMessages: [],
     unreadCount: 0,
+    lastReadMessageId: null,
     hasPendingPrompt: false,
     sessionChannel: null,
     sessionStatuses: [],
     baseDirectory: null,
+    pendingPermissions: [],
+    vcsInfo: null,
     ...overrides,
   };
 }
@@ -63,6 +67,8 @@ function makeSnapshot(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
     hasMcpChannel: false,
     baseDirectory: null,
     registeredParentSessionId: null,
+    providerType: null,
+    vcsInfo: null,
     ...overrides,
   };
 }
@@ -434,5 +440,201 @@ describe('partitionNodes', () => {
     expect(openCodeTree[0].depth).toBe(0);
     expect(openCodeTree[1].depth).toBe(1);
     expect(openCodeTree[2].depth).toBe(2);
+  });
+
+  it('sorts roots by running subtrees first (child has pending prompt)', () => {
+    const nodes = new Map<string, SessionNode>([
+      // Root A - no activity
+      [
+        'ses_root_a',
+        makeSessionNode({
+          id: 'ses_root_a',
+          openCodeSessionId: 'ses_root_a',
+          openCodeParentId: null,
+          title: 'Root A',
+        }),
+      ],
+      // Root B - child has pending prompt (should be first)
+      [
+        'ses_root_b',
+        makeSessionNode({
+          id: 'ses_root_b',
+          openCodeSessionId: 'ses_root_b',
+          openCodeParentId: null,
+          title: 'Root B',
+        }),
+      ],
+      [
+        'ses_child_b',
+        makeSessionNode({
+          id: 'ses_child_b',
+          openCodeSessionId: 'ses_child_b',
+          openCodeParentId: 'ses_root_b',
+          title: 'Child B',
+          hasPendingPrompt: true,
+        }),
+      ],
+    ]);
+
+    const { openCodeTree } = partitionNodes(nodes);
+
+    // Root B should come first because its child has a pending prompt
+    expect(openCodeTree[0].id).toBe('ses_root_b');
+    expect(openCodeTree[1].id).toBe('ses_child_b');
+    expect(openCodeTree[2].id).toBe('ses_root_a');
+  });
+
+  it('sorts roots by most recent subtree activity when no running sessions', () => {
+    const oldTime = new Date(Date.now() - 60000); // 1 minute ago
+    const newTime = new Date(Date.now()); // now
+
+    const nodes = new Map<string, SessionNode>([
+      // Root A - older activity
+      [
+        'ses_root_a',
+        makeSessionNode({
+          id: 'ses_root_a',
+          openCodeSessionId: 'ses_root_a',
+          openCodeParentId: null,
+          title: 'Root A',
+          channelMessages: [
+            { id: 'msg-1', kind: 'outbound', text: 'old', timestamp: oldTime },
+          ],
+        }),
+      ],
+      // Root B - child has newer activity (should be first)
+      [
+        'ses_root_b',
+        makeSessionNode({
+          id: 'ses_root_b',
+          openCodeSessionId: 'ses_root_b',
+          openCodeParentId: null,
+          title: 'Root B',
+        }),
+      ],
+      [
+        'ses_child_b',
+        makeSessionNode({
+          id: 'ses_child_b',
+          openCodeSessionId: 'ses_child_b',
+          openCodeParentId: 'ses_root_b',
+          title: 'Child B',
+          channelMessages: [
+            { id: 'msg-2', kind: 'outbound', text: 'new', timestamp: newTime },
+          ],
+        }),
+      ],
+    ]);
+
+    const { openCodeTree } = partitionNodes(nodes);
+
+    // Root B should come first because its child has newer activity
+    expect(openCodeTree[0].id).toBe('ses_root_b');
+    expect(openCodeTree[1].id).toBe('ses_child_b');
+    expect(openCodeTree[2].id).toBe('ses_root_a');
+  });
+
+  it('sorts roots by unread count in subtree when no running sessions', () => {
+    const nodes = new Map<string, SessionNode>([
+      // Root A - no unread
+      [
+        'ses_root_a',
+        makeSessionNode({
+          id: 'ses_root_a',
+          openCodeSessionId: 'ses_root_a',
+          openCodeParentId: null,
+          title: 'Root A',
+        }),
+      ],
+      // Root B - child has unread (should be first)
+      [
+        'ses_root_b',
+        makeSessionNode({
+          id: 'ses_root_b',
+          openCodeSessionId: 'ses_root_b',
+          openCodeParentId: null,
+          title: 'Root B',
+        }),
+      ],
+      [
+        'ses_child_b',
+        makeSessionNode({
+          id: 'ses_child_b',
+          openCodeSessionId: 'ses_child_b',
+          openCodeParentId: 'ses_root_b',
+          title: 'Child B',
+          unreadCount: 3,
+        }),
+      ],
+    ]);
+
+    const { openCodeTree } = partitionNodes(nodes);
+
+    // Root B should come first because its child has unread messages
+    expect(openCodeTree[0].id).toBe('ses_root_b');
+    expect(openCodeTree[1].id).toBe('ses_child_b');
+    expect(openCodeTree[2].id).toBe('ses_root_a');
+  });
+
+  it('keeps children grouped with parents after sorting', () => {
+    const newTime = new Date(Date.now());
+    const oldTime = new Date(Date.now() - 60000);
+
+    const nodes = new Map<string, SessionNode>([
+      // Root A with child - older
+      [
+        'ses_root_a',
+        makeSessionNode({
+          id: 'ses_root_a',
+          openCodeSessionId: 'ses_root_a',
+          openCodeParentId: null,
+          title: 'Root A',
+          channelMessages: [
+            { id: 'msg-1', kind: 'outbound', text: 'old', timestamp: oldTime },
+          ],
+        }),
+      ],
+      [
+        'ses_child_a',
+        makeSessionNode({
+          id: 'ses_child_a',
+          openCodeSessionId: 'ses_child_a',
+          openCodeParentId: 'ses_root_a',
+          title: 'Child A',
+        }),
+      ],
+      // Root B with child - newer
+      [
+        'ses_root_b',
+        makeSessionNode({
+          id: 'ses_root_b',
+          openCodeSessionId: 'ses_root_b',
+          openCodeParentId: null,
+          title: 'Root B',
+          channelMessages: [
+            { id: 'msg-2', kind: 'outbound', text: 'new', timestamp: newTime },
+          ],
+        }),
+      ],
+      [
+        'ses_child_b',
+        makeSessionNode({
+          id: 'ses_child_b',
+          openCodeSessionId: 'ses_child_b',
+          openCodeParentId: 'ses_root_b',
+          title: 'Child B',
+        }),
+      ],
+    ]);
+
+    const { openCodeTree } = partitionNodes(nodes);
+
+    // Root B and its children first, then Root A and its children
+    expect(openCodeTree.map((n) => n.id)).toEqual([
+      'ses_root_b',
+      'ses_child_b',
+      'ses_root_a',
+      'ses_child_a',
+    ]);
   });
 });

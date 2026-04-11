@@ -23,6 +23,12 @@ const startCapability: ToolCapabilityInfo = {
         description:
           'Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session)',
       },
+      openCodeSessionId: {
+        type: 'string',
+        optional: true,
+        description:
+          'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+      },
     },
     required: ['sessionTitle', 'baseDirectory'],
   },
@@ -45,6 +51,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
 - (!important!) Continue the prompt loop until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
 - (!important!) **NEVER use plain-text replies when a prompt trigger applies — use ask_intensive_chat to continue the session.**
 - (!important!) After all questions in the session are asked, close with stop_intensive_chat and then run the mandatory satisfaction check via request_user_input.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -97,6 +104,12 @@ const startSchema: ZodRawShape = {
     .describe(
       'Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session)',
     ),
+  openCodeSessionId: z
+    .string()
+    .optional()
+    .describe(
+      'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+    ),
 };
 
 const startToolDefinition: ToolDefinition = {
@@ -133,6 +146,12 @@ const askCapability: ToolCapabilityInfo = {
         description:
           'Required absolute path to the current repository root (must be a git repo root; autocomplete/search scope for this question)',
       },
+      openCodeSessionId: {
+        type: 'string',
+        optional: true,
+        description:
+          'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+      },
     },
     required: ['sessionId', 'question', 'baseDirectory'],
   },
@@ -150,6 +169,7 @@ Ask a new question in an active intensive chat session previously started with '
 - (!important!) If response is empty or times out for required input, re-prompt and do not proceed with assumptions.
 - (!important!) Keep the loop active until the user explicitly says one of: "Stop prompting", "End session", or "Don't ask anymore".
 - (!important!) **Concrete enforcement on timeout**: When this tool returns a timeout (e.g. "User did not reply to question in intensive chat: Timeout occurred."), the ONLY valid next action is to call this tool again immediately. Emitting a plain-text-only turn after a timeout is a policy violation — keep calling until the user replies.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -201,6 +221,12 @@ const askSchema: ZodRawShape = {
     .describe(
       'Required absolute path to the current repository root (must be a git repo root; autocomplete/search scope for this question)',
     ),
+  openCodeSessionId: z
+    .string()
+    .optional()
+    .describe(
+      'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+    ),
 };
 
 const askToolDefinition: ToolDefinition = {
@@ -220,6 +246,12 @@ const stopCapability: ToolCapabilityInfo = {
         type: 'string',
         description: 'ID of the intensive chat session to stop',
       },
+      openCodeSessionId: {
+        type: 'string',
+        optional: true,
+        description:
+          'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+      },
     },
     required: ['sessionId'],
   },
@@ -234,6 +266,7 @@ const stopDescription: ToolRegistrationDescription = `<description>
 - (!important!) Frees up system resources.
 - (!important!) **Should always be called** as the final step when finished with an intensive chat session, typically at the end of the response message where 'start_intensive_chat' was called.
 - (!important!) Only stop the session when the user explicitly wants to end prompting, such as with "Stop prompting", "End session", or "Don't ask anymore".
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -265,6 +298,12 @@ const stopDescription: ToolRegistrationDescription = `<description>
 
 const stopSchema: ZodRawShape = {
   sessionId: z.string().describe('ID of the intensive chat session to stop'),
+  openCodeSessionId: z
+    .string()
+    .optional()
+    .describe(
+      'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+    ),
 };
 
 const stopToolDefinition: ToolDefinition = {

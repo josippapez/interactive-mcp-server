@@ -29,6 +29,7 @@ export function useProviderInjection(
     outboundId: string,
     message: string,
     attachments?: Attachment[],
+    noReply?: boolean,
   ) => Promise<void>;
 } {
   const inject = useCallback(
@@ -37,6 +38,7 @@ export function useProviderInjection(
       outboundId: string,
       message: string,
       attachments?: Attachment[],
+      noReply = true,
     ): Promise<void> => {
       const providerStatus = await window.api.getProviderStatus();
 
@@ -132,6 +134,19 @@ export function useProviderInjection(
 
       if (!providerSessionId) {
         // No provider session — SQLite queue is the delivery. Mark sent immediately.
+        // Also inject doc context into the SQLite queue for poll_context_injections delivery.
+        try {
+          if (node?.docContextEnabled !== false) {
+            await window.api.injectDocContext?.(
+              connectionId,
+              null,
+              message,
+              baseDirectory,
+            );
+          }
+        } catch {
+          // Fire-and-forget — doc context failure must not block message delivery
+        }
         if (nodeKey) {
           withNode(nodeKey, (n) => ({
             ...n,
@@ -174,6 +189,7 @@ export function useProviderInjection(
                 sid,
                 message,
                 attachments,
+                noReply,
               )) ?? { ok: false, error: 'OpenCode inject bridge unavailable' },
             reResolve: async (cid: string, dir?: string) =>
               (await window.api.reResolveSession(cid, dir)) ?? {

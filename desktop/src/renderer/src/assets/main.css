@@ -148,3 +148,161 @@ textarea::placeholder {
 .msg-system {
   border-left: 3px solid var(--color-tool);
 }
+
+/* ===== Compact Mode ===== */
+[data-compact='true'] {
+  font-size: 12px;
+}
+
+[data-compact='true'] .compact\:text-xs {
+  font-size: 11px;
+}
+
+[data-compact='true'] .compact\:text-\[10px\] {
+  font-size: 10px;
+}
+
+[data-compact='true'] .compact\:py-0\.5 {
+  padding-top: 0.125rem;
+  padding-bottom: 0.125rem;
+}
+
+[data-compact='true'] .compact\:py-1 {
+  padding-top: 0.25rem;
+  padding-bottom: 0.25rem;
+}
+
+[data-compact='true'] .compact\:px-2 {
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+}
+
+[data-compact='true'] .compact\:gap-1 {
+  gap: 0.25rem;
+}
+
+[data-compact='true'] .compact\:gap-0\.5 {
+  gap: 0.125rem;
+}
+
+/* Global compact overrides */
+[data-compact='true'] .msg-user,
+[data-compact='true'] .msg-agent,
+[data-compact='true'] .msg-agent-info,
+[data-compact='true'] .msg-system {
+  padding: 0.375rem 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+/* Sidebar items in compact mode */
+[data-compact='true'] [data-sidebar-item] {
+  padding: 0.25rem 0.5rem;
+  font-size: 11px;
+}
+
+/* Header/nav in compact mode */
+[data-compact='true'] header {
+  padding-top: 1.5rem;
+  padding-bottom: 0.25rem;
+}
+
+/* Chat messages in compact mode */
+[data-compact='true'] [data-chat-message] {
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.125rem;
+}
+
+/* Composer in compact mode */
+[data-compact='true'] [data-composer] {
+  padding: 0.375rem;
+}
+
+/* Status bar in compact mode */
+[data-compact='true'] [data-status-bar] {
+  padding: 0.125rem 0.5rem;
+  font-size: 10px;
+}
+
+/* Todo list in compact mode */
+[data-compact='true'] [data-todo-item] {
+  padding: 0.25rem 0.5rem;
+  font-size: 11px;
+}
+
+/* Prose/markdown content in compact mode */
+[data-compact='true'] .prose {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+[data-compact='true'] .prose p {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+}
+
+[data-compact='true'] .prose h1 {
+  font-size: 1.25rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+[data-compact='true'] .prose h2 {
+  font-size: 1.1rem;
+  margin-top: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+[data-compact='true'] .prose h3 {
+  font-size: 1rem;
+  margin-top: 0.375rem;
+  margin-bottom: 0.25rem;
+}
+
+[data-compact='true'] .prose ul,
+[data-compact='true'] .prose ol {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+  padding-left: 1.25rem;
+}
+
+[data-compact='true'] .prose li {
+  margin-top: 0.125rem;
+  margin-bottom: 0.125rem;
+}
+
+[data-compact='true'] .prose pre {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+  padding: 0.5rem;
+}
+
+[data-compact='true'] .prose code {
+  font-size: 11px;
+}
+
+[data-compact='true'] .prose blockquote {
+  margin-top: 0.25rem;
+  margin-bottom: 0.25rem;
+  padding-left: 0.75rem;
+}
+
+[data-compact='true'] .prose table {
+  font-size: 11px;
+}
+
+[data-compact='true'] .prose hr {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+/* Split view divider */
+.split-divider {
+  width: 4px;
+  cursor: col-resize;
+  background: var(--color-border);
+  transition: background 0.15s;
+}
+
+.split-divider:hover {
+  background: var(--color-agent);
+}

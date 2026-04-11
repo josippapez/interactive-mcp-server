@@ -22,15 +22,18 @@ function makeNode(
     connectionId: connectionId ?? null,
     hasMcpChannel: false,
     isDirectConnection: false,
+    providerType: null,
     prompt: null,
     activeSession: null,
     channelMessages: [],
     unreadCount: 0,
+    lastReadMessageId: null,
     hasPendingPrompt: false,
     sessionChannel: null,
     sessionStatuses: [],
     baseDirectory: null,
     pendingPermissions: [],
+    vcsInfo: null,
   };
 }
 
@@ -68,14 +71,26 @@ describe('findKeyByConnectionId', () => {
     );
   });
 
-  it('prefers direct connectionId match over openCodeSessionId fallback', () => {
+  it('prefers openCodeSessionId over connectionId when openCodeSessionId is provided', () => {
     // Two nodes: one with matching connectionId, another with matching openCodeSessionId key.
+    // This simulates OpenCode's shared MCP client where multiple sessions share the same connectionId.
+    // When the caller provides openCodeSessionId, that should take priority over connectionId.
+    const nodes = new Map([
+      ['ses_a', makeNode('ses_a', 'ses_a', null, 'uuid-shared')],
+      ['ses_b', makeNode('ses_b', 'ses_b', null, 'uuid-shared')],
+    ]);
+    // openCodeSessionId hint wins when provided - routes to the correct subagent
+    expect(findKeyByConnectionId(nodes, 'uuid-shared', 'ses_b')).toBe('ses_b');
+  });
+
+  it('falls back to connectionId when openCodeSessionId is not provided', () => {
+    // When no openCodeSessionId is provided, fall back to connectionId matching
     const nodes = new Map([
       ['ses_a', makeNode('ses_a', 'ses_a', null, 'uuid-match')],
       ['ses_b', makeNode('ses_b', 'ses_b', null, 'auto-ses_b')],
     ]);
-    // Direct match wins even when openCodeSessionId hint points to ses_b
-    expect(findKeyByConnectionId(nodes, 'uuid-match', 'ses_b')).toBe('ses_a');
+    // No openCodeSessionId hint - use connectionId matching
+    expect(findKeyByConnectionId(nodes, 'uuid-match')).toBe('ses_a');
   });
 
   it('returns null when openCodeSessionId hint has no corresponding node', () => {

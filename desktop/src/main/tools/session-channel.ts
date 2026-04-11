@@ -2,11 +2,16 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
-import { staleConnectionError } from './connection-guard';
+import {
+  staleConnectionError,
+  missingSessionIdError,
+  missingSessionIdParamError,
+} from './connection-guard';
 import {
   appendSessionChannelMessage,
   getRegisteredConnection,
 } from '../database';
+import { sendSessionStatus, sendAgentMessage } from '../ipc/channel';
 
 /** Returns an actionable error if the agent hasn't called register_connection yet. */
 function unregisteredConnectionError(
@@ -35,6 +40,7 @@ export function registerSessionChannelTools(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
   connectionId: string,
+  requireSessionId = false,
 ): void {
   // ─── Tool: push_session_status ───
   server.registerTool(
@@ -49,6 +55,7 @@ Push a non-blocking status update to the UI. Returns immediately. Use to keep th
 - (!important!) Use frequently to keep the user informed of progress on long-running tasks.
 - (!important!) Do NOT use as a substitute for request_user_input when user input is needed.
 - (!important!) This is a one-way status push; it does not collect a response from the user.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -92,19 +99,39 @@ Push a non-blocking status update to the UI. Returns immediately. Use to keep th
           .enum(['info', 'working', 'success', 'error'])
           .optional()
           .describe('Visual type for the status indicator'),
+        openCodeSessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing.',
+          ),
       },
     },
-    async ({ status, type = 'info' }): Promise<CallToolResult> => {
+    async ({
+      status,
+      type = 'info',
+      openCodeSessionId,
+    }): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
 
-      getWindow()?.webContents.send('session-status-update', {
+      const missingErr = missingSessionIdError(connectionId, requireSessionId);
+      if (missingErr) return missingErr;
+
+      const missingParamErr = missingSessionIdParamError(
+        openCodeSessionId,
+        requireSessionId,
+      );
+      if (missingParamErr) return missingParamErr;
+
+      // Use the centralized IPC channel abstraction
+      sendSessionStatus(
+        getWindow(),
         connectionId,
+        openCodeSessionId,
         status,
         type,
-        openCodeSessionId:
-          getRegisteredConnection(connectionId)?.openCodeSessionId ?? null,
-      });
+      );
 
       return {
         content: [
@@ -122,6 +149,7 @@ export function registerSendMessageTool(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
   connectionId: string,
+  requireSessionId = false,
 ): void {
   // ─── Tool: send_message ───
   server.registerTool(
@@ -136,6 +164,7 @@ Send a visible, persistent message directly into the desktop app channel history
 - (!important!) The message is persisted in channel history and survives app restarts.
 - (!important!) Use this for informational updates that the user should see but doesn't need to reply to.
 - (!important!) For status badges (transient, not persisted), use push_session_status instead.
+- (!important!) You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call. It was injected into your context at session start.
 </importantNotes>
 
 <whenToUseThisTool>
@@ -164,11 +193,26 @@ Send a visible, persistent message directly into the desktop app channel history
         message: z
           .string()
           .describe('The message text to display. Markdown is supported.'),
+        openCodeSessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing.',
+          ),
       },
     },
-    async ({ message }): Promise<CallToolResult> => {
+    async ({ message, openCodeSessionId }): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
+
+      const missingErr = missingSessionIdError(connectionId, requireSessionId);
+      if (missingErr) return missingErr;
+
+      const missingParamErr = missingSessionIdParamError(
+        openCodeSessionId,
+        requireSessionId,
+      );
+      if (missingParamErr) return missingParamErr;
 
       const unregisteredErr = unregisteredConnectionError(connectionId);
       if (unregisteredErr) return unregisteredErr;
@@ -179,12 +223,8 @@ Send a visible, persistent message directly into the desktop app channel history
         messageText: message,
       });
 
-      getWindow()?.webContents.send('agent-message', {
-        connectionId,
-        message,
-        openCodeSessionId:
-          getRegisteredConnection(connectionId)?.openCodeSessionId ?? null,
-      });
+      // Use the centralized IPC channel abstraction
+      sendAgentMessage(getWindow(), connectionId, openCodeSessionId, message);
 
       return {
         content: [

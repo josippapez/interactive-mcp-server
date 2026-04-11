@@ -7,7 +7,7 @@
  * unit-tested without React, Electron, or IPC.
  */
 
-import type { SessionNode } from '../types';
+import type { ProviderType, SessionNode, VcsInfo } from '../types';
 
 /**
  * Shape of a single node in the session-tree snapshot emitted by the
@@ -24,6 +24,8 @@ export interface SnapshotNode {
   hasMcpChannel: boolean;
   baseDirectory: string | null;
   registeredParentSessionId: string | null;
+  providerType: ProviderType | null;
+  vcsInfo: VcsInfo | null;
 }
 
 /**
@@ -98,6 +100,8 @@ export function mergeSessionTreeSnapshot(
       hasMcpChannel: snap.hasMcpChannel,
       isDirectConnection: false,
       baseDirectory: snap.baseDirectory,
+      providerType: snap.providerType ?? mergeSource?.providerType ?? null,
+      vcsInfo: snap.vcsInfo ?? mergeSource?.vcsInfo ?? null,
       sessionChannel: snap.connectionId
         ? {
             sessionId: snap.connectionId,
@@ -114,6 +118,7 @@ export function mergeSessionTreeSnapshot(
       activeSession: mergeSource?.activeSession ?? null,
       channelMessages: mergeSource?.channelMessages ?? [],
       unreadCount: mergeSource?.unreadCount ?? 0,
+      lastReadMessageId: mergeSource?.lastReadMessageId ?? null,
       hasPendingPrompt: promptSource?.hasPendingPrompt ?? false,
       sessionStatuses: mergeSource?.sessionStatuses ?? [],
       pendingPermissions: mergeSource?.pendingPermissions ?? [],
@@ -135,9 +140,75 @@ export function mergeSessionTreeSnapshot(
 }
 
 /**
+ * Get the most recent activity timestamp from a node (status or message).
+ */
+function getLatestActivityTime(node: SessionNode): number {
+  return Math.max(
+    node.sessionStatuses.at(-1)?.timestamp.getTime() ?? 0,
+    node.channelMessages.at(-1)?.timestamp.getTime() ?? 0,
+  );
+}
+
+/**
+ * Get the most recent activity time across an entire subtree (node + all descendants).
+ */
+function getSubtreeLatestActivityTime(
+  node: SessionNode,
+  allNodes: SessionNode[],
+): number {
+  const nodeTime = getLatestActivityTime(node);
+
+  // Find all children recursively
+  const children = allNodes.filter(
+    (n) => n.openCodeParentId === node.openCodeSessionId,
+  );
+
+  if (children.length === 0) return nodeTime;
+
+  const childTimes = children.map((child) =>
+    getSubtreeLatestActivityTime(child, allNodes),
+  );
+
+  return Math.max(nodeTime, ...childTimes);
+}
+
+/**
+ * Check if a node or any of its descendants is "running" (has activity).
+ */
+function isSubtreeRunning(node: SessionNode, allNodes: SessionNode[]): boolean {
+  const isNodeActive =
+    node.hasPendingPrompt ||
+    node.sessionStatuses.some((s) => s.type === 'working');
+
+  if (isNodeActive) return true;
+
+  // Check children recursively
+  const children = allNodes.filter(
+    (n) => n.openCodeParentId === node.openCodeSessionId,
+  );
+
+  return children.some((child) => isSubtreeRunning(child, allNodes));
+}
+
+/**
+ * Check if a node or any of its descendants has unread messages.
+ */
+function hasSubtreeUnread(node: SessionNode, allNodes: SessionNode[]): boolean {
+  if (node.unreadCount > 0) return true;
+
+  const children = allNodes.filter(
+    (n) => n.openCodeParentId === node.openCodeSessionId,
+  );
+
+  return children.some((child) => hasSubtreeUnread(child, allNodes));
+}
+
+/**
  * Partition SessionNode map into two ordered lists:
  * - `openCodeTree`: root OpenCode sessions with their subagents in
- *   depth-first order.
+ *   depth-first order. Roots are sorted by most recent activity in their
+ *   subtree (running first, then by timestamp). Children stay grouped
+ *   under their parents.
  * - `directConnections`: MCP agents with no associated OpenCode session.
  */
 export function partitionNodes(nodes: Map<string, SessionNode>): {
@@ -150,8 +221,30 @@ export function partitionNodes(nodes: Map<string, SessionNode>): {
   const ocNodes = all.filter((n) => !n.isDirectConnection);
   const roots = ocNodes.filter((n) => n.openCodeParentId === null);
 
+  // Sort roots by: running subtrees first, then by most recent subtree activity
+  const sortedRoots = [...roots].sort((a, b) => {
+    const aRunning = isSubtreeRunning(a, ocNodes);
+    const bRunning = isSubtreeRunning(b, ocNodes);
+
+    if (aRunning && !bRunning) return -1;
+    if (!aRunning && bRunning) return 1;
+
+    // Secondary: unread in subtree
+    const aUnread = hasSubtreeUnread(a, ocNodes);
+    const bUnread = hasSubtreeUnread(b, ocNodes);
+
+    if (aUnread && !bUnread) return -1;
+    if (!aUnread && bUnread) return 1;
+
+    // Tertiary: most recent activity in subtree
+    const aLatest = getSubtreeLatestActivityTime(a, ocNodes);
+    const bLatest = getSubtreeLatestActivityTime(b, ocNodes);
+
+    return bLatest - aLatest; // Descending (newest first)
+  });
+
   const openCodeTree: SessionNode[] = [];
-  for (const root of roots) {
+  for (const root of sortedRoots) {
     openCodeTree.push({ ...root, depth: 0 });
     openCodeTree.push(...collectSubtree(ocNodes, root.openCodeSessionId, 1));
   }

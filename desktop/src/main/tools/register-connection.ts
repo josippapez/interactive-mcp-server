@@ -1,25 +1,29 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
-import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
-import {
-  upsertRegisteredConnection,
-  createSessionChannel,
-  isOpenCodeSessionClaimed,
-  getConnectionClaimingSession,
-  clearConnectionOpenCodeSession,
-  listSkillsAndInstructions,
-  getRegisteredConnection,
-} from '../database';
-import { autoDetectOpenCodeSession } from '../opencode-session';
-import {
-  triggerSessionTreeUpdate,
-  recordPendingConnection,
-} from '../session-tree-manager';
-import { initDocContext } from '../doc-context-injector';
-import { injectOpenCodeMessage } from '../opencode-injector';
+import { z } from 'zod';
 import { getBackendAdapter } from '../backend-adapter';
+import {
+  createSessionChannel,
+  listSkillsAndInstructions,
+  upsertRegisteredConnection,
+  type RegisteredConnection,
+} from '../database';
+// Note: tryClaimOpenCodeSession was removed in Phase 2 — openCodeSessionId is
+// now the PK, so there is no "claiming" step. Each agent upserts its own row.
+import { initDocContext } from '../docs/context-injector';
+import { sendSessionStatus } from '../ipc/channel';
+import { injectOpenCodeMessage } from '../opencode/injector';
+import { autoDetectOpenCodeSession } from '../opencode/session';
+import {
+  recordPendingConnection,
+  triggerSessionTreeUpdate,
+} from '../session/tree-manager';
 import type { AgentBackend } from '../settings';
+import { buildStartupContextMessage } from './startup-context';
+
+/** Provider types supported by the multi-provider architecture. */
+export type ProviderType = RegisteredConnection['providerType'];
 
 const REGISTER_CONNECTION_TIMEOUT_MS = 15_000;
 const REGISTER_CONNECTION_TIMEOUT_MESSAGE =
@@ -65,75 +69,6 @@ function isRegisterConnectionTimeoutError(error: unknown): boolean {
   );
 }
 
-function buildStartupContextMessage(params: {
-  channelName: string;
-  projectName: string;
-  baseDirectory?: string;
-}): string {
-  const { channelName, projectName, baseDirectory } = params;
-  const locationLine = baseDirectory
-    ? `- Base directory: ${baseDirectory}`
-    : '- Base directory: not provided';
-
-  const lines = [
-    '<system-reminder>',
-    'Interactive MCP Desktop session bootstrap:',
-    `- Registered agent: ${channelName}`,
-    `- Project: ${projectName}`,
-    locationLine,
-    '- Prompting policy: use interactive prompt tools for user questions.',
-    '- Timeout policy: if a prompt times out or returns a timeout error (including -32001), re-prompt immediately.',
-    '- Stop phrases (exact match): "Stop prompting", "End session", "Don\'t ask anymore", "Close conversation".',
-    '- Parallel subagents should use unique agent names to avoid sidebar name collisions.',
-  ];
-
-  // Inject all registered skills and instructions
-  const entries = listSkillsAndInstructions();
-  if (entries.length > 0) {
-    const skills = entries.filter((e) => e.type === 'skill');
-    const instructions = entries.filter((e) => e.type === 'instruction');
-
-    if (skills.length > 0) {
-      lines.push('');
-      lines.push('Available Skills:');
-      for (const skill of skills) {
-        lines.push(`- ${skill.name}: ${skill.description}`);
-      }
-    }
-
-    if (instructions.length > 0) {
-      lines.push('');
-      lines.push('Active Instructions:');
-      for (const instruction of instructions) {
-        lines.push(`- ${instruction.name}: ${instruction.description}`);
-      }
-    }
-
-    lines.push('');
-    lines.push(
-      'Use the manage_skills_and_instructions tool with action "get" to retrieve the full content of any skill or instruction by name.',
-    );
-  }
-
-  lines.push('</system-reminder>');
-  return lines.join('\n');
-}
-
-function pushSessionStatus(
-  getWindow: () => BrowserWindow | null,
-  connectionId: string,
-  status: string,
-  type: 'info' | 'working' | 'success' | 'error',
-): void {
-  getWindow()?.webContents.send('session-status-update', {
-    connectionId,
-    status,
-    type,
-    openCodeSessionId:
-      getRegisteredConnection(connectionId)?.openCodeSessionId ?? null,
-  });
-}
-
 export function registerConnectionTool(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
@@ -141,8 +76,8 @@ export function registerConnectionTool(
   getOpenCodePort: () => number,
   getDocIndexingEnabled: () => boolean,
   getAgentBackend: () => AgentBackend,
+  getDetectedProvider: () => ProviderType,
   onRegistered?: (connectionId: string) => void | Promise<void>,
-  isConnectionLive?: (connectionId: string) => boolean,
 ): void {
   server.registerTool(
     'register_connection',
@@ -161,7 +96,8 @@ After registration, your channel will appear in the app's sidebar with the given
 - (!important!) Use clear, human-readable channelName values so channels are easy to distinguish in the sidebar.
 - (!important!) For spawned/parallel subagents, use a unique task label (for example "Research Agent A", "Research Agent B") to avoid duplicate names.
 - (!important!) If you pass baseDirectory and omit openCodeSessionId, the desktop app will auto-detect your active session for context injection — this is the correct path for the main agent.
-- (!important!) If you are a subagent spawned via the Task tool, you MUST pass your own OpenCode session ID via the openCodeSessionId parameter. Without it your channel will have no injection target and messages typed in your channel will not reach you.
+- (!important!) If you are a subagent spawned via the Task tool, your openCodeSessionId was automatically injected into your context via a <system-reminder> message before your first tool call. Use that value as openCodeSessionId here.
+- (!important!) SESSION_ALREADY_CLAIMED errors no longer occur. If you see one in old context, ignore it — call register_connection with your openCodeSessionId directly.
 - (!important!) This tool has a hard 15-second deadline; if registration does not complete in time, it fails so callers can retry cleanly.
 </importantNotes>
 
@@ -220,6 +156,10 @@ After registration, your channel will appear in the app's sidebar with the given
       const startedAt = Date.now();
       const backend = await getBackendAdapter(getAgentBackend());
 
+      // Determine provider type from environment variable or global setting fallback.
+      // The environment variable takes precedence and is set per-connection via MCP config.
+      const detectedProvider = getDetectedProvider();
+
       // Use explicitly provided session ID if given.
       // Only auto-detect when baseDirectory is also provided — that is the
       // reliable signal that this is the main agent calling from a real project
@@ -236,9 +176,10 @@ After registration, your channel will appear in the app's sidebar with the given
       }
 
       if (backend.backend === 'claude_sdk' && backend.runtime?.available) {
-        pushSessionStatus(
-          getWindow,
+        sendSessionStatus(
+          getWindow(),
           connectionId,
+          openCodeSessionId,
           'Claude SDK backend active (session injection adapter scaffolded)',
           'info',
         );
@@ -254,29 +195,10 @@ After registration, your channel will appear in the app's sidebar with the given
           startedAt,
         );
         if (detected) {
-          // Guard: only bind to the detected session if it isn't already
-          // claimed by a LIVE connection. If the claiming connection's
-          // transport is dead (stale DB record from a previous run), clear
-          // the claim and take over — this is the normal reconnect path.
-          const claimingId = getConnectionClaimingSession(
-            detected.id,
-            connectionId,
-          );
-          const claimedByLive =
-            claimingId != null &&
-            (isConnectionLive == null || isConnectionLive(claimingId));
-
-          if (!claimedByLive) {
-            if (claimingId != null) {
-              // Stale claim — release it so the new connection can bind.
-              clearConnectionOpenCodeSession(claimingId);
-              console.log(
-                `[register-connection] released stale claim on session ${detected.id} from dead connection ${claimingId}`,
-              );
-            }
-            openCodeSessionId = detected.id;
-            parentSessionId = detected.parentId;
-          }
+          // Phase 2: openCodeSessionId is the PK — no claiming step needed.
+          // Each agent owns its own row, keyed by its session ID.
+          openCodeSessionId = detected.id;
+          parentSessionId = detected.parentId;
         }
       } else if (backend.supportsProviderInjection && openCodeSessionId) {
         // When session ID is explicit, try to fetch its parentID from the API.
@@ -309,13 +231,21 @@ After registration, your channel will appear in the app's sidebar with the given
 
       ensureRegisterConnectionTimeRemaining(startedAt);
 
-      // Persist registration: upsert DB record + write /tmp ID file
+      // Persist registration: upsert DB record + write /tmp ID file.
+      // Use composite key (providerType, providerSessionId) for isolation.
+      // For OpenCode clients, use the OpenCode session ID.
+      // For non-OpenCode clients, use connectionId as the provider session ID.
+      const effectiveSessionId = openCodeSessionId ?? connectionId;
+      const effectiveProviderType = openCodeSessionId
+        ? 'opencode'
+        : detectedProvider;
       const idFilePath = upsertRegisteredConnection({
+        providerSessionId: effectiveSessionId,
+        providerType: effectiveProviderType,
         connectionId,
         channelName,
         projectName,
         baseDirectory,
-        openCodeSessionId: openCodeSessionId ?? undefined,
         parentSessionId: parentSessionId ?? undefined,
       });
 
@@ -334,7 +264,7 @@ After registration, your channel will appear in the app's sidebar with the given
       // Immediately push a fresh session-tree snapshot so the renderer
       // reflects the new registration without waiting for the next poll tick.
       if (backend.supportsSessionHierarchy) {
-        void triggerSessionTreeUpdate(getWindow, getOpenCodePort);
+        void triggerSessionTreeUpdate(getWindow);
       }
 
       // Kick off doc indexing and context injection in the background.
@@ -354,10 +284,15 @@ After registration, your channel will appear in the app's sidebar with the given
         );
       }
 
+      // Build startup context message using the extracted pure function.
+      // Pass all registered entries so instructions get full content injection
+      // and skills get name+description only.
       const startupContextMessage = buildStartupContextMessage({
         channelName,
         projectName,
         baseDirectory,
+        openCodeSessionId: openCodeSessionId ?? undefined,
+        entries: listSkillsAndInstructions(),
       });
 
       // Provider-aware startup injection (Phase 1):
@@ -366,9 +301,10 @@ After registration, your channel will appear in the app's sidebar with the given
       // - Standalone path: include the same context as part of this tool result
       //   so the caller still receives deterministic startup context.
       if (backend.supportsProviderInjection && openCodeSessionId) {
-        pushSessionStatus(
-          getWindow,
+        sendSessionStatus(
+          getWindow(),
           connectionId,
+          openCodeSessionId,
           'Injecting startup context into OpenCode session…',
           'working',
         );
@@ -382,34 +318,38 @@ After registration, your channel will appear in the app's sidebar with the given
           );
 
           if (injectionResult.ok) {
-            pushSessionStatus(
-              getWindow,
+            sendSessionStatus(
+              getWindow(),
               connectionId,
+              openCodeSessionId,
               'Startup context injected into OpenCode session',
               'success',
             );
             return;
           }
 
-          pushSessionStatus(
-            getWindow,
+          sendSessionStatus(
+            getWindow(),
             connectionId,
+            openCodeSessionId,
             `Startup context injection failed: ${injectionResult.error ?? 'unknown error'}`,
             'error',
           );
         })();
       } else {
-        pushSessionStatus(
-          getWindow,
+        sendSessionStatus(
+          getWindow(),
           connectionId,
+          openCodeSessionId,
           `Startup context prepared (${backend.backend} mode)`,
           'info',
         );
 
         if (backend.runtime && !backend.runtime.available) {
-          pushSessionStatus(
-            getWindow,
+          sendSessionStatus(
+            getWindow(),
             connectionId,
+            openCodeSessionId,
             backend.runtime.message,
             'error',
           );

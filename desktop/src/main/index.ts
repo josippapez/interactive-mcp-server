@@ -1,24 +1,31 @@
 import { app, BrowserWindow, Tray } from 'electron';
 import { electronApp, optimizer } from '@electron-toolkit/utils';
 import { startMcpServer, stopMcpServer } from './mcp-server';
-import { initDatabase } from './database';
+import { initDatabase, seedBuiltinTemplates } from './database';
 import { defaultSettings, loadSettings, type AppSettings } from './settings';
 import { createWindow } from './window';
 import { createTray } from './tray';
-import { registerIpcHandlers } from './ipc-handlers';
+import { registerIpcHandlers } from './ipc/handlers';
 import {
   startSessionTreeManager,
   stopSessionTreeManager,
-} from './session-tree-manager';
+} from './session/tree-manager';
 import {
   startBusEventSubscription,
   stopBusEventSubscription,
-} from './opencode-bus-events';
-import { reconcileSessionConnections } from './session-reconnect';
-import { startOpenCodeServer, stopOpenCodeServer } from './opencode-server';
-import { syncRemoteConfig } from './opencode-config-sync';
+} from './opencode/bus-events';
+import { reconcileSessionConnections } from './session/reconnect';
+import { startOpenCodeServer, stopOpenCodeServer } from './opencode/server';
+import { syncRemoteConfig } from './opencode/config-sync';
 import { detectClaudeSdkRuntime } from './claude-sdk-runtime';
-import { registerMcpWithRetry } from './opencode-mcp-register';
+import { registerMcpWithRetry } from './opencode/mcp-register';
+import { BUILTIN_TEMPLATES } from './builtin-templates';
+import {
+  initializeConversationProviders,
+  stopConversationProviders,
+  registerConversationHandlers,
+  updateConversationPort,
+} from './conversation';
 
 let mainWindow: BrowserWindow | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -41,14 +48,30 @@ app.whenReady().then(async () => {
     openAsHidden: currentSettings.launchAtLogin,
   });
 
+  // Seed built-in templates on first launch (only inserts if not already present)
+  const seededCount = seedBuiltinTemplates(BUILTIN_TEMPLATES);
+  if (seededCount > 0) {
+    console.log(`[builtin-templates] Seeded ${seededCount} built-in templates`);
+  }
+
   // Register IPC handlers
   registerIpcHandlers({
     getMainWindow: () => mainWindow,
     getSettings: () => currentSettings,
     setSettings: (settings: AppSettings) => {
+      // Track if OpenCode port changed for conversation provider update
+      const portChanged =
+        settings.openCodePort !== currentSettings.openCodePort;
       currentSettings = settings;
+      // Update conversation provider port if it changed
+      if (portChanged) {
+        updateConversationPort(settings.openCodePort);
+      }
     },
   });
+
+  // Register conversation IPC handlers
+  registerConversationHandlers();
 
   // Start MCP server (pass getter so it always has the current window)
   await startMcpServer(
@@ -114,6 +137,12 @@ app.whenReady().then(async () => {
         `[startup-register] status=${result.status}${result.error ? ` error=${result.error}` : ''}`,
       );
     });
+
+    // Initialize conversation providers for mirroring OpenCode conversations
+    initializeConversationProviders({
+      getMainWindow: () => mainWindow,
+      getOpenCodePort: () => currentSettings.openCodePort,
+    });
   } else if (currentSettings.agentBackend === 'claude_sdk') {
     const claudeRuntime = await detectClaudeSdkRuntime();
     console.log(`[claude-sdk] ${claudeRuntime.message}`);
@@ -152,6 +181,7 @@ app.on('before-quit', () => {
   isQuitting = true;
   stopSessionTreeManager();
   stopBusEventSubscription();
+  stopConversationProviders();
   stopOpenCodeServer();
   stopMcpServer();
 });

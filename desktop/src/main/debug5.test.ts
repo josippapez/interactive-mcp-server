@@ -40,20 +40,20 @@ vi.mock('./database', () => ({
   upsertRegisteredConnection: vi.fn(),
   isOpenCodeSessionClaimed: vi.fn(() => false),
 }));
-vi.mock('./session-file', () => ({
+vi.mock('./session/file', () => ({
   writeSessionFile: vi.fn(),
   clearSessionFile: vi.fn(),
   writeMcpConfigHint: vi.fn(),
   MCP_CONFIG_FILE: '/tmp/x',
 }));
 vi.mock('./attachment-store', () => ({ cleanupOldAttachments: vi.fn() }));
-vi.mock('./session-registration-cleanup', () => ({
+vi.mock('./session/registration-cleanup', () => ({
   pickUnregisteredConnectionsForCleanup: vi.fn(() => []),
 }));
-vi.mock('./opencode-session', () => ({
+vi.mock('./opencode/session', () => ({
   autoDetectOpenCodeSession: vi.fn(() => Promise.resolve(null)),
 }));
-vi.mock('./session-tree-manager', () => ({
+vi.mock('./session/tree-manager', () => ({
   triggerSessionTreeUpdate: vi.fn(),
 }));
 vi.mock('./tools/request-user-input', () => ({
@@ -81,6 +81,7 @@ vi.mock('@modelcontextprotocol/sdk/server/mcp.js', () => ({
       connect: vi.fn(() => Promise.resolve()),
       close: vi.fn(() => Promise.resolve()),
       tool: vi.fn(),
+      registerTool: vi.fn(),
     };
   }),
 }));
@@ -96,7 +97,7 @@ vi.mock('./api-routes', () => ({
     return m;
   }),
 }));
-vi.mock('./ipc-prompt', () => ({
+vi.mock('./ipc/prompt', () => ({
   cancelActivePrompt: vi.fn(),
   promptUser: vi.fn(),
   setSoundEnabled: vi.fn(),
@@ -141,7 +142,7 @@ vi.mock('@modelcontextprotocol/sdk/server/streamableHttp.js', () => ({
 
 import express from 'express';
 import { startMcpServer, stopMcpServer } from './mcp-server';
-import { cancelActivePrompt } from './ipc-prompt';
+import { cancelActivePrompt } from './ipc/prompt';
 
 describe('debug5 — full flow', () => {
   beforeEach(async () => {

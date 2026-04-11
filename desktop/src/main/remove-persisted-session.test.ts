@@ -39,7 +39,10 @@ describe('removePersistedSession', () => {
     expect(deps.forceTerminateChat).toHaveBeenCalledWith('conn-123');
     expect(deps.closeSessionByConnectionId).toHaveBeenCalledWith('conn-123');
     expect(deps.deleteSessionChannel).toHaveBeenCalledWith('conn-123');
-    expect(deps.deleteRegisteredConnection).toHaveBeenCalledWith('conn-123');
+    // deleteRegisteredConnection now takes the openCodeSessionId (PK), not connectionId
+    expect(deps.deleteRegisteredConnection).toHaveBeenCalledWith(
+      'oc-session-123',
+    );
     expect(deps.markConnectionDeleted).toHaveBeenCalledWith('conn-123');
     expect(deps.triggerSessionTreeUpdate).toHaveBeenCalled();
     expect(send).toHaveBeenCalledWith('connection-closed', {
@@ -93,7 +96,10 @@ describe('removePersistedSession', () => {
     expect(result).toBe(false);
     // DB cleanup must still run despite the failed close
     expect(deps.deleteSessionChannel).toHaveBeenCalledWith('conn-fail');
-    expect(deps.deleteRegisteredConnection).toHaveBeenCalledWith('conn-fail');
+    // deleteRegisteredConnection takes the openCodeSessionId (PK), not connectionId
+    expect(deps.deleteRegisteredConnection).toHaveBeenCalledWith(
+      'oc-session-123',
+    );
     expect(deps.markConnectionDeleted).toHaveBeenCalledWith('conn-fail');
   });
 
@@ -108,7 +114,10 @@ describe('removePersistedSession', () => {
 
     expect(result).toBe(false);
     expect(deps.deleteSessionChannel).toHaveBeenCalledWith('conn-throw');
-    expect(deps.deleteRegisteredConnection).toHaveBeenCalledWith('conn-throw');
+    // deleteRegisteredConnection takes the openCodeSessionId (PK), not connectionId
+    expect(deps.deleteRegisteredConnection).toHaveBeenCalledWith(
+      'oc-session-123',
+    );
     expect(deps.markConnectionDeleted).toHaveBeenCalledWith('conn-throw');
   });
 

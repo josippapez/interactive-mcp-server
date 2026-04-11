@@ -72,6 +72,25 @@ export type PendingPermission = {
  * The renderer uses `openCodeSessionId ?? connectionId` as the map key so both
  * types can live in the same `Map<string, SessionNode>`.
  */
+/** Provider types supported by the multi-provider architecture. */
+export type ProviderType =
+  | 'opencode'
+  | 'copilot-cli'
+  | 'claude-sdk'
+  | 'standalone';
+
+/** VCS (version control) information for a session. */
+export type VcsInfo = {
+  /** Git branch name extracted from version string. */
+  branch: string | null;
+  /** Number of added lines. */
+  additions: number;
+  /** Number of deleted lines. */
+  deletions: number;
+  /** Number of changed files. */
+  files: number;
+};
+
 export type SessionNode = {
   /**
    * Stable key for this node.
@@ -104,6 +123,9 @@ export type SessionNode = {
   /** True when this node represents an MCP agent with no associated OpenCode session. */
   isDirectConnection: boolean;
 
+  /** Provider type for this connection (opencode, copilot-cli, claude-sdk, standalone). */
+  providerType: ProviderType | null;
+
   /** Active prompt waiting for a response. */
   prompt: PromptData | null;
 
@@ -118,6 +140,12 @@ export type SessionNode = {
 
   /** Count of messages received while this node was not active. */
   unreadCount: number;
+
+  /**
+   * ID of the last message that was read by the user.
+   * Used to display the "New messages" divider.
+   */
+  lastReadMessageId: string | null;
 
   /** True when there is a pending prompt that needs attention. */
   hasPendingPrompt: boolean;
@@ -137,6 +165,9 @@ export type SessionNode = {
    * Defaults to true (undefined = enabled).
    */
   docContextEnabled?: boolean;
+
+  /** VCS (git) information for this session (branch, change stats). */
+  vcsInfo: VcsInfo | null;
 };
 
 /**

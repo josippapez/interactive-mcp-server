@@ -6,7 +6,11 @@ export interface RemovePersistedSessionDeps {
   forceTerminateChat: (connectionId: string) => void;
   closeSessionByConnectionId: (connectionId: string) => Promise<boolean>;
   deleteSessionChannel: (sessionId: string) => void;
-  deleteRegisteredConnection: (connectionId: string) => void;
+  /**
+   * Delete the registered connection record.
+   * Parameter is the openCodeSessionId (PK after Phase 2 schema change).
+   */
+  deleteRegisteredConnection: (openCodeSessionId: string) => void;
   markConnectionDeleted: (connectionId: string) => void;
   triggerSessionTreeUpdate: (
     getWindow: () => BrowserWindow | null,
@@ -20,7 +24,7 @@ export interface RemovePersistedSessionDeps {
    */
   getRegisteredConnection: (
     connectionId: string,
-  ) => { openCodeSessionId: string | null } | null | undefined;
+  ) => { openCodeSessionId: string } | null | undefined;
   /**
    * Mark an OpenCode session ID as tombstoned so the session-tree poller
    * excludes it from all subsequent snapshots.
@@ -71,7 +75,7 @@ export async function removePersistedSession(
 
   // Always clean up DB state — even if the transport close failed.
   deps.deleteSessionChannel(sessionId);
-  deps.deleteRegisteredConnection(sessionId);
+  deps.deleteRegisteredConnection(openCodeSessionId);
   deps.markConnectionDeleted(sessionId);
 
   // Tombstone the OpenCode session so the session-tree poller never re-adds

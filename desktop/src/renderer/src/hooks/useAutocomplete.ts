@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export type AutocompleteTarget = { start: number; end: number; query: string };
 
@@ -97,6 +97,16 @@ export function useAutocomplete(baseDirectory?: string): UseAutocompleteReturn {
     },
     [target],
   );
+
+  // Cleanup debounce timer on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = null;
+      }
+    };
+  }, []);
 
   return {
     target,

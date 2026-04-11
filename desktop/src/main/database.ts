@@ -16,7 +16,7 @@ let dbPath = '';
  * dropped and recreated from scratch. This eliminates all incremental
  * migration code.
  */
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 9;
 
 // ─── Public interfaces ─────────────────────────────────────────────────────
 
@@ -26,6 +26,10 @@ export interface SkillOrInstruction {
   type: 'skill' | 'instruction';
   description: string;
   content: string;
+  category: string | null;
+  tags: string[] | null;
+  enabled: boolean;
+  isBuiltin: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -50,13 +54,41 @@ export interface SessionChannelMessageRecord {
 }
 
 export interface RegisteredConnection {
-  connectionId: string;
+  /**
+   * Provider-specific session ID. This is the primary identifier within a provider:
+   * - For 'opencode': The OpenCode session ID (e.g., ses_xxx)
+   * - For 'copilot-cli': The MCP connectionId (UUID)
+   * - For 'claude-sdk': The MCP connectionId (UUID)
+   * - For 'standalone': The MCP connectionId (UUID)
+   *
+   * Combined with `providerType`, this forms the composite primary key.
+   */
+  providerSessionId: string;
+  /**
+   * @deprecated Use `providerSessionId` instead. Kept for backwards compatibility
+   * during migration. For OpenCode connections, this equals `providerSessionId`.
+   * For other providers, this is also set to `providerSessionId` for compatibility.
+   */
+  openCodeSessionId: string;
+  connectionId: string | null;
   channelName: string;
   projectName: string;
   baseDirectory: string | null;
   idFilePath: string;
-  openCodeSessionId: string | null;
   parentSessionId: string | null;
+  /**
+   * Provider type for this connection. Used to isolate connections from
+   * different AI providers (OpenCode, Copilot CLI, Claude SDK, etc.).
+   * - 'opencode': OpenCode sessions with session hierarchy and injection support
+   * - 'copilot-cli': GitHub Copilot CLI connections
+   * - 'claude-sdk': Anthropic Claude SDK connections
+   * - 'standalone': Direct MCP connections without provider-specific features
+   *
+   * Combined with `providerSessionId`, this forms the composite primary key.
+   * This prevents cross-provider contamination where different providers
+   * could overwrite each other's connections.
+   */
+  providerType: 'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone';
   createdAt: string;
   updatedAt: string;
 }
@@ -124,6 +156,10 @@ function createTables(): void {
       type        TEXT    NOT NULL CHECK(type IN ('skill', 'instruction')),
       description TEXT    NOT NULL,
       content     TEXT    NOT NULL,
+      category    TEXT,
+      tags        TEXT,
+      enabled     INTEGER NOT NULL DEFAULT 1,
+      is_builtin  INTEGER NOT NULL DEFAULT 0,
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
     )
@@ -131,38 +167,66 @@ function createTables(): void {
 
   db.run(`
     CREATE TABLE IF NOT EXISTS registered_connections (
-      connection_id        TEXT     PRIMARY KEY,
+      provider_type        TEXT     NOT NULL DEFAULT 'standalone' CHECK(provider_type IN ('opencode', 'copilot-cli', 'claude-sdk', 'standalone')),
+      provider_session_id  TEXT     NOT NULL,
+      connection_id        TEXT,
       agent_name           TEXT     NOT NULL,
       project_name         TEXT     NOT NULL,
       base_directory       TEXT,
       id_file_path         TEXT     NOT NULL,
-      open_code_session_id TEXT,
       parent_session_id    TEXT,
       created_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP
+      updated_at           DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (provider_type, provider_session_id)
     )
+  `);
+
+  // noReply context injections — for Copilot CLI / standalone mode.
+  // Injections are claimed atomically and delivered via the poll_context_injections
+  // MCP tool or auto-prepended to request_user_input responses.
+  db.run(`
+    CREATE TABLE IF NOT EXISTS pending_context_injections (
+      id            INTEGER  PRIMARY KEY AUTOINCREMENT,
+      connection_id TEXT     NOT NULL,
+      source        TEXT     NOT NULL DEFAULT 'manual',
+      replace_key   TEXT,
+      payload       TEXT     NOT NULL,
+      claimed       INTEGER  DEFAULT 0,
+      delivered     INTEGER  DEFAULT 0,
+      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+  db.run(`
+    CREATE INDEX IF NOT EXISTS idx_pci_connection_delivered
+      ON pending_context_injections (connection_id, delivered)
   `);
 }
 
 /**
- * Map a raw SQL row (9 columns) from `registered_connections` to a
+ * Map a raw SQL row (10 columns) from `registered_connections` to a
  * `RegisteredConnection` object. Column order must match every SELECT that
  * queries this table:
- *   0 connection_id, 1 agent_name, 2 project_name, 3 base_directory,
- *   4 id_file_path, 5 open_code_session_id, 6 parent_session_id,
- *   7 created_at, 8 updated_at
+ *   0 provider_type, 1 provider_session_id, 2 connection_id, 3 agent_name,
+ *   4 project_name, 5 base_directory, 6 id_file_path, 7 parent_session_id,
+ *   8 created_at, 9 updated_at
  */
 function mapRowToRegisteredConnection(row: SqlValue[]): RegisteredConnection {
+  const providerType =
+    (row[0] as RegisteredConnection['providerType']) ?? 'standalone';
+  const providerSessionId = row[1] as string;
   return {
-    connectionId: row[0] as string,
-    channelName: row[1] as string,
-    projectName: row[2] as string,
-    baseDirectory: row[3] as string | null,
-    idFilePath: row[4] as string,
-    openCodeSessionId: row[5] as string | null,
-    parentSessionId: row[6] as string | null,
-    createdAt: row[7] as string,
-    updatedAt: row[8] as string,
+    providerType,
+    providerSessionId,
+    // For backwards compatibility, openCodeSessionId mirrors providerSessionId
+    openCodeSessionId: providerSessionId,
+    connectionId: row[2] as string | null,
+    channelName: row[3] as string,
+    projectName: row[4] as string,
+    baseDirectory: row[5] as string | null,
+    idFilePath: row[6] as string,
+    parentSessionId: row[7] as string | null,
+    createdAt: row[8] as string,
+    updatedAt: row[9] as string,
   };
 }
 
@@ -195,6 +259,14 @@ export async function initDatabase(): Promise<void> {
   persist();
 }
 
+/**
+ * Get the internal database reference for modules that need direct SQL access.
+ * Returns null if the database is not initialized.
+ */
+export function getDbInstance(): SqlJsDatabase | null {
+  return db;
+}
+
 function getSchemaVersion(): number {
   if (!db) return 0;
   const results = db.exec('PRAGMA user_version');
@@ -212,6 +284,7 @@ function dropAllTables(): void {
   // Order matters: drop dependents first to avoid FK issues (though we don't
   // use FK constraints, this keeps the intent clear).
   const tables = [
+    'pending_context_injections',
     'session_messages',
     'session_channel_history',
     'session_channels',
@@ -463,9 +536,9 @@ export function getActiveSessionChannels(): {
   if (!db) return [];
   const results = db.exec(
     `SELECT sc.session_id, sc.label, sc.created_at,
-            rc.open_code_session_id, rc.parent_session_id
+            rc.provider_session_id, rc.parent_session_id
      FROM session_channels sc
-     LEFT JOIN registered_connections rc ON rc.connection_id = sc.session_id
+     LEFT JOIN registered_connections rc ON rc.provider_session_id = sc.session_id
      ORDER BY sc.created_at ASC`,
   );
   if (results.length === 0) return [];
@@ -480,44 +553,71 @@ export function getActiveSessionChannels(): {
 
 // ─── Registered connections ────────────────────────────────────────────────
 
-/** Path for a per-agent connection ID file in /tmp. */
+/**
+ * Path for a per-agent connection ID file in /tmp.
+ * Includes provider type to prevent collisions between providers.
+ */
 export function agentIdFilePath(
   channelName: string,
-  openCodeSessionId?: string,
-  connectionId?: string,
+  providerSessionId: string,
+  providerType: RegisteredConnection['providerType'] = 'standalone',
 ): string {
   const safe = channelName.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-  const identityRaw = openCodeSessionId ?? connectionId ?? 'main';
-  const identity = identityRaw.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-  return join(tmpdir(), `imcp-agent-${safe}-${identity}.json`);
+  const identity = providerSessionId.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  const provider = providerType.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+  return join(tmpdir(), `imcp-agent-${provider}-${safe}-${identity}.json`);
 }
 
 /**
  * Upsert a registered connection. Writes the ID file to /tmp and persists
  * the record to the database.
  *
- * Deduplication: when the same agent reconnects with a new transport UUID
- * (new connectionId), existing history and queued messages from old
- * connections with the same (channelName, openCodeSessionId) pair are re-keyed
- * to the new connectionId. Old session_channels and registered_connections
- * rows are then cleaned up.
+ * Uses composite primary key (provider_type, provider_session_id).
+ * This ensures connections from different providers cannot overwrite each other.
  *
- * Two rows with the same channelName but *different* non-null
- * openCodeSessionIds are distinct agent instances (e.g. root and subagent
- * both named "Claude Code") and are NOT deduplicated against each other.
+ * `providerSessionId` is the provider-specific session ID:
+ * - For OpenCode: the OpenCode session ID (ses_xxx)
+ * - For other providers: the MCP connectionId (UUID)
+ *
+ * `connectionId` is the MCP transport handle, bound at MCP initialize time.
+ *
+ * ON CONFLICT on `(provider_type, provider_session_id)`: updates channelName,
+ * projectName, baseDirectory, connectionId, parentSessionId, and updated_at.
+ *
+ * For backwards compatibility, if `providerSessionId` is not provided but
+ * `openCodeSessionId` is, the latter will be used.
  */
 export function upsertRegisteredConnection(data: {
-  connectionId: string;
+  /**
+   * Provider-specific session ID. For OpenCode, this is the session ID.
+   * For other providers, use the connectionId.
+   */
+  providerSessionId?: string;
+  /**
+   * @deprecated Use `providerSessionId` instead. If provided and providerSessionId
+   * is not provided, this will be used as providerSessionId for backwards compatibility.
+   */
+  openCodeSessionId?: string;
   channelName: string;
   projectName: string;
+  connectionId?: string | null;
   baseDirectory?: string;
-  openCodeSessionId?: string;
-  parentSessionId?: string;
+  parentSessionId?: string | null;
+  providerType?: RegisteredConnection['providerType'];
 }): string {
+  const providerType = data.providerType ?? 'standalone';
+  // Use providerSessionId if provided, fall back to openCodeSessionId for backwards compat
+  const providerSessionId = data.providerSessionId ?? data.openCodeSessionId;
+  if (!providerSessionId) {
+    throw new Error(
+      'Either providerSessionId or openCodeSessionId must be provided',
+    );
+  }
+
   const idFilePath = agentIdFilePath(
     data.channelName,
-    data.openCodeSessionId,
-    data.connectionId,
+    providerSessionId,
+    providerType,
   );
 
   // Write ID file so agents can read their connectionId back on restart
@@ -525,12 +625,15 @@ export function upsertRegisteredConnection(data: {
     writeFileSync(
       idFilePath,
       JSON.stringify({
-        connectionId: data.connectionId,
+        connectionId: data.connectionId ?? null,
         channelName: data.channelName,
         projectName: data.projectName,
         baseDirectory: data.baseDirectory ?? null,
-        openCodeSessionId: data.openCodeSessionId ?? null,
+        providerSessionId,
+        // Keep openCodeSessionId for backwards compatibility
+        openCodeSessionId: providerSessionId,
         parentSessionId: data.parentSessionId ?? null,
+        providerType,
       }),
       'utf-8',
     );
@@ -539,91 +642,26 @@ export function upsertRegisteredConnection(data: {
   }
 
   if (db) {
-    // Match condition: both have no session ID, OR both share the same
-    // non-null session ID. Any cross-session combination is left alone.
-    const newSessionId = data.openCodeSessionId ?? null;
-    const sameSessionFilter = `(
-      (? IS NULL AND open_code_session_id IS NULL)
-      OR
-      (? IS NOT NULL AND open_code_session_id = ?)
-    )`;
-    // dedupeParams for UPDATE queries:
-    // [newConnId, channelName, newConnId, newSesId, newSesId, newSesId]
-    const dedupeParams = [
-      data.connectionId,
-      data.channelName,
-      data.connectionId,
-      newSessionId,
-      newSessionId,
-      newSessionId,
-    ];
-    db.run(
-      `UPDATE session_channel_history
-       SET session_id = ?
-       WHERE session_id IN (
-         SELECT connection_id FROM registered_connections
-         WHERE agent_name = ? AND connection_id != ?
-           AND ${sameSessionFilter}
-       )`,
-      dedupeParams,
-    );
-    db.run(
-      `UPDATE session_messages
-       SET session_id = ?
-       WHERE session_id IN (
-         SELECT connection_id FROM registered_connections
-         WHERE agent_name = ? AND connection_id != ?
-           AND ${sameSessionFilter}
-       )`,
-      dedupeParams,
-    );
-    db.run(
-      `DELETE FROM session_channels
-       WHERE session_id IN (
-         SELECT connection_id FROM registered_connections
-         WHERE agent_name = ? AND connection_id != ?
-           AND ${sameSessionFilter}
-       )`,
-      [
-        data.channelName,
-        data.connectionId,
-        newSessionId,
-        newSessionId,
-        newSessionId,
-      ],
-    );
-    db.run(
-      `DELETE FROM registered_connections
-       WHERE agent_name = ? AND connection_id != ?
-         AND ${sameSessionFilter}`,
-      [
-        data.channelName,
-        data.connectionId,
-        newSessionId,
-        newSessionId,
-        newSessionId,
-      ],
-    );
-
     db.run(
       `INSERT INTO registered_connections
-         (connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-       ON CONFLICT(connection_id) DO UPDATE SET
+         (provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(provider_type, provider_session_id) DO UPDATE SET
+         connection_id = excluded.connection_id,
          agent_name = excluded.agent_name,
          project_name = excluded.project_name,
          base_directory = excluded.base_directory,
          id_file_path = excluded.id_file_path,
-         open_code_session_id = excluded.open_code_session_id,
          parent_session_id = excluded.parent_session_id,
          updated_at = CURRENT_TIMESTAMP`,
       [
-        data.connectionId,
+        providerType,
+        providerSessionId,
+        data.connectionId ?? null,
         data.channelName,
         data.projectName,
         data.baseDirectory ?? null,
         idFilePath,
-        data.openCodeSessionId ?? null,
         data.parentSessionId ?? null,
       ],
     );
@@ -637,25 +675,100 @@ export function upsertRegisteredConnection(data: {
 export function getAllRegisteredConnections(): RegisteredConnection[] {
   if (!db) return [];
   const results = db.exec(
-    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, created_at, updated_at
+    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
      FROM registered_connections ORDER BY created_at ASC`,
   );
   if (results.length === 0) return [];
   return results[0].values.map(mapRowToRegisteredConnection);
 }
 
-/** Look up a registered connection by connectionId. */
+/**
+ * Look up a registered connection by transport connectionId (secondary lookup).
+ * Searches the `connection_id` column, which is now a nullable non-PK column.
+ */
 export function getRegisteredConnection(
   connectionId: string,
 ): RegisteredConnection | null {
   if (!db) return null;
   const results = db.exec(
-    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, created_at, updated_at
+    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
      FROM registered_connections WHERE connection_id = ?`,
     [connectionId],
   );
   if (results.length === 0 || results[0].values.length === 0) return null;
   return mapRowToRegisteredConnection(results[0].values[0]);
+}
+
+/**
+ * Primary lookup: find a registered connection by its composite key
+ * (providerType, providerSessionId).
+ *
+ * For backwards compatibility with code that only passes openCodeSessionId,
+ * if providerType is omitted it defaults to 'opencode'.
+ */
+export function getRegisteredConnectionBySessionId(
+  providerSessionId: string,
+  providerType: RegisteredConnection['providerType'] = 'opencode',
+): RegisteredConnection | null {
+  if (!db) return null;
+  const results = db.exec(
+    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+     FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
+    [providerType, providerSessionId],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return null;
+  return mapRowToRegisteredConnection(results[0].values[0]);
+}
+
+/**
+ * Legacy lookup: find a registered connection by openCodeSessionId only.
+ * This searches across all provider types but only returns the first match.
+ * Prefer `getRegisteredConnectionBySessionId` with explicit providerType.
+ *
+ * @deprecated Use getRegisteredConnectionBySessionId with providerType instead.
+ */
+export function getRegisteredConnectionByOpenCodeSessionId(
+  openCodeSessionId: string,
+): RegisteredConnection | null {
+  // For backwards compatibility, try 'opencode' provider first
+  const result = getRegisteredConnectionBySessionId(
+    openCodeSessionId,
+    'opencode',
+  );
+  if (result) return result;
+
+  // Fall back to searching any provider with this session ID
+  if (!db) return null;
+  const results = db.exec(
+    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+     FROM registered_connections WHERE provider_session_id = ? LIMIT 1`,
+    [openCodeSessionId],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return null;
+  return mapRowToRegisteredConnection(results[0].values[0]);
+}
+
+/**
+ * Bind a transport connectionId to an existing registered connection row.
+ * Called at MCP initialize time when the SSE row already exists.
+ *
+ * @param providerSessionId The provider-specific session ID (composite key part)
+ * @param connectionId The MCP transport connectionId to bind
+ * @param providerType The provider type (composite key part), defaults to 'opencode'
+ */
+export function updateConnectionId(
+  providerSessionId: string,
+  connectionId: string,
+  providerType: RegisteredConnection['providerType'] = 'opencode',
+): void {
+  if (!db) return;
+  db.run(
+    `UPDATE registered_connections
+     SET connection_id = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE provider_type = ? AND provider_session_id = ?`,
+    [connectionId, providerType, providerSessionId],
+  );
+  persist();
 }
 
 /** Look up a registered connection by channel name. */
@@ -664,7 +777,7 @@ export function getRegisteredConnectionByName(
 ): RegisteredConnection | null {
   if (!db) return null;
   const results = db.exec(
-    `SELECT connection_id, agent_name, project_name, base_directory, id_file_path, open_code_session_id, parent_session_id, created_at, updated_at
+    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
      FROM registered_connections WHERE agent_name = ?
      ORDER BY updated_at DESC LIMIT 1`,
     [channelName],
@@ -674,90 +787,135 @@ export function getRegisteredConnectionByName(
 }
 
 /**
- * Returns true if the given openCodeSessionId is already claimed by a
- * registered connection OTHER than `excludingConnectionId`.
+ * Returns true if the given provider session already has a registered
+ * connection row (i.e. the session is claimed/owned).
  *
- * Used during register_connection auto-detection: if the detected session is
- * already owned by another connection (e.g. the root agent), a subagent must
- * NOT bind itself to that same session — doing so would route the subagent's
- * prompts to the root channel.
+ * @param providerSessionId The provider-specific session ID
+ * @param providerType The provider type, defaults to 'opencode' for backwards compat
  */
-export function isOpenCodeSessionClaimed(
-  openCodeSessionId: string,
-  excludingConnectionId: string,
+export function isProviderSessionClaimed(
+  providerSessionId: string,
+  providerType: RegisteredConnection['providerType'] = 'opencode',
 ): boolean {
   if (!db) return false;
   const results = db.exec(
     `SELECT 1 FROM registered_connections
-     WHERE open_code_session_id = ? AND connection_id != ?
+     WHERE provider_type = ? AND provider_session_id = ?
      LIMIT 1`,
-    [openCodeSessionId, excludingConnectionId],
+    [providerType, providerSessionId],
   );
   return results.length > 0 && results[0].values.length > 0;
 }
 
 /**
- * Returns the connectionId of the connection that is currently claiming
- * the given openCodeSessionId, excluding `excludingConnectionId`.
- *
- * Returns null if no other connection claims the session.
+ * @deprecated Use isProviderSessionClaimed with providerType instead.
+ * Kept for backwards compatibility.
  */
-export function getConnectionClaimingSession(
-  openCodeSessionId: string,
-  excludingConnectionId: string,
-): string | null {
-  if (!db) return null;
+export function isOpenCodeSessionClaimed(openCodeSessionId: string): boolean {
+  return isProviderSessionClaimed(openCodeSessionId, 'opencode');
+}
+
+/**
+ * Return all registered connections filtered by provider type.
+ * Used by the session-tree manager to only show OpenCode sessions in the hierarchy.
+ */
+export function getRegisteredConnectionsByProvider(
+  providerType: RegisteredConnection['providerType'],
+): RegisteredConnection[] {
+  if (!db) return [];
   const results = db.exec(
-    `SELECT connection_id FROM registered_connections
-     WHERE open_code_session_id = ? AND connection_id != ?
-     LIMIT 1`,
-    [openCodeSessionId, excludingConnectionId],
+    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+     FROM registered_connections WHERE provider_type = ? ORDER BY created_at ASC`,
+    [providerType],
   );
-  if (results.length === 0 || results[0].values.length === 0) return null;
-  return results[0].values[0][0] as string;
+  if (results.length === 0) return [];
+  return results[0].values.map(mapRowToRegisteredConnection);
 }
 
 /**
- * Clear the openCodeSessionId for a connection (set to NULL).
- * Used to release a stale session claim so a new connection can take over.
- */
-export function clearConnectionOpenCodeSession(connectionId: string): void {
-  if (!db) return;
-  db.run(
-    `UPDATE registered_connections
-     SET open_code_session_id = NULL, updated_at = CURRENT_TIMESTAMP
-     WHERE connection_id = ?`,
-    [connectionId],
-  );
-  persist();
-}
-
-/**
- * Patch the openCodeSessionId on an existing registered connection.
+ * Update the provider session ID on an existing registered connection.
  * Used by the SSE auto-bind logic to attach a just-created OpenCode child
  * session to the MCP connection that was registered within the same time window.
+ *
+ * With the composite PK, this creates a new row with the OpenCode session ID
+ * and deletes the old standalone row (if it was a temporary connectionId-based row).
+ *
+ * @param connectionId The MCP transport connectionId to find the existing row
+ * @param newProviderSessionId The new provider session ID (e.g., OpenCode ses_xxx)
+ * @param newProviderType The provider type for the new row, defaults to 'opencode'
+ */
+export function updateConnectionProviderSession(
+  connectionId: string,
+  newProviderSessionId: string,
+  newProviderType: RegisteredConnection['providerType'] = 'opencode',
+): void {
+  if (!db) return;
+
+  // Find the existing row by connectionId
+  const existing = getRegisteredConnection(connectionId);
+  if (!existing) return;
+
+  // If the provider type is changing, we need to delete the old row and create a new one
+  // because provider_type is part of the composite PK
+  if (
+    existing.providerType !== newProviderType ||
+    existing.providerSessionId !== newProviderSessionId
+  ) {
+    // Delete old row
+    db.run(
+      `DELETE FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
+      [existing.providerType, existing.providerSessionId],
+    );
+
+    // Insert new row with the correct composite key
+    upsertRegisteredConnection({
+      providerSessionId: newProviderSessionId,
+      providerType: newProviderType,
+      connectionId,
+      channelName: existing.channelName,
+      projectName: existing.projectName,
+      baseDirectory: existing.baseDirectory ?? undefined,
+      parentSessionId: existing.parentSessionId ?? undefined,
+    });
+  } else {
+    // Same composite key, just update the row
+    db.run(
+      `UPDATE registered_connections
+       SET updated_at = CURRENT_TIMESTAMP
+       WHERE provider_type = ? AND provider_session_id = ?`,
+      [newProviderType, newProviderSessionId],
+    );
+    persist();
+  }
+}
+
+/**
+ * @deprecated Use updateConnectionProviderSession instead.
+ * Kept for backwards compatibility.
  */
 export function updateConnectionOpenCodeSession(
   connectionId: string,
   openCodeSessionId: string,
 ): void {
-  if (!db) return;
-  db.run(
-    `UPDATE registered_connections
-     SET open_code_session_id = ?, updated_at = CURRENT_TIMESTAMP
-     WHERE connection_id = ?`,
-    [openCodeSessionId, connectionId],
-  );
-  persist();
+  updateConnectionProviderSession(connectionId, openCodeSessionId, 'opencode');
 }
 
 /**
  * Delete a registered connection from the DB and remove the ID file from disk.
  * Called when the user removes a session from the UI.
+ *
+ * @param providerSessionId The provider-specific session ID (composite key part)
+ * @param providerType The provider type (composite key part), defaults to 'opencode'
  */
-export function deleteRegisteredConnection(connectionId: string): void {
+export function deleteRegisteredConnection(
+  providerSessionId: string,
+  providerType: RegisteredConnection['providerType'] = 'opencode',
+): void {
   if (!db) return;
-  const rec = getRegisteredConnection(connectionId);
+  const rec = getRegisteredConnectionBySessionId(
+    providerSessionId,
+    providerType,
+  );
   if (rec) {
     try {
       unlinkSync(rec.idFilePath);
@@ -765,9 +923,10 @@ export function deleteRegisteredConnection(connectionId: string): void {
       // file may already be gone
     }
   }
-  db.run(`DELETE FROM registered_connections WHERE connection_id = ?`, [
-    connectionId,
-  ]);
+  db.run(
+    `DELETE FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
+    [providerType, providerSessionId],
+  );
   persist();
 }
 
@@ -776,17 +935,30 @@ export function deleteRegisteredConnection(connectionId: string): void {
 /**
  * Map a raw SQL row from `skills_and_instructions` to a `SkillOrInstruction`.
  * Column order: 0 id, 1 name, 2 type, 3 description, 4 content,
- *               5 created_at, 6 updated_at
+ *               5 category, 6 tags, 7 enabled, 8 is_builtin, 9 created_at, 10 updated_at
  */
 function mapRowToSkillOrInstruction(row: SqlValue[]): SkillOrInstruction {
+  const tagsRaw = row[6] as string | null;
+  let tags: string[] | null = null;
+  if (tagsRaw) {
+    try {
+      tags = JSON.parse(tagsRaw) as string[];
+    } catch {
+      tags = null;
+    }
+  }
   return {
     id: row[0] as number,
     name: row[1] as string,
     type: row[2] as 'skill' | 'instruction',
     description: row[3] as string,
     content: row[4] as string,
-    createdAt: row[5] as string,
-    updatedAt: row[6] as string,
+    category: row[5] as string | null,
+    tags,
+    enabled: (row[7] as number) === 1,
+    isBuiltin: (row[8] as number) === 1,
+    createdAt: row[9] as string,
+    updatedAt: row[10] as string,
   };
 }
 
@@ -796,33 +968,58 @@ export function upsertSkillOrInstruction(data: {
   type: 'skill' | 'instruction';
   description: string;
   content: string;
+  category?: string | null;
+  tags?: string[] | null;
 }): SkillOrInstruction | null {
   if (!db) return null;
+  const tagsJson = data.tags ? JSON.stringify(data.tags) : null;
   db.run(
-    `INSERT INTO skills_and_instructions (name, type, description, content)
-     VALUES (?, ?, ?, ?)
+    `INSERT INTO skills_and_instructions (name, type, description, content, category, tags)
+     VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET
        type = excluded.type,
        description = excluded.description,
        content = excluded.content,
+       category = excluded.category,
+       tags = excluded.tags,
        updated_at = CURRENT_TIMESTAMP`,
-    [data.name, data.type, data.description, data.content],
+    [
+      data.name,
+      data.type,
+      data.description,
+      data.content,
+      data.category ?? null,
+      tagsJson,
+    ],
   );
   persist();
   return getSkillOrInstructionByName(data.name);
 }
 
-/** List all skills and instructions, optionally filtered by type. */
+/** List all skills and instructions, optionally filtered by type and/or category. */
 export function listSkillsAndInstructions(
   filterType?: 'skill' | 'instruction',
+  filterCategory?: string,
 ): SkillOrInstruction[] {
   if (!db) return [];
-  const query = filterType
-    ? `SELECT id, name, type, description, content, created_at, updated_at
-       FROM skills_and_instructions WHERE type = ? ORDER BY name ASC`
-    : `SELECT id, name, type, description, content, created_at, updated_at
-       FROM skills_and_instructions ORDER BY name ASC`;
-  const params = filterType ? [filterType] : [];
+
+  const conditions: string[] = [];
+  const params: (string | number)[] = [];
+
+  if (filterType) {
+    conditions.push('type = ?');
+    params.push(filterType);
+  }
+  if (filterCategory) {
+    conditions.push('category = ?');
+    params.push(filterCategory);
+  }
+
+  const whereClause =
+    conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+  const query = `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
+     FROM skills_and_instructions ${whereClause} ORDER BY name ASC`;
+
   const results = db.exec(query, params);
   if (results.length === 0) return [];
   return results[0].values.map(mapRowToSkillOrInstruction);
@@ -834,7 +1031,7 @@ export function getSkillOrInstructionByName(
 ): SkillOrInstruction | null {
   if (!db) return null;
   const results = db.exec(
-    `SELECT id, name, type, description, content, created_at, updated_at
+    `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
      FROM skills_and_instructions WHERE name = ?`,
     [name],
   );
@@ -855,4 +1052,266 @@ export function deleteSkillOrInstruction(name: string): boolean {
     persist();
   }
   return existed;
+}
+
+/** Toggle the enabled status of a skill or instruction. Returns the updated record or null. */
+export function toggleSkillOrInstructionEnabled(
+  name: string,
+  enabled: boolean,
+): SkillOrInstruction | null {
+  if (!db) return null;
+  db.run(
+    `UPDATE skills_and_instructions
+     SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE name = ?`,
+    [enabled ? 1 : 0, name],
+  );
+  persist();
+  return getSkillOrInstructionByName(name);
+}
+
+/**
+ * Duplicate a skill or instruction with a new name.
+ * The new name will be "{original-name}-copy" or "{original-name}-copy-2", etc.
+ * Returns the newly created record or null if the original doesn't exist.
+ */
+export function duplicateSkillOrInstruction(
+  name: string,
+): SkillOrInstruction | null {
+  if (!db) return null;
+
+  const original = getSkillOrInstructionByName(name);
+  if (!original) return null;
+
+  // Generate a unique copy name
+  let copyName = `${name}-copy`;
+  let suffix = 1;
+  while (getSkillOrInstructionByName(copyName) !== null) {
+    suffix += 1;
+    copyName = `${name}-copy-${suffix}`;
+  }
+
+  db.run(
+    `INSERT INTO skills_and_instructions (name, type, description, content, enabled)
+     VALUES (?, ?, ?, ?, ?)`,
+    [
+      copyName,
+      original.type,
+      original.description,
+      original.content,
+      original.enabled ? 1 : 0,
+    ],
+  );
+  persist();
+  return getSkillOrInstructionByName(copyName);
+}
+
+/**
+ * Seed built-in templates into the database.
+ * Only inserts templates that don't already exist (by name).
+ * Returns the count of templates that were newly inserted.
+ */
+export function seedBuiltinTemplates(
+  templates: {
+    name: string;
+    type: 'skill' | 'instruction';
+    category: string;
+    description: string;
+    content: string;
+  }[],
+): number {
+  if (!db) return 0;
+
+  let insertedCount = 0;
+  for (const template of templates) {
+    // Check if template already exists
+    const existing = db.exec(
+      `SELECT 1 FROM skills_and_instructions WHERE name = ?`,
+      [template.name],
+    );
+    if (existing.length > 0 && existing[0].values.length > 0) {
+      continue; // Skip existing template
+    }
+
+    // Insert the built-in template
+    db.run(
+      `INSERT INTO skills_and_instructions (name, type, description, content, category, is_builtin, enabled)
+       VALUES (?, ?, ?, ?, ?, 1, 1)`,
+      [
+        template.name,
+        template.type,
+        template.description,
+        template.content,
+        template.category,
+      ],
+    );
+    insertedCount++;
+  }
+
+  if (insertedCount > 0) {
+    persist();
+  }
+  return insertedCount;
+}
+
+/**
+ * Reset built-in templates to their default content.
+ * Re-inserts any missing built-in templates and updates existing ones
+ * to match the original content.
+ * Returns the count of templates that were reset/inserted.
+ */
+export function resetBuiltinTemplates(
+  templates: {
+    name: string;
+    type: 'skill' | 'instruction';
+    category: string;
+    description: string;
+    content: string;
+  }[],
+): number {
+  if (!db) return 0;
+
+  let resetCount = 0;
+  for (const template of templates) {
+    // Check if template already exists
+    const existing = db.exec(
+      `SELECT 1 FROM skills_and_instructions WHERE name = ?`,
+      [template.name],
+    );
+
+    if (existing.length > 0 && existing[0].values.length > 0) {
+      // Update existing template to reset it
+      db.run(
+        `UPDATE skills_and_instructions
+         SET type = ?, description = ?, content = ?, category = ?, is_builtin = 1, enabled = 1, updated_at = CURRENT_TIMESTAMP
+         WHERE name = ?`,
+        [
+          template.type,
+          template.description,
+          template.content,
+          template.category,
+          template.name,
+        ],
+      );
+    } else {
+      // Insert missing built-in template
+      db.run(
+        `INSERT INTO skills_and_instructions (name, type, description, content, category, is_builtin, enabled)
+         VALUES (?, ?, ?, ?, ?, 1, 1)`,
+        [
+          template.name,
+          template.type,
+          template.description,
+          template.content,
+          template.category,
+        ],
+      );
+    }
+    resetCount++;
+  }
+
+  if (resetCount > 0) {
+    persist();
+  }
+  return resetCount;
+}
+
+/**
+ * Get count of missing built-in templates.
+ * Returns how many of the provided template names don't exist in the database.
+ */
+export function getMissingBuiltinCount(templateNames: string[]): number {
+  if (!db || templateNames.length === 0) return 0;
+
+  const placeholders = templateNames.map(() => '?').join(',');
+  const results = db.exec(
+    `SELECT COUNT(*) FROM skills_and_instructions WHERE name IN (${placeholders})`,
+    templateNames,
+  );
+
+  const existingCount =
+    results.length > 0 ? (results[0].values[0][0] as number) : 0;
+  return templateNames.length - existingCount;
+}
+
+// ─── Pending Context Injections ────────────────────────────────────────────
+
+export interface ContextInjection {
+  id: number;
+  source: string;
+  payload: string;
+  createdAt: string;
+}
+
+/**
+ * Queue a noReply context injection for delivery to a standalone (Copilot CLI)
+ * agent. When `replaceKey` is provided, any existing undelivered injection with
+ * the same (connectionId, replaceKey) is replaced — useful for doc context
+ * (latest wins). Without `replaceKey`, a new row is always appended.
+ */
+export function upsertContextInjection(
+  connectionId: string,
+  payload: string,
+  source = 'manual',
+  replaceKey?: string,
+): void {
+  if (!db) return;
+  if (replaceKey) {
+    db.run(
+      `DELETE FROM pending_context_injections
+       WHERE connection_id = ? AND replace_key = ? AND delivered = 0`,
+      [connectionId, replaceKey],
+    );
+  }
+  db.run(
+    `INSERT INTO pending_context_injections (connection_id, source, replace_key, payload)
+     VALUES (?, ?, ?, ?)`,
+    [connectionId, source, replaceKey ?? null, payload],
+  );
+  persist();
+}
+
+/**
+ * Atomically claim and return all undelivered injections for a connection.
+ * Marks them as delivered immediately. Safe in single-threaded Node.js/sql.js.
+ */
+export function claimContextInjections(
+  connectionId: string,
+): ContextInjection[] {
+  if (!db) return [];
+  const results = db.exec(
+    `SELECT id, source, payload, created_at
+     FROM pending_context_injections
+     WHERE connection_id = ? AND delivered = 0
+     ORDER BY id ASC`,
+    [connectionId],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return [];
+
+  const items: ContextInjection[] = results[0].values.map((row) => ({
+    id: row[0] as number,
+    source: row[1] as string,
+    payload: row[2] as string,
+    createdAt: row[3] as string,
+  }));
+
+  const ids = items.map((item) => item.id);
+  const placeholders = ids.map(() => '?').join(',');
+  db.run(
+    `UPDATE pending_context_injections SET delivered = 1 WHERE id IN (${placeholders})`,
+    ids,
+  );
+  persist();
+  return items;
+}
+
+/** Remove all context injections (delivered or not) for a connection. */
+export function deleteContextInjectionsForConnection(
+  connectionId: string,
+): void {
+  if (!db) return;
+  db.run(`DELETE FROM pending_context_injections WHERE connection_id = ?`, [
+    connectionId,
+  ]);
+  persist();
 }

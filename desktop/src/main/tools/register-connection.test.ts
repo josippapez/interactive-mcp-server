@@ -13,26 +13,38 @@ import { registerConnectionTool } from './register-connection';
 vi.mock('../database', () => ({
   upsertRegisteredConnection: vi.fn(),
   createSessionChannel: vi.fn(),
-  isOpenCodeSessionClaimed: vi.fn().mockReturnValue(false),
-  getConnectionClaimingSession: vi.fn().mockReturnValue(null),
-  clearConnectionOpenCodeSession: vi.fn(),
   listSkillsAndInstructions: vi.fn().mockReturnValue([]),
+  getRegisteredConnection: vi.fn().mockReturnValue(null),
 }));
 
-vi.mock('../opencode-session', () => ({
+vi.mock('../opencode/session', () => ({
   autoDetectOpenCodeSession: vi.fn(),
 }));
 
-vi.mock('../session-tree-manager', () => ({
+vi.mock('../session/tree-manager', () => ({
   triggerSessionTreeUpdate: vi.fn(),
+  recordPendingConnection: vi.fn(),
 }));
 
-vi.mock('../doc-context-injector', () => ({
+vi.mock('../docs/context-injector', () => ({
   initDocContext: vi.fn(),
 }));
 
+vi.mock('../opencode/injector', () => ({
+  injectOpenCodeMessage: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock('../backend-adapter', () => ({
+  getBackendAdapter: vi.fn().mockResolvedValue({
+    backend: 'opencode',
+    supportsProviderInjection: true,
+    supportsSessionHierarchy: true,
+    runtime: null,
+  }),
+}));
+
 import { upsertRegisteredConnection, createSessionChannel } from '../database';
-import { autoDetectOpenCodeSession } from '../opencode-session';
+import { autoDetectOpenCodeSession } from '../opencode/session';
 
 type RegisterConnectionInput = {
   channelName: string;
@@ -41,9 +53,14 @@ type RegisterConnectionInput = {
   openCodeSessionId?: string;
 };
 
+type RegisterConnectionResult = {
+  isError?: boolean;
+  content: Array<{ type: 'text'; text: string }>;
+};
+
 type RegisterConnectionHandler = (
   input: RegisterConnectionInput,
-) => Promise<{ content: Array<{ type: 'text'; text: string }> }>;
+) => Promise<RegisterConnectionResult>;
 
 function getToolHandler(connectionId = 'conn-test'): RegisterConnectionHandler {
   const server = {
@@ -57,6 +74,7 @@ function getToolHandler(connectionId = 'conn-test'): RegisterConnectionHandler {
     () => 4096,
     () => true,
     () => 'opencode',
+    () => 'opencode', // getDetectedProvider
   );
 
   const toolCall = (server.registerTool as Mock).mock.calls[0];
@@ -135,7 +153,85 @@ describe('register_connection tool', () => {
     expect(payload.ok).toBe(true);
     expect(payload.connectionId).toBe('conn-ok');
     expect(payload.openCodeSessionId).toBe('ses_abc');
+    // Phase 2: single upsert with detected session ID as PK (no pre-register step)
     expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerSessionId: 'ses_abc',
+        connectionId: 'conn-ok',
+      }),
+    );
     expect(mockCreateSessionChannel).toHaveBeenCalledWith('conn-ok', 'Agent A');
+  });
+
+  it('registers successfully with an explicitly provided openCodeSessionId', async () => {
+    mockAutoDetect.mockResolvedValueOnce(null); // should not be used
+
+    const handler = getToolHandler('conn-subagent-explicit');
+    const result = await handler({
+      channelName: 'Agent B',
+      projectName: 'proj',
+      baseDirectory: '/repo',
+      openCodeSessionId: 'ses_own_subagent',
+    });
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as {
+      ok: boolean;
+      openCodeSessionId: string | null;
+    };
+    expect(payload.ok).toBe(true);
+    expect(payload.openCodeSessionId).toBe('ses_own_subagent');
+    // Only one upsert — no pre-register step in Phase 2
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses connectionId as synthetic session ID when detection returns null (non-OpenCode client)', async () => {
+    mockAutoDetect.mockResolvedValueOnce(null);
+
+    const handler = getToolHandler('conn-standalone');
+    const result = await handler({
+      channelName: 'Standalone Agent',
+      projectName: 'proj',
+      baseDirectory: '/repo',
+    });
+
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as {
+      ok: boolean;
+      openCodeSessionId: string | null;
+    };
+    expect(payload.ok).toBe(true);
+    // openCodeSessionId is null in the response (no session detected)
+    expect(payload.openCodeSessionId).toBeNull();
+    // But upsert was called with connectionId as the synthetic PK
+    expect(mockUpsert).toHaveBeenCalledTimes(1);
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        providerSessionId: 'conn-standalone',
+        connectionId: 'conn-standalone',
+      }),
+    );
+  });
+
+  it('does not return SESSION_ALREADY_CLAIMED error in Phase 2 (no claiming)', async () => {
+    // In Phase 2, auto-detection never produces SESSION_ALREADY_CLAIMED.
+    // The main agent and subagent each have their own session ID → own row.
+    mockAutoDetect.mockResolvedValueOnce({
+      id: 'ses_main_agent',
+      parentId: null,
+    });
+
+    const handler = getToolHandler('conn-main');
+    const result = await handler({
+      channelName: 'Main Agent',
+      projectName: 'proj',
+      baseDirectory: '/repo',
+    });
+
+    // Should always succeed, never SESSION_ALREADY_CLAIMED
+    expect(result.isError).toBeFalsy();
+    const payload = JSON.parse(result.content[0].text) as { ok: boolean };
+    expect(payload.ok).toBe(true);
   });
 });

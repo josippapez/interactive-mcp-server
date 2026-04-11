@@ -145,7 +145,7 @@ describe('manage_skills_and_instructions tool', () => {
     };
     expect(payload.ok).toBe(true);
     expect(payload.count).toBe(2);
-    expect(mockList).toHaveBeenCalledWith(undefined);
+    expect(mockList).toHaveBeenCalledWith(undefined, undefined);
   });
 
   it('lists with filter', async () => {
@@ -154,7 +154,7 @@ describe('manage_skills_and_instructions tool', () => {
     const handler = getToolHandler();
     await handler({ action: 'list', filterType: 'skill' });
 
-    expect(mockList).toHaveBeenCalledWith('skill');
+    expect(mockList).toHaveBeenCalledWith('skill', undefined);
   });
 
   it('gets an entry by name', async () => {

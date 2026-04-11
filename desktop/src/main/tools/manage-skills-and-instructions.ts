@@ -92,12 +92,28 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
           .string()
           .optional()
           .describe('Full Markdown content body (required for register)'),
+        category: z
+          .string()
+          .optional()
+          .describe(
+            'Category for organizing skills/instructions (e.g., "Code Review", "Testing", "Documentation")',
+          ),
+        tags: z
+          .array(z.string())
+          .optional()
+          .describe(
+            'Tags for categorizing the entry (e.g., ["typescript", "react"])',
+          ),
         filterType: z
           .enum(['skill', 'instruction'])
           .optional()
           .describe(
             'Optional filter for list action — show only "skill" or "instruction" entries',
           ),
+        filterCategory: z
+          .string()
+          .optional()
+          .describe('Optional category filter for list action'),
       },
     },
     async ({
@@ -106,7 +122,10 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
       type,
       description,
       content,
+      category,
+      tags,
       filterType,
+      filterCategory,
     }): Promise<CallToolResult> => {
       const staleErr = staleConnectionError(connectionId);
       if (staleErr) return staleErr;
@@ -134,6 +153,8 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
             type,
             description,
             content,
+            category,
+            tags,
           });
 
           if (!record) {
@@ -166,6 +187,8 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
                     name: record.name,
                     type: record.type,
                     description: record.description,
+                    category: record.category,
+                    tags: record.tags,
                     createdAt: record.createdAt,
                     updatedAt: record.updatedAt,
                   },
@@ -177,11 +200,13 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
         }
 
         case 'list': {
-          const entries = listSkillsAndInstructions(filterType);
+          const entries = listSkillsAndInstructions(filterType, filterCategory);
           const summary = entries.map((e) => ({
             name: e.name,
             type: e.type,
             description: e.description,
+            category: e.category,
+            tags: e.tags,
             updatedAt: e.updatedAt,
           }));
 

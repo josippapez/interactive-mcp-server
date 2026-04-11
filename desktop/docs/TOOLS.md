@@ -16,7 +16,43 @@ This document is the authoritative reference for all MCP tools registered by the
 | [`push_session_status`](#push_session_status)                       | Display a live status indicator in the UI                              | No — returns immediately            |
 | [`send_message`](#send_message)                                     | Send a persistent informational message into the channel               | No — returns immediately            |
 | [`find_repo_docs`](#find_repo_docs)                                 | Search repository documentation by query                               | No — returns immediately            |
+| [`poll_context_injections`](#poll_context_injections)               | Check for pending context messages from the desktop app                | No — returns immediately            |
 | [`manage_skills_and_instructions`](#manage_skills_and_instructions) | Register, list, retrieve, or delete persistent skills and instructions | No — returns immediately            |
+
+---
+
+## Required Parameters for Multi-Agent Support
+
+OpenCode uses a **shared MCP client** per server name. This means all agents (main agent + subagents) share the same transport connection and receive the same `connectionId`. To enable correct routing in multi-agent scenarios, tools accept an `openCodeSessionId` parameter.
+
+### The `openCodeSessionId` parameter
+
+| Aspect               | Details                                                                                                       |
+| -------------------- | ------------------------------------------------------------------------------------------------------------- |
+| **Format**           | `ses_<alphanumeric>` (e.g., `ses_abc123def456`)                                                               |
+| **Source**           | Injected into agent context via `<system-reminder>` when the session starts                                   |
+| **Required for**     | Correct multi-agent routing — without it, messages may route to the wrong channel                             |
+| **Backwards compat** | Tools still work if omitted (fall back to `connectionId`), but multi-agent scenarios will have routing issues |
+
+### Tools requiring `openCodeSessionId`
+
+The following tools use `openCodeSessionId` for session routing:
+
+| Tool                      | Routing behavior                                            |
+| ------------------------- | ----------------------------------------------------------- |
+| `register_connection`     | Associates the channel with the given `openCodeSessionId`   |
+| `request_user_input`      | Routes prompt to the correct session channel                |
+| `start_intensive_chat`    | Associates the chat session with the correct channel        |
+| `ask_intensive_chat`      | Routes question to the correct session channel              |
+| `stop_intensive_chat`     | Closes the chat session for the correct channel             |
+| `push_session_status`     | Sends status update to the correct session channel          |
+| `send_message`            | Sends message to the correct session channel                |
+| `poll_context_injections` | Returns context injections for the correct session          |
+| `find_repo_docs`          | Uses the registered `baseDirectory` for the correct session |
+
+### Best practice
+
+Agents **MUST** pass `openCodeSessionId` on every tool call after receiving it via the `<system-reminder>` context injection. This ensures correct routing even when multiple agents share the same MCP transport.
 
 ---
 
@@ -136,6 +172,7 @@ const result = await mcp.callTool('register_connection', {
 | `message`           | `string`                            | Yes      | The specific question for the user (prompt body text).                                                                                                                                                       |
 | `predefinedOptions` | `string[]`                          | No       | Predefined options for the user to choose from. When provided, the UI renders these as clickable choices in addition to free-text input.                                                                     |
 | `baseDirectory`     | `string`                            | Yes      | Required absolute path to the current repository root (must be a git repo root; used as file autocomplete/search scope).                                                                                     |
+| `openCodeSessionId` | `string`                            | No       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support).   |
 | `clientInfo`        | `{ model?: string; mode?: string }` | No       | Optional metadata about the MCP client. `model` is the model name (e.g. `"Claude Opus 4.6"`); `mode` is the agent mode (e.g. `"Plan"`, `"Code"`). Desktop-specific parameter not present in the TUI version. |
 
 #### Return Value
@@ -207,10 +244,11 @@ const result = await mcp.callTool('request_user_input', {
 
 #### Parameters
 
-| Parameter       | Type     | Required | Description                                                                                                                                                                                                                                             |
-| --------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `sessionTitle`  | `string` | Yes      | Title for the intensive chat session (appears at the top of the console). Used as `projectName` for all prompts within the session.                                                                                                                     |
-| `baseDirectory` | `string` | Yes      | Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session). Acts as the default `baseDirectory` for all `ask_intensive_chat` calls in this session unless overridden per-call. |
+| Parameter           | Type     | Required | Description                                                                                                                                                                                                                                             |
+| ------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionTitle`      | `string` | Yes      | Title for the intensive chat session (appears at the top of the console). Used as `projectName` for all prompts within the session.                                                                                                                     |
+| `baseDirectory`     | `string` | Yes      | Required absolute path to the current repository root (must be a git repo root; default autocomplete/search scope for this session). Acts as the default `baseDirectory` for all `ask_intensive_chat` calls in this session unless overridden per-call. |
+| `openCodeSessionId` | `string` | No       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support).                                              |
 
 #### Return Value
 
@@ -263,6 +301,7 @@ const sessionId = result.content[0].text.split('Session ID: ')[1];
 | `question`          | `string`   | Yes      | Question to ask the user.                                                                                                                                                                                                |
 | `predefinedOptions` | `string[]` | No       | Predefined options for the user to choose from.                                                                                                                                                                          |
 | `baseDirectory`     | `string`   | Yes      | Required absolute path to the current repository root (must be a git repo root; autocomplete/search scope for this question). If provided, overrides the `baseDirectory` stored on the session for this specific prompt. |
+| `openCodeSessionId` | `string`   | No       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support).               |
 
 #### Return Value
 
@@ -315,9 +354,10 @@ const result = await mcp.callTool('ask_intensive_chat', {
 
 #### Parameters
 
-| Parameter   | Type     | Required | Description                               |
-| ----------- | -------- | -------- | ----------------------------------------- |
-| `sessionId` | `string` | Yes      | ID of the intensive chat session to stop. |
+| Parameter           | Type     | Required | Description                                                                                                                                                                                                |
+| ------------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `sessionId`         | `string` | Yes      | ID of the intensive chat session to stop.                                                                                                                                                                  |
+| `openCodeSessionId` | `string` | No       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support). |
 
 #### Return Value
 
@@ -360,10 +400,11 @@ await mcp.callTool('stop_intensive_chat', { sessionId });
 
 #### Parameters
 
-| Parameter | Type                                          | Required | Description                                                                               |
-| --------- | --------------------------------------------- | -------- | ----------------------------------------------------------------------------------------- |
-| `status`  | `string`                                      | Yes      | Status message to display in the UI.                                                      |
-| `type`    | `'info' \| 'working' \| 'success' \| 'error'` | No       | Visual indicator type. Controls the icon/color of the status badge. Defaults to `'info'`. |
+| Parameter           | Type                                          | Required | Description                                                                                                                                                                                                |
+| ------------------- | --------------------------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `status`            | `string`                                      | Yes      | Status message to display in the UI.                                                                                                                                                                       |
+| `type`              | `'info' \| 'working' \| 'success' \| 'error'` | No       | Visual indicator type. Controls the icon/color of the status badge. Defaults to `'info'`.                                                                                                                  |
+| `openCodeSessionId` | `string`                                      | No       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support). |
 
 #### Return Value
 
@@ -408,9 +449,10 @@ await mcp.callTool('push_session_status', {
 
 #### Parameters
 
-| Parameter | Type     | Required | Description                                         |
-| --------- | -------- | -------- | --------------------------------------------------- |
-| `message` | `string` | Yes      | The message text to display. Markdown is supported. |
+| Parameter           | Type     | Required | Description                                                                                                                                                                                                |
+| ------------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `message`           | `string` | Yes      | The message text to display. Markdown is supported.                                                                                                                                                        |
+| `openCodeSessionId` | `string` | No       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support). |
 
 #### Return Value
 
@@ -462,10 +504,11 @@ Results are ranked by combined score. The first search after registration may be
 
 #### Parameters
 
-| Parameter | Type     | Required | Default | Description                                          |
-| --------- | -------- | -------- | ------- | ---------------------------------------------------- |
-| `query`   | `string` | Yes      | —       | Search query for repository docs and markdown files. |
-| `limit`   | `number` | No       | `8`     | Maximum number of matches to return (1–20).          |
+| Parameter           | Type     | Required | Default | Description                                                                                                                                                                                                |
+| ------------------- | -------- | -------- | ------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `query`             | `string` | Yes      | —       | Search query for repository docs and markdown files.                                                                                                                                                       |
+| `limit`             | `number` | No       | `8`     | Maximum number of matches to return (1–20).                                                                                                                                                                |
+| `openCodeSessionId` | `string` | No       | —       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support). |
 
 #### Return Value
 
@@ -545,6 +588,56 @@ const result = await mcp.callTool('find_repo_docs', {
 
 ---
 
+### `poll_context_injections`
+
+**File:** `desktop/src/main/tools/poll-context-injections.ts`
+
+**Description:** Check for pending context messages injected by the desktop app into this agent session. Returns any queued system notifications (e.g., relevant repo docs, instructions) that the desktop has prepared for you. Each injection is delivered exactly once and cleared on receipt.
+
+This tool is the noReply equivalent for standalone/CLI modes. The desktop app can queue context injections that the agent claims by calling this tool.
+
+#### Parameters
+
+| Parameter           | Type     | Required | Description                                                                                                                                                                                                |
+| ------------------- | -------- | -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `openCodeSessionId` | `string` | No       | OpenCode session ID for routing (format: `ses_<alphanumeric>`). Required for correct multi-agent routing. See [Required Parameters for Multi-Agent Support](#required-parameters-for-multi-agent-support). |
+
+#### Return Value
+
+| Scenario              | Content                                                                                                      |
+| --------------------- | ------------------------------------------------------------------------------------------------------------ |
+| No pending injections | `[{ type: 'text', text: '{"injections":[],"message":"No pending context injections."}' }]`                   |
+| Injections found      | `[{ type: 'text', text: '<system_notification>\n...\n</system_notification>\n\n<system_notification>...' }]` |
+| Stale connection      | `[{ type: 'text', text: '<stale connection error>' }]`                                                       |
+
+#### Behavior
+
+1. Resolves the injection key from `openCodeSessionId` (if provided), falling back to the DB lookup, then `connectionId`.
+2. Calls `claimContextInjections(injectionKey)` which returns all pending injections and clears them from the queue.
+3. If no injections are pending, returns `{"injections":[],"message":"No pending context injections."}`.
+4. If injections exist, formats each as `<system_notification>...\n</system_notification>` blocks.
+
+#### When to use
+
+- At the start of each new user task or request
+- Before making decisions that may depend on repository-specific context
+- After calling `register_connection`, to receive any startup context that was queued
+
+> **Note:** Injections are also auto-prepended to `request_user_input` responses. Calling this tool explicitly ensures you have context before performing tool calls or producing output.
+
+#### Example (pseudocode)
+
+```ts
+const result = await mcp.callTool('poll_context_injections', {
+  openCodeSessionId: 'ses_abc123',
+});
+// result.content[0].text contains either:
+// - '{"injections":[],"message":"No pending context injections."}'
+// - '<system_notification>\n...\n</system_notification>'
+```
+
+---
+
 ### `manage_skills_and_instructions`
 
 **File:** `desktop/src/main/tools/manage-skills-and-instructions.ts`
@@ -559,23 +652,28 @@ const result = await mcp.callTool('find_repo_docs', {
 > - Use `"instruction"` type for behavioral rules, policies, or guidelines that agents should follow.
 > - Names must be unique. Registering with an existing name will update (upsert) that entry.
 > - Content supports full Markdown formatting.
+> - Entries can be organized with `category` and `tags` for better discoverability.
 
 #### Parameters
 
-| Parameter     | Type                                        | Required                            | Description                                                                                    |
-| ------------- | ------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `action`      | `'register' \| 'list' \| 'get' \| 'delete'` | Yes                                 | The operation to perform.                                                                      |
-| `name`        | `string`                                    | Yes for `register`, `get`, `delete` | Name/identifier for the skill or instruction. Must be unique across all entries.               |
-| `type`        | `'skill' \| 'instruction'`                  | Yes for `register`                  | Type of entry. `"skill"` for workflows/recipes; `"instruction"` for behavioral rules/policies. |
-| `description` | `string`                                    | Yes for `register`                  | Short summary of what the skill/instruction does.                                              |
-| `content`     | `string`                                    | Yes for `register`                  | Full Markdown content body.                                                                    |
-| `filterType`  | `'skill' \| 'instruction'`                  | No                                  | Optional filter for the `list` action — show only entries of the given type.                   |
+| Parameter        | Type                                        | Required                            | Description                                                                                    |
+| ---------------- | ------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `action`         | `'register' \| 'list' \| 'get' \| 'delete'` | Yes                                 | The operation to perform.                                                                      |
+| `name`           | `string`                                    | Yes for `register`, `get`, `delete` | Name/identifier for the skill or instruction. Must be unique across all entries.               |
+| `type`           | `'skill' \| 'instruction'`                  | Yes for `register`                  | Type of entry. `"skill"` for workflows/recipes; `"instruction"` for behavioral rules/policies. |
+| `description`    | `string`                                    | Yes for `register`                  | Short summary of what the skill/instruction does.                                              |
+| `content`        | `string`                                    | Yes for `register`                  | Full Markdown content body.                                                                    |
+| `category`       | `string`                                    | No                                  | Category for organizing skills/instructions (e.g., "Code Review", "Testing", "Documentation"). |
+| `tags`           | `string[]`                                  | No                                  | Tags for categorizing the entry (e.g., `["typescript", "react"]`).                             |
+| `filterType`     | `'skill' \| 'instruction'`                  | No                                  | Optional filter for the `list` action — show only entries of the given type.                   |
+| `filterCategory` | `string`                                    | No                                  | Optional category filter for the `list` action — show only entries in the given category.      |
 
 #### Actions
 
 ##### `register` — Create or update a skill/instruction
 
 Required fields: `name`, `type`, `description`, `content`.
+Optional fields: `category`, `tags`.
 
 If an entry with the same `name` already exists it is updated in-place (`updated_at` refreshes). After a successful upsert the renderer receives a `skills-updated` event so the UI updates live.
 
@@ -589,6 +687,8 @@ If an entry with the same `name` already exists it is updated in-place (`updated
     "name": "code-review",
     "type": "skill",
     "description": "Step-by-step code review workflow",
+    "category": "Code Review",
+    "tags": ["workflow", "best-practices"],
     "createdAt": "2024-01-01T00:00:00.000Z",
     "updatedAt": "2024-01-01T00:00:00.000Z"
   },
@@ -618,7 +718,7 @@ If an entry with the same `name` already exists it is updated in-place (`updated
 
 ##### `list` — List all registered skills and instructions
 
-Returns summary rows (no `content` field). Optionally filtered by `filterType`.
+Returns summary rows (no `content` field). Optionally filtered by `filterType` and/or `filterCategory`.
 
 ###### Return value
 
@@ -633,12 +733,16 @@ Returns summary rows (no `content` field). Optionally filtered by `filterType`.
       "name": "code-review",
       "type": "skill",
       "description": "...",
+      "category": "Code Review",
+      "tags": ["workflow"],
       "updatedAt": "..."
     },
     {
       "name": "debugging",
       "type": "skill",
       "description": "...",
+      "category": "Development",
+      "tags": ["troubleshooting"],
       "updatedAt": "..."
     }
   ]
@@ -732,13 +836,15 @@ When the name is not found: `"deleted": false, "message": "No entry found with n
 #### Example (pseudocode)
 
 ```ts
-// Register a skill
+// Register a skill with category and tags
 await mcp.callTool('manage_skills_and_instructions', {
   action: 'register',
   name: 'code-review',
   type: 'skill',
   description: 'Step-by-step code review workflow',
   content: '# Code Review\n\n1. Check for correctness...',
+  category: 'Code Review',
+  tags: ['workflow', 'best-practices'],
 });
 
 // Register an instruction
@@ -748,6 +854,8 @@ await mcp.callTool('manage_skills_and_instructions', {
   type: 'instruction',
   description: 'TypeScript coding standards',
   content: '# TypeScript Rules\n\n- No any types...',
+  category: 'Coding Standards',
+  tags: ['typescript', 'linting'],
 });
 
 // List all
@@ -757,6 +865,19 @@ await mcp.callTool('manage_skills_and_instructions', { action: 'list' });
 await mcp.callTool('manage_skills_and_instructions', {
   action: 'list',
   filterType: 'skill',
+});
+
+// List by category
+await mcp.callTool('manage_skills_and_instructions', {
+  action: 'list',
+  filterCategory: 'Code Review',
+});
+
+// List skills in a specific category
+await mcp.callTool('manage_skills_and_instructions', {
+  action: 'list',
+  filterType: 'skill',
+  filterCategory: 'Development',
 });
 
 // Get one (returns metadata + full content)

@@ -272,10 +272,19 @@ export function useConnections(onActivatePromptTab: () => void) {
   // Side-effects
   // ---------------------------------------------------------------------------
 
-  /** Clear unread count when switching to a node */
+  /** Clear unread count and update lastReadMessageId when switching to a node */
   useEffect(() => {
     if (activeId) {
-      withNode(activeId, (node) => ({ ...node, unreadCount: 0 }));
+      withNode(activeId, (node) => {
+        // Mark the last message as read when the node becomes active
+        const lastMessage =
+          node.channelMessages[node.channelMessages.length - 1];
+        return {
+          ...node,
+          unreadCount: 0,
+          lastReadMessageId: lastMessage?.id ?? node.lastReadMessageId,
+        };
+      });
     }
   }, [activeId, withNode]);
 
@@ -538,6 +547,48 @@ export function useConnections(onActivatePromptTab: () => void) {
     [inject],
   );
 
+  /**
+   * Send a message with noReply=false to trigger an agent response.
+   * This bypasses the SQLite queue and directly injects via the OpenCode API.
+   */
+  const handleInjectWithReply = useCallback(
+    (sessionId: string, message: string, attachments?: Attachment[]) => {
+      const outboundId = `local-outbound-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
+      // Add outbound message to UI immediately
+      setNodes((prev) => {
+        let key: string | null = null;
+        for (const [id, node] of prev) {
+          if (node.connectionId === sessionId || node.id === sessionId) {
+            key = id;
+            break;
+          }
+        }
+        if (!key) return prev;
+        const node = prev.get(key)!;
+        const next = new Map(prev);
+        next.set(key, {
+          ...node,
+          channelMessages: [
+            ...node.channelMessages,
+            {
+              id: outboundId,
+              kind: 'outbound' as const,
+              text: message,
+              timestamp: new Date(),
+              attachments,
+            },
+          ],
+        });
+        return next;
+      });
+
+      // Inject with noReply=false to trigger agent response
+      void inject(sessionId, outboundId, message, attachments, false);
+    },
+    [inject],
+  );
+
   const handleClearChannelMessages = useCallback((sessionId: string) => {
     void window.api.clearSessionChannelMessages(sessionId);
   }, []);
@@ -625,6 +676,7 @@ export function useConnections(onActivatePromptTab: () => void) {
     handleDismissStatus,
     handleDismissSession,
     handleQueueSessionMessage,
+    handleInjectWithReply,
     handleClearChannelMessages,
     handleRemoveSession,
     handleToggleDocContext,

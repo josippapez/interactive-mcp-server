@@ -4,6 +4,24 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 
 export type AgentBackend = 'standalone' | 'opencode' | 'claude_sdk';
 
+/**
+ * Predefined list of common MCP tool names.
+ * These are shown in the tool exclusion settings UI alongside any discovered tools.
+ */
+export const PREDEFINED_TOOLS = [
+  'Edit',
+  'Read',
+  'Write',
+  'Bash',
+  'Grep',
+  'Glob',
+  'WebFetch',
+  'TodoWrite',
+  'Task',
+  'question',
+  'skill',
+] as const;
+
 export interface AppSettings {
   port: number;
   soundEnabled: boolean;
@@ -26,6 +44,31 @@ export interface AppSettings {
   agentBackend: AgentBackend;
   /** When true, child OpenCode sessions are automatically registered as channels in the sidebar. Default: true. */
   autoRegisterSubagents: boolean;
+  /**
+   * Raw JSON object string of additional MCP server entries to include alongside
+   * `interactive-desktop` when syncing `opencode.json`. Each key is a server name,
+   * each value is a valid MCP server config object.
+   * Example: `{ "test": { "type": "stdio", "command": "python", "args": ["-m", "test.mcp_server"] } }`
+   * Default: "" (empty — no extra servers).
+   */
+  extraMcpServers: string;
+  /**
+   * When true, reduces padding, margins, and font sizes across the UI for a denser layout.
+   * Default: false.
+   */
+  compactMode: boolean;
+  /**
+   * List of tool names to exclude from auto-expand when "Expand All Tools" is enabled.
+   * Tools in this list will remain collapsed even when the global expand toggle is on.
+   * Default: [] (no exclusions).
+   */
+  toolAutoExpandExclusions: string[];
+  /**
+   * List of tool names discovered from conversation history.
+   * Combined with predefined tools to show in the exclusion settings UI.
+   * Default: [] (empty — only predefined tools shown initially).
+   */
+  discoveredTools: string[];
 }
 
 export const defaultSettings: AppSettings = {
@@ -41,6 +84,10 @@ export const defaultSettings: AppSettings = {
   docContextDebug: false,
   agentBackend: 'opencode',
   autoRegisterSubagents: true,
+  extraMcpServers: '',
+  compactMode: false,
+  toolAutoExpandExclusions: [],
+  discoveredTools: [],
 };
 
 export function getSettingsPath(): string {

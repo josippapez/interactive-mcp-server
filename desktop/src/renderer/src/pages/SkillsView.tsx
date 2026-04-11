@@ -7,11 +7,24 @@ type SkillOrInstruction = {
   type: 'skill' | 'instruction';
   description: string;
   content: string;
+  enabled: boolean;
+  isBuiltin: boolean;
+  category: string | null;
+  tags: string[] | null;
   createdAt: string;
   updatedAt: string;
 };
 
 type TabType = 'all' | 'skill' | 'instruction';
+
+const PREDEFINED_CATEGORIES = [
+  'Code Review',
+  'Testing',
+  'Documentation',
+  'Workflow',
+  'Style Guide',
+  'Other',
+];
 
 export default function SkillsView(): React.ReactElement {
   const [entries, setEntries] = useState<SkillOrInstruction[]>([]);
@@ -21,11 +34,16 @@ export default function SkillsView(): React.ReactElement {
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
+  // Category filter for sidebar
+  const [categoryFilter, setCategoryFilter] = useState<string>('');
+
   // Form state
   const [formName, setFormName] = useState('');
   const [formType, setFormType] = useState<'skill' | 'instruction'>('skill');
   const [formDescription, setFormDescription] = useState('');
   const [formContent, setFormContent] = useState('');
+  const [formCategory, setFormCategory] = useState('');
+  const [formTags, setFormTags] = useState('');
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   // Delete modal
@@ -50,9 +68,12 @@ export default function SkillsView(): React.ReactElement {
   );
 
   const loadEntries = useCallback(async () => {
-    const result = await window.api.listSkillsAndInstructions(undefined);
+    const result = await window.api.listSkillsAndInstructions(
+      undefined,
+      categoryFilter || undefined,
+    );
     setEntries(result);
-  }, []);
+  }, [categoryFilter]);
 
   useEffect(() => {
     void loadEntries();
@@ -73,6 +94,8 @@ export default function SkillsView(): React.ReactElement {
     setFormType(entry.type);
     setFormDescription(entry.description);
     setFormContent(entry.content);
+    setFormCategory(entry.category ?? '');
+    setFormTags(entry.tags?.join(', ') ?? '');
   }, []);
 
   const handleCreate = useCallback(() => {
@@ -83,6 +106,8 @@ export default function SkillsView(): React.ReactElement {
     setFormType(tab === 'skill' || tab === 'instruction' ? tab : 'skill');
     setFormDescription('');
     setFormContent('');
+    setFormCategory('');
+    setFormTags('');
   }, [tab]);
 
   const handleEdit = useCallback(() => {
@@ -100,6 +125,8 @@ export default function SkillsView(): React.ReactElement {
       setFormType(selected.type);
       setFormDescription(selected.description);
       setFormContent(selected.content);
+      setFormCategory(selected.category ?? '');
+      setFormTags(selected.tags?.join(', ') ?? '');
     }
     setIsEditing(false);
   }, [isCreating, selected]);
@@ -116,11 +143,19 @@ export default function SkillsView(): React.ReactElement {
       return;
     }
 
+    // Parse tags from comma-separated string
+    const parsedTags = formTags
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
     const result = await window.api.upsertSkillOrInstruction({
       name: formName.trim(),
       type: formType,
       description: formDescription.trim(),
       content: formContent.trim(),
+      category: formCategory.trim() || null,
+      tags: parsedTags.length > 0 ? parsedTags : null,
     });
 
     if (result) {
@@ -141,6 +176,8 @@ export default function SkillsView(): React.ReactElement {
     formType,
     formDescription,
     formContent,
+    formCategory,
+    formTags,
     isCreating,
     loadEntries,
   ]);
@@ -155,6 +192,40 @@ export default function SkillsView(): React.ReactElement {
     }
     await loadEntries();
   }, [deleteTarget, selected, loadEntries]);
+
+  const handleToggleEnabled = useCallback(
+    async (name: string, currentEnabled: boolean) => {
+      await window.api.toggleSkillOrInstructionEnabled(name, !currentEnabled);
+      await loadEntries();
+      // Update selected if it's the one being toggled
+      if (selected?.name === name) {
+        setSelected((prev) =>
+          prev ? { ...prev, enabled: !currentEnabled } : null,
+        );
+      }
+    },
+    [loadEntries, selected?.name],
+  );
+
+  const handleDuplicate = useCallback(
+    async (name: string) => {
+      const duplicated = await window.api.duplicateSkillOrInstruction(name);
+      if (duplicated) {
+        await loadEntries();
+        // Select the duplicated entry and open in edit mode
+        setSelected(duplicated);
+        setIsEditing(true);
+        setIsCreating(false);
+        setFormName(duplicated.name);
+        setFormType(duplicated.type);
+        setFormDescription(duplicated.description);
+        setFormContent(duplicated.content);
+        setFormCategory(duplicated.category ?? '');
+        setFormTags(duplicated.tags?.join(', ') ?? '');
+      }
+    },
+    [loadEntries],
+  );
 
   useEffect(() => {
     return () => {
@@ -207,18 +278,34 @@ export default function SkillsView(): React.ReactElement {
 
   const isFormMode = isEditing || isCreating;
 
-  // Derive the visible list from tab + search query
+  // Collect all unique categories from entries for the filter dropdown
+  const availableCategories = useMemo(() => {
+    const cats = new Set<string>();
+    for (const e of entries) {
+      if (e.category) cats.add(e.category);
+    }
+    // Merge with predefined categories
+    for (const c of PREDEFINED_CATEGORIES) {
+      cats.add(c);
+    }
+    return Array.from(cats).sort();
+  }, [entries]);
+
+  // Derive the visible list from tab + search query + category filter
   const visibleEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
     return entries.filter((e) => {
       if (tab !== 'all' && e.type !== tab) return false;
+      // categoryFilter is applied via API, but double-check here for safety
+      if (categoryFilter && e.category !== categoryFilter) return false;
       if (!q) return true;
       return (
         e.name.toLowerCase().includes(q) ||
-        e.description.toLowerCase().includes(q)
+        e.description.toLowerCase().includes(q) ||
+        (e.tags?.some((t) => t.toLowerCase().includes(q)) ?? false)
       );
     });
-  }, [entries, tab, search]);
+  }, [entries, tab, search, categoryFilter]);
 
   const skills = visibleEntries.filter((e) => e.type === 'skill');
   const instructions = visibleEntries.filter((e) => e.type === 'instruction');
@@ -294,6 +381,20 @@ export default function SkillsView(): React.ReactElement {
             ))}
           </div>
 
+          {/* Category filter dropdown */}
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="w-full mb-2 bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-2 py-1 text-xs text-[var(--color-text)]"
+          >
+            <option value="">All Categories</option>
+            {availableCategories.map((cat) => (
+              <option key={cat} value={cat}>
+                {cat}
+              </option>
+            ))}
+          </select>
+
           {/* Search input */}
           <input
             type="search"
@@ -313,8 +414,8 @@ export default function SkillsView(): React.ReactElement {
         <div className="flex-1 overflow-y-auto">
           {visibleEntries.length === 0 ? (
             <div className="p-3 text-xs text-[var(--color-text-faint)]">
-              {search
-                ? `No matches for "${search}".`
+              {search || categoryFilter
+                ? `No matches${search ? ` for "${search}"` : ''}${categoryFilter ? ` in category "${categoryFilter}"` : ''}.`
                 : 'No entries yet. Click "+ New" to create one, or use the manage_skills_and_instructions tool from an agent.'}
             </div>
           ) : (
@@ -333,6 +434,7 @@ export default function SkillsView(): React.ReactElement {
                       isSelected={selected?.id === entry.id}
                       onSelect={handleSelect}
                       onDelete={(name) => setDeleteTarget(name)}
+                      onToggleEnabled={handleToggleEnabled}
                     />
                   ))}
                 </div>
@@ -352,6 +454,7 @@ export default function SkillsView(): React.ReactElement {
                         isSelected={selected?.id === entry.id}
                         onSelect={handleSelect}
                         onDelete={(name) => setDeleteTarget(name)}
+                        onToggleEnabled={handleToggleEnabled}
                       />
                     ))}
                   </div>
@@ -392,13 +495,54 @@ export default function SkillsView(): React.ReactElement {
               </h3>
               {!isFormMode && selected && (
                 <div className="flex flex-col items-end gap-1">
-                  <div className="flex gap-2">
+                  <div className="flex gap-2 items-center">
+                    {/* Toggle switch */}
+                    <button
+                      type="button"
+                      onClick={() =>
+                        void handleToggleEnabled(
+                          selected.name,
+                          selected.enabled,
+                        )
+                      }
+                      className={`relative w-8 h-4 rounded-full transition-colors cursor-pointer ${
+                        selected.enabled
+                          ? 'bg-[var(--color-agent)]'
+                          : 'bg-[var(--color-border)]'
+                      }`}
+                      aria-label={
+                        selected.enabled
+                          ? 'Disable this entry'
+                          : 'Enable this entry'
+                      }
+                      title={
+                        selected.enabled
+                          ? 'Enabled — click to disable'
+                          : 'Disabled — click to enable'
+                      }
+                    >
+                      <span
+                        className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform ${
+                          selected.enabled ? 'left-4' : 'left-0.5'
+                        }`}
+                      />
+                    </button>
+                    <span className="text-[10px] text-[var(--color-text-faint)] w-14">
+                      {selected.enabled ? 'Enabled' : 'Disabled'}
+                    </span>
                     <button
                       type="button"
                       onClick={() => void handleExportSingle(selected.name)}
                       className="px-2 py-1 text-xs rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
                     >
                       Export
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDuplicate(selected.name)}
+                      className="px-2 py-1 text-xs rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
+                    >
+                      Duplicate
                     </button>
                     <button
                       type="button"
@@ -464,6 +608,38 @@ export default function SkillsView(): React.ReactElement {
 
                 <div>
                   <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+                    Category
+                  </label>
+                  <input
+                    type="text"
+                    list="category-options"
+                    value={formCategory}
+                    onChange={(e) => setFormCategory(e.target.value)}
+                    placeholder="Select or type a category"
+                    className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-tool)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-agent)]"
+                  />
+                  <datalist id="category-options">
+                    {availableCategories.map((cat) => (
+                      <option key={cat} value={cat} />
+                    ))}
+                  </datalist>
+                </div>
+
+                <div>
+                  <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+                    Tags
+                  </label>
+                  <input
+                    type="text"
+                    value={formTags}
+                    onChange={(e) => setFormTags(e.target.value)}
+                    placeholder="Comma-separated tags, e.g. react, typescript, testing"
+                    className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] focus:border-[var(--color-tool)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[var(--color-agent)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs text-[var(--color-text-muted)] mb-1">
                     Description
                   </label>
                   <input
@@ -514,7 +690,7 @@ export default function SkillsView(): React.ReactElement {
               /* Read-only view */
               selected && (
                 <div className="space-y-3">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 flex-wrap">
                     <span
                       className={`px-1.5 py-0.5 text-[10px] rounded-sm border ${
                         selected.type === 'skill'
@@ -524,6 +700,21 @@ export default function SkillsView(): React.ReactElement {
                     >
                       {selected.type}
                     </span>
+                    {selected.category && (
+                      <span className="px-1.5 py-0.5 text-[10px] rounded-sm border border-[var(--color-tool)]/30 text-[var(--color-tool)] bg-[var(--color-tool)]/10">
+                        {selected.category}
+                      </span>
+                    )}
+                    {selected.tags &&
+                      selected.tags.length > 0 &&
+                      selected.tags.map((tag) => (
+                        <span
+                          key={tag}
+                          className="px-1.5 py-0.5 text-[10px] rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-surface)]"
+                        >
+                          {tag}
+                        </span>
+                      ))}
                     <span className="text-xs text-[var(--color-text-faint)]">
                       Updated {selected.updatedAt}
                     </span>
@@ -560,11 +751,13 @@ function SidebarItem({
   isSelected,
   onSelect,
   onDelete,
+  onToggleEnabled,
 }: {
   entry: SkillOrInstruction;
   isSelected: boolean;
   onSelect: (entry: SkillOrInstruction) => void;
   onDelete: (name: string) => void;
+  onToggleEnabled: (name: string, currentEnabled: boolean) => void;
 }): React.ReactElement {
   return (
     <button
@@ -574,21 +767,83 @@ function SidebarItem({
         isSelected
           ? 'bg-[var(--color-surface)] text-[var(--color-text)]'
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]'
-      }`}
+      } ${!entry.enabled ? 'opacity-50' : ''}`}
     >
       <div className="flex items-center justify-between">
-        <span className="truncate font-medium">{entry.name}</span>
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            onDelete(entry.name);
-          }}
-          className="opacity-0 group-hover:opacity-100 text-[var(--color-text-faint)] hover:text-[var(--color-error)] transition-all cursor-pointer text-[10px]"
-          aria-label={`Delete ${entry.name}`}
-        >
-          x
-        </button>
+        <span className="truncate font-medium flex items-center gap-1">
+          {entry.name}
+          {entry.isBuiltin && (
+            <span
+              className="px-1 py-0.5 text-[8px] rounded bg-[var(--color-tool)]/20 text-[var(--color-tool)]"
+              title="Built-in template"
+            >
+              Built-in
+            </span>
+          )}
+          {!entry.enabled && (
+            <span
+              className="px-1 py-0.5 text-[8px] rounded bg-[var(--color-text-faint)]/20 text-[var(--color-text-faint)]"
+              title="Disabled - will not be injected into agent sessions"
+            >
+              Off
+            </span>
+          )}
+        </span>
+        <div className="flex items-center gap-1">
+          {/* Toggle switch */}
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleEnabled(entry.name, entry.enabled);
+            }}
+            className={`relative w-6 h-3.5 rounded-full transition-colors cursor-pointer ${
+              entry.enabled
+                ? 'bg-[var(--color-agent)]'
+                : 'bg-[var(--color-border)]'
+            }`}
+            aria-label={`${entry.enabled ? 'Disable' : 'Enable'} ${entry.name}`}
+            title={entry.enabled ? 'Disable' : 'Enable'}
+          >
+            <span
+              className={`absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white transition-transform ${
+                entry.enabled ? 'left-3' : 'left-0.5'
+              }`}
+            />
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete(entry.name);
+            }}
+            className="opacity-0 group-hover:opacity-100 text-[var(--color-text-faint)] hover:text-[var(--color-error)] transition-all cursor-pointer text-[10px]"
+            aria-label={`Delete ${entry.name}`}
+          >
+            x
+          </button>
+        </div>
+      </div>
+      <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+        {entry.category && (
+          <span className="px-1 py-0.5 text-[8px] rounded bg-[var(--color-tool)]/10 text-[var(--color-tool)]">
+            {entry.category}
+          </span>
+        )}
+        {entry.tags &&
+          entry.tags.slice(0, 2).map((tag) => (
+            <span
+              key={tag}
+              className="px-1 py-0.5 text-[8px] rounded bg-[var(--color-surface)] text-[var(--color-text-faint)]"
+            >
+              {tag}
+            </span>
+          ))}
+        {entry.tags && entry.tags.length > 2 && (
+          <span className="text-[8px] text-[var(--color-text-faint)]">
+            +{entry.tags.length - 2}
+          </span>
+        )}
       </div>
       <p className="truncate text-[var(--color-text-faint)] mt-0.5">
         {entry.description}

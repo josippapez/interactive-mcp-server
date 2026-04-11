@@ -1,13 +1,21 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { staleConnectionError } from './connection-guard';
-import { getRegisteredConnection } from '../database';
-import { searchDocs, formatSearchResults } from '../doc-context-injector';
+import {
+  staleConnectionError,
+  missingSessionIdError,
+  missingSessionIdParamError,
+} from './connection-guard';
+import {
+  getRegisteredConnection,
+  getRegisteredConnectionBySessionId,
+} from '../database';
+import { searchDocs, formatSearchResults } from '../docs/context-injector';
 
 export function registerFindRepoDocsTool(
   server: McpServer,
   connectionId: string,
+  requireSessionId = false,
 ): void {
   server.registerTool(
     'find_repo_docs',
@@ -20,7 +28,9 @@ The search combines:
 - Keyword matching (path, content, title, directory context)
 - Semantic similarity (embedding-based, available after the background indexer warms up)
 
-Results are ranked by combined score. The first search after registration may be keyword-only while the semantic index builds in the background.`,
+Results are ranked by combined score. The first search after registration may be keyword-only while the semantic index builds in the background.
+
+IMPORTANT: You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) with every call for correct routing.`,
       title: 'Search repository documentation',
       inputSchema: {
         query: z
@@ -34,15 +44,33 @@ Results are ranked by combined score. The first search after registration may be
           .optional()
           .default(8)
           .describe('Maximum number of matches to return (1-20, default 8).'),
+        openCodeSessionId: z
+          .string()
+          .optional()
+          .describe(
+            'Your OpenCode session ID (format: ses_<alphanumeric>). Required for correct routing in multi-agent scenarios.',
+          ),
       },
     },
-    async ({ query, limit }): Promise<CallToolResult> => {
+    async ({ query, limit, openCodeSessionId }): Promise<CallToolResult> => {
       // Check for stale/deleted connection
       const staleError = staleConnectionError(connectionId);
       if (staleError) return staleError;
 
-      // Look up the registered connection to get baseDirectory
-      const connection = getRegisteredConnection(connectionId);
+      // Check for missing OpenCode session ID (required in OpenCode mode)
+      const missingErr = missingSessionIdError(connectionId, requireSessionId);
+      if (missingErr) return missingErr;
+
+      const missingParamErr = missingSessionIdParamError(
+        openCodeSessionId,
+        requireSessionId,
+      );
+      if (missingParamErr) return missingParamErr;
+
+      // Look up the registered connection - prefer openCodeSessionId for lookup
+      const connection = openCodeSessionId
+        ? getRegisteredConnectionBySessionId(openCodeSessionId)
+        : getRegisteredConnection(connectionId);
       if (!connection?.baseDirectory) {
         return {
           content: [

@@ -1,9 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import PromptView from './pages/PromptView';
 import SettingsView from './pages/SettingsView';
 import SkillsView from './pages/SkillsView';
 import StatusBar from './components/StatusBar';
 import ShortcutHelpModal from './components/ShortcutHelpModal';
+import QuickSwitcher from './components/QuickSwitcher';
 import { useConnections } from './hooks/useConnections';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 
@@ -12,6 +13,30 @@ const TABS: Tab[] = ['prompt', 'skills', 'settings'];
 
 export default function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<Tab>('prompt');
+  const [compactMode, setCompactMode] = useState(false);
+
+  // Ref for triggering skill creation from QuickSwitcher
+  const skillsViewRef = useRef<{
+    createNew: (type: 'skill' | 'instruction') => void;
+  } | null>(null);
+
+  // Load compact mode setting on mount
+  useEffect(() => {
+    window.api.getSettings().then((s) => {
+      setCompactMode(s.compactMode);
+    });
+  }, []);
+
+  // Listen for settings changes (e.g., from SettingsView)
+  useEffect(() => {
+    const checkSettings = async () => {
+      const s = await window.api.getSettings();
+      setCompactMode(s.compactMode);
+    };
+    // Poll for settings changes when returning to the app
+    const interval = setInterval(checkSettings, 2000);
+    return () => clearInterval(interval);
+  }, []);
 
   const switchToPrompt = useCallback(() => setActiveTab('prompt'), []);
 
@@ -26,10 +51,10 @@ export default function App(): React.ReactElement {
     handleDismissStatus,
     handleDismissSession,
     handleQueueSessionMessage,
+    handleInjectWithReply,
     handleClearChannelMessages,
     handleRemoveSession,
     handleToggleDocContext,
-    handleReplyPermission,
     jumpToFirstPendingPrompt,
   } = useConnections(switchToPrompt);
 
@@ -42,9 +67,44 @@ export default function App(): React.ReactElement {
     setActiveTab(TABS[tab - 1]);
   }, []);
 
-  const { showShortcuts, openShortcuts, closeShortcuts } = useGlobalShortcuts({
+  const {
+    showShortcuts,
+    openShortcuts,
+    closeShortcuts,
+    showQuickSwitcher,
+    closeQuickSwitcher,
+  } = useGlobalShortcuts({
     onSwitchTab: switchTab,
   });
+
+  const handleRefreshSessions = useCallback(() => {
+    void window.api.refreshSessionTree();
+  }, []);
+
+  const handleCreateSkill = useCallback(() => {
+    skillsViewRef.current?.createNew('skill');
+  }, []);
+
+  const handleCreateInstruction = useCallback(() => {
+    skillsViewRef.current?.createNew('instruction');
+  }, []);
+
+  const handleNavigate = useCallback(
+    (tab: 'prompt' | 'skills' | 'settings') => {
+      setActiveTab(tab);
+      if (tab === 'prompt') {
+        jumpToFirstPendingPrompt();
+      }
+    },
+    [jumpToFirstPendingPrompt],
+  );
+
+  const handleSelectSession = useCallback(
+    (sessionId: string) => {
+      setActiveConnectionId(sessionId);
+    },
+    [setActiveConnectionId],
+  );
 
   const hasAnyPrompt = Array.from(connections.values()).some(
     (c) => c.hasPendingPrompt,
@@ -57,7 +117,10 @@ export default function App(): React.ReactElement {
   const connectionCount = connections.size;
 
   return (
-    <div className="flex flex-col h-screen bg-[var(--color-bg)] text-[var(--color-text)]">
+    <div
+      className="flex flex-col h-screen bg-[var(--color-bg)] text-[var(--color-text)]"
+      data-compact={compactMode ? 'true' : 'false'}
+    >
       <header className="titlebar-drag flex items-center justify-between px-4 pt-8 pb-2 border-b border-[var(--color-border)]">
         <div className="flex items-center gap-2">
           <span className="text-[var(--color-agent)] text-sm">&#x276F;</span>
@@ -110,6 +173,7 @@ export default function App(): React.ReactElement {
             onDismissStatus={handleDismissStatus}
             onDismissSession={handleDismissSession}
             onQueueSessionMessage={handleQueueSessionMessage}
+            onInjectWithReply={handleInjectWithReply}
             onClearMessages={handleClearChannelMessages}
             onRemoveSession={handleRemoveSession}
             onToggleDocContext={() =>
@@ -127,6 +191,16 @@ export default function App(): React.ReactElement {
         onShowShortcuts={openShortcuts}
       />
       <ShortcutHelpModal open={showShortcuts} onClose={closeShortcuts} />
+      <QuickSwitcher
+        open={showQuickSwitcher}
+        onClose={closeQuickSwitcher}
+        connections={connections}
+        onSelectSession={handleSelectSession}
+        onNavigate={handleNavigate}
+        onRefreshSessions={handleRefreshSessions}
+        onCreateSkill={handleCreateSkill}
+        onCreateInstruction={handleCreateInstruction}
+      />
     </div>
   );
 }

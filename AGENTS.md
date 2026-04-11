@@ -28,7 +28,7 @@ The CLI package (`src/`) is published to npm. The desktop app (`desktop/`) is di
 - Entry: `desktop/src/main/index.ts`
 - Main process tools: `desktop/src/main/tools/`
 - Build: `electron-vite build`
-- Tests: `npm test -- --run` (vitest, 185 tests)
+- Tests: `npm test -- --run` (vitest, 427 tests)
 - Packaging: `npm run package:mac` / `package:win` / `package:linux`
 - Docs: `desktop/docs/` — authoritative architecture and API references
 
@@ -52,7 +52,7 @@ The CLI package (`src/`) is published to npm. The desktop app (`desktop/`) is di
 
 - TypeScript throughout — no `any` types
 - All new code must pass: `npm run check-types` (root) and type-checking in `desktop/`
-- After desktop edits: run `npm test -- --run` in `desktop/` — all 185 tests must pass
+- After desktop edits: run `npm test -- --run` in `desktop/` — all 427 tests must pass
 - After root edits: run `npm run check-types`
 
 ### File Structure
@@ -70,6 +70,91 @@ The CLI package (`src/`) is published to npm. The desktop app (`desktop/`) is di
 - **Config-file timeout** — MCP tool call timeout is set in `opencode.json` via `syncRemoteConfig` at startup. Dynamic registration does not reliably override session timeouts.
 - **Prompt timeout behaviour** — when a prompt times out, it clears immediately and an expiry notice is appended. No grace period.
 - **SQLite via sql.js** — all session/message history is persisted in an embedded SQLite database (no native sqlite3 bindings).
+- **openCodeSessionId as primary key** — after the session-ID refactor, `openCodeSessionId` is the canonical DB identity for every session. The MCP `connectionId` is an internal transport handle only. Agents must pass `openCodeSessionId` on every tool call to ensure correct channel routing.
+
+---
+
+## Auto-register Connection (for AI agents using interactive-desktop tools)
+
+The desktop app **automatically registers sessions** when it detects new OpenCode sessions via SSE events. Agents do NOT need to call `register_connection` as a prerequisite — tools work immediately.
+
+### How auto-registration works
+
+1. When OpenCode spawns a session (root or child), the desktop app receives a `session.created.1` SSE event
+2. The desktop app proactively creates a DB row for that session, keyed by `openCodeSessionId`
+3. The desktop app injects a `<system-reminder>` into the agent's context containing its `openCodeSessionId` (format: `ses_<alphanumeric>`)
+4. The agent can immediately use tools like `request_user_input` — just pass `openCodeSessionId` on every call
+
+### When to call `register_connection`
+
+Calling `register_connection` is **optional but recommended** for:
+
+- **Custom channel names** — auto-registered channels use the OpenCode session title; call `register_connection` to set a descriptive name like "Fix authentication bug"
+- **Recovering after deletion** — if a user deletes the channel from the sidebar, call `register_connection` to re-create it
+- **Non-OpenCode providers** — Copilot CLI, Claude SDK, and standalone agents MUST call `register_connection` since there's no SSE auto-detection
+
+### Why `openCodeSessionId` is required on tool calls
+
+OpenCode uses a **shared MCP client** across all agent sessions. Without an explicit session ID on each tool call:
+
+- Messages may route to the wrong channel in multi-agent scenarios
+- Parallel subagents cannot be distinguished from each other
+- The desktop app cannot reliably associate tool calls with the correct session
+
+Each agent MUST pass `openCodeSessionId` on every tool call for correct channel routing.
+
+### Tool Call Requirements
+
+The following tools REQUIRE `openCodeSessionId` on every call:
+
+| Tool                      | Purpose                                    |
+| ------------------------- | ------------------------------------------ |
+| `request_user_input`      | Prompt user for input/confirmation         |
+| `push_session_status`     | Send non-blocking status update to UI      |
+| `send_message`            | Send persistent message to channel history |
+| `start_intensive_chat`    | Start multi-question chat session          |
+| `ask_intensive_chat`      | Ask question in active intensive chat      |
+| `stop_intensive_chat`     | Close intensive chat session               |
+| `poll_context_injections` | Check for pending context from desktop app |
+| `find_repo_docs`          | Search repository documentation            |
+
+### Example workflow
+
+**Step 1: Register connection (first tool call)**
+
+```json
+{
+  "channelName": "Fix authentication bug",
+  "projectName": "my-project",
+  "baseDirectory": "/Users/me/projects/my-project",
+  "openCodeSessionId": "ses_abc123"
+}
+```
+
+**Step 2: Subsequent tool calls (always include openCodeSessionId)**
+
+```json
+// request_user_input
+{
+  "projectName": "my-project",
+  "message": "Should I refactor the auth module?",
+  "baseDirectory": "/Users/me/projects/my-project",
+  "openCodeSessionId": "ses_abc123"
+}
+
+// push_session_status
+{
+  "status": "Running tests...",
+  "type": "working",
+  "openCodeSessionId": "ses_abc123"
+}
+
+// send_message
+{
+  "message": "Build completed successfully.",
+  "openCodeSessionId": "ses_abc123"
+}
+```
 
 ---
 
