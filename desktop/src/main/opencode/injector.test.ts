@@ -38,6 +38,7 @@ function startServer(): Promise<number> {
           body,
           headers: req.headers,
         };
+
         res.writeHead(responseStatus, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: responseStatus === 200 }));
       });
@@ -71,6 +72,7 @@ describe('injectOpenCodeMessage', () => {
 
   afterEach(async () => {
     await stopServer();
+    vi.restoreAllMocks();
   });
 
   it('sends a POST to /session/:id/message with correct URL', async () => {
@@ -106,6 +108,25 @@ describe('injectOpenCodeMessage', () => {
 
     const body = JSON.parse(lastRequest!.body);
     expect(body.noReply).toBe(false);
+  });
+
+  it('maps xhigh variant to provider max in request payload', async () => {
+    await injectOpenCodeMessage(
+      's1',
+      'test',
+      undefined,
+      serverPort,
+      undefined,
+      false,
+      {
+        providerId: 'openai',
+        modelId: 'gpt-5',
+        variant: 'xhigh',
+      },
+    );
+
+    const body = JSON.parse(lastRequest!.body);
+    expect(body.variant).toBe('max');
   });
 
   it('includes the message text in parts[0].text', async () => {
@@ -194,6 +215,86 @@ describe('injectOpenCodeMessage', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toBeDefined();
+  });
+
+  it('treats noReply=false timeout as success when message exists in session history', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy
+      .mockRejectedValueOnce(new Error('This operation was aborted'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          {
+            info: { role: 'user' },
+            parts: [{ type: 'text', text: 'timeout but delivered' }],
+          },
+        ],
+      } as unknown as Response);
+
+    const result = await injectOpenCodeMessage(
+      's1',
+      'timeout but delivered',
+      undefined,
+      serverPort,
+      undefined,
+      false,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.noReply).toBe(false);
+    fetchSpy.mockRestore();
+  });
+
+  it('keeps timeout failure for noReply=false when message is not found in session history', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy
+      .mockRejectedValueOnce(new Error('This operation was aborted'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      } as unknown as Response);
+
+    const result = await injectOpenCodeMessage(
+      's1',
+      'timeout and missing',
+      undefined,
+      serverPort,
+      undefined,
+      false,
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain('Request timed out');
+    fetchSpy.mockRestore();
+  });
+
+  it('treats noReply=false timeout as success when session is busy after timeout', async () => {
+    const fetchSpy = vi.spyOn(globalThis, 'fetch');
+    fetchSpy
+      .mockRejectedValueOnce(new Error('This operation was aborted'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [],
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          s1: { type: 'busy' },
+        }),
+      } as unknown as Response);
+
+    const result = await injectOpenCodeMessage(
+      's1',
+      'timeout while busy',
+      undefined,
+      serverPort,
+      undefined,
+      false,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(result.noReply).toBe(false);
+    fetchSpy.mockRestore();
   });
 
   it('URL-encodes the session ID', async () => {

@@ -8,18 +8,39 @@ import {
   type Mock,
 } from 'vitest';
 import {
+  registerMcpAcrossReachablePorts,
   registerMcpWithOpenCode,
   registerMcpWithRetry,
   type McpRegistrationResult,
 } from './mcp-register';
+
+vi.mock('./endpoints', () => ({
+  buildOpenCodePortCandidates: vi.fn((primaryPort: number) => [primaryPort]),
+  resolveReachableOpenCodePorts: vi.fn().mockResolvedValue([]),
+}));
+
+import {
+  buildOpenCodePortCandidates,
+  resolveReachableOpenCodePorts,
+} from './endpoints';
 
 // Mock global fetch
 const mockFetch = vi.fn() as Mock;
 vi.stubGlobal('fetch', mockFetch);
 
 describe('opencode-mcp-register', () => {
+  const mockResolveReachableOpenCodePorts =
+    resolveReachableOpenCodePorts as Mock;
+  const mockBuildOpenCodePortCandidates = buildOpenCodePortCandidates as Mock;
+
   beforeEach(() => {
     mockFetch.mockReset();
+    mockResolveReachableOpenCodePorts.mockReset();
+    mockResolveReachableOpenCodePorts.mockResolvedValue([]);
+    mockBuildOpenCodePortCandidates.mockReset();
+    mockBuildOpenCodePortCandidates.mockImplementation(
+      (primaryPort: number) => [primaryPort],
+    );
   });
 
   it('registers the desktop MCP server via POST /mcp', async () => {
@@ -127,6 +148,75 @@ describe('opencode-mcp-register', () => {
 
     const body = JSON.parse(mockFetch.mock.calls[0][1].body);
     expect(body.name).toBe('my-custom-mcp');
+  });
+
+  it('registers on all reachable OpenCode ports', async () => {
+    mockResolveReachableOpenCodePorts.mockResolvedValue([4096, 4098]);
+    mockFetch.mockResolvedValue({ ok: true });
+
+    const result = await registerMcpAcrossReachablePorts({
+      appPort: 3100,
+      openCodePort: 4096,
+    });
+
+    expect(result).toEqual({ status: 'registered' });
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'http://localhost:4096/mcp',
+      expect.any(Object),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:4098/mcp',
+      expect.any(Object),
+    );
+  });
+
+  it('falls back to candidate ports when no port is reachable', async () => {
+    mockResolveReachableOpenCodePorts.mockResolvedValue([]);
+    mockBuildOpenCodePortCandidates.mockReturnValue([4096, 4097]);
+    mockFetch
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce({ ok: true });
+
+    const result = await registerMcpAcrossReachablePorts({
+      appPort: 3100,
+      openCodePort: 4096,
+    });
+
+    expect(result).toEqual({ status: 'registered' });
+    expect(mockBuildOpenCodePortCandidates).toHaveBeenCalledWith(4096);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns error when at least one candidate responds with non-ok and none succeed', async () => {
+    mockResolveReachableOpenCodePorts.mockResolvedValue([4096, 4097]);
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 500, statusText: 'Oops' })
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+    const result = await registerMcpAcrossReachablePorts({
+      appPort: 3100,
+      openCodePort: 4096,
+    });
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('500');
+  });
+
+  it('returns unreachable when all ports are unreachable', async () => {
+    mockResolveReachableOpenCodePorts.mockResolvedValue([4096, 4097]);
+    mockFetch
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'));
+
+    const result = await registerMcpAcrossReachablePorts({
+      appPort: 3100,
+      openCodePort: 4096,
+    });
+
+    expect(result.status).toBe('unreachable');
   });
 });
 

@@ -9,6 +9,7 @@ import { registerIpcHandlers } from './ipc/handlers';
 import {
   startSessionTreeManager,
   stopSessionTreeManager,
+  replayPendingSessionTreeSnapshot,
 } from './session/tree-manager';
 import {
   startBusEventSubscription,
@@ -20,6 +21,7 @@ import { syncRemoteConfig } from './opencode/config-sync';
 import { detectClaudeSdkRuntime } from './claude-sdk-runtime';
 import { registerMcpWithRetry } from './opencode/mcp-register';
 import { BUILTIN_TEMPLATES } from './builtin-templates';
+import { initLogger, createLogger } from './utils/logger';
 import {
   initializeConversationProviders,
   stopConversationProviders,
@@ -43,10 +45,22 @@ app.whenReady().then(async () => {
   // Initialize database and load settings
   await initDatabase();
   currentSettings = loadSettings();
-  app.setLoginItemSettings({
-    openAtLogin: currentSettings.launchAtLogin,
-    openAsHidden: currentSettings.launchAtLogin,
-  });
+
+  // Set login item settings (may fail in development or without proper signing)
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: currentSettings.launchAtLogin,
+      openAsHidden: currentSettings.launchAtLogin,
+    });
+  } catch {
+    // Login item registration requires app signing on macOS
+    // Silently ignore in development
+  }
+
+  // Initialize file logger
+  initLogger(app.getPath('logs'));
+  const appLog = createLogger('app');
+  appLog.info(`Application started, version=${app.getVersion()}`);
 
   // Seed built-in templates on first launch (only inserts if not already present)
   const seededCount = seedBuiltinTemplates(BUILTIN_TEMPLATES);
@@ -108,6 +122,7 @@ app.whenReady().then(async () => {
     startBusEventSubscription(
       () => mainWindow,
       () => currentSettings.openCodePort,
+      () => currentSettings,
     );
 
     // Reconcile persisted connections with live OpenCode sessions
@@ -152,6 +167,7 @@ app.whenReady().then(async () => {
   mainWindow = createWindow(() => isQuitting, {
     startHidden: openedAtLogin,
   });
+  replayPendingSessionTreeSnapshot(() => mainWindow);
   tray = createTray(
     () => mainWindow,
     () => {

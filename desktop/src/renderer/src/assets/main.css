@@ -1,49 +1,145 @@
 @import 'tailwindcss';
 @plugin '@tailwindcss/typography';
+@plugin 'tailwindcss-animate';
+
+/* Override Tailwind's dark variant to use data-theme="dark" selector,
+   not the OS media query. This ensures dark: utilities only apply when
+   the app is explicitly in dark mode, regardless of system preference. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 /* ===== Dark theme (default) ===== */
 :root,
 [data-theme='dark'] {
-  --color-user: #cc7700;
-  --color-agent: #5599dd;
+  --color-user: #f59e0b;
+  --color-agent: #60a5fa;
   --color-agent-info: #2dd4bf;
-  --color-tool: #445566;
-  --color-surface: #252525;
-  --color-surface-alt: #1e1e1e;
-  --color-border: #333333;
-  --color-error: #cc3333;
-  --color-warning: #aaaa00;
-  --color-success: #22c55e;
-  --color-bg: #1a1a1a;
-  --color-text: #d1d5db;
-  --color-text-muted: #6b7280;
-  --color-text-faint: #4b5563;
-  --color-input-bg: #1e1e1e;
-  --color-input-border: #3a3a3a;
-  --color-scrollbar: #444444;
-  --color-kbd-bg: #2e2e2e;
+  --color-tool: #64748b;
+  --color-surface: #2f3238;
+  --color-surface-alt: #272a30;
+  --color-surface-raised: #24272d;
+  --color-border: #3f454f;
+  --color-error: #f87171;
+  --color-warning: #facc15;
+  --color-success: #4ade80;
+  --color-bg: #1f2228;
+  --color-text: #e8ebf0;
+  --color-text-muted: #a9b0bc;
+  --color-text-faint: #7f8794;
+  --color-input-bg: #2b2f36;
+  --color-input-border: #4a5260;
+  --color-scrollbar: #596273;
+  --color-kbd-bg: #3a404b;
+
+  /* shadcn/ui CSS variable mappings */
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --muted: var(--color-surface-alt);
+  --muted-foreground: var(--color-text-muted);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-text);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+  --border: var(--color-border);
+  --input: var(--color-input-border);
+  --primary: var(--color-agent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-surface-alt);
+  --secondary-foreground: var(--color-text);
+  --accent: var(--color-surface-alt);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-error);
+  --destructive-foreground: #ffffff;
+  --ring: var(--color-agent);
+  --radius: 0.375rem;
 }
 
 /* ===== Light theme ===== */
 [data-theme='light'] {
-  --color-user: #b35900;
-  --color-agent: #2563eb;
+  --color-bg: #bcc5d2;
+  --color-text: #1a202c;
+  --color-text-muted: #3c4d5e;
+  --color-text-faint: #5c6d7e;
+  --color-border: #8a9eb0;
+  --color-error: #b91c1c;
+  --color-warning: #92400e;
+  --color-success: #166534;
+  --color-user: #9a3a00;
+  --color-agent: #1a44c8;
   --color-agent-info: #0d9488;
-  --color-tool: #64748b;
-  --color-surface: #ffffff;
-  --color-surface-alt: #f8fafc;
-  --color-border: #e2e8f0;
-  --color-error: #dc2626;
-  --color-warning: #ca8a04;
-  --color-success: #16a34a;
-  --color-bg: #f1f5f9;
-  --color-text: #1e293b;
-  --color-text-muted: #475569;
-  --color-text-faint: #64748b;
-  --color-input-bg: #ffffff;
-  --color-input-border: #cbd5e1;
-  --color-scrollbar: #cbd5e1;
-  --color-kbd-bg: #e2e8f0;
+  --color-tool: #3d5268;
+  --color-surface: #d4dbe5;
+  --color-surface-alt: #ccd3de;
+  --color-surface-raised: #e8eef6;
+  --color-input-bg: #edf2f8;
+  --color-input-border: #4e6e88;
+  --color-scrollbar: #7a91a6;
+  --color-kbd-bg: #aab7c4;
+
+  /* shadcn/ui CSS variable mappings */
+  --background: var(--color-bg);
+  --foreground: var(--color-text);
+  --muted: var(--color-surface-alt);
+  --muted-foreground: var(--color-text-muted);
+  --popover: var(--color-surface);
+  --popover-foreground: var(--color-text);
+  --card: var(--color-surface);
+  --card-foreground: var(--color-text);
+  --border: var(--color-border);
+  --input: var(--color-input-border);
+  --primary: var(--color-agent);
+  --primary-foreground: #ffffff;
+  --secondary: var(--color-surface-alt);
+  --secondary-foreground: var(--color-text);
+  --accent: var(--color-surface-alt);
+  --accent-foreground: var(--color-text);
+  --destructive: var(--color-error);
+  --destructive-foreground: #ffffff;
+  --ring: var(--color-agent);
+}
+
+/* ===== Light tints (override bg/surface tokens only; applied via data-tint) ===== */
+[data-theme='light'][data-tint='sage'] {
+  --color-bg: #bdd0c2;
+  --color-surface: #cddbd0;
+  --color-surface-alt: #c5d5c8;
+  --color-surface-raised: #e2eee5;
+  --color-input-bg: #e8f2ea;
+  --color-border: #7a9f86;
+  --color-scrollbar: #7a9f86;
+  --color-kbd-bg: #a8c0ad;
+}
+
+[data-theme='light'][data-tint='sand'] {
+  --color-bg: #d4c9bc;
+  --color-surface: #e0d6c8;
+  --color-surface-alt: #d8cfc2;
+  --color-surface-raised: #eee5d9;
+  --color-input-bg: #f2ece2;
+  --color-border: #a89080;
+  --color-scrollbar: #a89080;
+  --color-kbd-bg: #c4b5a8;
+}
+
+[data-theme='light'][data-tint='teal'] {
+  --color-bg: #b8cecc;
+  --color-surface: #c8dbd9;
+  --color-surface-alt: #bed4d2;
+  --color-surface-raised: #ddeeed;
+  --color-input-bg: #e4f2f1;
+  --color-border: #6a9e9c;
+  --color-scrollbar: #6a9e9c;
+  --color-kbd-bg: #9abfbe;
+}
+
+[data-theme='light'][data-tint='sky'] {
+  --color-bg: #b8cedc;
+  --color-surface: #c8dae8;
+  --color-surface-alt: #c0d4e2;
+  --color-surface-raised: #ddedf6;
+  --color-input-bg: #e4f0f8;
+  --color-border: #6a8faa;
+  --color-scrollbar: #6a8faa;
+  --color-kbd-bg: #9ab6c9;
 }
 
 body {
@@ -148,6 +244,43 @@ textarea::placeholder {
 .msg-system {
   border-left: 3px solid var(--color-tool);
 }
+.msg-conversation {
+  border-left: 3px solid var(--color-tool);
+}
+
+/* ===== Active Prompt Highlight ===== */
+/* Makes the currently active request_user_input prompt visually distinctive */
+[data-active-prompt='true'] {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--color-agent) 12%, transparent),
+    color-mix(in srgb, var(--color-agent) 8%, transparent)
+  );
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--color-agent) 25%, transparent),
+    0 0 12px -4px color-mix(in srgb, var(--color-agent) 30%, transparent);
+  border-radius: 4px;
+  position: relative;
+}
+
+/* Subtle animated glow effect for active prompts */
+@keyframes active-prompt-glow {
+  0%,
+  100% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--color-agent) 25%, transparent),
+      0 0 12px -4px color-mix(in srgb, var(--color-agent) 30%, transparent);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 0 1px color-mix(in srgb, var(--color-agent) 35%, transparent),
+      0 0 16px -4px color-mix(in srgb, var(--color-agent) 40%, transparent);
+  }
+}
+
+[data-active-prompt='true'] {
+  animation: active-prompt-glow 2.5s ease-in-out infinite;
+}
 
 /* ===== Compact Mode ===== */
 [data-compact='true'] {
@@ -185,13 +318,23 @@ textarea::placeholder {
   gap: 0.125rem;
 }
 
-/* Global compact overrides */
+/* Global compact overrides - tighter padding for all message types */
 [data-compact='true'] .msg-user,
 [data-compact='true'] .msg-agent,
 [data-compact='true'] .msg-agent-info,
-[data-compact='true'] .msg-system {
-  padding: 0.375rem 0.5rem;
-  margin-bottom: 0.25rem;
+[data-compact='true'] .msg-system,
+[data-compact='true'] .msg-conversation {
+  padding: 0.25rem 0.5rem;
+  margin-bottom: 0.125rem;
+}
+
+/* Reduce header row margin in messages for compact mode */
+[data-compact='true'] .msg-user > div:first-child,
+[data-compact='true'] .msg-agent > div:first-child,
+[data-compact='true'] .msg-agent-info > div:first-child,
+[data-compact='true'] .msg-system > div:first-child,
+[data-compact='true'] .msg-conversation > div:first-child {
+  margin-bottom: 0.125rem;
 }
 
 /* Sidebar items in compact mode */
@@ -200,9 +343,15 @@ textarea::placeholder {
   font-size: 11px;
 }
 
-/* Header/nav in compact mode */
-[data-compact='true'] header {
+/* Main titlebar in compact mode - reduce padding but keep space for traffic lights */
+[data-compact='true'] [data-titlebar] {
   padding-top: 1.5rem;
+  padding-bottom: 0.25rem;
+}
+
+/* Channel header in compact mode - tighter vertical padding */
+[data-compact='true'] header:not([data-titlebar]) {
+  padding-top: 0.25rem;
   padding-bottom: 0.25rem;
 }
 
@@ -210,6 +359,21 @@ textarea::placeholder {
 [data-compact='true'] [data-chat-message] {
   padding: 0.25rem 0.5rem;
   margin-bottom: 0.125rem;
+}
+
+/* Scroll to bottom button in compact mode */
+[data-compact='true'] [data-scroll-to-bottom] {
+  padding: 0.25rem 0.5rem;
+  font-size: 10px;
+}
+
+[data-compact='true'] [data-scroll-to-bottom] svg {
+  width: 0.75rem;
+  height: 0.75rem;
+}
+
+[data-compact='true'] [data-scroll-to-bottom] kbd {
+  display: none;
 }
 
 /* Composer in compact mode */
@@ -293,6 +457,33 @@ textarea::placeholder {
 [data-compact='true'] .prose hr {
   margin-top: 0.5rem;
   margin-bottom: 0.5rem;
+}
+
+/* Collapsible animations */
+@keyframes collapsible-down {
+  from {
+    height: 0;
+  }
+  to {
+    height: var(--radix-collapsible-content-height);
+  }
+}
+
+@keyframes collapsible-up {
+  from {
+    height: var(--radix-collapsible-content-height);
+  }
+  to {
+    height: 0;
+  }
+}
+
+.animate-collapsible-down {
+  animation: collapsible-down 200ms ease-out;
+}
+
+.animate-collapsible-up {
+  animation: collapsible-up 200ms ease-out;
 }
 
 /* Split view divider */

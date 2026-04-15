@@ -7,7 +7,7 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { getConversationRegistry } from './registry';
 import { getOpenCodeConversationProvider } from './opencode-provider';
-import type { ConversationMessage, ConversationEvent } from './types';
+import type { ConversationMessage } from './types';
 
 export interface ConversationHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -28,42 +28,9 @@ export function initializeConversationProviders(
   // Register OpenCode provider
   registry.register(openCodeProvider);
 
-  // Subscribe to global events and forward to renderer
-  registry.subscribe(null, (event: ConversationEvent) => {
-    const win = deps.getMainWindow();
-    if (!win) return;
-
-    switch (event.type) {
-      case 'message.created':
-      case 'message.updated':
-      case 'message.completed':
-        win.webContents.send('conversation-message-event', {
-          type: event.type,
-          sessionId: event.sessionId,
-          messageId: event.messageId,
-        });
-        break;
-      case 'part.added':
-      case 'part.updated':
-        win.webContents.send('conversation-part-event', {
-          type: event.type,
-          sessionId: event.sessionId,
-          messageId: event.messageId,
-          part: event.part,
-        });
-        break;
-      case 'part.delta':
-        win.webContents.send('conversation-part-delta', {
-          type: event.type,
-          sessionId: event.sessionId,
-          messageId: event.messageId,
-          partId: event.partId,
-          deltaField: event.deltaField,
-          deltaValue: event.deltaValue,
-        });
-        break;
-    }
-  });
+  // Live conversation events are already forwarded from the main OpenCode event
+  // subscribers (`bus-events.ts` and `tree-manager.ts`). Avoid subscribing here,
+  // otherwise the renderer receives duplicate message/part events and churns.
 
   // Start all providers
   void registry.startAll().catch((err) => {

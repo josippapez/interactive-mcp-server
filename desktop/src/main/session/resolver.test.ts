@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 // Mock dependencies before importing the module under test.
 vi.mock('../database', () => ({
   getRegisteredConnection: vi.fn(),
+  getRegisteredConnectionBySessionId: vi.fn(),
   upsertRegisteredConnection: vi.fn(),
 }));
 
@@ -10,14 +11,20 @@ vi.mock('../opencode/session', () => ({
   autoDetectOpenCodeSession: vi.fn(),
 }));
 
-import { resolveSession, reResolveStaleSession } from './resolver';
+import {
+  resolveSession,
+  reResolveStaleSession,
+  resolveOpenCodeSessionId,
+} from './resolver';
 import {
   getRegisteredConnection,
+  getRegisteredConnectionBySessionId,
   upsertRegisteredConnection,
 } from '../database';
 import { autoDetectOpenCodeSession } from '../opencode/session';
 
 const mockGetConnection = getRegisteredConnection as Mock;
+const mockGetConnectionBySessionId = getRegisteredConnectionBySessionId as Mock;
 const mockUpsert = upsertRegisteredConnection as Mock;
 const mockAutoDetect = autoDetectOpenCodeSession as Mock;
 
@@ -55,6 +62,7 @@ function makeConnection(
 describe('resolveSession', () => {
   beforeEach(() => {
     mockGetConnection.mockReset();
+    mockGetConnectionBySessionId.mockReset();
     mockUpsert.mockReset();
     mockAutoDetect.mockReset();
   });

@@ -15,12 +15,15 @@ export type MessageRole = 'user' | 'assistant' | 'system';
  */
 export type PartType =
   | 'text'
+  | 'reasoning'
   | 'tool-call'
   | 'tool-result'
   | 'image'
   | 'file'
   | 'step-start'
   | 'step-end'
+  | 'compaction'
+  | 'source-url'
   | 'unknown';
 
 /**
@@ -29,7 +32,7 @@ export type PartType =
 export interface MessagePart {
   id: string;
   type: PartType;
-  /** Text content (for 'text' parts). */
+  /** Text content (for 'text' and 'reasoning' parts). */
   text?: string;
   /** Tool name (for 'tool-call' parts). */
   toolName?: string;
@@ -41,6 +44,20 @@ export interface MessagePart {
   toolOutput?: string;
   /** Tool status (for 'tool-call' parts). */
   toolStatus?: 'pending' | 'running' | 'completed' | 'error';
+  /** Tool metadata (for 'tool-call' parts, includes sessionId for Task tools). */
+  toolMetadata?: Record<string, unknown>;
+  /** Source URL (for 'source-url' parts). */
+  sourceUrl?: string;
+  /** Source title (for 'source-url' parts). */
+  sourceTitle?: string;
+  /** Source ID (for 'source-url' parts). */
+  sourceId?: string;
+  /** File media type (for 'file' parts). */
+  mediaType?: string;
+  /** File name (for 'file' parts). */
+  filename?: string;
+  /** File URL (for 'file' parts). */
+  fileUrl?: string;
   /** Raw provider-specific data. */
   raw?: unknown;
 }
@@ -65,6 +82,10 @@ export interface ConversationMessage {
   providerId?: string;
   /** Agent name/mode (e.g., 'build', 'plan'). */
   agent?: string;
+  /** Message mode (e.g., 'compaction' for context compaction summaries). */
+  mode?: string;
+  /** Reasoning effort variant (e.g., 'low', 'medium', 'high', 'xhigh'). */
+  variant?: string;
   /** Creation timestamp (ms since epoch). */
   createdAt: number;
   /** Completion timestamp (ms since epoch). */
@@ -73,10 +94,20 @@ export interface ConversationMessage {
   tokens?: {
     input?: number;
     output?: number;
+    reasoning?: number;
     total?: number;
+    cache?: {
+      read?: number;
+      write?: number;
+    };
   };
   /** Cost in USD. */
   cost?: number;
+  /** Working directory path info. */
+  path?: {
+    cwd?: string;
+    root?: string;
+  };
 }
 
 /**

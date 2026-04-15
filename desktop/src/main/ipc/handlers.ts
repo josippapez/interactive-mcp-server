@@ -7,7 +7,16 @@ import {
   injectOpenCodeMessage,
   SUPPORTED_FILE_EXTENSIONS,
 } from '../opencode/injector';
-import { autoDetectOpenCodeSessionId } from '../opencode/session';
+import {
+  autoDetectOpenCodeSessionId,
+  createOpenCodeSession,
+} from '../opencode/session';
+import {
+  fetchMcpStatus,
+  connectMcp,
+  disconnectMcp,
+  registerMcp,
+} from '../opencode/mcp-status';
 import { resolveSession, reResolveStaleSession } from '../session/resolver';
 import {
   getConversationHistory,
@@ -19,6 +28,7 @@ import {
   deleteSessionChannel,
   deleteRegisteredConnection,
   getRegisteredConnection,
+  getRegisteredConnectionBySessionId,
   resetDatabase,
   upsertSkillOrInstruction,
   listSkillsAndInstructions,
@@ -29,6 +39,10 @@ import {
   upsertContextInjection,
   resetBuiltinTemplates,
   getMissingBuiltinCount,
+  getPinnedProjects,
+  addPinnedProject,
+  removePinnedProject,
+  updateConnectionBaseDirectory,
 } from '../database';
 import {
   BUILTIN_TEMPLATES,
@@ -54,7 +68,7 @@ import {
 } from '../session/tree-manager';
 import { startOpenCodeServer, stopOpenCodeServer } from '../opencode/server';
 import { syncRemoteConfig } from '../opencode/config-sync';
-import { registerMcpWithOpenCode } from '../opencode/mcp-register';
+import { registerMcpAcrossReachablePorts } from '../opencode/mcp-register';
 import { removePersistedSession } from '../remove-persisted-session';
 import { getBackendAdapter } from '../backend-adapter';
 import { fetchTodosForSession } from '../opencode/todo';
@@ -68,6 +82,26 @@ import {
   buildSkillSuggestionText,
 } from '../tools/skill-match';
 import { searchGlobal } from '../docs/search';
+import {
+  getSessionContextUsage,
+  triggerCompaction,
+  fetchSessionTokens,
+  setSessionTotalTokens,
+} from '../opencode/context-tracking';
+import {
+  fetchProviders,
+  fetchProvidersInfo,
+  fetchModels,
+  fetchProviderAuthMethods,
+  authorizeProvider,
+  callbackProvider,
+  setProviderApiKey,
+} from '../opencode/provider';
+import { fetchCommands, executeCommand } from '../opencode/command';
+import { createLogger } from '../utils/logger';
+
+const ipcLog = createLogger('ipc');
+const rendererLog = createLogger('renderer');
 
 export interface IpcHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
@@ -76,6 +110,24 @@ export interface IpcHandlerDeps {
 }
 
 export function registerIpcHandlers(deps: IpcHandlerDeps): void {
+  // ─── Renderer Logging ─────────────────────────────────────────────────────
+  // Bridge for renderer process to write logs to the main process log file.
+  // This allows routing diagnostics to be persisted alongside other app logs.
+  ipcMain.on(
+    'renderer-log',
+    (
+      _event,
+      data: {
+        level: 'debug' | 'info' | 'warn' | 'error';
+        category: string;
+        message: string;
+      },
+    ) => {
+      const logFn = rendererLog[data.level] ?? rendererLog.info;
+      logFn(`[${data.category}] ${data.message}`);
+    },
+  );
+
   ipcMain.handle('get-history', () => getConversationHistory());
 
   ipcMain.handle('clear-history', () => {
@@ -117,11 +169,12 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   // Manually trigger MCP registration + config sync into OpenCode
   ipcMain.handle('sync-opencode-config', async () => {
     const settings = deps.getSettings();
+    ipcLog.info(`sync-opencode-config: backend=${settings.agentBackend}`);
     if (settings.agentBackend !== 'opencode') {
       return 'skipped: agentBackend is not opencode';
     }
     // Try dynamic registration first
-    const regResult = await registerMcpWithOpenCode({
+    const regResult = await registerMcpAcrossReachablePorts({
       appPort: settings.port,
       openCodePort: settings.openCodePort,
       promptTimeoutSeconds: settings.promptTimeoutSeconds,
@@ -151,6 +204,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'resolve-session',
     async (_event, data: { connectionId: string; baseDirectory?: string }) => {
+      ipcLog.info(`resolve-session: connectionId=${data.connectionId}`);
       const settings = deps.getSettings();
       return resolveSession({
         connectionId: data.connectionId,
@@ -183,10 +237,24 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     const portChanged = settings.port !== prev.port;
     deps.setSettings(settings);
     saveSettings(settings);
-    app.setLoginItemSettings({
-      openAtLogin: settings.launchAtLogin,
-      openAsHidden: settings.launchAtLogin,
-    });
+
+    // Notify renderer that settings have changed
+    const mainWindow = deps.getMainWindow();
+    if (mainWindow) {
+      mainWindow.webContents.send('settings-changed');
+    }
+
+    // Set login item settings (may fail in development or without proper signing)
+    try {
+      app.setLoginItemSettings({
+        openAtLogin: settings.launchAtLogin,
+        openAsHidden: settings.launchAtLogin,
+      });
+    } catch {
+      // Login item registration requires app signing on macOS
+      // Silently ignore in development
+    }
+
     // Restart server if port changed
     if (portChanged) {
       stopMcpServer();
@@ -238,6 +306,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   // Soft-restart: clear all in-memory MCP sessions but keep the HTTP listener
   // running so clients can transparently reinitialize on their next request.
   ipcMain.handle('reconnect-mcp-server', async () => {
+    ipcLog.info('reconnect-mcp-server: soft restart requested');
     const cleared = await softRestartMcpServer();
     return { ok: true, cleared };
   });
@@ -265,6 +334,18 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     });
     if (result.canceled) return [];
     return result.filePaths;
+  });
+
+  // Folder dialog for adding project folders
+  ipcMain.handle('open-folder-dialog', async () => {
+    const win = deps.getMainWindow();
+    if (!win) return null;
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory'],
+      title: 'Select Project Folder',
+    });
+    if (result.canceled || result.filePaths.length === 0) return null;
+    return result.filePaths[0];
   });
 
   // Read file contents for attachment
@@ -310,6 +391,20 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   // Force-terminate a chat connection from the UI
   ipcMain.handle('force-terminate-chat', (_event, connectionId: string) => {
     forceTerminateChat(connectionId);
+  });
+
+  // Pinned projects management
+  ipcMain.handle('get-pinned-projects', () => getPinnedProjects());
+
+  ipcMain.handle(
+    'add-pinned-project',
+    (_event, data: { path: string; name: string }) => {
+      return addPinnedProject(data.path, data.name);
+    },
+  );
+
+  ipcMain.handle('remove-pinned-project', (_event, path: string) => {
+    return removePinnedProject(path);
   });
 
   // Return all currently-active prompts so the renderer can recover them on restart.
@@ -364,6 +459,9 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   ipcMain.on(
     'queue-session-message',
     (_event, data: { sessionId: string; message: string }) => {
+      ipcLog.info(
+        `[queue-session-message] sessionId=${data.sessionId} messageLength=${data.message.length}`,
+      );
       const skills = listSkillsAndInstructions('skill');
       const matched = matchSkillsForMessage(data.message, skills);
       const suggestion = buildSkillSuggestionText(matched);
@@ -371,6 +469,9 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         ? `${suggestion}\n\n${data.message}`
         : data.message;
       queueSessionMessage(data.sessionId, outbound);
+      ipcLog.info(
+        `[queue-session-message] queued to sessionId=${data.sessionId}`,
+      );
     },
   );
 
@@ -391,22 +492,35 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
           size: number;
         }[];
         noReply?: boolean;
+        modelOverride?: {
+          providerId: string;
+          modelId: string;
+          variant?: string;
+        };
       },
     ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> => {
+      ipcLog.info(
+        `[inject-opencode-message] openCodeSessionId=${data.openCodeSessionId} noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0}`,
+      );
       const skills = listSkillsAndInstructions('skill');
       const matched = matchSkillsForMessage(data.message, skills);
       const suggestion = buildSkillSuggestionText(matched);
       const outbound = suggestion
         ? `${suggestion}\n\n${data.message}`
         : data.message;
-      return injectOpenCodeMessage(
+      const result = await injectOpenCodeMessage(
         data.openCodeSessionId,
         outbound,
         data.attachments,
         deps.getSettings().openCodePort,
         deps.getSettings().port,
         data.noReply ?? true,
+        data.modelOverride,
       );
+      ipcLog.info(
+        `[inject-opencode-message] result ok=${result.ok} error=${result.error ?? 'none'} openCodeSessionId=${data.openCodeSessionId}`,
+      );
+      return result;
     },
   );
 
@@ -466,14 +580,12 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
           searchDocs,
           injectOpenCodeMessage,
           upsertContextInjection,
-          sendAgentMessage: (connectionId, message) => {
+          sendAgentMessage: (connectionId, openCodeSessionId, message) => {
             // Use the centralized IPC channel abstraction
-            // Note: openCodeSessionId is null here since this is called from
-            // inject-doc-context-handler which doesn't have access to it
             sendAgentMessage(
               deps.getMainWindow(),
               connectionId,
-              null, // no explicit session ID available in this context
+              openCodeSessionId,
               message,
             );
           },
@@ -666,6 +778,14 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   // ─── Refresh session tree cache on demand ────────────────────────────────
 
   ipcMain.handle('refresh-session-tree', async () => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend === 'opencode') {
+      await registerMcpAcrossReachablePorts({
+        appPort: settings.port,
+        openCodePort: settings.openCodePort,
+        promptTimeoutSeconds: settings.promptTimeoutSeconds,
+      });
+    }
     await refreshSessionTreeCache();
   });
 
@@ -682,7 +802,8 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       },
     ): Promise<{ ok: boolean; error?: string }> => {
       const { openCodePort } = deps.getSettings();
-      const url = `http://localhost:${openCodePort}/session/${data.sessionID}/permission/${data.requestID}`;
+      // Use the newer /permission/:requestID/reply endpoint (not the deprecated session endpoint)
+      const url = `http://localhost:${openCodePort}/permission/${data.requestID}/reply`;
       try {
         const res = await fetch(url, {
           method: 'POST',
@@ -734,6 +855,133 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         return { success: false, error: 'Failed to abort session' };
       }
       return { success: true };
+    },
+  );
+
+  // ─── Create a new OpenCode session ──────────────────────────────────────────
+
+  ipcMain.handle(
+    'create-opencode-session',
+    async (
+      _event,
+      data: {
+        title?: string;
+        parentID?: string;
+        initialMessage?: string;
+        baseDirectory?: string;
+        attachments?: {
+          data: string;
+          mimeType: string;
+          name: string;
+          size: number;
+        }[];
+        modelSelection?: {
+          providerId: string;
+          modelId: string;
+          variant?: string;
+        };
+      },
+    ): Promise<{
+      ok: boolean;
+      sessionId?: string;
+      error?: string;
+    }> => {
+      ipcLog.info(
+        `create-opencode-session: title=${data.title ?? '(none)'} parentID=${data.parentID ?? '(none)'} baseDirectory=${data.baseDirectory ?? '(none)'}`,
+      );
+      const {
+        openCodePort,
+        agentBackend,
+        port: mcpServerPort,
+      } = deps.getSettings();
+      if (agentBackend !== 'opencode') {
+        return {
+          ok: false,
+          error: `OpenCode backend not enabled (current: ${agentBackend})`,
+        };
+      }
+
+      const hasAttachments = (data.attachments?.length ?? 0) > 0;
+      const hasInitialMessage = (data.initialMessage?.trim().length ?? 0) > 0;
+      const hasModelSelection = Boolean(data.modelSelection);
+
+      // Inject path is required when we need capabilities only supported by
+      // injectOpenCodeMessage (attachments and/or explicit model selection).
+      // Note: attachments-only submissions are valid from the blank new-session page.
+      const needsInject =
+        (hasAttachments || hasModelSelection) &&
+        (hasAttachments || hasInitialMessage);
+
+      ipcLog.info(
+        `create-opencode-session flags: hasInitialMessage=${hasInitialMessage} hasAttachments=${hasAttachments} hasModelSelection=${hasModelSelection} needsInject=${needsInject}`,
+      );
+      if (hasModelSelection) {
+        ipcLog.info(
+          `create-opencode-session modelSelection: providerId=${data.modelSelection?.providerId ?? '(none)'} modelId=${data.modelSelection?.modelId ?? '(none)'} variant=${data.modelSelection?.variant ?? '(none)'}`,
+        );
+      }
+
+      const result = await createOpenCodeSession(openCodePort, {
+        title: data.title,
+        parentID: data.parentID,
+        // Only send initial message directly if injection is not required.
+        // Skip empty-string messages.
+        initialMessage:
+          !needsInject && hasInitialMessage ? data.initialMessage : undefined,
+        // Pass directory to create session in correct project context
+        // This ensures OpenCode loads .opencode/opencode.jsonc and project-specific MCPs
+        directory: data.baseDirectory,
+      });
+
+      if (!result.ok) {
+        return { ok: false, error: result.error };
+      }
+
+      // If we need to inject (attachments or model selection), use injectOpenCodeMessage
+      if (needsInject && result.session?.id) {
+        // Build model override from selection if provided
+        const modelOverride = data.modelSelection
+          ? {
+              providerId: data.modelSelection.providerId,
+              modelId: data.modelSelection.modelId,
+              variant: data.modelSelection.variant,
+            }
+          : undefined;
+
+        const injectResult = await injectOpenCodeMessage(
+          result.session.id,
+          data.initialMessage ?? '',
+          data.attachments,
+          openCodePort,
+          mcpServerPort,
+          false, // noReply = false to trigger agent response
+          modelOverride,
+        );
+
+        if (!injectResult.ok) {
+          // Session was created but message injection failed
+          console.warn(
+            `[create-opencode-session] Session created but initial message injection failed: ${injectResult.error}`,
+          );
+        }
+      }
+
+      // Trigger a session tree refresh so the new session appears in the sidebar
+      await refreshSessionTreeCache();
+
+      // If a baseDirectory was provided, update the registered connection
+      // This overrides the default directory from OpenCode with the user's selection
+      if (data.baseDirectory && result.session?.id) {
+        updateConnectionBaseDirectory(
+          result.session.id,
+          data.baseDirectory,
+          'opencode',
+        );
+        // Re-trigger tree update so the sidebar shows the correct project grouping
+        await triggerSessionTreeUpdate(deps.getMainWindow);
+      }
+
+      return { ok: true, sessionId: result.session?.id };
     },
   );
 
@@ -809,6 +1057,376 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         sessionLimit: data.sessionLimit,
         messageLimit: data.messageLimit,
       });
+    },
+  );
+
+  // ─── Allowed Read Folders Management ────────────────────────────────────────
+
+  ipcMain.handle('add-allowed-read-folder', (_event, folderPath: string) => {
+    const currentSettings = deps.getSettings();
+    const folders = currentSettings.allowedReadFolders ?? [];
+    // Avoid duplicates
+    if (!folders.includes(folderPath)) {
+      const updatedSettings = {
+        ...currentSettings,
+        allowedReadFolders: [...folders, folderPath],
+      };
+      deps.setSettings(updatedSettings);
+      saveSettings(updatedSettings);
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('remove-allowed-read-folder', (_event, folderPath: string) => {
+    const currentSettings = deps.getSettings();
+    const folders = currentSettings.allowedReadFolders ?? [];
+    const updatedSettings = {
+      ...currentSettings,
+      allowedReadFolders: folders.filter((f) => f !== folderPath),
+    };
+    deps.setSettings(updatedSettings);
+    saveSettings(updatedSettings);
+    return { ok: true };
+  });
+
+  ipcMain.handle('get-allowed-read-folders', () => {
+    const currentSettings = deps.getSettings();
+    return currentSettings.allowedReadFolders ?? [];
+  });
+
+  ipcMain.handle('select-folder-dialog', async () => {
+    const win = deps.getMainWindow();
+    if (!win) return { canceled: true };
+    const result = await dialog.showOpenDialog(win, {
+      properties: ['openDirectory'],
+      title: 'Select Folder to Allow',
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { canceled: true };
+    }
+    return { canceled: false, folderPath: result.filePaths[0] };
+  });
+
+  // ─── Context Tracking IPC Handlers ─────────────────────────────────────────
+
+  ipcMain.handle('get-context-usage', async (_event, sessionId: string) => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') return null;
+
+    const sessionInfo = await fetchSessionTokens(
+      sessionId,
+      settings.openCodePort,
+    );
+    if (!sessionInfo) return null;
+
+    // Always recompute from the latest OpenCode session snapshot instead of
+    // returning potentially stale cached usage. This keeps parent/child context
+    // bars updating regularly rather than freezing after the first calculation.
+    return setSessionTotalTokens(
+      sessionId,
+      sessionInfo.tokens ?? 0,
+      sessionInfo.modelId,
+      sessionInfo.providerId,
+    );
+  });
+
+  ipcMain.handle(
+    'trigger-compaction',
+    async (
+      _event,
+      {
+        sessionId,
+        providerId,
+        modelId,
+      }: { sessionId: string; providerId?: string; modelId?: string },
+    ) => {
+      const settings = deps.getSettings();
+      ipcLog.info(`trigger-compaction: sessionId=${sessionId}`);
+      console.log(
+        '[trigger-compaction] Starting compaction for session:',
+        sessionId,
+      );
+
+      // If providerId or modelId not provided, get defaults from OpenCode API
+      let finalProviderId = providerId;
+      let finalModelId = modelId;
+
+      if (!finalProviderId || !finalModelId) {
+        const providersInfo = await fetchProvidersInfo(settings.openCodePort);
+        if (providersInfo) {
+          // Get the first connected provider and its default model
+          const connectedProvider = providersInfo.connectedProviderIds[0];
+          if (connectedProvider) {
+            finalProviderId = finalProviderId ?? connectedProvider;
+            finalModelId =
+              finalModelId ?? providersInfo.defaults[finalProviderId];
+          }
+        }
+      }
+
+      if (!finalProviderId || !finalModelId) {
+        return {
+          ok: false,
+          error: 'No connected provider or model available for compaction',
+        };
+      }
+
+      const result = await triggerCompaction(sessionId, settings.openCodePort, {
+        providerId: finalProviderId,
+        modelId: finalModelId,
+      });
+      return result;
+    },
+  );
+
+  ipcMain.handle('fetch-session-tokens', async (_event, sessionId: string) => {
+    const settings = deps.getSettings();
+    return fetchSessionTokens(sessionId, settings.openCodePort);
+  });
+
+  // ─── Provider/Model IPC Handlers ───────────────────────────────────────────
+
+  ipcMain.handle('fetch-providers', async () => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') {
+      return null;
+    }
+    return fetchProviders(settings.openCodePort);
+  });
+
+  ipcMain.handle('fetch-providers-info', async () => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') {
+      return null;
+    }
+    return fetchProvidersInfo(settings.openCodePort);
+  });
+
+  ipcMain.handle('fetch-models', async () => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') {
+      return [];
+    }
+    return fetchModels(settings.openCodePort);
+  });
+
+  // ─── Slash Command IPC Handlers ────────────────────────────────────────────
+
+  ipcMain.handle('fetch-commands', async () => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') {
+      return [];
+    }
+    return fetchCommands(settings.openCodePort);
+  });
+
+  ipcMain.handle(
+    'execute-command',
+    async (
+      _event,
+      {
+        sessionId,
+        commandName,
+        args,
+      }: {
+        sessionId: string;
+        commandName: string;
+        args?: Record<string, string>;
+      },
+    ) => {
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return executeCommand(
+        settings.openCodePort,
+        sessionId,
+        commandName,
+        args,
+      );
+    },
+  );
+
+  // ─── Provider Auth IPC Handlers ────────────────────────────────────────────
+
+  ipcMain.handle('fetch-provider-auth-methods', async () => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') {
+      return null;
+    }
+    return fetchProviderAuthMethods(settings.openCodePort);
+  });
+
+  ipcMain.handle(
+    'authorize-provider',
+    async (
+      _event,
+      {
+        providerId,
+        method,
+        inputs,
+      }: {
+        providerId: string;
+        method: number;
+        inputs?: Record<string, string>;
+      },
+    ) => {
+      ipcLog.info(
+        `authorize-provider: providerId=${providerId} method=${method}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return null;
+      }
+      return authorizeProvider(
+        settings.openCodePort,
+        providerId,
+        method,
+        inputs,
+      );
+    },
+  );
+
+  ipcMain.handle(
+    'callback-provider',
+    async (
+      _event,
+      {
+        providerId,
+        method,
+        code,
+      }: {
+        providerId: string;
+        method: number;
+        code?: string;
+      },
+    ) => {
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return false;
+      }
+      return callbackProvider(settings.openCodePort, providerId, method, code);
+    },
+  );
+
+  ipcMain.handle(
+    'set-provider-api-key',
+    async (
+      _event,
+      {
+        providerId,
+        apiKey,
+      }: {
+        providerId: string;
+        apiKey: string;
+      },
+    ) => {
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return false;
+      }
+      return setProviderApiKey(settings.openCodePort, providerId, apiKey);
+    },
+  );
+
+  // ─── MCP Status IPC Handlers ─────────────────────────────────────────────────
+
+  ipcMain.handle(
+    'fetch-mcp-status',
+    async (
+      _event,
+      { directory }: { directory?: string } = {},
+    ): Promise<{
+      ok: boolean;
+      servers?: Array<{
+        name: string;
+        type: 'local' | 'remote';
+        status: 'connected' | 'disconnected' | 'connecting' | 'error';
+        error?: string;
+        url?: string;
+        command?: string[];
+        environmentKeys?: string[];
+        tools?: Array<{ name: string; description?: string }>;
+        resources?: Array<{
+          name: string;
+          uri: string;
+          description?: string;
+          mimeType?: string;
+        }>;
+        prompts?: Array<{ name: string; description?: string }>;
+      }>;
+      error?: string;
+    }> => {
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return fetchMcpStatus(settings.openCodePort, directory);
+    },
+  );
+
+  ipcMain.handle(
+    'connect-mcp',
+    async (
+      _event,
+      { name, directory }: { name: string; directory?: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      ipcLog.info(
+        `connect-mcp: name=${name} directory=${directory ?? '(none)'}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return connectMcp(settings.openCodePort, name, directory);
+    },
+  );
+
+  ipcMain.handle(
+    'disconnect-mcp',
+    async (
+      _event,
+      { name, directory }: { name: string; directory?: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      ipcLog.info(
+        `disconnect-mcp: name=${name} directory=${directory ?? '(none)'}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return disconnectMcp(settings.openCodePort, name, directory);
+    },
+  );
+
+  ipcMain.handle(
+    'register-mcp',
+    async (
+      _event,
+      {
+        name,
+        config,
+        directory,
+      }: {
+        name: string;
+        config: {
+          type: 'local' | 'remote';
+          url?: string;
+          command?: string[];
+          environment?: Record<string, string>;
+          timeout?: number;
+        };
+        directory?: string;
+      },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      ipcLog.info(
+        `register-mcp: name=${name} type=${config.type} directory=${directory ?? '(none)'}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return registerMcp(settings.openCodePort, name, config, directory);
     },
   );
 }

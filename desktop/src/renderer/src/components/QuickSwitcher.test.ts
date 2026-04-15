@@ -4,7 +4,7 @@ import {
   filterActions,
   groupActions,
   type QuickSwitcherAction,
-} from './QuickSwitcher';
+} from './QuickSwitcher.actions';
 import type { SessionNode } from '../types';
 
 // ---------------------------------------------------------------------------

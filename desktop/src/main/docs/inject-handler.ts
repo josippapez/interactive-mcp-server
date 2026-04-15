@@ -7,7 +7,11 @@
 
 import { searchDocs, formatSearchResults } from './context-injector';
 import { injectOpenCodeMessage } from '../opencode/injector';
-import { getRegisteredConnection, upsertContextInjection } from '../database';
+import {
+  getRegisteredConnection,
+  getRegisteredConnectionBySessionId,
+  upsertContextInjection,
+} from '../database';
 
 export interface InjectDocContextInput {
   connectionId: string;
@@ -31,10 +35,20 @@ export interface InjectDocContextResult {
 export interface InjectDocContextDeps {
   openCodePort: number;
   getRegisteredConnection: typeof getRegisteredConnection;
+  /**
+   * Optional session-based lookup. When provided and `openCodeSessionId` is
+   * available, this is used to reliably detect subagent sessions even when the
+   * `connectionId`-based lookup returns the parent row (shared MCP client).
+   */
+  getRegisteredConnectionBySessionId?: typeof getRegisteredConnectionBySessionId;
   searchDocs: typeof searchDocs;
   injectOpenCodeMessage: typeof injectOpenCodeMessage;
   upsertContextInjection: typeof upsertContextInjection;
-  sendAgentMessage: (connectionId: string, message: string) => void;
+  sendAgentMessage: (
+    connectionId: string,
+    openCodeSessionId: string | null,
+    message: string,
+  ) => void;
 }
 
 /**
@@ -64,7 +78,20 @@ export async function handleInjectDocContext(
   // Injecting a <system-reminder> into a child OpenCode session causes it to
   // propagate up to the parent session via OpenCode's session hierarchy, leaking
   // the reminder into the parent agent's context.
-  if (conn?.parentSessionId) {
+  //
+  // When openCodeSessionId is available and the session-based lookup dep is
+  // provided, prefer it over the connectionId-based lookup. In shared-MCP-client
+  // scenarios (OpenCode), multiple sessions share the same connectionId, so
+  // getRegisteredConnection(connectionId) may return the parent row even when
+  // the tool call originated from a subagent. The session-based lookup resolves
+  // the correct row for the calling session.
+  const sessionConn =
+    openCodeSessionId && deps.getRegisteredConnectionBySessionId
+      ? deps.getRegisteredConnectionBySessionId(openCodeSessionId)
+      : null;
+  const effectiveConn = sessionConn ?? conn;
+
+  if (effectiveConn?.parentSessionId) {
     return { ok: true, injectedCount: 0 };
   }
 
@@ -107,7 +134,7 @@ export async function handleInjectDocContext(
       `**Context queued for agent (${results.length} docs):**`,
       ...results.map((r, i) => `${i + 1}. \`${r.path}\``),
     ].join('\n');
-    deps.sendAgentMessage(connectionId, visibleSummary);
+    deps.sendAgentMessage(connectionId, openCodeSessionId, visibleSummary);
 
     return { ok: true, injectedCount: results.length };
   }
@@ -135,7 +162,7 @@ export async function handleInjectDocContext(
   ].join('\n');
 
   // Emit to renderer so it shows up in chat immediately (not persisted to DB per Option A)
-  deps.sendAgentMessage(connectionId, visibleSummary);
+  deps.sendAgentMessage(connectionId, openCodeSessionId, visibleSummary);
 
   return { ok: true, injectedCount: results.length };
 }

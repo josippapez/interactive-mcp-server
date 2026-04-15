@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from './ui/button';
 
 type Props = {
   open: boolean;
@@ -24,12 +25,9 @@ export default function ShortcutHelpModal({
           <h2 className="text-sm font-medium text-[var(--color-text)]">
             Keyboard Shortcuts
           </h2>
-          <button
-            onClick={onClose}
-            className="text-[var(--color-text-muted)] hover:text-[var(--color-text)] text-xs"
-          >
+          <Button variant="ghost" size="sm" onClick={onClose}>
             ESC
-          </button>
+          </Button>
         </div>
         <div className="space-y-2 text-xs">
           <ShortcutRow keys="⌘ + K" desc="Quick switcher" />

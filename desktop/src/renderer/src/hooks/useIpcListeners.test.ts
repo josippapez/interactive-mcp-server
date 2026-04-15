@@ -4,6 +4,8 @@ import {
   findKeyByConnectionId,
   findPromptTargetKey,
 } from './useIpcListeners';
+import { resolveNewlyCreatedSessionNodeId } from './useIpcListeners/useSessionTreeHandler';
+import type { SnapshotNode } from './session-tree-merge';
 import type { SessionNode } from '../types';
 
 function makeNode(
@@ -34,6 +36,24 @@ function makeNode(
     baseDirectory: null,
     pendingPermissions: [],
     vcsInfo: null,
+  };
+}
+
+function makeSnapshotNode(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
+  return {
+    openCodeSessionId: 'ses_new',
+    openCodeParentId: null,
+    title: 'OpenCode Session',
+    directory: '/repo',
+    depth: 0,
+    connectionId: 'conn-new',
+    channelName: 'Agent X',
+    hasMcpChannel: true,
+    baseDirectory: '/repo',
+    registeredParentSessionId: null,
+    providerType: 'opencode',
+    vcsInfo: null,
+    ...overrides,
   };
 }
 
@@ -183,5 +203,58 @@ describe('collectDescendantKeys', () => {
       ['child', makeNode('child', 'ses_child', 'ses_root')],
     ]);
     expect(collectDescendantKeys(nodes, 'ses_root').has('root')).toBe(false);
+  });
+});
+
+describe('resolveNewlyCreatedSessionNodeId', () => {
+  it('returns a newly created OpenCode session node id', () => {
+    const prev = new Map<string, { id: string }>([
+      ['ses_existing', { id: 'ses_existing' }],
+    ]);
+    const snapshotNodes = [
+      makeSnapshotNode({
+        openCodeSessionId: 'ses_existing',
+        connectionId: 'conn-existing',
+      }),
+      makeSnapshotNode({
+        openCodeSessionId: 'ses_new',
+        connectionId: 'conn-new',
+      }),
+    ];
+
+    expect(resolveNewlyCreatedSessionNodeId(prev, snapshotNodes)).toEqual({
+      sessionId: 'ses_new',
+      hasConnectedChannel: true,
+    });
+  });
+
+  it('returns null when snapshot only contains existing sessions', () => {
+    const prev = new Map<string, { id: string }>([
+      ['ses_existing', { id: 'ses_existing' }],
+    ]);
+    const snapshotNodes = [
+      makeSnapshotNode({
+        openCodeSessionId: 'ses_existing',
+        connectionId: 'conn-existing',
+      }),
+    ];
+
+    expect(resolveNewlyCreatedSessionNodeId(prev, snapshotNodes)).toBeNull();
+  });
+
+  it('returns null for sessions without MCP channel', () => {
+    const prev = new Map<string, { id: string }>();
+    const snapshotNodes = [
+      makeSnapshotNode({
+        openCodeSessionId: 'ses_unbound',
+        connectionId: null,
+        hasMcpChannel: false,
+      }),
+    ];
+
+    expect(resolveNewlyCreatedSessionNodeId(prev, snapshotNodes)).toEqual({
+      sessionId: 'ses_unbound',
+      hasConnectedChannel: false,
+    });
   });
 });

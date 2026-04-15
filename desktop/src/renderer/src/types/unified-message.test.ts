@@ -277,6 +277,83 @@ describe('conversationToUnified', () => {
     expect(result.text).toBe('');
     expect(result.toolCalls).toBeUndefined();
   });
+
+  it('reflects updated text even when the same message object reference is reused', () => {
+    const msg = makeConversationMessage({
+      parts: [{ id: 'p1', type: 'text', text: 'initial text' }],
+    });
+
+    const first = conversationToUnified(msg);
+    expect(first.text).toBe('initial text');
+
+    // Simulate in-place streaming mutation from upstream transport code.
+    msg.parts[0].text = 'updated text';
+
+    const second = conversationToUnified(msg);
+    expect(second.text).toBe('updated text');
+  });
+
+  // ---------------------------------------------------------------------------
+  // Compaction detection tests
+  // ---------------------------------------------------------------------------
+
+  it('detects compaction message via mode field', () => {
+    const msg = makeConversationMessage({
+      mode: 'compaction',
+      parts: [{ id: 'p1', type: 'text', text: 'Context summary' }],
+    });
+    const result = conversationToUnified(msg);
+
+    expect(result.isCompaction).toBe(true);
+    expect(result.text).toBe('Context summary');
+  });
+
+  it('detects compaction message via part type', () => {
+    const msg = makeConversationMessage({
+      role: 'user',
+      parts: [{ id: 'p1', type: 'compaction', text: 'Compact context' }],
+    });
+    const result = conversationToUnified(msg);
+
+    expect(result.isCompaction).toBe(true);
+    expect(result.text).toBe('Compact context');
+  });
+
+  it('extracts text from compaction-type parts', () => {
+    const msg = makeConversationMessage({
+      mode: 'compaction',
+      parts: [
+        { id: 'p1', type: 'compaction', text: 'Compaction summary' },
+        { id: 'p2', type: 'text', text: 'Additional text' },
+      ],
+    });
+    const result = conversationToUnified(msg);
+
+    expect(result.isCompaction).toBe(true);
+    expect(result.text).toBe('Compaction summary\n\nAdditional text');
+  });
+
+  it('does NOT mark regular message as compaction', () => {
+    const msg = makeConversationMessage({
+      role: 'assistant',
+      parts: [{ id: 'p1', type: 'text', text: 'Regular message' }],
+    });
+    const result = conversationToUnified(msg);
+
+    expect(result.isCompaction).toBe(false);
+  });
+
+  it('does NOT mark message as compaction when mode is undefined', () => {
+    // This simulates a placeholder message created by delta-batcher
+    const msg = makeConversationMessage({
+      role: 'assistant',
+      // mode is intentionally NOT set (undefined)
+      parts: [{ id: 'p1', type: 'text', text: 'Streaming text' }],
+    });
+    const result = conversationToUnified(msg);
+
+    expect(result.isCompaction).toBe(false);
+  });
 });
 
 // ===========================================================================
@@ -395,5 +472,187 @@ describe('mergeMessages', () => {
     expect(result).toHaveLength(200);
     // Should complete in well under 100ms
     expect(duration).toBeLessThan(100);
+  });
+
+  it('reuses unified objects when message content signatures are unchanged', () => {
+    const channelMessages = [
+      makeChannelMessage({
+        id: 'ch-stable',
+        text: 'Stable question',
+        timestamp: new Date('2026-04-11T10:00:00.000Z'),
+      }),
+    ];
+    const conversationMessages = [
+      makeConversationMessage({
+        id: 'conv-stable',
+        parts: [{ id: 'p1', type: 'text', text: 'Stable answer' }],
+      }),
+    ];
+
+    const first = mergeMessages(channelMessages, conversationMessages, null);
+    const second = mergeMessages(channelMessages, conversationMessages, null);
+
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).toBe(first[1]);
+  });
+
+  it('recomputes only the changed conversation message when a part updates', () => {
+    const conversationMessages = [
+      makeConversationMessage({
+        id: 'conv-a',
+        parts: [{ id: 'p-a', type: 'text', text: 'A1' }],
+      }),
+      makeConversationMessage({
+        id: 'conv-b',
+        parts: [{ id: 'p-b', type: 'text', text: 'B1' }],
+      }),
+    ];
+
+    const first = mergeMessages([], conversationMessages, null);
+    conversationMessages[1].parts[0].text = 'B2';
+    const second = mergeMessages([], conversationMessages, null);
+
+    expect(second[0]).toBe(first[0]);
+    expect(second[1]).not.toBe(first[1]);
+    expect(second[1].text).toBe('B2');
+  });
+
+  it('suppresses sent outbound channel messages when the same user message exists in conversation', () => {
+    const channelMsgs = [
+      makeChannelMessage({
+        id: 'out-1',
+        kind: 'outbound',
+        text: 'same message',
+        sent: true,
+        timestamp: new Date('2026-04-11T10:00:00.000Z'),
+      }),
+    ];
+    const convMsgs = [
+      makeConversationMessage({
+        id: 'conv-user-1',
+        role: 'user',
+        createdAt: new Date('2026-04-11T10:00:01.000Z').getTime(),
+        parts: [{ id: 'p1', type: 'text', text: 'same message' }],
+      }),
+    ];
+
+    const result = mergeMessages(channelMsgs, convMsgs);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('conv-user-1');
+    expect(result[0].source).toBe('conversation');
+  });
+
+  it('suppresses sent outbound channel messages when whitespace differs across sources', () => {
+    const channelMsgs = [
+      makeChannelMessage({
+        id: 'out-1',
+        kind: 'outbound',
+        text: 'same   message\nwith spacing',
+        sent: true,
+        timestamp: new Date('2026-04-11T10:00:00.000Z'),
+      }),
+    ];
+    const convMsgs = [
+      makeConversationMessage({
+        id: 'conv-user-1',
+        role: 'user',
+        createdAt: new Date('2026-04-11T10:00:01.000Z').getTime(),
+        parts: [{ id: 'p1', type: 'text', text: 'same message with spacing' }],
+      }),
+    ];
+
+    const result = mergeMessages(channelMsgs, convMsgs);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('conv-user-1');
+  });
+
+  it('keeps unsent outbound channel messages even when the text matches conversation', () => {
+    const channelMsgs = [
+      makeChannelMessage({
+        id: 'out-1',
+        kind: 'outbound',
+        text: 'same message',
+        sent: undefined,
+        timestamp: new Date('2026-04-11T10:00:00.000Z'),
+      }),
+    ];
+    const convMsgs = [
+      makeConversationMessage({
+        id: 'conv-user-1',
+        role: 'user',
+        createdAt: new Date('2026-04-11T10:00:01.000Z').getTime(),
+        parts: [{ id: 'p1', type: 'text', text: 'same message' }],
+      }),
+    ];
+
+    const result = mergeMessages(channelMsgs, convMsgs);
+
+    expect(result).toHaveLength(2);
+  });
+
+  it('suppresses tool-only interactive prompt messages when a channel prompt exists at the same time', () => {
+    const timestamp = new Date('2026-04-11T10:00:00.000Z');
+    const channelMsgs = [
+      makeChannelMessage({
+        id: 'prompt-1',
+        kind: 'question',
+        text: 'Are you satisfied with this result?',
+        timestamp,
+      }),
+    ];
+    const convMsgs = [
+      makeConversationMessage({
+        id: 'conv-tool-1',
+        createdAt: timestamp.getTime(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'interactive-desktop_request_user_input',
+            toolStatus: 'running',
+            toolInput: { message: 'Are you satisfied with this result?' },
+          },
+        ],
+      }),
+    ];
+
+    const result = mergeMessages(channelMsgs, convMsgs);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('prompt-1');
+  });
+
+  it('keeps tool-only conversation messages for non-interactive tools', () => {
+    const timestamp = new Date('2026-04-11T10:00:00.000Z');
+    const channelMsgs = [
+      makeChannelMessage({
+        id: 'prompt-1',
+        kind: 'agent_message',
+        text: 'Reading files',
+        timestamp,
+      }),
+    ];
+    const convMsgs = [
+      makeConversationMessage({
+        id: 'conv-tool-1',
+        createdAt: timestamp.getTime(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'bash',
+            toolStatus: 'completed',
+            toolOutput: 'done',
+          },
+        ],
+      }),
+    ];
+
+    const result = mergeMessages(channelMsgs, convMsgs);
+
+    expect(result).toHaveLength(2);
+    expect(result.some((message) => message.id === 'conv-tool-1')).toBe(true);
   });
 });

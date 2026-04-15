@@ -8,6 +8,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { app } from 'electron';
 import {
   initDatabase,
   upsertRegisteredConnection,
@@ -21,7 +22,7 @@ import {
   deleteSkillOrInstruction,
 } from './database';
 
-const TEST_DB_PATH = join('/tmp', 'conversations.db');
+const TEST_DB_PATH = join(app.getPath('userData'), 'conversations.db');
 
 function freshDb(): Promise<void> {
   if (existsSync(TEST_DB_PATH)) {
@@ -320,6 +321,31 @@ describe('getRegisteredConnection secondary lookup by connection_id', () => {
     const result = getRegisteredConnection('transport-handle-abc');
     expect(result).not.toBeNull();
     expect(result?.providerSessionId).toBe('ses_secondary');
+  });
+
+  it('returns the most recently updated row when multiple rows share the same connection_id', () => {
+    // Parent agent registers first with shared transport
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_parent',
+      providerType: 'opencode',
+      channelName: 'Parent Agent',
+      projectName: 'proj',
+      connectionId: 'shared-transport',
+    });
+
+    // Subagent registers later with the same transport connectionId
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_subagent',
+      providerType: 'opencode',
+      channelName: 'Subagent',
+      projectName: 'proj',
+      connectionId: 'shared-transport',
+    });
+
+    const result = getRegisteredConnection('shared-transport');
+    expect(result).not.toBeNull();
+    // Should return the most recently updated row (subagent), not an arbitrary one
+    expect(result?.providerSessionId).toBe('ses_subagent');
   });
 });
 

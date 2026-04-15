@@ -57,7 +57,7 @@ export function useVcsInfo(enabled: boolean = true): UseVcsInfoResult {
     }
   }, []);
 
-  // Initial fetch and when enabled changes
+  // Initial fetch and when enabled changes (deferred to idle time)
   useEffect(() => {
     if (!enabled) {
       setVcsInfo(null);
@@ -65,7 +65,21 @@ export function useVcsInfo(enabled: boolean = true): UseVcsInfoResult {
       return;
     }
 
-    void fetchVcs();
+    // Defer non-critical fetch to idle time to prioritize conversation rendering
+    const idleCallback =
+      'requestIdleCallback' in window
+        ? window.requestIdleCallback
+        : (cb: () => void) => setTimeout(cb, 50);
+
+    const handle = idleCallback(() => {
+      void fetchVcs();
+    });
+
+    return () => {
+      if ('cancelIdleCallback' in window && typeof handle === 'number') {
+        window.cancelIdleCallback(handle);
+      }
+    };
   }, [enabled, fetchVcs]);
 
   // Set up polling for VCS info (fallback when SSE unavailable)

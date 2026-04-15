@@ -200,6 +200,7 @@ describe('handleInjectDocContext', () => {
 
     expect(deps.sendAgentMessage).toHaveBeenCalledWith(
       'conn-123',
+      'ses_abc',
       expect.stringContaining('Context injected (2 docs)'),
     );
   });
@@ -314,6 +315,90 @@ describe('handleInjectDocContext', () => {
     expect(deps.sendAgentMessage).not.toHaveBeenCalled();
   });
 
+  it('skips injection when connectionId lookup returns parent but session-based lookup finds the subagent (shared MCP client)', async () => {
+    // Simulate the shared-MCP-client scenario: connectionId is shared between
+    // parent and subagent, so getRegisteredConnection(connectionId) returns
+    // the parent (no parentSessionId). But getRegisteredConnectionBySessionId
+    // returns the subagent row (with parentSessionId set).
+    const deps = makeDeps({
+      getRegisteredConnection: vi.fn(() => ({
+        connectionId: 'conn-shared',
+        channelName: 'Root Agent',
+        projectName: 'proj',
+        baseDirectory: '/my/repo',
+        idFilePath: '/tmp/root.json',
+        providerSessionId: 'ses_parent',
+        openCodeSessionId: 'ses_parent',
+        parentSessionId: null, // parent row — no parentSessionId
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+        providerType: 'opencode' as const,
+      })),
+      getRegisteredConnectionBySessionId: vi.fn(() => ({
+        connectionId: 'conn-shared',
+        channelName: 'Subagent',
+        projectName: 'proj',
+        baseDirectory: '/my/repo',
+        idFilePath: '/tmp/sub.json',
+        providerSessionId: 'ses_child',
+        openCodeSessionId: 'ses_child',
+        parentSessionId: 'ses_parent', // subagent row — has parentSessionId
+        createdAt: '2024-01-01',
+        updatedAt: '2024-01-01',
+        providerType: 'opencode' as const,
+      })),
+      searchDocs: vi
+        .fn()
+        .mockResolvedValue([
+          { path: 'docs/api.md', score: 9, lineNumber: 0, snippet: '' },
+        ]),
+    });
+
+    const result = await handleInjectDocContext(
+      {
+        connectionId: 'conn-shared',
+        openCodeSessionId: 'ses_child',
+        message: 'test message',
+        baseDirectory: '/my/repo',
+      },
+      deps,
+    );
+
+    expect(result).toEqual({ ok: true, injectedCount: 0 });
+    // Session-based lookup should have been used
+    expect(deps.getRegisteredConnectionBySessionId).toHaveBeenCalledWith(
+      'ses_child',
+    );
+    expect(deps.searchDocs).not.toHaveBeenCalled();
+    expect(deps.injectOpenCodeMessage).not.toHaveBeenCalled();
+    expect(deps.sendAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it('passes openCodeSessionId to sendAgentMessage for correct channel routing', async () => {
+    const deps = makeDeps({
+      searchDocs: vi.fn().mockResolvedValue([
+        {
+          path: 'docs/routing.md',
+          score: 10,
+          lineNumber: 1,
+          snippet: 'routing',
+        },
+      ]),
+    });
+
+    await handleInjectDocContext(
+      { ...BASE_INPUT, baseDirectory: '/my/repo' },
+      deps,
+    );
+
+    // sendAgentMessage should receive connectionId, openCodeSessionId, and the message
+    expect(deps.sendAgentMessage).toHaveBeenCalledWith(
+      'conn-123',
+      'ses_abc',
+      expect.stringContaining('Context injected (1 docs)'),
+    );
+  });
+
   it('the visible summary lists each injected doc path', async () => {
     const deps = makeDeps({
       searchDocs: vi.fn().mockResolvedValue([
@@ -328,8 +413,8 @@ describe('handleInjectDocContext', () => {
     );
 
     const mockCalls = (deps.sendAgentMessage as ReturnType<typeof vi.fn>).mock
-      .calls as Array<[string, string]>;
-    const [, messageText] = mockCalls[0];
+      .calls as Array<[string, string | null, string]>;
+    const [, , messageText] = mockCalls[0];
     expect(messageText).toContain('`docs/api.md`');
     expect(messageText).toContain('`docs/guide.md`');
   });

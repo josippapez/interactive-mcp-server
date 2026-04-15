@@ -638,3 +638,199 @@ The app supports multiple AI providers through:
 - Composite primary key `(providerType, providerSessionId)` for connection isolation
 - Provider-specific features (e.g., session injection only for OpenCode)
 - Fallback to `agentBackend` setting for backwards compatibility
+
+---
+
+## Session ID Priority for Message Routing
+
+In OpenCode's shared MCP client architecture, multiple agent sessions (parent and subagents) share the same `connectionId` (MCP transport UUID) but have unique `openCodeSessionId` values.
+
+When routing messages to the correct channel, the lookup priority is:
+
+1. **`openCodeSessionId`** — The unique identifier for each agent session (format: `ses_<alphanumeric>`)
+2. **`connectionId`** — The MCP transport UUID (fallback for legacy/standalone clients)
+3. **Direct map key** — Final fallback for direct connections where the map key is the connectionId
+
+This priority ensures that:
+
+- Subagents receive messages intended for them, not the parent
+- Messages don't get stuck in "Sending" state due to incorrect node lookup
+- The UI correctly displays messages in the originating agent's channel
+- Doc context injection targets the correct agent's OpenCode session
+
+### Key Functions
+
+| Function                      | File                      | Purpose                                                                                               |
+| ----------------------------- | ------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `findKeyByConnectionId()`     | `useIpcListeners.ts`      | Primary routing helper — all renderer-side routing uses this function                                 |
+| `findPromptTargetKey()`       | `useIpcListeners.ts`      | Prompt routing — thin wrapper around `findKeyByConnectionId`                                          |
+| `findNodeBySessionId()`       | `useProviderInjection.ts` | Provider injection routing — ensures injected messages reach the correct agent session                |
+| `handleQueueSessionMessage()` | `useConnections.ts`       | User message routing — queues outbound messages to the correct channel (uses `findKeyByConnectionId`) |
+| `handleInjectWithReply()`     | `useConnections.ts`       | Reply injection routing — injects messages with response triggers (uses `findKeyByConnectionId`)      |
+
+**Important:** All renderer-side node lookups MUST use `findKeyByConnectionId` to ensure correct routing in multi-agent scenarios. Do not use inline `connectionId`-only lookups.
+
+### Implementation Details
+
+All four functions follow the same lookup priority:
+
+```typescript
+// Priority 1: Match by openCodeSessionId (direct map key or node field)
+if (openCodeSessionId) {
+  if (nodes.has(openCodeSessionId)) return openCodeSessionId;
+  for (const [id, node] of nodes) {
+    if (node.openCodeSessionId === openCodeSessionId) return id;
+  }
+}
+
+// Priority 2: Match by connectionId field (fallback)
+for (const [id, node] of nodes) {
+  if (node.connectionId === connectionId) return id;
+}
+
+// Priority 3: Direct map key lookup by connectionId
+if (nodes.has(connectionId)) return connectionId;
+```
+
+### Why This Matters
+
+In a multi-agent scenario:
+
+1. **Main agent** (ses_abc) spawns **Subagent** (ses_xyz) via the Task tool
+2. Both agents share the same MCP transport `connectionId` (UUID)
+3. When Subagent sends a message, the renderer receives both `connectionId` and `openCodeSessionId`
+4. Without prioritizing `openCodeSessionId`, the message would route to whichever node last registered that `connectionId` — likely the Main agent's channel
+5. With correct priority, the message routes to Subagent's channel based on `openCodeSessionId` match
+
+This architectural decision was implemented to fix a bug where subagent messages appeared in parent channels, and user-sent messages to subagents would get stuck in "Sending" state due to incorrect node lookup.
+
+### Known Issue: Prompt Auto-Focus Channel Switching
+
+When a new prompt arrives and the currently active channel doesn't have a pending prompt, the UI automatically switches focus to the prompt's channel (`useIpcListeners.ts`). This can cause confusion when:
+
+1. User is viewing parent channel
+2. Child agent sends a prompt
+3. Focus auto-switches to child channel
+4. User sends a message thinking they're still on the parent channel
+5. Message routes to the child channel (which is now active)
+
+**Mitigation**: The code uses the global Jotai-based channel selection store (`store/channel-selection.ts`) which:
+
+- Provides a single source of truth for channel selection across all components
+- Tracks selection source (e.g., `'prompt-received'`, `'sidebar-click'`) for debugging
+- Enables future improvements like visual indicators or settings to disable auto-focus
+
+## Global State Management
+
+The app uses **Jotai** for global reactive state that needs to be accessed from multiple components without prop drilling.
+
+### Channel Selection Store
+
+Located in `store/channel-selection.ts`, this store manages which channel is currently selected:
+
+| Atom                           | Type             | Purpose                                                |
+| ------------------------------ | ---------------- | ------------------------------------------------------ |
+| `activeChannelIdAtom`          | `string \| null` | Currently selected channel ID                          |
+| `intentionalNullSelectionAtom` | `boolean`        | Whether null selection was user-initiated              |
+| `selectChannelAtom`            | write-only       | Action atom for channel selection with source tracking |
+
+**Selection Sources** (`ChannelSelectionSource`):
+
+- `sidebar-click` — User clicked a channel in the sidebar
+- `prompt-received` — Auto-focus when a new prompt arrives
+- `connection-opened` — New MCP connection was established
+- `connection-closed` — MCP connection was closed
+- `session-deleted` — Session was removed
+- `keyboard-shortcut` — User navigated via keyboard
+- `quick-switcher` — User selected via quick switcher (Cmd+K)
+- `auto-select-first` — Auto-select first available when current disappears
+
+**Hooks:**
+
+- `useActiveChannelId()` — Read-only access to active channel ID
+- `useSelectChannel()` — Write-only function to change selection
+- `useChannelSelection()` — Combined read/write access
+
+---
+
+## Logging
+
+The desktop app includes a persistent file-based logging system for debugging and diagnostics.
+
+### Log File Location
+
+Log files are stored in the platform-specific logs directory:
+
+| Platform | Path                                      |
+| -------- | ----------------------------------------- |
+| macOS    | `~/Library/Logs/interactive-mcp-desktop/` |
+| Windows  | `%APPDATA%\interactive-mcp-desktop\logs\` |
+| Linux    | `~/.config/interactive-mcp-desktop/logs/` |
+
+The exact path is determined by Electron's `app.getPath('logs')`.
+
+### Log File Format
+
+- **Naming**: `app-YYYY-MM-DD.log` (e.g., `app-2026-04-13.log`)
+- **Line format**: `[YYYY-MM-DDTHH:mm:ss.sssZ] [LEVEL] [category] message`
+- **Levels**: `DEBUG`, `INFO`, `WARN`, `ERROR`
+- **Auto-rotation**: Files older than 7 days are automatically deleted on startup
+
+### Logger Categories
+
+Each subsystem uses a dedicated logger category for easy filtering:
+
+| Category       | Subsystem                                   |
+| -------------- | ------------------------------------------- |
+| `app`          | Application lifecycle and startup           |
+| `mcp`          | MCP server and HTTP transport               |
+| `ipc`          | IPC handlers (main ↔ renderer)              |
+| `session`      | Session resolution and management           |
+| `sse`          | SSE bus events and subscriptions            |
+| `session-tree` | Session tree manager (OpenCode integration) |
+| `injector`     | Context injection into OpenCode sessions    |
+
+### Usage in Code
+
+```ts
+import { createLogger } from './utils/logger';
+
+const log = createLogger('mcp');
+log.info('server started on port 3100');
+log.error('failed to handle request');
+```
+
+### Crash-Safe Writes
+
+The logger uses synchronous `appendFileSync` writes — every log line is flushed to disk immediately, ensuring no log data is lost on unexpected exits or crashes.
+
+---
+
+## Recent Changes
+
+### Reasoning/Thinking Display Support
+
+The app now supports models with extended thinking capabilities (e.g., Claude with thinking, o1/o3 reasoning models):
+
+- **Reasoning content**: Messages can include `reasoning` parts that display the model's thinking process
+- **Model detection**: The `reasoning` capability flag is extracted from OpenCode model metadata
+- **Variant selection**: For reasoning models, the app infers default effort levels (low/medium/high) based on model type
+
+### Extended Token Tracking
+
+Token usage display now includes additional metrics when available:
+
+| Metric      | Description                               |
+| ----------- | ----------------------------------------- |
+| `input`     | Input/prompt tokens                       |
+| `output`    | Output/completion tokens                  |
+| `reasoning` | Tokens used for reasoning/thinking        |
+| `total`     | Total tokens (computed if not provided)   |
+| `cache`     | Cache read/write tokens (when applicable) |
+
+### UI Improvements
+
+- **Tool call spacing**: Reduced spacing between tool calls for more compact display
+- **Auto-scroll**: Edit diffs now auto-scroll to the changed section
+- **Timeout errors**: Provider inject timeout errors now show a user-friendly message: "Request timed out — OpenCode may be busy or unresponsive"
+- **Error logging**: Timeout errors are logged to the file logger for debugging

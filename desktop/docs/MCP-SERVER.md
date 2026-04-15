@@ -411,3 +411,32 @@ const baseDirectory =
 ```
 
 Without this guard, the doc indexer (`doc-context-injector.ts`) would receive `/` as the `baseDirectory` and attempt to walk the entire filesystem to discover documentation files.
+
+---
+
+## Debugging and Logging
+
+The MCP server logs diagnostic information to the file-based logger. Key events logged:
+
+| Event                   | Category | Level | Description                                             |
+| ----------------------- | -------- | ----- | ------------------------------------------------------- |
+| Server startup          | `mcp`    | INFO  | Port binding and server initialization                  |
+| Session created         | `mcp`    | INFO  | New MCP session established                             |
+| Session closed          | `mcp`    | INFO  | Session teardown (client disconnect or explicit close)  |
+| Transparent reinit      | `mcp`    | INFO  | Stale session resurrected transparently                 |
+| Tool call received      | `mcp`    | DEBUG | Incoming tool invocation                                |
+| Provider inject timeout | `mcp`    | ERROR | Context injection timed out (user-friendly error shown) |
+
+### Finding Log Files
+
+Log files are located in the platform-specific logs directory (see [ARCHITECTURE.md](./ARCHITECTURE.md#logging) for details):
+
+- **macOS**: `~/Library/Logs/interactive-mcp-desktop/app-YYYY-MM-DD.log`
+- **Windows**: `%APPDATA%\interactive-mcp-desktop\logs\app-YYYY-MM-DD.log`
+- **Linux**: `~/.config/interactive-mcp-desktop/logs/app-YYYY-MM-DD.log`
+
+### Debugging Tips
+
+1. **Check logs for session issues**: Look for `[mcp]` entries around the time of the problem
+2. **Verify transparent reinit**: Search for "transparent" to confirm reconnection handling
+3. **Timeout debugging**: `[ERROR] [mcp]` entries will show timeout failures with timestamps

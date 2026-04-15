@@ -14,3 +14,6 @@ release/
 **/.doc-embeddings.json
 
 **/.imcp-session
+
+# Bundled OpenCode binaries (copied during build, not committed)
+desktop/resources/bin/

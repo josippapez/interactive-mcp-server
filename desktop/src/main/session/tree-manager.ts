@@ -47,6 +47,17 @@ import {
   fetchAllOpenCodeSessions,
   type OpenCodeSession,
 } from '../opencode/session';
+import {
+  updateSessionTokens,
+  type MessageTokens,
+} from '../opencode/context-tracking';
+import { createLogger } from '../utils/logger';
+import {
+  buildOpenCodePortCandidates,
+  resolveReachableOpenCodePorts,
+} from '../opencode/endpoints';
+
+const log = createLogger('session-tree');
 
 /** How long after a register_connection call to consider a connection "pending" for auto-bind. */
 const AUTO_BIND_WINDOW_MS = 3_000;
@@ -151,6 +162,13 @@ const _pendingConnections = new Map<string, number>();
 let _sseAbortController: AbortController | null = null;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+let _restSeedCompleted = false;
+/**
+ * Flag indicating that a snapshot was requested but could not be emitted
+ * (e.g., window unavailable). When true, the next scheduleSnapshot call
+ * or window availability check should emit immediately.
+ */
+let _snapshotPending = false;
 let _getWindow: (() => BrowserWindow | null) | null = null;
 let _getOpenCodePort: (() => number) | null = null;
 let _getAutoRegisterSubagents: (() => boolean) | null = null;
@@ -245,6 +263,40 @@ function extractVcsInfo(session: SessionInfo): VcsInfo | null {
   };
 }
 
+function buildSessionNodeData(
+  sessionId: string,
+  session: SessionInfo,
+  rc: RegisteredConnection | null,
+  depthCache: Map<string, number> = new Map(),
+): SessionNodeData {
+  return {
+    openCodeSessionId: sessionId,
+    openCodeParentId: session.parentID ?? null,
+    title: session.title ?? `Session ${sessionId.slice(0, 8)}`,
+    directory: session.directory ?? '',
+    createdAt: session.time?.created ?? 0,
+    updatedAt: session.time?.updated ?? 0,
+    depth: computeDepth(sessionId, depthCache),
+    connectionId: rc?.connectionId ?? null,
+    channelName: rc?.channelName ?? null,
+    hasMcpChannel: rc !== null,
+    baseDirectory: rc?.baseDirectory ?? null,
+    registeredParentSessionId: rc?.parentSessionId ?? null,
+    providerType: rc?.providerType ?? null,
+    vcsInfo: extractVcsInfo(session),
+  };
+}
+
+function findRegisteredConnectionForSession(
+  openCodeSessionId: string,
+): RegisteredConnection | null {
+  return (
+    getAllRegisteredConnections().find(
+      (entry) => entry.providerSessionId === openCodeSessionId,
+    ) ?? null
+  );
+}
+
 // ─── Snapshot builder ────────────────────────────────────────────────────────
 
 function buildSnapshot(): SessionNodeData[] {
@@ -264,34 +316,62 @@ function buildSnapshot(): SessionNodeData[] {
     if (_tombstonedSessionIds.has(id)) continue;
     if (hasTombstonedAncestor(id)) continue;
 
-    const rc = byOpenCodeId.get(id) ?? null;
-    const depth = computeDepth(id, depthCache);
-
-    const title =
-      session.title ?? rc?.channelName ?? `Session ${id.slice(0, 8)}`;
-
-    result.push({
-      openCodeSessionId: id,
-      openCodeParentId: session.parentID ?? null,
-      title,
-      directory: session.directory ?? '',
-      createdAt: session.time?.created ?? 0,
-      updatedAt: session.time?.updated ?? 0,
-      depth,
-      connectionId: rc?.connectionId ?? null,
-      channelName: rc?.channelName ?? null,
-      hasMcpChannel: rc !== null,
-      baseDirectory: rc?.baseDirectory ?? null,
-      registeredParentSessionId: rc?.parentSessionId ?? null,
-      providerType: rc?.providerType ?? null,
-      vcsInfo: extractVcsInfo(session),
-    });
+    result.push(
+      buildSessionNodeData(
+        id,
+        session,
+        byOpenCodeId.get(id) ?? null,
+        depthCache,
+      ),
+    );
   }
   return result;
 }
 
+function emitOptimisticChildSession(info: SessionInfo): void {
+  if (!info.parentID) return;
+  if (_tombstonedSessionIds.has(info.id)) return;
+  if (hasTombstonedAncestor(info.id)) return;
+
+  const win = _getWindow?.();
+  if (!win || win.isDestroyed()) return;
+
+  win.webContents.send(
+    'session-node-created-optimistic',
+    buildSessionNodeData(
+      info.id,
+      info,
+      findRegisteredConnectionForSession(info.id),
+    ),
+  );
+}
+
 function scheduleSnapshot(): void {
-  if (_snapshotTimer !== null) return;
+  // If a timer is already scheduled, reschedule it to capture the latest state
+  // (trailing-edge debounce). This ensures rapid updates don't lose data.
+  if (_snapshotTimer !== null) {
+    clearTimeout(_snapshotTimer);
+    log.debug('scheduleSnapshot: rescheduling snapshot (timer was pending)');
+  } else {
+    log.debug(
+      `scheduleSnapshot: scheduling snapshot in ${SNAPSHOT_DEBOUNCE_MS}ms`,
+    );
+  }
+
+  // If there was a pending snapshot from a failed emit (window unavailable),
+  // and the window is now available, emit immediately to recover.
+  if (_snapshotPending) {
+    const win = _getWindow?.();
+    if (win && !win.isDestroyed()) {
+      log.info('scheduleSnapshot: recovering pending snapshot');
+      _snapshotTimer = setTimeout(() => {
+        _snapshotTimer = null;
+        emitSnapshot();
+      }, 0); // Emit immediately
+      return;
+    }
+  }
+
   _snapshotTimer = setTimeout(() => {
     _snapshotTimer = null;
     emitSnapshot();
@@ -300,8 +380,24 @@ function scheduleSnapshot(): void {
 
 function emitSnapshot(): void {
   const win = _getWindow?.();
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) {
+    log.warn(
+      'emitSnapshot: window not available or destroyed — marking pending',
+    );
+    _snapshotPending = true;
+    return;
+  }
+  _snapshotPending = false;
   const snapshot = buildSnapshot();
+  const childSessions = snapshot.filter((s) => s.openCodeParentId !== null);
+  log.info(
+    `emitSnapshot: emitting ${snapshot.length} sessions (${childSessions.length} children) to renderer`,
+  );
+  if (childSessions.length > 0) {
+    log.info(
+      `emitSnapshot: child sessions: ${childSessions.map((s) => `${s.openCodeSessionId}(parent=${s.openCodeParentId})`).join(', ')}`,
+    );
+  }
   win.webContents.send('session-tree-updated', snapshot);
 }
 
@@ -378,10 +474,22 @@ function buildSessionBootstrapMessage(
  * deduplication will consolidate the record on the (providerType, providerSessionId)
  * composite key, so no orphaned rows are left behind.
  */
-function autoRegisterSession(info: SessionInfo): void {
+function autoRegisterSession(
+  info: SessionInfo,
+  options?: { scheduleSnapshot?: boolean },
+): void {
   // Only auto-register OpenCode sessions (providerType = 'opencode')
-  if (isProviderSessionClaimed(info.id, 'opencode')) return;
+  const alreadyClaimed = isProviderSessionClaimed(info.id, 'opencode');
+  log.info(
+    `autoRegisterSession: sessionId=${info.id}, parentID=${info.parentID ?? 'null'}, alreadyClaimed=${alreadyClaimed}`,
+  );
 
+  if (alreadyClaimed) {
+    log.info(`session ${info.id} already claimed — skipping auto-register`);
+    return;
+  }
+
+  log.info(`upserting registered connection for session ${info.id}`);
   upsertRegisteredConnection({
     providerSessionId: info.id,
     providerType: 'opencode',
@@ -391,12 +499,16 @@ function autoRegisterSession(info: SessionInfo): void {
     baseDirectory: info.directory,
     parentSessionId: info.parentID ?? undefined,
   });
+  log.info(`registered connection upserted for session ${info.id}`);
 
   // Inject session ID into child agent context so it knows what to pass to
   // register_connection. Root sessions are handled by mcp-server.ts via
   // autoDetectOpenCodeSession, so we only inject for child sessions here.
   if (info.parentID) {
     const port = _getOpenCodePort?.() ?? 4096;
+    log.info(
+      `injecting session bootstrap message for child session ${info.id}, parentID=${info.parentID}`,
+    );
     void injectOpenCodeMessage(
       info.id,
       buildSessionBootstrapMessage(info.id, info.parentID),
@@ -405,7 +517,10 @@ function autoRegisterSession(info: SessionInfo): void {
     );
   }
 
-  scheduleSnapshot();
+  if (options?.scheduleSnapshot !== false) {
+    scheduleSnapshot();
+    log.info(`scheduleSnapshot called for session ${info.id}`);
+  }
 }
 
 // ─── SSE event handling ───────────────────────────────────────────────────────
@@ -416,17 +531,36 @@ function handleSyncEvent(envelope: SyncEventEnvelope): void {
   if (type === 'session.created.1') {
     const info = data['info'] as SessionInfo | undefined;
     const sessionId = data['sessionID'] as string | undefined;
-    if (!sessionId || !info) return;
+    log.info(
+      `session.created.1 received: sessionId=${sessionId}, parentID=${info?.parentID ?? 'null'}, title=${info?.title ?? 'untitled'}`,
+    );
+    if (!sessionId || !info) {
+      log.warn(`session.created.1 missing sessionId or info — skipping`);
+      return;
+    }
 
     const merged: SessionInfo = { ...info, id: sessionId };
-    if (!_tombstonedSessionIds.has(sessionId)) {
-      _sessionCache.set(sessionId, merged);
-      tryAutoBindSession(merged);
-      if (_getAutoRegisterSubagents?.() ?? true) {
-        autoRegisterSession(merged);
-      }
-      scheduleSnapshot();
+    if (_tombstonedSessionIds.has(sessionId)) {
+      log.info(`session ${sessionId} is tombstoned — skipping`);
+      return;
     }
+
+    _sessionCache.set(sessionId, merged);
+    log.info(
+      `session ${sessionId} added to cache, cache size=${_sessionCache.size}`,
+    );
+
+    tryAutoBindSession(merged);
+
+    const autoRegisterEnabled = _getAutoRegisterSubagents?.() ?? true;
+    log.info(`autoRegisterSubagents enabled: ${autoRegisterEnabled}`);
+
+    if (autoRegisterEnabled) {
+      autoRegisterSession(merged, { scheduleSnapshot: false });
+    }
+
+    emitOptimisticChildSession(merged);
+    scheduleSnapshot();
     return;
   }
 
@@ -449,6 +583,58 @@ function handleSyncEvent(envelope: SyncEventEnvelope): void {
     if (!sessionId) return;
     _sessionCache.delete(sessionId);
     scheduleSnapshot();
+    return;
+  }
+
+  // Context/token tracking from message updates.
+  // The message.updated.1 SyncEvent carries the full message info including
+  // token counts on assistant messages. We extract token data and forward
+  // context-usage-updated IPC events to the renderer so the ContextUsageBar
+  // component can display real-time usage.
+  if (type === 'message.updated.1') {
+    const sessionID = data['sessionID'] as string | undefined;
+    const info = data['info'] as Record<string, unknown> | undefined;
+    if (!sessionID || !info) return;
+
+    // Only process assistant messages (they carry token data)
+    if (info['role'] !== 'assistant') return;
+
+    const tokens = info['tokens'] as MessageTokens | undefined;
+    if (!tokens) return;
+
+    // Calculate the actual token count from the tokens object
+    // Skip if there's no meaningful token data (empty object or all zeros)
+    const tokenCount =
+      tokens.total ?? (tokens.input ?? 0) + (tokens.output ?? 0);
+    if (tokenCount <= 0) return;
+
+    const modelID = info['modelID'] as string | undefined;
+    const providerID = info['providerID'] as string | undefined;
+
+    // Use replace=true because each assistant message's tokens represent
+    // the cumulative input context for that step — the last message's total
+    // IS the current context usage (matching the OpenCode app's approach).
+    const usage = updateSessionTokens(
+      sessionID,
+      tokens,
+      modelID,
+      providerID,
+      true,
+    );
+
+    // Forward to renderer
+    const win = _getWindow?.();
+    if (!win || win.isDestroyed()) return;
+
+    win.webContents.send('context-usage-updated', {
+      sessionId: sessionID,
+      totalTokens: usage.totalTokens,
+      contextLimit: usage.contextLimit,
+      usableLimit: usage.usableLimit,
+      usagePercent: usage.usagePercent,
+      isNearOverflow: usage.isNearOverflow,
+      isOverflow: usage.isOverflow,
+    });
     return;
   }
 
@@ -485,6 +671,10 @@ function handleSyncEvent(envelope: SyncEventEnvelope): void {
             | string
             | undefined,
         ),
+        // Forward metadata from tool state (contains sessionId for Task tools)
+        toolMetadata: (part['state'] as Record<string, unknown> | undefined)?.[
+          'metadata'
+        ] as Record<string, unknown> | undefined,
       },
     });
     return;
@@ -497,16 +687,21 @@ function mapPartType(
   type: string | undefined,
 ):
   | 'text'
+  | 'reasoning'
   | 'tool-call'
   | 'tool-result'
   | 'image'
   | 'file'
   | 'step-start'
   | 'step-end'
+  | 'compaction'
+  | 'source-url'
   | 'unknown' {
   switch (type) {
     case 'text':
       return 'text';
+    case 'reasoning':
+      return 'reasoning';
     case 'tool':
       return 'tool-call';
     case 'tool-result':
@@ -519,6 +714,10 @@ function mapPartType(
       return 'step-start';
     case 'step-end':
       return 'step-end';
+    case 'compaction':
+      return 'compaction';
+    case 'source-url':
+      return 'source-url';
     default:
       return 'unknown';
   }
@@ -551,9 +750,24 @@ function mapToolStatus(
  * If the API is unreachable (returns null), the cache stays empty and the app
  * renders as-is — the user will see sessions appear as new events arrive.
  */
-async function seedCacheFromRest(openCodePort: number): Promise<void> {
-  const sessions = await fetchAllOpenCodeSessions(openCodePort);
+async function seedCacheFromRest(
+  openCodePort: number,
+  force = false,
+): Promise<void> {
+  if (_restSeedCompleted && !force) return;
+
+  const fallbackDirectories = getAllKnownBaseDirectories();
+  const sessions = await fetchAllOpenCodeSessions(
+    openCodePort,
+    fallbackDirectories,
+  );
   if (!sessions) return; // API unreachable — skip silently
+
+  // Intentionally avoid destructive pruning on manual refresh (force=true).
+  // OpenCode endpoints can return partial session sets transiently; deleting
+  // missing sessions here causes channel-list flicker across consecutive refreshes.
+  // Session removals should come from authoritative session.deleted.1 events.
+  void force;
 
   let seeded = 0;
   for (const session of sessions) {
@@ -567,7 +781,7 @@ async function seedCacheFromRest(openCodePort: number): Promise<void> {
     };
     _sessionCache.set(session.id, info);
     if (_getAutoRegisterSubagents?.() ?? true) {
-      autoRegisterSession(info);
+      autoRegisterSession(info, { scheduleSnapshot: false });
     }
     seeded++;
   }
@@ -576,69 +790,108 @@ async function seedCacheFromRest(openCodePort: number): Promise<void> {
     console.log(`[session-tree] seeded ${seeded} sessions from REST`);
     scheduleSnapshot();
   }
+
+  _restSeedCompleted = true;
+}
+
+function getAllKnownBaseDirectories(): string[] {
+  const directories = getAllRegisteredConnections()
+    .map((entry) => entry.baseDirectory?.trim() ?? '')
+    .filter((entry) => entry.length > 0);
+  return Array.from(new Set(directories));
 }
 
 // ─── SSE subscription ─────────────────────────────────────────────────────────
 
 async function subscribeToSyncEvents(openCodePort: number): Promise<void> {
-  const url = `http://localhost:${openCodePort}/global/sync-event`;
-  const controller = new AbortController();
-  _sseAbortController = controller;
+  const reachable = await resolveReachableOpenCodePorts(openCodePort);
+  const ports =
+    reachable.length > 0
+      ? reachable
+      : buildOpenCodePortCandidates(openCodePort);
 
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { Accept: 'text/event-stream', 'Cache-Control': 'no-cache' },
-    });
-
-    if (!res.ok || !res.body) {
-      console.warn(
-        `[session-tree] SSE connect failed: ${res.status} — will retry in ${SSE_RECONNECT_DELAY_MS}ms`,
-      );
-      scheduleReconnect();
-      return;
-    }
-
-    console.log(`[session-tree] SSE connected to ${url}`);
-
-    // Seed the cache with sessions that already existed before we connected.
-    await seedCacheFromRest(openCodePort);
-
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-
-      // SSE frames are terminated by a double newline.
-      const frames = buffer.split(/\n\n/);
-      buffer = frames.pop() ?? '';
-
-      for (const frame of frames) {
-        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
-        if (!dataLine) continue;
-
-        const raw = dataLine.slice('data:'.length).trim();
-        if (!raw) continue;
-
-        try {
-          const envelope = JSON.parse(raw) as SyncEventEnvelope;
-          if (envelope?.payload?.type) {
-            handleSyncEvent(envelope);
-          }
-        } catch {
-          // malformed JSON — ignore
-        }
+  const controllers: AbortController[] = [];
+  _sseAbortController = {
+    abort: () => {
+      for (const controller of controllers) {
+        controller.abort();
       }
-    }
-  } catch (err: unknown) {
-    if ((err as { name?: string }).name === 'AbortError') return; // intentional stop
-    console.warn(`[session-tree] SSE error:`, err);
-  }
+    },
+  } as AbortController;
+
+  // Seed across all reachable endpoints before streaming starts.
+  await seedCacheFromRest(openCodePort);
+
+  await Promise.all(
+    ports.map(async (port) => {
+      const url = `http://localhost:${port}/global/sync-event`;
+      const controller = new AbortController();
+      controllers.push(controller);
+      log.info(`subscribing to SSE at ${url}`);
+
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: { Accept: 'text/event-stream', 'Cache-Control': 'no-cache' },
+        });
+
+        if (!res.ok || !res.body) {
+          log.warn(
+            `SSE connect failed on port ${port}: ${res.status} — will retry in ${SSE_RECONNECT_DELAY_MS}ms`,
+          );
+          return;
+        }
+
+        log.info(`SSE connected to ${url}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) {
+            log.info(`SSE stream ended on port ${port}`);
+            break;
+          }
+
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE frames are terminated by a double newline.
+          const frames = buffer.split(/\n\n/);
+          buffer = frames.pop() ?? '';
+
+          for (const frame of frames) {
+            const dataLine = frame
+              .split('\n')
+              .find((l) => l.startsWith('data:'));
+            if (!dataLine) continue;
+
+            const raw = dataLine.slice('data:'.length).trim();
+            if (!raw) continue;
+
+            try {
+              const envelope = JSON.parse(raw) as SyncEventEnvelope;
+              if (envelope?.payload?.type) {
+                const eventType = envelope.payload.type;
+                if (eventType.startsWith('session.')) {
+                  log.debug(`SSE event received: ${eventType}`);
+                }
+                handleSyncEvent(envelope);
+              }
+            } catch {
+              // malformed JSON — ignore
+            }
+          }
+        }
+      } catch (err: unknown) {
+        if ((err as { name?: string }).name === 'AbortError') return;
+        log.warn(
+          `SSE error on port ${port}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+    }),
+  );
 
   scheduleReconnect();
 }
@@ -689,19 +942,35 @@ export function stopSessionTreeManager(): void {
   _getWindow = null;
   _getOpenCodePort = null;
   _getAutoRegisterSubagents = null;
+  _restSeedCompleted = false;
 }
 
 /**
  * Force an immediate re-snapshot and emit `session-tree-updated`.
  * Called after register_connection so the renderer sees the update right away.
+ * Also clears the pending snapshot flag since we're emitting successfully.
  */
 export async function triggerSessionTreeUpdate(
   getWindow: () => BrowserWindow | null,
 ): Promise<void> {
   const win = getWindow();
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) {
+    _snapshotPending = true;
+    return;
+  }
+  _snapshotPending = false; // Clear pending flag on successful emit
   const snapshot = buildSnapshot();
   win.webContents.send('session-tree-updated', snapshot);
+}
+
+export function replayPendingSessionTreeSnapshot(
+  getWindow: () => BrowserWindow | null,
+): void {
+  if (!_snapshotPending) {
+    return;
+  }
+
+  void triggerSessionTreeUpdate(getWindow);
 }
 
 /**
@@ -711,7 +980,7 @@ export async function triggerSessionTreeUpdate(
  */
 export async function refreshSessionTreeCache(): Promise<void> {
   const port = _getOpenCodePort?.() ?? 4096;
-  await seedCacheFromRest(port);
+  await seedCacheFromRest(port, true);
 }
 
 // ─── Exported for backwards-compat (session-reconnect uses this type) ─────────

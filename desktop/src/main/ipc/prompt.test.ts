@@ -17,6 +17,7 @@ vi.mock('../database', () => ({
   saveConversation: vi.fn(),
   appendSessionChannelMessage: vi.fn(),
   getRegisteredConnection: vi.fn(() => null),
+  getRegisteredConnectionBySessionId: vi.fn(() => null),
 }));
 
 import { ipcMain } from 'electron';
@@ -25,6 +26,7 @@ import {
   cancelActivePrompt,
   forceTerminateChat,
   setPromptTimeout,
+  __resetPromptStateForTests,
 } from './prompt';
 import {
   appendSessionChannelMessage,
@@ -62,6 +64,8 @@ describe('promptUser', () => {
     vi.useFakeTimers();
     // Set a short prompt timeout for tests
     setPromptTimeout(() => 5000);
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -203,7 +207,7 @@ describe('promptUser', () => {
       expect.objectContaining({ id: 'prompt-b', connectionId: 'conn-shared' }),
     );
 
-    handlers[1]?.({} as IpcMainEvent, { id: 'prompt-b', answer: 'second' });
+    handlers[0]?.({} as IpcMainEvent, { id: 'prompt-b', answer: 'second' });
     await expect(second).resolves.toEqual({
       answer: 'second',
       attachments: undefined,
@@ -333,6 +337,7 @@ describe('promptUser', () => {
           return ipcMain;
         },
       );
+      vi.mocked(ipcMain.removeListener).mockClear();
 
       const abortController = new AbortController();
 
@@ -382,7 +387,7 @@ describe('promptUser', () => {
       expect(result).toEqual({ answer: 'works', attachments: undefined });
     });
 
-    it('cleans up IPC listener when prompt settles', async () => {
+    it('keeps shared IPC listener active when prompt settles', async () => {
       const win = createMockWindow();
       let capturedHandler: IpcListener | undefined;
       vi.mocked(ipcMain.on).mockImplementation(
@@ -404,7 +409,7 @@ describe('promptUser', () => {
 
       await promise;
 
-      expect(ipcMain.removeListener).toHaveBeenCalledWith(
+      expect(ipcMain.removeListener).not.toHaveBeenCalledWith(
         'prompt-response',
         expect.any(Function),
       );
@@ -420,6 +425,8 @@ describe('forceTerminateChat', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     setPromptTimeout(() => 5000);
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -456,6 +463,8 @@ describe('timeout does not fire after normal answer', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     setPromptTimeout(() => 5000);
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -502,6 +511,8 @@ describe('cancelActivePrompt sends prompt-clear to renderer', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     setPromptTimeout(() => 5000);
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -543,6 +554,8 @@ describe('durable prompt — transport resilience', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     setPromptTimeout(() => 60_000); // 60 s — long enough to simulate reconnects
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -717,6 +730,8 @@ describe('promptKey — openCodeSessionId keying', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     setPromptTimeout(() => 60_000);
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
   });
 
   afterEach(() => {
@@ -813,6 +828,35 @@ describe('promptKey — openCodeSessionId keying', () => {
 
     // Cancel by connectionId — even though the map key is openCodeSessionId
     cancelActivePrompt('conn-cancel-key');
+
+    const result = await promise;
+    expect(result.answer).toContain('superseded');
+  });
+
+  it('cancelActivePrompt still settles prompt when session lookup is stale and keying used openCodeSessionId', async () => {
+    const win = createMockWindow();
+
+    // During prompt creation, we have explicit openCodeSessionId in tool call.
+    // During cancellation, DB lookup is stale and returns null.
+    vi.mocked(getRegisteredConnection)
+      .mockReturnValueOnce(null)
+      .mockReturnValueOnce(null);
+
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+    const promise = promptUser(
+      win as never,
+      createPromptData({
+        id: 'stale-cancel',
+        connectionId: 'conn-stale-cancel',
+        openCodeSessionId: 'ses_stale_cancel',
+      }),
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    cancelActivePrompt('conn-stale-cancel');
 
     const result = await promise;
     expect(result.answer).toContain('superseded');
@@ -931,5 +975,254 @@ describe('promptKey — openCodeSessionId keying', () => {
     const [r1, r2] = await Promise.all([first, second]);
     expect(r1).toEqual({ answer: 'reconnect answer', attachments: undefined });
     expect(r2).toEqual({ answer: 'reconnect answer', attachments: undefined });
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Bug #2: appendSessionChannelMessage calls use data.connectionId instead of
+// the resolved promptKey (openCodeSessionId). When parent and subagent share
+// the same connectionId, all history is persisted under the parent's channel.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('appendSessionChannelMessage — uses resolved session ID, not connectionId', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setPromptTimeout(() => 5000);
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
+
+    // Simulate a subagent: DB lookup for connectionId returns openCodeSessionId
+    vi.mocked(getRegisteredConnection).mockReturnValue({
+      connectionId: 'shared-conn-uuid',
+      providerSessionId: 'ses_subagent_hist',
+      openCodeSessionId: 'ses_subagent_hist',
+      channelName: 'Subagent',
+      projectName: 'test',
+      baseDirectory: null,
+      parentSessionId: 'ses_parent',
+      idFilePath: '/tmp/test.json',
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-01',
+      providerType: 'standalone' as const,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('persists question under resolved openCodeSessionId when prompt is sent', async () => {
+    const win = createMockWindow();
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+    vi.mocked(appendSessionChannelMessage).mockClear();
+
+    const data = createPromptData({
+      id: 'hist-question-test',
+      connectionId: 'shared-conn-uuid',
+      openCodeSessionId: 'ses_subagent_hist',
+    });
+
+    const promise = promptUser(win as never, data);
+
+    // Let the queue process
+    await vi.advanceTimersByTimeAsync(0);
+
+    // The 'question' message should be persisted under 'ses_subagent_hist', not 'shared-conn-uuid'
+    const questionCalls = vi
+      .mocked(appendSessionChannelMessage)
+      .mock.calls.filter((call) => call[0]?.messageType === 'question');
+
+    expect(questionCalls).toHaveLength(1);
+    expect(questionCalls[0][0].sessionId).toBe('ses_subagent_hist');
+
+    // Clean up
+    cancelActivePrompt('shared-conn-uuid');
+    await promise;
+  });
+
+  it('persists answer under resolved openCodeSessionId when user responds', async () => {
+    const win = createMockWindow();
+    let capturedHandler: IpcListener | undefined;
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        capturedHandler = handler;
+        return ipcMain;
+      },
+    );
+    vi.mocked(appendSessionChannelMessage).mockClear();
+
+    const data = createPromptData({
+      id: 'hist-answer-test',
+      connectionId: 'shared-conn-uuid',
+      openCodeSessionId: 'ses_subagent_hist',
+    });
+
+    const promise = promptUser(win as never, data);
+
+    // Let the queue process so the durable state is established
+    await vi.advanceTimersByTimeAsync(0);
+
+    // User responds
+    capturedHandler?.({} as IpcMainEvent, {
+      id: 'hist-answer-test',
+      answer: 'Yes, proceed',
+    });
+
+    // Flush microtasks so the durable promise chain resolves the outer promise
+    await vi.advanceTimersByTimeAsync(0);
+
+    const result = await promise;
+    expect(result.answer).toBe('Yes, proceed');
+
+    // The 'answer' message should be persisted under 'ses_subagent_hist'
+    const answerCalls = vi
+      .mocked(appendSessionChannelMessage)
+      .mock.calls.filter((call) => call[0]?.messageType === 'answer');
+
+    expect(answerCalls).toHaveLength(1);
+    expect(answerCalls[0][0].sessionId).toBe('ses_subagent_hist');
+  }, 15_000);
+
+  it('persists timeout expiry message under resolved openCodeSessionId', async () => {
+    const win = createMockWindow();
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+    vi.mocked(appendSessionChannelMessage).mockClear();
+
+    const data = createPromptData({
+      id: 'hist-timeout-test',
+      connectionId: 'shared-conn-uuid',
+      openCodeSessionId: 'ses_subagent_hist',
+    });
+
+    const promise = promptUser(win as never, data);
+
+    // Let the queue run, then advance past the 5s timeout
+    await vi.advanceTimersByTimeAsync(6000);
+    await promise;
+
+    // The expiry agent_message should be persisted under 'ses_subagent_hist'
+    const agentMsgCalls = vi
+      .mocked(appendSessionChannelMessage)
+      .mock.calls.filter((call) => call[0]?.messageType === 'agent_message');
+
+    expect(agentMsgCalls).toHaveLength(1);
+    expect(agentMsgCalls[0][0].sessionId).toBe('ses_subagent_hist');
+  }, 15_000);
+});
+
+describe('prompt-response listener lifecycle', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    setPromptTimeout(() => 5000);
+    __resetPromptStateForTests();
+    vi.clearAllMocks();
+    vi.mocked(getRegisteredConnection).mockReturnValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('registers prompt-response listener only once for multiple active prompts', async () => {
+    const win = createMockWindow();
+    const handlers: IpcListener[] = [];
+
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        handlers.push(handler);
+        return ipcMain;
+      },
+    );
+
+    const first = promptUser(
+      win as never,
+      createPromptData({ id: 'listener-a', connectionId: 'conn-listener-a' }),
+    );
+    const second = promptUser(
+      win as never,
+      createPromptData({ id: 'listener-b', connectionId: 'conn-listener-b' }),
+    );
+
+    expect(ipcMain.on).toHaveBeenCalledTimes(1);
+
+    handlers[0]?.({} as IpcMainEvent, { id: 'listener-a', answer: 'A' });
+    handlers[0]?.({} as IpcMainEvent, { id: 'listener-b', answer: 'B' });
+
+    await expect(first).resolves.toEqual({
+      answer: 'A',
+      attachments: undefined,
+    });
+    await expect(second).resolves.toEqual({
+      answer: 'B',
+      attachments: undefined,
+    });
+  });
+
+  it('keeps a single listener with many concurrent prompts', async () => {
+    const win = createMockWindow();
+    const handlers: IpcListener[] = [];
+
+    vi.mocked(ipcMain.on).mockImplementation(
+      (_channel: string, handler: IpcListener) => {
+        handlers.push(handler);
+        return ipcMain;
+      },
+    );
+    vi.mocked(ipcMain.listenerCount).mockReturnValue(1);
+
+    const promptCount = 20;
+    const promises: Array<Promise<{ answer: string | null }>> = [];
+
+    for (let i = 0; i < promptCount; i++) {
+      promises.push(
+        promptUser(
+          win as never,
+          createPromptData({
+            id: `listener-many-${i}`,
+            connectionId: `conn-listener-many-${i}`,
+          }),
+        ) as Promise<{ answer: string | null }>,
+      );
+    }
+
+    expect(ipcMain.on).toHaveBeenCalledTimes(1);
+    expect(ipcMain.listenerCount('prompt-response')).toBe(1);
+
+    for (let i = 0; i < promptCount; i++) {
+      handlers[0]?.({} as IpcMainEvent, {
+        id: `listener-many-${i}`,
+        answer: `answer-${i}`,
+      });
+    }
+
+    const results = await Promise.all(promises);
+    expect(results).toHaveLength(promptCount);
+    expect(results[0]).toEqual({ answer: 'answer-0', attachments: undefined });
+    expect(results[promptCount - 1]).toEqual({
+      answer: `answer-${promptCount - 1}`,
+      attachments: undefined,
+    });
+  });
+
+  it('removes shared prompt-response listener on state reset', () => {
+    const win = createMockWindow();
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+    void promptUser(
+      win as never,
+      createPromptData({
+        id: 'listener-reset',
+        connectionId: 'conn-listener-reset',
+      }),
+    );
+
+    __resetPromptStateForTests();
+
+    expect(ipcMain.removeListener).toHaveBeenCalledWith(
+      'prompt-response',
+      expect.any(Function),
+    );
   });
 });

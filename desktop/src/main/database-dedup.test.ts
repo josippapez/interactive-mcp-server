@@ -10,16 +10,16 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { app } from 'electron';
 import {
   initDatabase,
   upsertRegisteredConnection,
   getAllRegisteredConnections,
   isProviderSessionClaimed,
-  isOpenCodeSessionClaimed,
   getRegisteredConnection,
 } from './database';
 
-const TEST_DB_PATH = join('/tmp', 'conversations.db');
+const TEST_DB_PATH = join(app.getPath('userData'), 'conversations.db');
 
 describe('upsertRegisteredConnection deduplication', () => {
   beforeEach(async () => {
@@ -210,27 +210,6 @@ describe('isProviderSessionClaimed', () => {
     });
 
     expect(isProviderSessionClaimed('ses_stable', 'opencode')).toBe(true);
-  });
-});
-
-describe('isOpenCodeSessionClaimed (deprecated wrapper)', () => {
-  beforeEach(async () => {
-    if (existsSync(TEST_DB_PATH)) {
-      unlinkSync(TEST_DB_PATH);
-    }
-    await initDatabase();
-  });
-
-  it('defaults to opencode provider type', () => {
-    upsertRegisteredConnection({
-      providerSessionId: 'ses_compat',
-      providerType: 'opencode',
-      channelName: 'Compat Agent',
-      projectName: 'proj',
-    });
-
-    // isOpenCodeSessionClaimed internally calls isProviderSessionClaimed with 'opencode'
-    expect(isOpenCodeSessionClaimed('ses_compat')).toBe(true);
   });
 });
 

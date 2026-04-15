@@ -1,11 +1,18 @@
 import type { PendingPermission } from '../../types';
+import { Button } from '../ui/button';
 
 type Props = {
   permissions: PendingPermission[];
+  onReplyPermission: (
+    sessionID: string,
+    requestId: string,
+    reply: 'once' | 'always' | 'reject',
+  ) => void;
 };
 
 export default function PermissionPrompt({
   permissions,
+  onReplyPermission,
 }: Props): React.ReactElement | null {
   if (permissions.length === 0) return null;
 
@@ -46,9 +53,37 @@ export default function PermissionPrompt({
               )}
             </div>
           </div>
-          <p className="text-xs text-[var(--color-text-muted)] italic">
-            This permission request must be handled directly in OpenCode.
-          </p>
+          <div className="flex items-center gap-2 mt-3">
+            <Button
+              size="sm"
+              onClick={() =>
+                onReplyPermission(perm.sessionID, perm.requestId, 'once')
+              }
+            >
+              Allow Once
+            </Button>
+            {perm.always && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  onReplyPermission(perm.sessionID, perm.requestId, 'always')
+                }
+              >
+                Always Allow
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() =>
+                onReplyPermission(perm.sessionID, perm.requestId, 'reject')
+              }
+              className="hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
+            >
+              Reject
+            </Button>
+          </div>
         </div>
       ))}
     </div>

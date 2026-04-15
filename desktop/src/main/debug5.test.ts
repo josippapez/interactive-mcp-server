@@ -38,7 +38,6 @@ vi.mock('./database', () => ({
   deleteSessionChannel: vi.fn(),
   getAllRegisteredConnections: vi.fn(() => []),
   upsertRegisteredConnection: vi.fn(),
-  isOpenCodeSessionClaimed: vi.fn(() => false),
 }));
 vi.mock('./session/file', () => ({
   writeSessionFile: vi.fn(),

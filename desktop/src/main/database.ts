@@ -16,7 +16,7 @@ let dbPath = '';
  * dropped and recreated from scratch. This eliminates all incremental
  * migration code.
  */
-const SCHEMA_VERSION = 9;
+const SCHEMA_VERSION = 10;
 
 // ─── Public interfaces ─────────────────────────────────────────────────────
 
@@ -199,6 +199,16 @@ function createTables(): void {
   db.run(`
     CREATE INDEX IF NOT EXISTS idx_pci_connection_delivered
       ON pending_context_injections (connection_id, delivered)
+  `);
+
+  // Pinned projects — manually added project folders that appear in sidebar
+  // even when no sessions exist for them
+  db.run(`
+    CREATE TABLE IF NOT EXISTS pinned_projects (
+      path        TEXT     PRIMARY KEY,
+      name        TEXT     NOT NULL,
+      created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
   `);
 }
 
@@ -692,7 +702,8 @@ export function getRegisteredConnection(
   if (!db) return null;
   const results = db.exec(
     `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections WHERE connection_id = ?`,
+     FROM registered_connections WHERE connection_id = ?
+     ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
     [connectionId],
   );
   if (results.length === 0 || results[0].values.length === 0) return null;
@@ -898,6 +909,29 @@ export function updateConnectionOpenCodeSession(
   openCodeSessionId: string,
 ): void {
   updateConnectionProviderSession(connectionId, openCodeSessionId, 'opencode');
+}
+
+/**
+ * Update the baseDirectory for a registered connection.
+ * Used when the user selects a project folder for an existing session.
+ *
+ * @param providerSessionId The provider-specific session ID (composite key part)
+ * @param baseDirectory The new base directory path
+ * @param providerType The provider type (composite key part), defaults to 'opencode'
+ */
+export function updateConnectionBaseDirectory(
+  providerSessionId: string,
+  baseDirectory: string,
+  providerType: RegisteredConnection['providerType'] = 'opencode',
+): void {
+  if (!db) return;
+  db.run(
+    `UPDATE registered_connections
+     SET base_directory = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE provider_type = ? AND provider_session_id = ?`,
+    [baseDirectory, providerType, providerSessionId],
+  );
+  persist();
 }
 
 /**
@@ -1314,4 +1348,59 @@ export function deleteContextInjectionsForConnection(
     connectionId,
   ]);
   persist();
+}
+
+// ─── Pinned Projects ───────────────────────────────────────────────────────
+
+export interface PinnedProject {
+  path: string;
+  name: string;
+  createdAt: string;
+}
+
+/** Get all pinned projects. */
+export function getPinnedProjects(): PinnedProject[] {
+  if (!db) return [];
+  const results = db.exec(
+    `SELECT path, name, created_at FROM pinned_projects ORDER BY created_at DESC`,
+  );
+  if (results.length === 0) return [];
+  return results[0].values.map((row) => ({
+    path: row[0] as string,
+    name: row[1] as string,
+    createdAt: row[2] as string,
+  }));
+}
+
+/** Add a pinned project. Returns true if added, false if already exists. */
+export function addPinnedProject(path: string, name: string): boolean {
+  if (!db) return false;
+  try {
+    db.run(`INSERT OR IGNORE INTO pinned_projects (path, name) VALUES (?, ?)`, [
+      path,
+      name,
+    ]);
+    persist();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Remove a pinned project by path. */
+export function removePinnedProject(path: string): boolean {
+  if (!db) return false;
+  db.run(`DELETE FROM pinned_projects WHERE path = ?`, [path]);
+  persist();
+  return true;
+}
+
+/** Check if a project path is pinned. */
+export function isPinnedProject(path: string): boolean {
+  if (!db) return false;
+  const results = db.exec(
+    `SELECT 1 FROM pinned_projects WHERE path = ? LIMIT 1`,
+    [path],
+  );
+  return results.length > 0 && results[0].values.length > 0;
 }

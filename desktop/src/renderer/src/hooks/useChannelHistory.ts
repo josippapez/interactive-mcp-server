@@ -45,7 +45,23 @@ function toChannelMessage(record: {
     text: record.messageText,
     timestamp: parseHistoryTimestamp(record.createdAt),
     attachments: parseAttachments(record.attachments),
+    sent: record.messageType === 'outbound' ? true : undefined,
   };
+}
+
+function getMessageSignature(message: ChannelMessage): string {
+  const attachmentSignature = (message.attachments ?? [])
+    .map((attachment) =>
+      [
+        attachment.name,
+        attachment.mimeType,
+        attachment.size ?? '',
+        attachment.data.length,
+      ].join(':'),
+    )
+    .join(',');
+
+  return [message.kind, message.text, attachmentSignature].join('|');
 }
 
 // ---------------------------------------------------------------------------
@@ -74,11 +90,10 @@ export function useChannelHistory(): {
 
     const dbMessages = records.map(toChannelMessage);
     // Merge: keep live messages that are not already covered by a DB record.
-    // A live message is considered a duplicate if a DB record shares the same
-    // kind and text (DB records are the authoritative persisted version).
-    const liveIds = new Set(dbMessages.map((m) => `${m.kind}::${m.text}`));
+    // Persisted DB history is authoritative for completed outbound messages.
+    const liveIds = new Set(dbMessages.map(getMessageSignature));
     const dedupedLive = liveMessages.filter(
-      (m) => !liveIds.has(`${m.kind}::${m.text}`),
+      (m) => !liveIds.has(getMessageSignature(m)),
     );
     return [...dbMessages, ...dedupedLive].sort(
       (a, b) => a.timestamp.getTime() - b.timestamp.getTime(),

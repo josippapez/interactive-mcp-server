@@ -207,6 +207,61 @@ The `openCodeSessionId` is injected into agent context via:
 - Type-checking passing in root and desktop packages
 - Multi-agent workflow verified with main agent + subagent scenarios
 
+### 2026-04-13: Renderer-Side Routing Fix
+
+**Problem Identified:**
+
+After the main-process routing refactor was complete, a subtle bug remained in the renderer-side state updates. When a user sent a message or when outbound messages were queued, the inline node lookup in `handleQueueSessionMessage` and `handleInjectWithReply` (in `useConnections.ts`) only checked `node.connectionId` — not `node.openCodeSessionId`.
+
+In OpenCode's shared MCP client architecture, parent and child sessions (subagents) share the same `connectionId` but have unique `openCodeSessionId` values. This caused messages to route to the wrong channel (typically the parent's channel) in multi-agent scenarios.
+
+**Root Cause:**
+
+The inline lookup in `useConnections.ts` used a simple iteration:
+
+```typescript
+// WRONG: Only checked connectionId
+for (const [id, node] of nodes) {
+  if (node.connectionId === sessionId) return id;
+}
+```
+
+This ignored the `openCodeSessionId` parameter, causing incorrect routing when multiple sessions shared the same `connectionId`.
+
+**Fix Applied:**
+
+Changed both `handleQueueSessionMessage` (lines 594-627) and `handleInjectWithReply` (lines 636-690) to use the shared `findKeyByConnectionId` helper from `useIpcListeners.ts`:
+
+```typescript
+// CORRECT: Uses priority-based lookup
+const key = findKeyByConnectionId(prev, sessionId, sessionId);
+```
+
+The `findKeyByConnectionId` helper implements the correct lookup priority:
+
+1. **`openCodeSessionId`** — Match by unique agent session ID (direct map key or node field)
+2. **`connectionId`** — Match by MCP transport UUID (fallback)
+3. **Direct map key** — Final fallback for direct connections
+
+**Files Changed:**
+
+| File                                       | Lines   | Change                                                       |
+| ------------------------------------------ | ------- | ------------------------------------------------------------ |
+| `src/renderer/src/hooks/useConnections.ts` | 594-627 | `handleQueueSessionMessage` now uses `findKeyByConnectionId` |
+| `src/renderer/src/hooks/useConnections.ts` | 636-690 | `handleInjectWithReply` now uses `findKeyByConnectionId`     |
+
+**Why This Was Missed:**
+
+The main-process routing (tool handlers in `src/main/tools/`) was fixed in the original refactor, but the renderer-side state update logic in `useConnections.ts` had its own inline node lookups that weren't updated to use the shared helper. The helper `findKeyByConnectionId` already existed in `useIpcListeners.ts` and was correctly used for prompt routing, but the message-sending functions in `useConnections.ts` predated the refactor and used their own lookup logic.
+
+**Impact:**
+
+- Subagent messages now correctly appear in the subagent's channel, not the parent's
+- User-sent messages to subagents no longer get stuck in "Sending" state
+- Doc context injection reaches the correct agent's OpenCode session
+
+---
+
 ### Status: COMPLETE
 
 The session-ID routing refactor is fully implemented. Agents must now pass `openCodeSessionId` on every tool call for correct multi-agent routing.

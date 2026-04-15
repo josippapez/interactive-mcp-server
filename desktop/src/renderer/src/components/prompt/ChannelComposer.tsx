@@ -1,9 +1,15 @@
-import { useMemo, useState, useRef, useCallback, useEffect } from 'react';
-import type { Attachment } from '../../types';
+import { memo, useMemo, useState, useRef, useCallback, useEffect } from 'react';
+import type { Attachment, SessionStatus } from '../../types';
+import type { Model } from '../../hooks/useProviders';
 import AttachmentPreview from './AttachmentPreview';
 import AutocompleteDropdown from './AutocompleteDropdown';
+import CommandPalette from './CommandPalette';
+import { useProviders } from '../../hooks/useProviders';
 import { useAutocomplete } from '../../hooks/useAutocomplete';
 import { useAttachments } from '../../hooks/useAttachments';
+import { ComposerBottomBar } from './composer/ComposerBottomBar';
+import { ImageLightbox } from './composer/ImageLightbox';
+import { resolveCurrentModel } from './model-resolution';
 
 type Props = {
   enabled: boolean;
@@ -19,9 +25,37 @@ type Props = {
   noReply?: boolean;
   /** Called when noReply toggle changes */
   onNoReplyChange?: (noReply: boolean) => void;
+  /** OpenCode session ID for command execution */
+  sessionId?: string | null;
+  /** Whether the command palette is open (controlled from parent for Cmd+K) */
+  commandPaletteOpen?: boolean;
+  /** Called when command palette open state changes */
+  onCommandPaletteChange?: (open: boolean) => void;
+  /** Current model ID for OpenCode sessions */
+  modelId?: string | null;
+  /** Current provider ID for OpenCode sessions */
+  providerId?: string | null;
+  /** Current variant/effort level for the model */
+  variant?: string | null;
+  /** Callback when model is selected */
+  onModelSelect?: (model: Model, variant?: string) => void;
+  /** Whether this is an OpenCode session (shows model selector) */
+  isOpenCodeSession?: boolean;
+  /** Latest session status for inline display */
+  latestStatus?: SessionStatus | null;
+  /** Connection ID for status dismissal */
+  connectionId?: string | null;
+  /** Callback to dismiss a status */
+  onDismissStatus?: (connectionId: string, timestamp: Date) => void;
+  /** Whether the agent is busy (shows working indicator) */
+  isBusy?: boolean;
+  /** Whether doc context is enabled */
+  docContextEnabled?: boolean;
+  /** Callback to toggle doc context */
+  onToggleDocContext?: () => void;
 };
 
-export default function ChannelComposer({
+function ChannelComposer({
   enabled,
   baseDirectory,
   placeholder,
@@ -31,13 +65,109 @@ export default function ChannelComposer({
   onSubmitWithReply,
   noReply = true,
   onNoReplyChange,
+  sessionId,
+  commandPaletteOpen: externalPaletteOpen,
+  onCommandPaletteChange,
+  modelId,
+  providerId,
+  variant,
+  onModelSelect,
+  isOpenCodeSession,
+  latestStatus,
+  connectionId,
+  onDismissStatus,
+  isBusy = false,
+  docContextEnabled = false,
+  onToggleDocContext,
 }: Props): React.ReactElement {
   const [value, setValue] = useState('');
   const [expandedImage, setExpandedImage] = useState<{
     src: string;
     name: string;
   } | null>(null);
+  // Internal command palette state (for "/" trigger)
+  const [internalPaletteOpen, setInternalPaletteOpen] = useState(false);
+  const [commandQuery, setCommandQuery] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isFocused, setIsFocused] = useState(false);
+
+  // Model selector state
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const {
+    providers,
+    models,
+    isLoading: modelsLoading,
+    isConnected,
+  } = useProviders();
+
+  // Command palette can be opened externally (Cmd+K) or internally (/)
+  const commandPaletteOpen = externalPaletteOpen || internalPaletteOpen;
+
+  // Only show models from connected providers in the popover
+  const connectedModels = useMemo(
+    () => models.filter((m) => isConnected(m.providerId)),
+    [models, isConnected],
+  );
+  const connectedProviders = useMemo(
+    () => providers.filter((p) => isConnected(p.id)),
+    [providers, isConnected],
+  );
+
+  // Find current model info
+  const currentModel = resolveCurrentModel(models, modelId, providerId);
+
+  // Show model selector for OpenCode sessions
+  const showModelSelector = modelId || isOpenCodeSession;
+
+  const handleClosePalette = useCallback(() => {
+    setInternalPaletteOpen(false);
+    setCommandQuery('');
+    onCommandPaletteChange?.(false);
+    // Clear the "/" from input if it was typed
+    if (value.startsWith('/')) {
+      setValue('');
+    }
+    // Refocus textarea
+    textareaRef.current?.focus();
+  }, [value, onCommandPaletteChange]);
+
+  const handleCommandExecuted = useCallback(
+    (commandName: string) => {
+      // Clear input after successful command execution
+      setValue('');
+      setCommandQuery('');
+      setInternalPaletteOpen(false);
+      onCommandPaletteChange?.(false);
+      if (process.env.NODE_ENV === 'development') {
+        console.debug(`[ChannelComposer] Command /${commandName} executed`);
+      }
+    },
+    [onCommandPaletteChange],
+  );
+
+  // Handle model selection from popover
+  const handleModelSelect = useCallback(
+    (model: Model) => {
+      if (model.id !== modelId) {
+        onModelSelect?.(model, model.defaultVariant);
+      } else {
+        onModelSelect?.(model, variant ?? undefined);
+      }
+      setPopoverOpen(false);
+    },
+    [modelId, variant, onModelSelect],
+  );
+
+  // Handle variant selection
+  const handleVariantSelect = useCallback(
+    (newVariant: string | undefined) => {
+      if (currentModel) {
+        onModelSelect?.(currentModel, newVariant);
+      }
+    },
+    [currentModel, onModelSelect],
+  );
 
   const {
     target,
@@ -71,6 +201,11 @@ export default function ChannelComposer({
     ta.selectionEnd = cursorPos;
   }, []);
 
+  // Stable callback for expanding images (passed to memoized AttachmentPreview)
+  const handleExpandImage = useCallback((src: string, name: string) => {
+    setExpandedImage({ src, name });
+  }, []);
+
   const handleApplySuggestion = useCallback(
     (filePath: string) => {
       applySuggestion(filePath, () => value, setValue, focusTextarea);
@@ -80,7 +215,9 @@ export default function ChannelComposer({
 
   const submit = useCallback(() => {
     const text = value.trim();
-    if (!enabled || (!text && attachments.length === 0)) return;
+    if (!enabled || (!text && attachments.length === 0)) {
+      return;
+    }
 
     // If Reply toggle is ON and we have the reply handler, use it
     // Otherwise use the regular submit (noReply mode)
@@ -89,7 +226,6 @@ export default function ChannelComposer({
     } else {
       onSubmit(text, attachments.length > 0 ? attachments : undefined);
     }
-
     setValue('');
     setAttachments([]);
     clearSuggestions();
@@ -109,22 +245,40 @@ export default function ChannelComposer({
     [enabled, value, attachments.length],
   );
 
-  // Auto-grow textarea - use minHeight instead of min-h class to avoid scrollHeight issues
-  // Maximum height is 1000px or 60% of viewport height, whichever is smaller
+  // Auto-grow textarea
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
-    // Reset to minimum height first, then expand to content
-    ta.style.height = '2.5rem'; // ~40px, matches rows={1} with padding
-    const maxHeight = Math.min(1000, window.innerHeight * 0.6);
-    const newHeight = Math.max(40, Math.min(ta.scrollHeight, maxHeight));
+    ta.style.height = '24px';
+    const maxHeight = Math.min(300, window.innerHeight * 0.4);
+    const newHeight = Math.max(24, Math.min(ta.scrollHeight, maxHeight));
     ta.style.height = `${newHeight}px`;
   }, [value]);
 
+  // Detect keyboard shortcut label based on platform
+  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+  const sendShortcut = isMac ? '⌘⏎' : 'Ctrl+↵';
+
+  // Handle popover toggle
+  const handlePopoverToggle = useCallback(() => {
+    if (!modelsLoading) {
+      setPopoverOpen((prev) => !prev);
+    }
+  }, [modelsLoading]);
+
   return (
     <>
-      <div className="border-t border-[var(--color-border)]">
-        <div className="relative flex items-end gap-2 p-3">
+      <div className="p-3" data-composer>
+        {/* Main composer container */}
+        <div
+          ref={containerRef}
+          className={`relative flex flex-col rounded-xl border bg-[var(--color-surface)] shadow-sm transition-all duration-150 ${
+            isFocused
+              ? 'border-[var(--color-agent)]/50 ring-1 ring-[var(--color-agent)]/20'
+              : 'border-[var(--color-border)]'
+          } ${!enabled ? 'opacity-60' : ''}`}
+        >
+          {/* Autocomplete dropdown */}
           {showSuggestions && (
             <AutocompleteDropdown
               suggestions={suggestions}
@@ -135,178 +289,134 @@ export default function ChannelComposer({
               onHoverIndex={setSelectedIndex}
             />
           )}
-          <span className="text-[var(--color-user)] text-sm pb-2 select-none">
-            ❯
-          </span>
-          <div className="flex-1 flex flex-col gap-1.5">
-            {attachments.length > 0 && (
+
+          {/* Command palette */}
+          {commandPaletteOpen && sessionId && (
+            <CommandPalette
+              sessionId={sessionId}
+              open={commandPaletteOpen}
+              onClose={handleClosePalette}
+              initialQuery={commandQuery}
+              onCommandExecuted={handleCommandExecuted}
+            />
+          )}
+
+          {/* Attachments preview */}
+          {attachments.length > 0 && (
+            <div className="px-3 pt-3 pb-1">
               <AttachmentPreview
                 attachments={attachments}
                 onRemove={removeAttachment}
-                onExpand={(src, name) => setExpandedImage({ src, name })}
+                onExpand={handleExpandImage}
               />
-            )}
-            <textarea
-              ref={textareaRef}
-              value={value}
-              disabled={!enabled}
-              onPaste={handlePaste}
-              onChange={(e) => {
-                const next = e.target.value;
-                setValue(next);
-                detectAutocomplete(
-                  next,
-                  e.target.selectionStart ?? next.length,
-                );
-              }}
-              onKeyDown={(e) => {
-                if (showSuggestions && suggestions.length > 0) {
-                  if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    setSelectedIndex((prev) =>
-                      prev < suggestions.length - 1 ? prev + 1 : 0,
-                    );
-                    return;
-                  }
-                  if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    setSelectedIndex((prev) =>
-                      prev > 0 ? prev - 1 : suggestions.length - 1,
-                    );
-                    return;
-                  }
-                  if (e.key === 'Enter' || e.key === 'Tab') {
-                    e.preventDefault();
-                    handleApplySuggestion(suggestions[selectedIndex]);
-                    return;
-                  }
-                  if (e.key === 'Escape') {
-                    e.preventDefault();
-                    clearSuggestions();
-                    return;
-                  }
-                }
-                if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  submit();
-                }
-              }}
-              placeholder={placeholder}
-              className="w-full bg-[var(--color-surface-alt)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:border-[var(--color-tool)] focus:outline-none resize-none overflow-hidden max-h-[1000px] disabled:opacity-60"
-              rows={1}
-              style={{ height: '2.5rem' }}
-            />
-          </div>
-          <div className="flex flex-col gap-1 self-end">
-            <button
-              type="button"
-              onClick={handleFilePicker}
-              disabled={!enabled}
-              title="Attach file"
-              className="px-2 py-2 rounded-sm text-[var(--color-text-muted)] hover:text-[var(--color-agent)] hover:bg-[var(--color-agent)]/10 transition-colors text-sm disabled:opacity-40"
-            >
-              📎
-            </button>
-            {/* Reply toggle switch - only show when reply button is available */}
-            {showReplyButton && onNoReplyChange && (
-              <label
-                className="flex items-center gap-1.5 cursor-pointer select-none"
-                title={
-                  noReply
-                    ? 'Reply OFF — message will be queued without triggering agent response'
-                    : 'Reply ON — message will trigger agent response'
-                }
-              >
-                <span
-                  className={`text-[10px] font-medium transition-colors ${
-                    noReply
-                      ? 'text-[var(--color-text-muted)]'
-                      : 'text-[var(--color-text-secondary)]'
-                  }`}
-                >
-                  Reply
-                </span>
-                <button
-                  type="button"
-                  role="switch"
-                  aria-checked={!noReply}
-                  onClick={() => onNoReplyChange(!noReply)}
-                  disabled={!enabled}
-                  className={`relative w-8 h-4 rounded-full transition-colors disabled:opacity-40 ${
-                    noReply
-                      ? 'bg-[var(--color-background-tertiary)] border border-[var(--color-border-primary)]'
-                      : 'bg-[var(--color-success)]'
-                  }`}
-                >
-                  <span
-                    className={`absolute top-0.5 w-3 h-3 rounded-full transition-all ${
-                      noReply
-                        ? 'left-0.5 bg-[var(--color-text-muted)]'
-                        : 'left-4 bg-white'
-                    }`}
-                  />
-                </button>
-              </label>
-            )}
-            <button
-              type="button"
-              onClick={submit}
-              disabled={disabled}
-              title={
-                showReplyButton
-                  ? noReply
-                    ? 'Queue message (no agent response)'
-                    : 'Send and trigger agent response'
-                  : undefined
+            </div>
+          )}
+
+          {/* Textarea */}
+          <textarea
+            ref={textareaRef}
+            value={value}
+            disabled={!enabled}
+            onPaste={handlePaste}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setValue(next);
+
+              // Detect "/" at start of input to open command palette
+              if (sessionId && next.startsWith('/') && !internalPaletteOpen) {
+                setInternalPaletteOpen(true);
+                setCommandQuery(next.slice(1));
+              } else if (internalPaletteOpen && next.startsWith('/')) {
+                setCommandQuery(next.slice(1));
+              } else if (internalPaletteOpen && !next.startsWith('/')) {
+                setInternalPaletteOpen(false);
+                setCommandQuery('');
               }
-              className={`px-3 py-2 rounded-sm text-black text-xs font-medium hover:opacity-90 disabled:opacity-30 disabled:cursor-not-allowed transition-colors ${
-                showReplyButton && !noReply
-                  ? 'bg-[var(--color-user)]'
-                  : 'bg-[var(--color-agent)]'
-              }`}
-            >
-              {submitLabel}
-            </button>
-          </div>
+
+              detectAutocomplete(next, e.target.selectionStart ?? next.length);
+            }}
+            onKeyDown={(e) => {
+              if (showSuggestions && suggestions.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setSelectedIndex((prev) =>
+                    prev < suggestions.length - 1 ? prev + 1 : 0,
+                  );
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSelectedIndex((prev) =>
+                    prev > 0 ? prev - 1 : suggestions.length - 1,
+                  );
+                  return;
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault();
+                  handleApplySuggestion(suggestions[selectedIndex]);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  clearSuggestions();
+                  return;
+                }
+              }
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder={placeholder}
+            className="w-full bg-transparent px-4 py-3 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none resize-none overflow-y-auto"
+            rows={1}
+            style={{ height: '24px', maxHeight: '300px' }}
+          />
+
+          {/* Bottom toolbar */}
+          <ComposerBottomBar
+            enabled={enabled}
+            showModelSelector={!!showModelSelector}
+            currentModel={currentModel}
+            currentVariant={variant}
+            popoverOpen={popoverOpen}
+            onPopoverToggle={handlePopoverToggle}
+            modelsLoading={modelsLoading}
+            connectedModels={connectedModels}
+            connectedProviders={connectedProviders}
+            modelId={modelId}
+            onModelSelect={handleModelSelect}
+            onVariantSelect={handleVariantSelect}
+            isBusy={isBusy}
+            latestStatus={latestStatus}
+            connectionId={connectionId}
+            onDismissStatus={onDismissStatus}
+            sendShortcut={sendShortcut}
+            docContextEnabled={docContextEnabled}
+            onToggleDocContext={onToggleDocContext}
+            onFilePicker={handleFilePicker}
+            showReplyButton={showReplyButton}
+            noReply={noReply}
+            onNoReplyChange={onNoReplyChange}
+            onSubmit={submit}
+            disabled={disabled}
+            submitLabel={submitLabel}
+          />
         </div>
       </div>
 
-      {/* Expanded image modal (lightbox) */}
+      {/* Expanded image modal */}
       {expandedImage && (
-        <div
-          role="dialog"
-          aria-label="Image preview"
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70"
-          onClick={() => setExpandedImage(null)}
-          onKeyDown={(e) => {
-            if (e.key === 'Escape') setExpandedImage(null);
-          }}
-        >
-          <div
-            className="relative max-w-[90vw] max-h-[90vh] flex flex-col items-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between w-full mb-2 px-1">
-              <span className="text-xs text-white/70 truncate max-w-[80%]">
-                {expandedImage.name}
-              </span>
-              <button
-                type="button"
-                onClick={() => setExpandedImage(null)}
-                className="text-white/70 hover:text-white text-sm px-2 py-0.5"
-                aria-label="Close image preview"
-              >
-                ESC
-              </button>
-            </div>
-            <img
-              src={expandedImage.src}
-              alt={expandedImage.name}
-              className="max-w-full max-h-[85vh] rounded-sm object-contain"
-            />
-          </div>
-        </div>
+        <ImageLightbox
+          src={expandedImage.src}
+          name={expandedImage.name}
+          onClose={() => setExpandedImage(null)}
+        />
       )}
     </>
   );
 }
+
+export default memo(ChannelComposer);

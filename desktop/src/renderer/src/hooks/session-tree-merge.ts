@@ -18,6 +18,8 @@ export interface SnapshotNode {
   openCodeParentId: string | null;
   title: string;
   directory: string;
+  createdAt?: number;
+  updatedAt?: number;
   depth: number;
   connectionId: string | null;
   channelName: string | null;
@@ -26,6 +28,89 @@ export interface SnapshotNode {
   registeredParentSessionId: string | null;
   providerType: ProviderType | null;
   vcsInfo: VcsInfo | null;
+}
+
+function createSessionChannel(
+  snap: Pick<SnapshotNode, 'openCodeSessionId' | 'connectionId' | 'title'>,
+  fallback: SessionNode | undefined,
+): SessionNode['sessionChannel'] {
+  if (snap.openCodeSessionId) {
+    return {
+      sessionId: snap.openCodeSessionId,
+      label: snap.title,
+    };
+  }
+
+  if (snap.connectionId) {
+    return {
+      sessionId: snap.connectionId,
+      label: snap.title,
+    };
+  }
+
+  return fallback?.sessionChannel ?? null;
+}
+
+function mergeSnapshotNode(
+  prev: Map<string, SessionNode>,
+  snap: SnapshotNode,
+): SessionNode {
+  const existing = prev.get(snap.openCodeSessionId);
+
+  let directNode: SessionNode | undefined;
+  if (snap.connectionId) {
+    for (const [prevId, prevNode] of prev) {
+      if (
+        prevNode.isDirectConnection &&
+        (prevNode.connectionId === snap.connectionId ||
+          prevId === snap.connectionId)
+      ) {
+        directNode = prevNode;
+        break;
+      }
+    }
+  }
+
+  const mergeSource = existing ?? directNode;
+  const promptSource = existing ?? directNode;
+  const resolvedLabel = snap.title;
+
+  return {
+    id: snap.openCodeSessionId,
+    openCodeSessionId: snap.openCodeSessionId,
+    openCodeParentId: snap.openCodeParentId,
+    title: resolvedLabel,
+    directory: snap.directory,
+    createdAt: snap.createdAt ?? mergeSource?.createdAt,
+    depth: snap.depth,
+    connectionId: snap.connectionId,
+    hasMcpChannel: snap.hasMcpChannel,
+    isDirectConnection: false,
+    baseDirectory: snap.baseDirectory,
+    providerType: snap.providerType ?? mergeSource?.providerType ?? null,
+    vcsInfo: snap.vcsInfo ?? mergeSource?.vcsInfo ?? null,
+    sessionChannel: createSessionChannel(snap, mergeSource),
+    prompt: promptSource?.prompt ?? null,
+    activeSession: mergeSource?.activeSession ?? null,
+    channelMessages: mergeSource?.channelMessages ?? [],
+    unreadCount: mergeSource?.unreadCount ?? 0,
+    lastReadMessageId: mergeSource?.lastReadMessageId ?? null,
+    hasPendingPrompt: promptSource?.hasPendingPrompt ?? false,
+    sessionStatuses: mergeSource?.sessionStatuses ?? [],
+    pendingPermissions: mergeSource?.pendingPermissions ?? [],
+  };
+}
+
+export function upsertOptimisticSessionNode(
+  prev: Map<string, SessionNode>,
+  snapshotNode: SnapshotNode,
+): Map<string, SessionNode> {
+  const next = new Map(prev);
+  next.set(
+    snapshotNode.openCodeSessionId,
+    mergeSnapshotNode(prev, snapshotNode),
+  );
+  return next;
 }
 
 /**
@@ -55,74 +140,7 @@ export function mergeSessionTreeSnapshot(
   }
 
   for (const snap of snapshotNodes) {
-    const id = snap.openCodeSessionId;
-    const existing = prev.get(id);
-
-    // Check if a direct-connection node exists for this snapshot's
-    // connectionId — if so, absorb its runtime state.
-    let directNode: SessionNode | undefined;
-    if (snap.connectionId) {
-      for (const [prevId, prevNode] of prev) {
-        if (
-          prevNode.isDirectConnection &&
-          (prevNode.connectionId === snap.connectionId ||
-            prevId === snap.connectionId)
-        ) {
-          directNode = prevNode;
-          break;
-        }
-      }
-    }
-
-    // Merge source: prefer existing tree node, fall back to absorbed
-    // direct-connection node, then defaults.
-    const mergeSource = existing ?? directNode;
-
-    // Prompt state is live/ephemeral and must NOT be pulled from a direct-connection
-    // node that is being absorbed for the first time IF an existing tree node is
-    // already in the map.  When `existing` is present, its prompt reflects the
-    // latest renderer state (possibly already cleared by handleSubmit).  Pulling
-    // `directNode.prompt` on top of that would resurrect a prompt the user already
-    // dismissed — the session-tree-updated race condition.
-    //
-    // Rule: prompt/hasPendingPrompt always come from `existing` when it exists;
-    // only fall back to `directNode` (first-time absorption) or null otherwise.
-    const promptSource = existing ?? directNode;
-
-    next.set(id, {
-      id,
-      openCodeSessionId: snap.openCodeSessionId,
-      openCodeParentId: snap.openCodeParentId,
-      title: snap.channelName ?? snap.title,
-      directory: snap.directory,
-      depth: snap.depth,
-      connectionId: snap.connectionId,
-      hasMcpChannel: snap.hasMcpChannel,
-      isDirectConnection: false,
-      baseDirectory: snap.baseDirectory,
-      providerType: snap.providerType ?? mergeSource?.providerType ?? null,
-      vcsInfo: snap.vcsInfo ?? mergeSource?.vcsInfo ?? null,
-      sessionChannel: snap.connectionId
-        ? {
-            sessionId: snap.connectionId,
-            label: snap.channelName ?? snap.title,
-          }
-        : !snap.openCodeParentId
-          ? {
-              sessionId: snap.openCodeSessionId,
-              label: snap.title,
-            }
-          : (mergeSource?.sessionChannel ?? null),
-      // Runtime state: preserved from merge source or defaulted
-      prompt: promptSource?.prompt ?? null,
-      activeSession: mergeSource?.activeSession ?? null,
-      channelMessages: mergeSource?.channelMessages ?? [],
-      unreadCount: mergeSource?.unreadCount ?? 0,
-      lastReadMessageId: mergeSource?.lastReadMessageId ?? null,
-      hasPendingPrompt: promptSource?.hasPendingPrompt ?? false,
-      sessionStatuses: mergeSource?.sessionStatuses ?? [],
-      pendingPermissions: mergeSource?.pendingPermissions ?? [],
-    });
+    next.set(snap.openCodeSessionId, mergeSnapshotNode(prev, snap));
   }
 
   // Preserve direct-connection nodes that were NOT absorbed.
@@ -147,6 +165,10 @@ function getLatestActivityTime(node: SessionNode): number {
     node.sessionStatuses.at(-1)?.timestamp.getTime() ?? 0,
     node.channelMessages.at(-1)?.timestamp.getTime() ?? 0,
   );
+}
+
+function getSessionCreatedAt(node: SessionNode): number {
+  return node.createdAt ?? 0;
 }
 
 /**
@@ -270,4 +292,162 @@ function collectSubtree(
     result.push(...collectSubtree(nodes, child.openCodeSessionId, depth + 1));
   }
   return result;
+}
+
+// ─── Project-based grouping ────────────────────────────────────────────────
+
+/**
+ * A project is identified by its baseDirectory or directory path.
+ * Sessions are grouped under their project.
+ */
+export type Project = {
+  /** The absolute path to the project directory */
+  path: string;
+  /** Display name (last segment of path, e.g., "my-project") */
+  name: string;
+  /** Root sessions in this project (no parent, or parent is in another project) */
+  sessions: SessionNode[];
+  /** Whether any session in this project is running */
+  isRunning: boolean;
+  /** Whether any session in this project has unread messages */
+  hasUnread: boolean;
+  /** Most recent activity timestamp across all sessions */
+  latestActivity: number;
+  /** Oldest session creation timestamp across all root sessions */
+  earliestSessionCreatedAt: number;
+  /** Whether this project was manually pinned (vs auto-detected from sessions) */
+  isPinned: boolean;
+};
+
+/**
+ * Extract the project path from a session node.
+ * Prefers baseDirectory, falls back to directory, then "Unknown".
+ */
+function getProjectPath(node: SessionNode): string {
+  return node.baseDirectory ?? node.directory ?? 'Unknown';
+}
+
+/**
+ * Extract the display name from a project path.
+ * Returns the last segment of the path (folder name).
+ */
+function getProjectName(projectPath: string): string {
+  if (projectPath === 'Unknown') return 'Unknown';
+  const segments = projectPath.split('/').filter(Boolean);
+  return segments[segments.length - 1] || projectPath;
+}
+
+/**
+ * Group sessions by project (baseDirectory).
+ * Returns an array of Project objects sorted by activity.
+ * @param nodes - The session nodes map
+ * @param pinnedPaths - Optional array of pinned project paths to include even if no sessions exist
+ */
+export function groupByProject(
+  nodes: Map<string, SessionNode>,
+  pinnedPaths: string[] = [],
+): Project[] {
+  const all = Array.from(nodes.values());
+  const ocNodes = all.filter((n) => !n.isDirectConnection);
+  const roots = ocNodes.filter((n) => n.openCodeParentId === null);
+
+  // Group root sessions by their project path
+  const projectMap = new Map<string, SessionNode[]>();
+
+  for (const root of roots) {
+    const projectPath = getProjectPath(root);
+    if (!projectMap.has(projectPath)) {
+      projectMap.set(projectPath, []);
+    }
+    projectMap.get(projectPath)!.push(root);
+  }
+
+  // Add pinned paths that don't have any sessions yet
+  const pinnedSet = new Set(pinnedPaths);
+  for (const pinnedPath of pinnedPaths) {
+    if (!projectMap.has(pinnedPath)) {
+      projectMap.set(pinnedPath, []);
+    }
+  }
+
+  // Build Project objects
+  const projects: Project[] = [];
+
+  for (const [path, rootSessions] of projectMap) {
+    const isPinned = pinnedSet.has(path);
+
+    if (rootSessions.length === 0) {
+      // Pinned project with no sessions
+      projects.push({
+        path,
+        name: getProjectName(path),
+        sessions: [],
+        isRunning: false,
+        hasUnread: false,
+        latestActivity: 0,
+        earliestSessionCreatedAt: 0,
+        isPinned,
+      });
+      continue;
+    }
+
+    // Sort root sessions within the project
+    const sortedRoots = [...rootSessions].sort((a, b) => {
+      const createdDiff = getSessionCreatedAt(b) - getSessionCreatedAt(a);
+      if (createdDiff !== 0) return createdDiff;
+
+      return a.title.localeCompare(b.title);
+    });
+
+    // Build the session tree for each root
+    const sessions: SessionNode[] = [];
+    for (const root of sortedRoots) {
+      sessions.push({ ...root, depth: 0 });
+      sessions.push(...collectSubtree(ocNodes, root.openCodeSessionId, 1));
+    }
+
+    // Calculate project-level stats
+    const isRunning = sortedRoots.some((r) => isSubtreeRunning(r, ocNodes));
+    const hasUnread = sortedRoots.some((r) => hasSubtreeUnread(r, ocNodes));
+    const latestActivity = Math.max(
+      ...sortedRoots.map((r) => getSubtreeLatestActivityTime(r, ocNodes)),
+      0,
+    );
+    const earliestSessionCreatedAt = sortedRoots.reduce((earliest, session) => {
+      const createdAt = session.createdAt ?? Number.POSITIVE_INFINITY;
+      return Math.min(earliest, createdAt);
+    }, Number.POSITIVE_INFINITY);
+
+    projects.push({
+      path,
+      name: getProjectName(path),
+      sessions,
+      isRunning,
+      hasUnread,
+      latestActivity,
+      earliestSessionCreatedAt:
+        earliestSessionCreatedAt === Number.POSITIVE_INFINITY
+          ? 0
+          : earliestSessionCreatedAt,
+      isPinned,
+    });
+  }
+
+  // Sort projects by earliest session start time (newer first).
+  // This keeps ordering stable and avoids activity-based jumping.
+  // Pinned projects without sessions go to the bottom.
+  projects.sort((a, b) => {
+    // Empty pinned projects go last
+    const aEmpty = a.sessions.length === 0;
+    const bEmpty = b.sessions.length === 0;
+    if (aEmpty && !bEmpty) return 1;
+    if (!aEmpty && bEmpty) return -1;
+
+    const createdDiff = b.earliestSessionCreatedAt - a.earliestSessionCreatedAt;
+    if (createdDiff !== 0) return createdDiff;
+
+    return a.name.localeCompare(b.name);
+  });
+
+  return projects;
 }

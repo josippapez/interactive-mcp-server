@@ -7,6 +7,7 @@ describe('fetchTodosForSession', () => {
 
   beforeEach(() => {
     mockFetch = vi.fn();
+    mockFetch.mockRejectedValue(new Error('Unexpected unmocked fetch call'));
     global.fetch = mockFetch;
   });
 
@@ -32,12 +33,16 @@ describe('fetchTodosForSession', () => {
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:4096/session/session-123/todo',
       expect.objectContaining({
-        headers: { Accept: 'application/json' },
+        signal: expect.any(AbortSignal),
       }),
     );
   });
 
   it('returns null on HTTP error', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+    } as Response);
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 404,
@@ -50,10 +55,38 @@ describe('fetchTodosForSession', () => {
 
   it('returns null on network error', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    mockFetch.mockRejectedValueOnce(new Error('Network error'));
 
     const result = await fetchTodosForSession(4096, 'session-123');
 
     expect(result).toBeNull();
+  });
+
+  it('falls back to default port when configured port fails', async () => {
+    const mockTodos: Todo[] = [
+      { content: 'Task 1', status: 'pending', priority: 'high' },
+    ];
+
+    mockFetch
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(mockTodos),
+      } as Response);
+
+    const result = await fetchTodosForSession(5000, 'session-123');
+
+    expect(result).toEqual(mockTodos);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'http://localhost:5000/session/session-123/todo',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:4096/session/session-123/todo',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 
   it('normalizes invalid todo status to pending', async () => {

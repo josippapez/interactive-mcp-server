@@ -91,20 +91,6 @@ type DurablePromptState = {
   timer: ReturnType<typeof setTimeout> | null;
   /** setInterval handle for diagnostic logging. */
   diagInterval: ReturnType<typeof setInterval> | null;
-  /** The IPC handler registered on ipcMain. */
-  ipcHandler: (
-    _event: Electron.IpcMainEvent,
-    response: {
-      id: string;
-      answer: string;
-      attachments?: {
-        data: string;
-        mimeType: string;
-        name: string;
-        size: number;
-      }[];
-    },
-  ) => void;
   /** Sends prompt-clear to the renderer. Captured at creation time. */
   sendPromptClear: () => void;
 };
@@ -112,10 +98,19 @@ type DurablePromptState = {
 /** One active durable prompt per connection (FIFO queue handles overflow). */
 const activePrompts = new Map<string, DurablePromptState>();
 
+/** Index active prompts by prompt ID for O(1) prompt-response dispatch. */
+const activePromptStatesById = new Map<string, Set<DurablePromptState>>();
+
+let promptResponseListenerRegistered = false;
+
 /** FIFO queue per connection for prompts that arrive while one is active. */
 const queuedPrompts = new Map<
   string,
-  { run: () => Promise<void>; resolve: (r: PromptResponse) => void }[]
+  {
+    run: () => Promise<void>;
+    resolve: (r: PromptResponse) => void;
+    connectionId: string;
+  }[]
 >();
 const queueRunning = new Set<string>();
 
@@ -125,6 +120,81 @@ const BEEP_COOLDOWN_MS = 2000;
 
 /** Max safe setTimeout value — prevents Node integer overflow (~24.8 days). */
 const MAX_SAFE_TIMEOUT_MS = 2_147_483_647;
+
+function trackPromptState(state: DurablePromptState): void {
+  const existing = activePromptStatesById.get(state.promptId);
+  if (existing) {
+    existing.add(state);
+    return;
+  }
+  activePromptStatesById.set(state.promptId, new Set([state]));
+}
+
+function untrackPromptState(state: DurablePromptState): void {
+  const states = activePromptStatesById.get(state.promptId);
+  if (!states) return;
+  states.delete(state);
+  if (states.size === 0) {
+    activePromptStatesById.delete(state.promptId);
+  }
+}
+
+function getIndexedPromptStateCount(): number {
+  let count = 0;
+  for (const states of activePromptStatesById.values()) {
+    count += states.size;
+  }
+  return count;
+}
+
+function handlePromptResponse(
+  _event: Electron.IpcMainEvent,
+  response: {
+    id: string;
+    answer: string;
+    attachments?: {
+      data: string;
+      mimeType: string;
+      name: string;
+      size: number;
+    }[];
+  },
+): void {
+  if (!response?.id) return;
+
+  const states = activePromptStatesById.get(response.id);
+  if (!states || states.size === 0) return;
+
+  for (const state of Array.from(states)) {
+    if (state.settled) continue;
+
+    _settlePrompt(state, {
+      answer: response.answer,
+      attachments: response.attachments,
+    });
+    state.sendPromptClear();
+
+    saveConversation({
+      promptMessage: state.data.message,
+      projectName: state.data.projectName,
+      userResponse: response.answer,
+      predefinedOptions: state.data.predefinedOptions,
+      attachments: response.attachments,
+    });
+    appendSessionChannelMessage({
+      sessionId: state.promptKey,
+      messageType: 'answer',
+      messageText: response.answer,
+      attachments: response.attachments,
+    });
+  }
+}
+
+function ensurePromptResponseListener(): void {
+  if (promptResponseListenerRegistered) return;
+  ipcMain.on('prompt-response', handlePromptResponse);
+  promptResponseListenerRegistered = true;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal: resolve the stable map key for a connectionId
@@ -152,29 +222,80 @@ export function getActivePromptData(): PromptData[] {
   return result;
 }
 
+/** Test-only helper to reset in-memory prompt state. */
+export function __resetPromptStateForTests(): void {
+  for (const state of activePrompts.values()) {
+    if (state.timer !== null) {
+      clearTimeout(state.timer);
+      state.timer = null;
+    }
+    if (state.diagInterval !== null) {
+      clearInterval(state.diagInterval);
+      state.diagInterval = null;
+    }
+  }
+
+  activePrompts.clear();
+  activePromptStatesById.clear();
+  queuedPrompts.clear();
+  queueRunning.clear();
+
+  if (promptResponseListenerRegistered) {
+    ipcMain.removeListener('prompt-response', handlePromptResponse);
+    promptResponseListenerRegistered = false;
+  }
+
+  lastBeepTime = 0;
+}
+
 /**
  * Cancel and clean up any active prompt for a connection.
  * Call when a connection drops to avoid leaked listeners.
  */
 export function cancelActivePrompt(connectionId: string): void {
-  const promptKey = resolvePromptKey(connectionId);
-  const state = activePrompts.get(promptKey);
-  if (state) {
+  // Primary key via DB resolver (openCodeSessionId when known).
+  // Fallback: scan all active prompts for matching MCP connectionId. This is
+  // required when subagent prompts are keyed by openCodeSessionId but the DB
+  // lookup is stale/missing during teardown.
+  const keysToCancel = new Set<string>([resolvePromptKey(connectionId)]);
+  for (const [key, state] of activePrompts.entries()) {
+    if (state.data.connectionId === connectionId) {
+      keysToCancel.add(key);
+    }
+  }
+
+  for (const key of keysToCancel) {
+    const state = activePrompts.get(key);
+    if (!state) continue;
     state.sendPromptClear();
     _settlePrompt(state, {
       answer: 'Error: Prompt superseded by a newer prompt.',
     });
   }
 
-  const queued = queuedPrompts.get(promptKey);
-  if (!queued?.length) return;
+  for (const [key, queued] of queuedPrompts.entries()) {
+    if (!queued.length) {
+      queuedPrompts.delete(key);
+      continue;
+    }
 
-  queuedPrompts.delete(promptKey);
-  for (const entry of queued) {
-    entry.resolve({
-      answer:
-        'Error: Prompt cancelled before display because the connection was closed.',
-    });
+    const remaining: typeof queued = [];
+    for (const entry of queued) {
+      if (entry.connectionId !== connectionId) {
+        remaining.push(entry);
+        continue;
+      }
+      entry.resolve({
+        answer:
+          'Error: Prompt cancelled before display because the connection was closed.',
+      });
+    }
+
+    if (remaining.length === 0) {
+      queuedPrompts.delete(key);
+      continue;
+    }
+    queuedPrompts.set(key, remaining);
   }
 }
 
@@ -183,24 +304,43 @@ export function cancelActivePrompt(connectionId: string): void {
  * with a termination message so the agent knows the user closed the chat.
  */
 export function forceTerminateChat(connectionId: string): void {
-  const promptKey = resolvePromptKey(connectionId);
-  const state = activePrompts.get(promptKey);
-  if (state) {
-    _settlePrompt(state, {
-      answer:
-        'USER_FORCE_TERMINATED: The user has force-terminated this conversation. Stop all current work and acknowledge the termination.',
-    });
+  const terminationMessage =
+    'USER_FORCE_TERMINATED: The user has force-terminated this conversation. Stop all current work and acknowledge the termination.';
+
+  // Same resilient lookup strategy as cancelActivePrompt.
+  const keysToTerminate = new Set<string>([resolvePromptKey(connectionId)]);
+  for (const [key, state] of activePrompts.entries()) {
+    if (state.data.connectionId === connectionId) {
+      keysToTerminate.add(key);
+    }
   }
 
-  const queued = queuedPrompts.get(promptKey);
-  if (!queued?.length) return;
+  for (const key of keysToTerminate) {
+    const state = activePrompts.get(key);
+    if (!state) continue;
+    _settlePrompt(state, { answer: terminationMessage });
+  }
 
-  queuedPrompts.delete(promptKey);
-  for (const entry of queued) {
-    entry.resolve({
-      answer:
-        'USER_FORCE_TERMINATED: The user has force-terminated this conversation. Stop all current work and acknowledge the termination.',
-    });
+  for (const [key, queued] of queuedPrompts.entries()) {
+    if (!queued.length) {
+      queuedPrompts.delete(key);
+      continue;
+    }
+
+    const remaining: typeof queued = [];
+    for (const entry of queued) {
+      if (entry.connectionId !== connectionId) {
+        remaining.push(entry);
+        continue;
+      }
+      entry.resolve({ answer: terminationMessage });
+    }
+
+    if (remaining.length === 0) {
+      queuedPrompts.delete(key);
+      continue;
+    }
+    queuedPrompts.set(key, remaining);
   }
 }
 
@@ -264,6 +404,7 @@ export function promptUser(
 
   return new Promise<PromptResponse>((resolveOuter) => {
     _enqueuePrompt(promptKey, {
+      connectionId: data.connectionId,
       resolve: resolveOuter,
       run: async () => {
         // If the AbortSignal is already fired before we even start, there is
@@ -334,42 +475,6 @@ export function promptUser(
           }
         };
 
-        const ipcHandler = (
-          _event: Electron.IpcMainEvent,
-          response: {
-            id: string;
-            answer: string;
-            attachments?: {
-              data: string;
-              mimeType: string;
-              name: string;
-              size: number;
-            }[];
-          },
-        ): void => {
-          if (response.id !== data.id) return;
-          const state = activePrompts.get(promptKey);
-          if (!state || state.settled) return;
-          _settlePrompt(state, {
-            answer: response.answer,
-            attachments: response.attachments,
-          });
-          sendPromptClear();
-          saveConversation({
-            promptMessage: data.message,
-            projectName: data.projectName,
-            userResponse: response.answer,
-            predefinedOptions: data.predefinedOptions,
-            attachments: response.attachments,
-          });
-          appendSessionChannelMessage({
-            sessionId: data.connectionId,
-            messageType: 'answer',
-            messageText: response.answer,
-            attachments: response.attachments,
-          });
-        };
-
         const durableState: DurablePromptState = {
           promptId: data.id,
           data: promptWithExpiry,
@@ -379,12 +484,12 @@ export function promptUser(
           settled: false,
           timer: null,
           diagInterval: null,
-          ipcHandler,
           sendPromptClear,
         };
 
+        ensurePromptResponseListener();
         activePrompts.set(promptKey, durableState);
-        ipcMain.on('prompt-response', ipcHandler);
+        trackPromptState(durableState);
 
         // Forward durable promise to the outer resolver of THIS call
         void durablePromise.then(resolveOuter);
@@ -392,7 +497,7 @@ export function promptUser(
         // ── Send prompt to renderer ───────────────────────────────────────────
         win.webContents.send('prompt-request', promptWithExpiry);
         appendSessionChannelMessage({
-          sessionId: data.connectionId,
+          sessionId: promptKey,
           messageType: 'question',
           messageText: data.message,
         });
@@ -407,11 +512,15 @@ export function promptUser(
           }
           const elapsed = Math.round((Date.now() - diagStart) / 1000);
           const listenerCount = ipcMain.listenerCount('prompt-response');
+          const indexedPromptIds = activePromptStatesById.size;
+          const indexedPromptStates = getIndexedPromptStateCount();
           console.log(
             `[prompt-diag] id=${data.id} connectionId=${data.connectionId} promptKey=${promptKey} ` +
               `settled=${durableState.settled} elapsed=${elapsed}s ` +
               `prompt-response-listeners=${listenerCount} ` +
-              `activePrompts=${activePrompts.size}`,
+              `activePrompts=${activePrompts.size} ` +
+              `indexedPromptIds=${indexedPromptIds} ` +
+              `indexedPromptStates=${indexedPromptStates}`,
           );
         }, 10_000);
 
@@ -425,7 +534,7 @@ export function promptUser(
             if (!state || state.settled) return;
             _settlePrompt(state, { answer: null as unknown as string });
             appendSessionChannelMessage({
-              sessionId: data.connectionId,
+              sessionId: promptKey,
               messageType: 'agent_message',
               messageText:
                 'Prompt expired before a reply was submitted. Ask again to continue this interaction.',
@@ -462,8 +571,6 @@ function _settlePrompt(
     state.diagInterval = null;
   }
 
-  ipcMain.removeListener('prompt-response', state.ipcHandler);
-
   // Use the stored promptKey (openCodeSessionId ?? connectionId) to find and
   // remove the correct map entry. This handles the case where the prompt was
   // keyed on openCodeSessionId and _settlePrompt is called without knowing
@@ -473,12 +580,18 @@ function _settlePrompt(
     activePrompts.delete(state.promptKey);
   }
 
+  untrackPromptState(state);
+
   state.resolve(response);
 }
 
 function _enqueuePrompt(
   promptKey: string,
-  entry: { run: () => Promise<void>; resolve: (r: PromptResponse) => void },
+  entry: {
+    run: () => Promise<void>;
+    resolve: (r: PromptResponse) => void;
+    connectionId: string;
+  },
 ): void {
   const queue = queuedPrompts.get(promptKey);
   if (queue) {

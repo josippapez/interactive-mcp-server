@@ -12,6 +12,7 @@ import {
   getRegisteredConnection,
 } from '../database';
 import { sendSessionStatus, sendAgentMessage } from '../ipc/channel';
+import { resolveOpenCodeSessionId } from '../session/resolver';
 
 /** Returns an actionable error if the agent hasn't called register_connection yet. */
 function unregisteredConnectionError(
@@ -217,8 +218,14 @@ Send a visible, persistent message directly into the desktop app channel history
       const unregisteredErr = unregisteredConnectionError(connectionId);
       if (unregisteredErr) return unregisteredErr;
 
+      // Resolve the correct session ID for persistence.
+      // openCodeSessionId (explicit param) takes priority over connectionId (transport handle).
+      const resolvedSessionId =
+        resolveOpenCodeSessionId(connectionId, openCodeSessionId) ??
+        connectionId;
+
       appendSessionChannelMessage({
-        sessionId: connectionId,
+        sessionId: resolvedSessionId,
         messageType: 'agent_message',
         messageText: message,
       });

@@ -104,6 +104,84 @@ describe('findKeyByConnectionId', () => {
     const result = findKeyByConnectionId(nodes, 'conn-shared');
     expect(['key-a', 'key-b']).toContain(result);
   });
+
+  // -------------------------------------------------------------------------
+  // openCodeSessionId priority (critical for prompt recovery after app restart)
+  // -------------------------------------------------------------------------
+
+  it('prioritizes openCodeSessionId over connectionId when both are provided', () => {
+    // After app restart, a node might have a null connectionId but still have
+    // an openCodeSessionId. The prompt recovery needs to match by openCodeSessionId.
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_abc123',
+        makeNode({
+          id: 'ses_abc123',
+          openCodeSessionId: 'ses_abc123',
+          connectionId: null, // Not yet reconnected
+        }),
+      ],
+    ]);
+
+    // When openCodeSessionId is provided, it should find the node even if
+    // connectionId doesn't match (because node.connectionId is null)
+    expect(findKeyByConnectionId(nodes, 'conn-old-uuid', 'ses_abc123')).toBe(
+      'ses_abc123',
+    );
+  });
+
+  it('matches by openCodeSessionId field when map key differs', () => {
+    // Edge case: node.openCodeSessionId differs from map key
+    const nodes = new Map<string, SessionNode>([
+      [
+        'some-other-key',
+        makeNode({
+          id: 'some-other-key',
+          openCodeSessionId: 'ses_xyz789',
+          connectionId: 'conn-456',
+        }),
+      ],
+    ]);
+
+    expect(findKeyByConnectionId(nodes, 'conn-unrelated', 'ses_xyz789')).toBe(
+      'some-other-key',
+    );
+  });
+
+  it('falls back to connectionId match when openCodeSessionId is not found', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_abc123',
+        makeNode({
+          id: 'ses_abc123',
+          openCodeSessionId: 'ses_abc123',
+          connectionId: 'conn-mcp-456',
+        }),
+      ],
+    ]);
+
+    // No matching openCodeSessionId, but connectionId matches
+    expect(findKeyByConnectionId(nodes, 'conn-mcp-456', 'ses_unknown')).toBe(
+      'ses_abc123',
+    );
+  });
+
+  it('returns null when neither openCodeSessionId nor connectionId matches', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_abc123',
+        makeNode({
+          id: 'ses_abc123',
+          openCodeSessionId: 'ses_abc123',
+          connectionId: 'conn-mcp-456',
+        }),
+      ],
+    ]);
+
+    expect(
+      findKeyByConnectionId(nodes, 'conn-unrelated', 'ses_unknown'),
+    ).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------

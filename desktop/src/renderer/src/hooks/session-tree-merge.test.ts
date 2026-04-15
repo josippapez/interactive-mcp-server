@@ -2,6 +2,8 @@ import { describe, it, expect } from 'vitest';
 import {
   mergeSessionTreeSnapshot,
   partitionNodes,
+  groupByProject,
+  upsertOptimisticSessionNode,
   type SnapshotNode,
 } from './session-tree-merge';
 import type { SessionNode } from '../types';
@@ -17,6 +19,7 @@ function makeSessionNode(overrides: Partial<SessionNode> = {}): SessionNode {
     openCodeParentId: null,
     title: 'Test Session',
     directory: '/tmp',
+    createdAt: 0,
     depth: 0,
     connectionId: null,
     hasMcpChannel: false,
@@ -61,6 +64,8 @@ function makeSnapshot(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
     openCodeParentId: null,
     title: 'Test Session',
     directory: '/tmp',
+    createdAt: 0,
+    updatedAt: 0,
     depth: 0,
     connectionId: null,
     channelName: null,
@@ -174,7 +179,7 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(node.isDirectConnection).toBe(false);
     expect(node.channelMessages).toBe(directMessages);
     expect(node.unreadCount).toBe(1);
-    expect(node.title).toBe('Claude Code');
+    expect(node.title).toBe('Test Session');
   });
 
   it('preserves direct-connection nodes NOT claimed by any snapshot node', () => {
@@ -246,7 +251,7 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(child.depth).toBe(1);
   });
 
-  it('prefers channelName over title when both are present in snapshot', () => {
+  it('uses OpenCode title as authoritative label when both title and channelName are present', () => {
     const snapshot = [
       makeSnapshot({
         openCodeSessionId: 'ses_1',
@@ -256,7 +261,8 @@ describe('mergeSessionTreeSnapshot', () => {
     ];
 
     const result = mergeSessionTreeSnapshot(new Map(), snapshot);
-    expect(result.get('ses_1')!.title).toBe('Claude Code');
+    expect(result.get('ses_1')!.title).toBe('OpenCode Title');
+    expect(result.get('ses_1')!.sessionChannel?.label).toBe('OpenCode Title');
   });
 
   it('uses title when channelName is null', () => {
@@ -297,6 +303,80 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(result.has('conn-abc')).toBe(false);
     expect(result.has('ses_x')).toBe(true);
     expect(result.get('ses_x')!.unreadCount).toBe(5);
+  });
+
+  it('assigns unique sessionChannel.sessionId using openCodeSessionId for parent and child with shared connectionId', () => {
+    // This test verifies the fix for the message routing bug where parent-child
+    // sessions share the same connectionId but need unique sessionChannel.sessionId
+    // values for correct message routing.
+    const prev = new Map<string, SessionNode>();
+
+    // Parent and child both have the same connectionId (shared MCP transport)
+    const sharedConnectionId = 'conn-shared-123';
+    const snapshot = [
+      makeSnapshot({
+        openCodeSessionId: 'ses_parent',
+        openCodeParentId: null,
+        connectionId: sharedConnectionId,
+        channelName: 'Parent Agent',
+        hasMcpChannel: true,
+      }),
+      makeSnapshot({
+        openCodeSessionId: 'ses_child',
+        openCodeParentId: 'ses_parent',
+        connectionId: sharedConnectionId, // Same connectionId as parent!
+        channelName: 'Child Agent',
+        hasMcpChannel: true,
+      }),
+    ];
+
+    const result = mergeSessionTreeSnapshot(prev, snapshot);
+
+    // Both nodes should exist
+    expect(result.has('ses_parent')).toBe(true);
+    expect(result.has('ses_child')).toBe(true);
+
+    const parentNode = result.get('ses_parent')!;
+    const childNode = result.get('ses_child')!;
+
+    // CRITICAL: sessionChannel.sessionId must be unique for each session
+    // (uses openCodeSessionId, not shared connectionId)
+    expect(parentNode.sessionChannel?.sessionId).toBe('ses_parent');
+    expect(childNode.sessionChannel?.sessionId).toBe('ses_child');
+
+    // They should NOT have the same sessionChannel.sessionId
+    expect(parentNode.sessionChannel?.sessionId).not.toBe(
+      childNode.sessionChannel?.sessionId,
+    );
+  });
+
+  it('reconciles an optimistic child node without creating a duplicate', () => {
+    const optimistic = upsertOptimisticSessionNode(
+      new Map(),
+      makeSnapshot({
+        openCodeSessionId: 'ses_child',
+        openCodeParentId: 'ses_parent',
+        title: 'Child Agent',
+        connectionId: null,
+        hasMcpChannel: false,
+      }),
+    );
+
+    const reconciled = mergeSessionTreeSnapshot(optimistic, [
+      makeSnapshot({
+        openCodeSessionId: 'ses_child',
+        openCodeParentId: 'ses_parent',
+        title: 'Child Agent Final',
+        connectionId: 'conn-child',
+        hasMcpChannel: true,
+      }),
+    ]);
+
+    expect(reconciled.size).toBe(1);
+    expect(reconciled.has('ses_child')).toBe(true);
+    expect(reconciled.get('ses_child')?.title).toBe('Child Agent Final');
+    expect(reconciled.get('ses_child')?.connectionId).toBe('conn-child');
+    expect(reconciled.get('ses_child')?.hasMcpChannel).toBe(true);
   });
 });
 
@@ -399,7 +479,7 @@ describe('partitionNodes', () => {
     // Agent should appear under SESSIONS, not DIRECT CONNECTIONS
     expect(directConnections).toHaveLength(0);
     expect(openCodeTree).toHaveLength(1);
-    expect(openCodeTree[0].title).toBe('Claude Code');
+    expect(openCodeTree[0].title).toBe('Test Session');
     expect(openCodeTree[0].isDirectConnection).toBe(false);
   });
 
@@ -636,5 +716,37 @@ describe('partitionNodes', () => {
       'ses_root_a',
       'ses_child_a',
     ]);
+  });
+});
+
+describe('groupByProject', () => {
+  it('sorts projects by earliest session creation time (newer first)', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_old',
+        makeSessionNode({
+          id: 'ses_old',
+          openCodeSessionId: 'ses_old',
+          openCodeParentId: null,
+          baseDirectory: '/workspace/old',
+          createdAt: 100,
+        }),
+      ],
+      [
+        'ses_new',
+        makeSessionNode({
+          id: 'ses_new',
+          openCodeSessionId: 'ses_new',
+          openCodeParentId: null,
+          baseDirectory: '/workspace/new',
+          createdAt: 200,
+        }),
+      ],
+    ]);
+
+    const projects = groupByProject(nodes);
+
+    expect(projects[0].path).toBe('/workspace/new');
+    expect(projects[1].path).toBe('/workspace/old');
   });
 });

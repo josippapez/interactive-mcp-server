@@ -9,6 +9,11 @@
  * 4. Return { id, parentId } for the best match, or null on failure.
  */
 
+import {
+  buildOpenCodePortCandidates,
+  fetchJsonFromAllReachable,
+} from './endpoints';
+
 export interface DetectedSession {
   id: string;
   parentId: string | null;
@@ -22,12 +27,28 @@ export interface OpenCodeSession {
   time?: { created?: number; updated?: number };
 }
 
-async function fetchSessions(url: string): Promise<OpenCodeSession[] | null> {
+async function fetchSessions(
+  openCodePort: number,
+  path: string,
+): Promise<OpenCodeSession[] | null> {
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(2000) });
-    if (!res.ok) return null;
-    const data = (await res.json()) as unknown;
-    return Array.isArray(data) ? (data as OpenCodeSession[]) : null;
+    const ports = buildOpenCodePortCandidates(openCodePort);
+    const responses = await fetchJsonFromAllReachable<unknown>(
+      ports,
+      path,
+      2000,
+    );
+    if (responses.length === 0) return null;
+
+    const mergedById = new Map<string, OpenCodeSession>();
+    for (const { data } of responses) {
+      if (!Array.isArray(data)) continue;
+      for (const session of data as OpenCodeSession[]) {
+        mergedById.set(session.id, session);
+      }
+    }
+
+    return Array.from(mergedById.values());
   } catch {
     return null;
   }
@@ -41,11 +62,8 @@ export async function fetchAllOpenCodeSessions(
   openCodePort: number,
   fallbackDirectories: string[] = [],
 ): Promise<OpenCodeSession[] | null> {
-  const unscoped = await fetchSessions(
-    `http://localhost:${openCodePort}/session`,
-  );
+  const unscoped = await fetchSessions(openCodePort, '/session');
   if (!unscoped) return null;
-  if (unscoped.length > 0) return unscoped;
 
   const scopedDirectories = Array.from(
     new Set(
@@ -55,17 +73,25 @@ export async function fetchAllOpenCodeSessions(
     ),
   );
 
-  if (scopedDirectories.length === 0) return [];
+  if (scopedDirectories.length === 0) {
+    return [...unscoped].sort(
+      (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
+    );
+  }
 
   const scopedResults = await Promise.all(
     scopedDirectories.map((dir) =>
       fetchSessions(
-        `http://localhost:${openCodePort}/session?directory=${encodeURIComponent(dir)}`,
+        openCodePort,
+        `/session?directory=${encodeURIComponent(dir)}`,
       ),
     ),
   );
 
   const mergedById = new Map<string, OpenCodeSession>();
+  for (const session of unscoped) {
+    mergedById.set(session.id, session);
+  }
   for (const scoped of scopedResults) {
     if (!scoped) continue;
     for (const session of scoped) {
@@ -117,13 +143,14 @@ export async function autoDetectOpenCodeSession(
   baseDirectory?: string,
 ): Promise<DetectedSession | null> {
   const dir = baseDirectory ?? process.cwd();
-  const scopedUrl = `http://localhost:${openCodePort}/session?directory=${encodeURIComponent(dir)}`;
-
-  let sessions = await fetchSessions(scopedUrl);
+  let sessions = await fetchSessions(
+    openCodePort,
+    `/session?directory=${encodeURIComponent(dir)}`,
+  );
 
   // If directory-scoped query returned nothing, fall back to all sessions
   if (!sessions || sessions.length === 0) {
-    sessions = await fetchSessions(`http://localhost:${openCodePort}/session`);
+    sessions = await fetchSessions(openCodePort, '/session');
   }
 
   if (!sessions || sessions.length === 0) return null;
@@ -155,4 +182,102 @@ export async function autoDetectOpenCodeSessionId(
 ): Promise<string | null> {
   const result = await autoDetectOpenCodeSession(openCodePort, baseDirectory);
   return result?.id ?? null;
+}
+
+/**
+ * Result of creating a new OpenCode session.
+ */
+export interface CreateSessionResult {
+  ok: boolean;
+  session?: OpenCodeSession;
+  error?: string;
+}
+
+export interface SessionAttachment {
+  data: string;
+  mimeType: string;
+  name: string;
+  size: number;
+}
+
+const CREATE_SESSION_TIMEOUT_MS = 10_000;
+const SESSION_MESSAGE_TIMEOUT_MS = 120_000;
+
+/**
+ * Create a new OpenCode session via the HTTP API.
+ *
+ * Uses POST /session with optional title and parentID.
+ * When a directory is provided, the session is created in that directory context,
+ * which loads the project's `.opencode/opencode.jsonc` config and project-specific MCPs.
+ * After creating the session, optionally sends an initial message.
+ * If attachments are provided, they will be included in the initial message.
+ */
+export async function createOpenCodeSession(
+  openCodePort: number,
+  options: {
+    title?: string;
+    parentID?: string;
+    initialMessage?: string;
+    attachments?: SessionAttachment[];
+    /** Directory context for the session - loads project-specific config from .opencode/ */
+    directory?: string;
+  } = {},
+): Promise<CreateSessionResult> {
+  // Build URL with optional directory query parameter
+  const baseUrl = `http://localhost:${openCodePort}/session`;
+  const url = options.directory
+    ? `${baseUrl}?directory=${encodeURIComponent(options.directory)}`
+    : baseUrl;
+
+  try {
+    // Create the session
+    const createRes = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: options.title,
+        parentID: options.parentID,
+      }),
+      signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
+    });
+
+    if (!createRes.ok) {
+      const body = await createRes.text().catch(() => '');
+      return {
+        ok: false,
+        error: `OpenCode API returned ${createRes.status}: ${body}`,
+      };
+    }
+
+    const session = (await createRes.json()) as OpenCodeSession;
+
+    // If an initial message is provided, send it to the session
+    // NOTE: Attachments are handled separately via injectOpenCodeMessage in the IPC handler
+    // because it requires access to the attachment store and MCP server port
+    if (options.initialMessage && session.id) {
+      const messageUrl = `http://localhost:${openCodePort}/session/${encodeURIComponent(session.id)}/message`;
+      const messageRes = await fetch(messageUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          parts: [{ type: 'text', text: options.initialMessage }],
+        }),
+        // Keep aligned with injector timeout for /session/:id/message.
+        signal: AbortSignal.timeout(SESSION_MESSAGE_TIMEOUT_MS),
+      });
+
+      if (!messageRes.ok) {
+        // Session was created but message failed - still return success
+        // The session exists and can be used
+        console.warn(
+          `[createOpenCodeSession] Session created but initial message failed: ${messageRes.status}`,
+        );
+      }
+    }
+
+    return { ok: true, session };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return { ok: false, error: msg };
+  }
 }

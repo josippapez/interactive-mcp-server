@@ -5,7 +5,6 @@ vi.mock('../database', () => ({
   getAllRegisteredConnections: vi.fn(),
   updateConnectionOpenCodeSession: vi.fn(),
   upsertRegisteredConnection: vi.fn(),
-  isOpenCodeSessionClaimed: vi.fn(),
   isProviderSessionClaimed: vi.fn(),
 }));
 
@@ -17,7 +16,21 @@ vi.mock('../opencode/injector', () => ({
   injectOpenCodeMessage: vi.fn().mockResolvedValue({ ok: true }),
 }));
 
+vi.mock('../opencode/context-tracking', () => ({
+  updateSessionTokens: vi.fn(() => ({
+    sessionId: 'mock',
+    totalTokens: 0,
+    contextLimit: 128000,
+    usableLimit: 108000,
+    usagePercent: 0,
+    isNearOverflow: false,
+    isOverflow: false,
+    updatedAt: Date.now(),
+  })),
+}));
+
 import {
+  refreshSessionTreeCache,
   triggerSessionTreeUpdate,
   startSessionTreeManager,
   stopSessionTreeManager,
@@ -25,16 +38,16 @@ import {
 import {
   getAllRegisteredConnections,
   upsertRegisteredConnection,
-  isOpenCodeSessionClaimed,
   isProviderSessionClaimed,
 } from '../database';
 import { fetchAllOpenCodeSessions } from '../opencode/session';
 import { injectOpenCodeMessage } from '../opencode/injector';
+import { updateSessionTokens } from '../opencode/context-tracking';
 
 const mockInjectOpenCodeMessage = injectOpenCodeMessage as Mock;
+const mockUpdateSessionTokens = updateSessionTokens as Mock;
 const mockGetAllRegisteredConnections = getAllRegisteredConnections as Mock;
 const mockUpsertRegisteredConnection = upsertRegisteredConnection as Mock;
-const mockIsOpenCodeSessionClaimed = isOpenCodeSessionClaimed as Mock;
 const mockIsProviderSessionClaimed = isProviderSessionClaimed as Mock;
 const mockFetchAllOpenCodeSessions = fetchAllOpenCodeSessions as Mock;
 
@@ -61,12 +74,22 @@ describe('session-tree-manager', () => {
   beforeEach(() => {
     mockGetAllRegisteredConnections.mockReset();
     mockUpsertRegisteredConnection.mockReset();
-    mockIsOpenCodeSessionClaimed.mockReset();
     mockIsProviderSessionClaimed.mockReset();
     mockFetchAllOpenCodeSessions.mockReset();
     mockFetchAllOpenCodeSessions.mockResolvedValue([]);
     mockInjectOpenCodeMessage.mockReset();
     mockInjectOpenCodeMessage.mockResolvedValue({ ok: true });
+    mockUpdateSessionTokens.mockReset();
+    mockUpdateSessionTokens.mockReturnValue({
+      sessionId: 'mock',
+      totalTokens: 0,
+      contextLimit: 128000,
+      usableLimit: 108000,
+      usagePercent: 0,
+      isNearOverflow: false,
+      isOverflow: false,
+      updatedAt: Date.now(),
+    });
   });
 
   // ─── Original tests ──────────────────────────────────────────────────────
@@ -209,6 +232,48 @@ describe('session-tree-manager', () => {
           providerSessionId: 'child-ses-001',
         }),
       );
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('emits only one session-tree snapshot for session.created.1 with auto-register enabled', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+
+      const childEvent = {
+        payload: {
+          type: 'session.created.1',
+          aggregate: 'session',
+          data: {
+            sessionID: 'child-ses-single-snapshot',
+            info: {
+              id: 'child-ses-single-snapshot',
+              parentID: 'root-ses-000',
+              title: 'Single Snapshot Agent',
+              directory: '/home/user/project',
+              time: { created: 1500, updated: 1500 },
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([childEvent]));
+      const send = vi.fn();
+      const win = {
+        isDestroyed: () => false,
+        webContents: { send },
+      } as unknown as BrowserWindow;
+
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 120));
+
+      const snapshotCalls = send.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'session-tree-updated',
+      );
+      expect(snapshotCalls).toHaveLength(1);
 
       stopSessionTreeManager();
       global.fetch = undefined as unknown as typeof fetch;
@@ -457,6 +522,396 @@ describe('session-tree-manager', () => {
       await new Promise((r) => setTimeout(r, 50));
 
       expect(mockInjectOpenCodeMessage).not.toHaveBeenCalled();
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('re-seeds from REST on manual refresh even after startup seed completed', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+      mockFetchAllOpenCodeSessions.mockResolvedValue([]);
+
+      const fetchMock = vi.fn().mockResolvedValue(makeSseResponse([]));
+      const win = makeWindow();
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      mockFetchAllOpenCodeSessions.mockClear();
+
+      await refreshSessionTreeCache();
+      await refreshSessionTreeCache();
+
+      expect(mockFetchAllOpenCodeSessions).toHaveBeenCalledTimes(2);
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('does not prune existing cached sessions when force refresh returns a partial list', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+
+      // Initial startup seed returns two sessions
+      mockFetchAllOpenCodeSessions.mockResolvedValueOnce([
+        {
+          id: 'seed-a',
+          parentID: null,
+          title: 'Seed A',
+          directory: '/repo',
+          time: { created: 1000, updated: 1000 },
+        },
+        {
+          id: 'seed-b',
+          parentID: null,
+          title: 'Seed B',
+          directory: '/repo',
+          time: { created: 1001, updated: 1001 },
+        },
+      ]);
+
+      const send = vi.fn();
+      const win = {
+        isDestroyed: () => false,
+        webContents: { send },
+      } as unknown as BrowserWindow;
+      const fetchMock = vi.fn().mockResolvedValue(makeSseResponse([]));
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 80));
+
+      // Force refresh now returns only one session (partial/transient API view)
+      mockFetchAllOpenCodeSessions.mockResolvedValueOnce([
+        {
+          id: 'seed-a',
+          parentID: null,
+          title: 'Seed A',
+          directory: '/repo',
+          time: { created: 1000, updated: 1000 },
+        },
+      ]);
+
+      await refreshSessionTreeCache();
+      await new Promise((r) => setTimeout(r, 80));
+
+      const snapshotCalls = send.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'session-tree-updated',
+      );
+      expect(snapshotCalls.length).toBeGreaterThan(0);
+
+      const latestSnapshot = snapshotCalls[snapshotCalls.length - 1]?.[1] as
+        | Array<{ openCodeSessionId: string }>
+        | undefined;
+      const sessionIds = (latestSnapshot ?? []).map((s) => s.openCodeSessionId);
+
+      // Keep prior cached sessions until authoritative session.deleted.1 arrives
+      expect(sessionIds).toContain('seed-a');
+      expect(sessionIds).toContain('seed-b');
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('builds snapshot title from OpenCode session title, not channelName fallback', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+
+      // Registered row has a transport label that differs from OpenCode title.
+      mockGetAllRegisteredConnections.mockReturnValue([
+        {
+          connectionId: 'ses_name_1',
+          providerSessionId: 'ses_name_1',
+          providerType: 'opencode',
+          channelName: 'Claude Code',
+          projectName: 'OpenCode',
+          baseDirectory: '/repo',
+          parentSessionId: null,
+          idFilePath: '/tmp/id.json',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+        },
+      ]);
+
+      const createdEvent = {
+        payload: {
+          type: 'session.created.1',
+          aggregate: 'session',
+          data: {
+            sessionID: 'ses_name_1',
+            info: {
+              id: 'ses_name_1',
+              parentID: null,
+              title: 'OpenCode Canonical Name',
+              directory: '/repo',
+              time: { created: 1000, updated: 1000 },
+            },
+          },
+        },
+      };
+
+      const send = vi.fn();
+      const win = {
+        isDestroyed: () => false,
+        webContents: { send },
+      } as unknown as BrowserWindow;
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([createdEvent]));
+      global.fetch = fetchMock as unknown as typeof fetch;
+
+      stopSessionTreeManager();
+      startSessionTreeManager(
+        () => win,
+        () => OPENCODE_PORT,
+      );
+
+      await new Promise((r) => setTimeout(r, 80));
+
+      const snapshotCall = send.mock.calls.find(
+        (call: unknown[]) => call[0] === 'session-tree-updated',
+      );
+      expect(snapshotCall).toBeTruthy();
+
+      const snapshot = snapshotCall?.[1] as Array<{
+        openCodeSessionId: string;
+        title: string;
+      }>;
+      const target = snapshot.find((s) => s.openCodeSessionId === 'ses_name_1');
+      expect(target?.title).toBe('OpenCode Canonical Name');
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+  });
+
+  // ─── Context/token tracking via message.updated.1 ────────────────────────
+
+  describe('context tracking from message.updated.1', () => {
+    const OPENCODE_PORT = 4096;
+
+    function makeWindow() {
+      const send = vi.fn();
+      const win = { isDestroyed: () => false, webContents: { send } };
+      return win as unknown as BrowserWindow & {
+        webContents: { send: Mock };
+      };
+    }
+
+    function startManager(win: BrowserWindow, fetchMock: Mock) {
+      global.fetch = fetchMock;
+      mockGetAllRegisteredConnections.mockReturnValue([]);
+      stopSessionTreeManager();
+      startSessionTreeManager(
+        () => win,
+        () => OPENCODE_PORT,
+      );
+    }
+
+    it('calls updateSessionTokens when message.updated.1 arrives for an assistant message', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+      mockUpdateSessionTokens.mockReturnValue({
+        sessionId: 'ses_ctx_1',
+        totalTokens: 5000,
+        contextLimit: 128000,
+        usableLimit: 108000,
+        usagePercent: 5,
+        isNearOverflow: false,
+        isOverflow: false,
+        updatedAt: Date.now(),
+      });
+
+      const messageUpdatedEvent = {
+        payload: {
+          type: 'message.updated.1',
+          aggregate: 'ses_ctx_1',
+          data: {
+            sessionID: 'ses_ctx_1',
+            info: {
+              id: 'msg_1',
+              sessionID: 'ses_ctx_1',
+              role: 'assistant',
+              modelID: 'claude-3-opus',
+              providerID: 'anthropic',
+              tokens: {
+                input: 3000,
+                output: 1500,
+                reasoning: 0,
+                total: 5000,
+                cache: { read: 0, write: 500 },
+              },
+              cost: 0.05,
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([messageUpdatedEvent]));
+      const win = makeWindow();
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Should call updateSessionTokens with the token data, replace=true
+      expect(mockUpdateSessionTokens).toHaveBeenCalledWith(
+        'ses_ctx_1',
+        {
+          input: 3000,
+          output: 1500,
+          reasoning: 0,
+          total: 5000,
+          cache: { read: 0, write: 500 },
+        },
+        'claude-3-opus',
+        'anthropic',
+        true,
+      );
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('emits context-usage-updated IPC event after processing message.updated.1', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+      mockUpdateSessionTokens.mockReturnValue({
+        sessionId: 'ses_ctx_2',
+        totalTokens: 50000,
+        contextLimit: 200000,
+        usableLimit: 180000,
+        usagePercent: 28,
+        isNearOverflow: false,
+        isOverflow: false,
+        updatedAt: Date.now(),
+      });
+
+      const messageUpdatedEvent = {
+        payload: {
+          type: 'message.updated.1',
+          aggregate: 'ses_ctx_2',
+          data: {
+            sessionID: 'ses_ctx_2',
+            info: {
+              id: 'msg_2',
+              sessionID: 'ses_ctx_2',
+              role: 'assistant',
+              modelID: 'claude-3-opus',
+              providerID: 'anthropic',
+              tokens: {
+                input: 40000,
+                output: 10000,
+                reasoning: 0,
+                total: 50000,
+                cache: { read: 0, write: 0 },
+              },
+              cost: 0.25,
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([messageUpdatedEvent]));
+      const win = makeWindow();
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      // Verify context-usage-updated IPC was sent
+      const sendMock = (win as unknown as { webContents: { send: Mock } })
+        .webContents.send;
+      const usageCalls = sendMock.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'context-usage-updated',
+      );
+      expect(usageCalls.length).toBeGreaterThanOrEqual(1);
+      expect(usageCalls[0][1]).toEqual(
+        expect.objectContaining({
+          sessionId: 'ses_ctx_2',
+          totalTokens: 50000,
+          usagePercent: 28,
+        }),
+      );
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('ignores message.updated.1 for user messages (no tokens)', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+
+      const userMessageEvent = {
+        payload: {
+          type: 'message.updated.1',
+          aggregate: 'ses_ctx_3',
+          data: {
+            sessionID: 'ses_ctx_3',
+            info: {
+              id: 'msg_user_1',
+              sessionID: 'ses_ctx_3',
+              role: 'user',
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([userMessageEvent]));
+      const win = makeWindow();
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      expect(mockUpdateSessionTokens).not.toHaveBeenCalled();
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('passes modelID to updateSessionTokens for context limit lookup', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+
+      const messageEvent = {
+        payload: {
+          type: 'message.updated.1',
+          aggregate: 'ses_model_lim',
+          data: {
+            sessionID: 'ses_model_lim',
+            info: {
+              id: 'msg_lim_1',
+              sessionID: 'ses_model_lim',
+              role: 'assistant',
+              modelID: 'claude-3-opus',
+              providerID: 'anthropic',
+              tokens: {
+                input: 1000,
+                output: 500,
+                reasoning: 0,
+                total: 1500,
+                cache: { read: 0, write: 0 },
+              },
+              cost: 0.01,
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([messageEvent]));
+      const win = makeWindow();
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 100));
+
+      // updateSessionTokens should have been called with the modelID
+      expect(mockUpdateSessionTokens).toHaveBeenCalledWith(
+        'ses_model_lim',
+        expect.objectContaining({ total: 1500 }),
+        'claude-3-opus',
+        'anthropic',
+        true,
+      );
 
       stopSessionTreeManager();
       global.fetch = undefined as unknown as typeof fetch;

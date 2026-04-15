@@ -24,6 +24,7 @@ vi.mock('../opencode/session', () => ({
 vi.mock('../session/tree-manager', () => ({
   triggerSessionTreeUpdate: vi.fn(),
   recordPendingConnection: vi.fn(),
+  refreshSessionTreeCache: vi.fn(),
 }));
 
 vi.mock('../docs/context-injector', () => ({
@@ -32,6 +33,15 @@ vi.mock('../docs/context-injector', () => ({
 
 vi.mock('../opencode/injector', () => ({
   injectOpenCodeMessage: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
+vi.mock('../opencode/mcp-inject', () => ({
+  injectProjectMcps: vi.fn().mockResolvedValue({
+    configFound: false,
+    results: [],
+    injectedMcps: [],
+  }),
+  recordInjectedMcps: vi.fn(),
 }));
 
 vi.mock('../backend-adapter', () => ({
@@ -45,6 +55,10 @@ vi.mock('../backend-adapter', () => ({
 
 import { upsertRegisteredConnection, createSessionChannel } from '../database';
 import { autoDetectOpenCodeSession } from '../opencode/session';
+import {
+  refreshSessionTreeCache,
+  triggerSessionTreeUpdate,
+} from '../session/tree-manager';
 
 type RegisterConnectionInput = {
   channelName: string;
@@ -85,12 +99,16 @@ describe('register_connection tool', () => {
   const mockUpsert = upsertRegisteredConnection as Mock;
   const mockCreateSessionChannel = createSessionChannel as Mock;
   const mockAutoDetect = autoDetectOpenCodeSession as Mock;
+  const mockRefreshSessionTreeCache = refreshSessionTreeCache as Mock;
+  const mockTriggerSessionTreeUpdate = triggerSessionTreeUpdate as Mock;
 
   beforeEach(() => {
     vi.useFakeTimers();
     mockUpsert.mockReset();
     mockCreateSessionChannel.mockReset();
     mockAutoDetect.mockReset();
+    mockRefreshSessionTreeCache.mockReset();
+    mockTriggerSessionTreeUpdate.mockReset();
     mockUpsert.mockReturnValue('/tmp/imcp-agent-test.json');
   });
 
@@ -184,6 +202,11 @@ describe('register_connection tool', () => {
     expect(payload.openCodeSessionId).toBe('ses_own_subagent');
     // Only one upsert — no pre-register step in Phase 2
     expect(mockUpsert).toHaveBeenCalledTimes(1);
+
+    // Allow fire-and-forget tree refresh/update task to run
+    await Promise.resolve();
+    expect(mockRefreshSessionTreeCache).toHaveBeenCalledTimes(1);
+    expect(mockTriggerSessionTreeUpdate).toHaveBeenCalledTimes(1);
   });
 
   it('uses connectionId as synthetic session ID when detection returns null (non-OpenCode client)', async () => {
@@ -212,6 +235,11 @@ describe('register_connection tool', () => {
         connectionId: 'conn-standalone',
       }),
     );
+
+    // Allow fire-and-forget tree refresh/update task to run.
+    await Promise.resolve();
+    expect(mockRefreshSessionTreeCache).toHaveBeenCalledTimes(1);
+    expect(mockTriggerSessionTreeUpdate).toHaveBeenCalledTimes(1);
   });
 
   it('does not return SESSION_ALREADY_CLAIMED error in Phase 2 (no claiming)', async () => {

@@ -49,6 +49,9 @@ import { pickUnregisteredConnectionsForCleanup } from './session/registration-cl
 import { autoDetectOpenCodeSession } from './opencode/session';
 import { triggerSessionTreeUpdate } from './session/tree-manager';
 import type { AgentBackend } from './settings';
+import { createLogger } from './utils/logger';
+
+const mcpLog = createLogger('mcp');
 
 const DEFAULT_MAIN_CHANNEL_NAME = 'OpenCode - Main Channel';
 
@@ -229,11 +232,11 @@ function createMcpServerWithTools(
     getDocIndexingEnabled,
     getAgentBackend,
     getDetectedProvider,
-    async (registeredConnectionId) => {
-      const channelName =
-        getSessionEntries().find(
-          (entry) => entry.connectionId === registeredConnectionId,
-        )?.connectionName ?? '';
+    async ({
+      connectionId: registeredConnectionId,
+      channelName,
+      openCodeSessionId,
+    }) => {
       const toCleanup = pickUnregisteredConnectionsForCleanup(
         getSessionEntries(),
         { connectionId: registeredConnectionId, channelName },
@@ -246,6 +249,7 @@ function createMcpServerWithTools(
       getWindow()?.webContents.send('channel-label-updated', {
         connectionId: registeredConnectionId,
         name: channelName,
+        openCodeSessionId,
       });
     },
   );
@@ -427,6 +431,9 @@ export async function startMcpServer(
   _sessionCleanup = async (connectionId: string): Promise<boolean> => {
     const sid = findSessionByConnectionId(connectionId);
     if (!sid) return false;
+    mcpLog.info(
+      `Session cleanup: connectionId=${connectionId} sessionId=${sid}`,
+    );
     const session = sessions[sid];
     delete sessions[sid];
     // Close the MCP server first so the SDK aborts in-flight tool handler
@@ -456,6 +463,7 @@ export async function startMcpServer(
    */
   _clearAllSessions = async (): Promise<number> => {
     const entries = Object.entries(sessions);
+    mcpLog.info(`Clearing all sessions: count=${entries.length}`);
     let cleared = 0;
     for (const [sid, entry] of entries) {
       delete sessions[sid];
@@ -742,6 +750,9 @@ export async function startMcpServer(
       const connectionName = resolveConnectionName();
       // Detect provider type from request headers at connection creation time.
       const providerType = getEffectiveProvider(getAgentBackend(), req.headers);
+      mcpLog.info(
+        `New session: connectionId=${connectionId} name="${connectionName}" provider=${providerType}`,
+      );
       const server = createMcpServerWithTools(
         getWindow,
         connectionId,
@@ -814,10 +825,14 @@ export async function startMcpServer(
     // create a new session, run the MCP handshake internally, and forward the
     // original request so the CLI never sees an error.
     if (sessionId) {
+      mcpLog.info(`Transparent reinit for stale sessionId=${sessionId}`);
       try {
         await handleTransparentReinit(req, res);
         return;
       } catch (err) {
+        mcpLog.error(
+          `Transparent reinit failed for sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
         console.error(
           '[mcp] transparent reinit failed, falling back to 404:',
           err,
@@ -890,6 +905,9 @@ export async function startMcpServer(
     const sessionId = req.headers['mcp-session-id'] as string;
     if (sessionId && sessions[sessionId]) {
       const { connectionId } = sessions[sessionId];
+      mcpLog.info(
+        `Session teardown: connectionId=${connectionId} sessionId=${sessionId}`,
+      );
       await sessions[sessionId].transport.handleRequest(req, res);
       delete sessions[sessionId];
       cancelActivePrompt(connectionId);
@@ -929,6 +947,9 @@ export async function startMcpServer(
   });
 
   httpServer = app.listen(port, () => {
+    mcpLog.info(
+      `MCP Streamable HTTP server listening on http://localhost:${port}/mcp`,
+    );
     console.log(
       `MCP Streamable HTTP server listening on http://localhost:${port}/mcp`,
     );
@@ -949,10 +970,14 @@ export async function startMcpServer(
   // value (2^31 - 1 ms ≈ 24.8 days) as the ceiling so the HTTP layer never
   // becomes the limiting factor regardless of what the user configures.
   // The prompt's own setTimeout in ipc-prompt.ts handles actual expiry.
-  // headersTimeout must be strictly greater than keepAliveTimeout (Node docs).
-  const HTTP_KEEPALIVE_MS = 2_147_483_647; // 2^31 - 1 ms ≈ 24.8 days (max safe setTimeout value)
-  httpServer.keepAliveTimeout = HTTP_KEEPALIVE_MS;
-  httpServer.headersTimeout = HTTP_KEEPALIVE_MS + 1_000;
+  //
+  // Node.js docs recommend headersTimeout > keepAliveTimeout, but when both
+  // are at MAX_INT32, adding even 1ms would overflow to a negative value and
+  // trigger a TimeoutOverflowWarning. At 24.8 days, the practical difference
+  // is negligible — both effectively mean "no timeout".
+  const MAX_SAFE_TIMEOUT_MS = 2_147_483_647; // 2^31 - 1 ms ≈ 24.8 days
+  httpServer.keepAliveTimeout = MAX_SAFE_TIMEOUT_MS;
+  httpServer.headersTimeout = MAX_SAFE_TIMEOUT_MS;
 
   // Periodically clean up old attachment files (every 6 hours)
   cleanupOldAttachments();

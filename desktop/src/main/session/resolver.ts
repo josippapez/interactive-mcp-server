@@ -19,10 +19,14 @@
 
 import {
   getRegisteredConnection,
+  getRegisteredConnectionBySessionId,
   upsertRegisteredConnection,
   type RegisteredConnection,
 } from '../database';
 import { autoDetectOpenCodeSession } from '../opencode/session';
+import { createLogger } from '../utils/logger';
+
+const sessionLog = createLogger('session');
 
 // ─── Public types ──────────────────────────────────────────────────────────
 
@@ -64,6 +68,9 @@ export async function resolveSession(
   opts: ResolverOptions,
 ): Promise<ResolvedSession> {
   const { connectionId, backend } = opts;
+  sessionLog.debug(
+    `resolveSession: connectionId=${connectionId} backend=${backend}`,
+  );
 
   // Standalone mode has no provider session to resolve.
   if (backend === 'standalone') {
@@ -76,7 +83,15 @@ export async function resolveSession(
   }
 
   // Step 1: Look up the DB record.
-  const record = getRegisteredConnection(connectionId);
+  // First try by connectionId (MCP transport UUID), then fall back to
+  // looking up by providerSessionId (openCodeSessionId) for subagents
+  // that were auto-registered via SSE but never called register_connection.
+  let record = getRegisteredConnection(connectionId);
+  if (!record && backend === 'opencode') {
+    // The connectionId might actually be an openCodeSessionId for subagents
+    // whose sessionChannel.sessionId was set to openCodeSessionId in the renderer.
+    record = getRegisteredConnectionBySessionId(connectionId, 'opencode');
+  }
   if (!record) {
     return {
       providerSessionId: null,
@@ -111,6 +126,9 @@ async function resolveOpenCode(
 ): Promise<ResolvedSession> {
   // Fast path: cached session ID exists.
   if (record.openCodeSessionId) {
+    sessionLog.info(
+      `Resolved via cache: connectionId=${record.connectionId} sessionId=${record.openCodeSessionId}`,
+    );
     return {
       providerSessionId: record.openCodeSessionId,
       parentSessionId: record.parentSessionId,
@@ -133,6 +151,9 @@ async function resolveOpenCode(
   const detected = await autoDetectOpenCodeSession(openCodePort, baseDir);
 
   if (!detected) {
+    sessionLog.warn(
+      `Re-resolve failed: connectionId=${record.connectionId} — no sessions detected`,
+    );
     return {
       providerSessionId: null,
       parentSessionId: record.parentSessionId,
@@ -152,6 +173,9 @@ async function resolveOpenCode(
     parentSessionId: detected.parentId ?? undefined,
   });
 
+  sessionLog.info(
+    `Re-resolved: connectionId=${record.connectionId} sessionId=${detected.id}`,
+  );
   return {
     providerSessionId: detected.id,
     parentSessionId: detected.parentId,
@@ -229,15 +253,23 @@ export function resolveOpenCodeSessionId(
 ): string | null {
   // Priority 1: Explicit session ID passed by the agent
   if (explicitSessionId) {
+    sessionLog.debug(`resolveOpenCodeSessionId: explicit=${explicitSessionId}`);
     return explicitSessionId;
   }
 
   // Priority 2: DB lookup by connectionId (legacy/standalone clients)
-  const rc = getRegisteredConnection(connectionId);
+  let rc = getRegisteredConnection(connectionId);
   if (rc?.openCodeSessionId) {
     return rc.openCodeSessionId;
   }
 
-  // Priority 3: No session ID available
+  // Priority 3: connectionId might be an openCodeSessionId for subagents
+  // that were auto-registered via SSE but never called register_connection.
+  rc = getRegisteredConnectionBySessionId(connectionId, 'opencode');
+  if (rc?.openCodeSessionId) {
+    return rc.openCodeSessionId;
+  }
+
+  // Priority 4: No session ID available
   return null;
 }

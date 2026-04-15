@@ -104,10 +104,10 @@ export function useSessionStatus(
       }));
     };
 
-    window.api.onOpenCodeSessionStatus?.(handler);
+    const cleanup = window.api.onOpenCodeSessionStatus?.(handler);
 
     return () => {
-      // Cleanup handled by preload
+      cleanup?.();
     };
   }, [enabled]);
 

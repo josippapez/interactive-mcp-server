@@ -1,4 +1,4 @@
-import { memo, useState } from 'react';
+import { memo, useState, useMemo } from 'react';
 import type { Todo } from '../../hooks/useTodos';
 
 type Props = {
@@ -111,21 +111,18 @@ const TodoList = memo(function TodoList({
 }: Props): React.ReactElement {
   const [isCollapsed, setIsCollapsed] = useState(false);
 
-  // Group todos by status for better organization
-  const pendingTodos = todos.filter((t) => t.status === 'pending');
-  const inProgressTodos = todos.filter((t) => t.status === 'in_progress');
-  const completedTodos = todos.filter((t) => t.status === 'completed');
-  const cancelledTodos = todos.filter((t) => t.status === 'cancelled');
+  // Memoize grouped and sorted todos to avoid recalculating on every render
+  const { sortedTodos, activeCount } = useMemo(() => {
+    const pending = todos.filter((t) => t.status === 'pending');
+    const inProgress = todos.filter((t) => t.status === 'in_progress');
+    const completed = todos.filter((t) => t.status === 'completed');
+    const cancelled = todos.filter((t) => t.status === 'cancelled');
 
-  // Show active todos first (in_progress, then pending), then completed, then cancelled
-  const sortedTodos = [
-    ...inProgressTodos,
-    ...pendingTodos,
-    ...completedTodos,
-    ...cancelledTodos,
-  ];
-
-  const activeCount = pendingTodos.length + inProgressTodos.length;
+    return {
+      sortedTodos: [...inProgress, ...pending, ...completed, ...cancelled],
+      activeCount: pending.length + inProgress.length,
+    };
+  }, [todos]);
 
   // When collapsed, show only header
   if (isCollapsed) {

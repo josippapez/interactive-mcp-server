@@ -44,6 +44,7 @@ export {
   startSessionTreeManager,
   stopSessionTreeManager,
   triggerSessionTreeUpdate,
+  replayPendingSessionTreeSnapshot,
   refreshSessionTreeCache,
   type VcsInfo,
   type SessionNodeData,

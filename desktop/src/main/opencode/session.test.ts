@@ -15,6 +15,7 @@ vi.stubGlobal('fetch', mockFetch);
 describe('autoDetectOpenCodeSession', () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockFetch.mockRejectedValue(new Error('Unexpected unmocked fetch call'));
   });
 
   afterEach(() => {
@@ -88,19 +89,20 @@ describe('autoDetectOpenCodeSession', () => {
 describe('fetchAllOpenCodeSessions', () => {
   beforeEach(() => {
     mockFetch.mockReset();
+    mockFetch.mockRejectedValue(new Error('Unexpected unmocked fetch call'));
   });
 
   afterEach(() => {
     vi.clearAllMocks();
   });
 
-  it('returns unscoped sessions when /session has data', async () => {
+  it('returns unscoped sessions when /session has data and no directories are provided', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => [{ id: 'ses_a', time: { created: 2 } }],
     });
 
-    const sessions = await fetchAllOpenCodeSessions(4096, ['/repo/a']);
+    const sessions = await fetchAllOpenCodeSessions(4096);
 
     expect(sessions).toEqual([{ id: 'ses_a', time: { created: 2 } }]);
     expect(mockFetch).toHaveBeenCalledTimes(1);
@@ -152,6 +154,47 @@ describe('fetchAllOpenCodeSessions', () => {
     );
   });
 
+  it('merges unscoped and directory-scoped sessions when /session has data', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: 'ses_unscoped', time: { created: 50 } }],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [
+          { id: 'ses_scoped_new', time: { created: 200 } },
+          { id: 'ses_shared', time: { created: 150 } },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: 'ses_shared', time: { created: 175 } }],
+      });
+
+    const sessions = await fetchAllOpenCodeSessions(4096, [
+      '/repo/a',
+      '/repo/b',
+    ]);
+
+    expect(sessions).toEqual([
+      { id: 'ses_scoped_new', time: { created: 200 } },
+      { id: 'ses_shared', time: { created: 175 } },
+      { id: 'ses_unscoped', time: { created: 50 } },
+    ]);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'http://localhost:4096/session?directory=%2Frepo%2Fa',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      3,
+      'http://localhost:4096/session?directory=%2Frepo%2Fb',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
   it('returns empty array when unscoped is empty and no directories are provided', async () => {
     mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
 
@@ -162,11 +205,47 @@ describe('fetchAllOpenCodeSessions', () => {
   });
 
   it('returns null when unscoped fetch is unreachable', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('ECONNREFUSED'));
+    mockFetch
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce({ ok: true, json: async () => [] });
 
-    const sessions = await fetchAllOpenCodeSessions(4096, ['/repo/a']);
+    const sessions = await fetchAllOpenCodeSessions(5000, ['/repo/a']);
 
-    expect(sessions).toBeNull();
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(sessions).toEqual([]);
+    expect(mockFetch).toHaveBeenCalledTimes(4);
+  });
+
+  it('auto-detect falls back to default port when configured port is unreachable', async () => {
+    mockFetch
+      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => [{ id: 'ses_root', time: { created: 100 } }],
+      });
+
+    const result = await autoDetectOpenCodeSession(5000, '/repo');
+    expect(result).toEqual({ id: 'ses_root', parentId: null });
+  });
+
+  it('uses 120s timeout for initial session message request', async () => {
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
+    timeoutSpy.mockReturnValue(new AbortController().signal);
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ id: 'ses_new' }),
+      })
+      .mockResolvedValueOnce({ ok: true });
+
+    const { createOpenCodeSession } = await import('./session');
+    const result = await createOpenCodeSession(4096, {
+      initialMessage: 'hello',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(timeoutSpy).toHaveBeenCalledWith(10_000);
+    expect(timeoutSpy).toHaveBeenCalledWith(120_000);
+    timeoutSpy.mockRestore();
   });
 });

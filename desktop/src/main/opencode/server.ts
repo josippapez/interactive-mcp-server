@@ -6,10 +6,17 @@
  *   startOpenCodeServer(port)  — spawn `opencode serve --port <port>` if not already running
  *   stopOpenCodeServer()       — kill the child process gracefully
  *   isOpenCodeServerRunning()  — check if the managed process is alive
+ *
+ * Binary resolution order:
+ *   1. Bundled binary in app resources (resources/bin/opencode)
+ *   2. User's ~/.opencode/bin/opencode
+ *   3. 'opencode' on PATH
  */
 
 import { spawn, type ChildProcess } from 'child_process';
 import { existsSync } from 'fs';
+import { join } from 'path';
+import { app } from 'electron';
 
 let child: ChildProcess | null = null;
 let managedPort: number | null = null;
@@ -46,10 +53,17 @@ export function startOpenCodeServer(port: number): void {
   // inherit '/' when the app is launched from the macOS Dock or at login.
   const spawnCwd = process.env.HOME ?? process.env.USERPROFILE ?? '/';
 
+  // Build an augmented PATH so that opencode (and its spawned MCP servers)
+  // can find tools like npx, node, etc. even when launched from macOS Dock/Finder.
+  // Electron apps launched this way inherit a minimal PATH that excludes
+  // user-installed tools from Homebrew, nvm, fnm, volta, etc.
+  const augmentedEnv = buildAugmentedEnv();
+
   child = spawn(opencodeBin, ['serve', '--port', String(port)], {
     stdio: ['ignore', 'pipe', 'pipe'],
     detached: false, // die with the parent
     cwd: spawnCwd,
+    env: augmentedEnv,
   });
 
   managedPort = port;
@@ -106,8 +120,45 @@ export function isOpenCodeServerRunning(): boolean {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/**
+ * Get the path to the bundled OpenCode binary in app resources.
+ * In production, this is inside the app bundle's resources directory.
+ * In development, it's in the project's resources/bin directory.
+ */
+function getBundledOpenCodePath(): string | null {
+  const binaryName = process.platform === 'win32' ? 'opencode.exe' : 'opencode';
+
+  // In packaged app: resources are in the extraResources directory
+  // app.isPackaged is true when running from a built app
+  if (app.isPackaged) {
+    // On macOS: AppName.app/Contents/Resources/bin/opencode
+    // On Windows/Linux: resources/bin/opencode
+    const resourcesPath = process.resourcesPath;
+    const bundledPath = join(resourcesPath, 'bin', binaryName);
+    if (existsSync(bundledPath)) {
+      return bundledPath;
+    }
+  } else {
+    // In development: check the project's resources/bin directory
+    // __dirname is .../out/main/ during dev, so go up to desktop/
+    const devPath = join(__dirname, '..', '..', 'resources', 'bin', binaryName);
+    if (existsSync(devPath)) {
+      return devPath;
+    }
+  }
+
+  return null;
+}
+
 function resolveOpenCodeBin(): string | null {
-  // 1. Check common install locations
+  // 1. Check for bundled binary first (preferred)
+  const bundled = getBundledOpenCodePath();
+  if (bundled) {
+    console.log(`[opencode-server] Using bundled binary: ${bundled}`);
+    return bundled;
+  }
+
+  // 2. Check common install locations
   const candidates = [
     // macOS / Linux typical install path
     `${process.env.HOME}/.opencode/bin/opencode`,
@@ -124,4 +175,86 @@ function resolveOpenCodeBin(): string | null {
 
   // Fallback: assume it's on PATH
   return 'opencode';
+}
+
+/**
+ * Build an environment object with an augmented PATH.
+ *
+ * When Electron apps are launched from macOS Dock/Finder (or at login),
+ * they inherit a minimal PATH that often lacks user-installed tools.
+ * This function adds common Node.js version manager paths and Homebrew
+ * locations so that `npx`, `node`, etc. are available to spawned processes.
+ */
+function buildAugmentedEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  const home = process.env.HOME ?? process.env.USERPROFILE ?? '';
+  const currentPath = env.PATH ?? '';
+
+  // Common paths where Node.js tools (npx, node) might be installed
+  const additionalPaths: string[] = [];
+
+  if (process.platform === 'darwin' || process.platform === 'linux') {
+    // Homebrew (macOS Intel and Apple Silicon)
+    additionalPaths.push('/opt/homebrew/bin');
+    additionalPaths.push('/usr/local/bin');
+
+    // nvm - Node Version Manager
+    if (home) {
+      additionalPaths.push(`${home}/.nvm/current/bin`);
+      // nvm default version symlink
+      const nvmDir = process.env.NVM_DIR ?? `${home}/.nvm`;
+      additionalPaths.push(`${nvmDir}/current/bin`);
+    }
+
+    // fnm - Fast Node Manager
+    if (home) {
+      additionalPaths.push(`${home}/.fnm/current/bin`);
+      additionalPaths.push(`${home}/Library/Application Support/fnm/current/bin`);
+    }
+
+    // volta
+    if (home) {
+      additionalPaths.push(`${home}/.volta/bin`);
+    }
+
+    // asdf
+    if (home) {
+      additionalPaths.push(`${home}/.asdf/shims`);
+    }
+
+    // mise (formerly rtx)
+    if (home) {
+      additionalPaths.push(`${home}/.local/share/mise/shims`);
+    }
+
+    // Standard local bin
+    if (home) {
+      additionalPaths.push(`${home}/.local/bin`);
+    }
+
+    // n - Node version manager
+    if (home) {
+      additionalPaths.push(`${home}/n/bin`);
+    }
+    additionalPaths.push('/usr/local/n/bin');
+  } else if (process.platform === 'win32') {
+    // Windows: npm global packages, common Node.js install paths
+    if (home) {
+      additionalPaths.push(`${home}\\AppData\\Roaming\\npm`);
+    }
+    additionalPaths.push('C:\\Program Files\\nodejs');
+    additionalPaths.push('C:\\Program Files (x86)\\nodejs');
+  }
+
+  // Filter out paths that are already in PATH and empty strings
+  const uniqueNewPaths = additionalPaths.filter(
+    (p) => p && !currentPath.includes(p),
+  );
+
+  if (uniqueNewPaths.length > 0) {
+    const separator = process.platform === 'win32' ? ';' : ':';
+    env.PATH = [...uniqueNewPaths, currentPath].join(separator);
+  }
+
+  return env;
 }

@@ -43,6 +43,33 @@ export {
   type McpRetryOptions,
 } from './mcp-register';
 
+// mcp-inject.ts
+export {
+  injectProjectMcps,
+  recordInjectedMcps,
+  getInjectedMcps,
+  clearInjectedMcps,
+  getAllInjectedMcpSessions,
+  type McpServerConfig,
+  type McpInjectionResult,
+  type McpInjectionSummary,
+  type McpInjectionOptions,
+} from './mcp-inject';
+
+// mcp-status.ts
+export {
+  fetchMcpStatus,
+  connectMcp,
+  disconnectMcp,
+  registerMcp,
+  type McpServerStatus,
+  type McpTool,
+  type McpResource,
+  type McpPrompt,
+  type McpStatusResult,
+  type McpOperationResult,
+} from './mcp-status';
+
 // server.ts
 export {
   startOpenCodeServer,
@@ -56,6 +83,8 @@ export {
   autoDetectOpenCodeSessionId,
   fetchAllOpenCodeSessions,
   collectDescendants,
+  createOpenCodeSession,
+  type CreateSessionResult,
   type DetectedSession,
   type OpenCodeSession,
 } from './session';
@@ -72,3 +101,50 @@ export { fetchTodosForSession, type Todo } from './todo';
 
 // vcs.ts
 export { fetchVcsInfo, type VcsInfo } from './vcs';
+
+// context-tracking.ts
+export {
+  updateSessionTokens,
+  setSessionTotalTokens,
+  getSessionContextUsage,
+  clearSessionContextUsage,
+  handleCompaction,
+  setModelContextLimit,
+  getModelContextLimit,
+  triggerCompaction,
+  fetchSessionTokens,
+  COMPACTION_BUFFER,
+  DEFAULT_CONTEXT_WINDOW,
+  type MessageTokens,
+  type ContextUsage,
+  type CompactionResult,
+  type SessionInfo as ContextSessionInfo,
+} from './context-tracking';
+
+// provider.ts
+export {
+  fetchProviders,
+  fetchModels,
+  fetchProvidersInfo,
+  getProviderById,
+  getModelById,
+  getCachedProviders,
+  clearProviderCache,
+  type Provider,
+  type ProviderModel,
+  type ProvidersInfo,
+  type Model,
+} from './provider';
+
+// command.ts
+export {
+  fetchCommands,
+  executeCommand,
+  getCachedCommands,
+  clearCommandCache,
+  getCommandByName,
+  type Command,
+  type CommandArg,
+  type CommandsResponse,
+  type ExecuteCommandResult,
+} from './command';

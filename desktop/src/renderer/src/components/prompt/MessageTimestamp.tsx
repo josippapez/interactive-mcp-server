@@ -1,6 +1,11 @@
 import { memo } from 'react';
 import { useRelativeTime } from '../../hooks/useRelativeTime';
 import { formatFullTimestamp } from '../../lib/relative-time';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 
 type Props = {
   timestamp: Date;
@@ -17,9 +22,14 @@ const MessageTimestamp = memo(function MessageTimestamp({
   const fullTimestamp = formatFullTimestamp(timestamp);
 
   return (
-    <span title={fullTimestamp} className="cursor-default">
-      {relativeTime}
-    </span>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <time dateTime={timestamp.toISOString()} className="cursor-default">
+          {relativeTime}
+        </time>
+      </TooltipTrigger>
+      <TooltipContent>{fullTimestamp}</TooltipContent>
+    </Tooltip>
   );
 });
 

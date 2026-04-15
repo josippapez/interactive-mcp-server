@@ -64,7 +64,7 @@ export function useTodos(sessionId: string | null): UseTodosResult {
     }
   }, []);
 
-  // Fetch todos when session ID changes
+  // Fetch todos when session ID changes (deferred to idle time)
   useEffect(() => {
     if (!sessionId) {
       setTodos([]);
@@ -74,7 +74,21 @@ export function useTodos(sessionId: string | null): UseTodosResult {
       return;
     }
 
-    void fetchTodos();
+    // Defer non-critical fetch to idle time to prioritize conversation rendering
+    const idleCallback =
+      'requestIdleCallback' in window
+        ? window.requestIdleCallback
+        : (cb: () => void) => setTimeout(cb, 50);
+
+    const handle = idleCallback(() => {
+      void fetchTodos();
+    });
+
+    return () => {
+      if ('cancelIdleCallback' in window && typeof handle === 'number') {
+        window.cancelIdleCallback(handle);
+      }
+    };
   }, [sessionId, fetchTodos]);
 
   // Set up polling for todo updates (fallback when SSE is unavailable)

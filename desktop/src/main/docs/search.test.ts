@@ -5,6 +5,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { existsSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { app } from 'electron';
 import {
   initDatabase,
   createSessionChannel,
@@ -13,7 +14,7 @@ import {
 } from '../database';
 import { searchGlobal } from './search';
 
-const TEST_DB_PATH = join('/tmp', 'conversations.db');
+const TEST_DB_PATH = join(app.getPath('userData'), 'conversations.db');
 
 function freshDb(): Promise<void> {
   try {

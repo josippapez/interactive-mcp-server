@@ -84,7 +84,6 @@ vi.mock('./database', () => ({
   deleteSessionChannel: vi.fn(),
   getAllRegisteredConnections: vi.fn(() => []),
   upsertRegisteredConnection: vi.fn(),
-  isOpenCodeSessionClaimed: vi.fn(() => false),
   getRegisteredConnectionBySessionId: vi.fn(() => null),
   updateConnectionId: vi.fn(),
 }));
@@ -213,6 +212,7 @@ vi.mock('./ipc/prompt', () => ({
 import express from 'express';
 import { startMcpServer, stopMcpServer } from './mcp-server';
 import { cancelActivePrompt } from './ipc/prompt';
+import { registerConnectionTool } from './tools/register-connection';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -445,5 +445,104 @@ describe('GET /mcp — dead-stream detection', () => {
     // Advance past the interval — write should NOT be called.
     vi.advanceTimersByTime(15_000);
     expect(res.write).not.toHaveBeenCalled();
+  });
+});
+
+describe('register_connection callback wiring', () => {
+  it('includes openCodeSessionId when emitting channel-label-updated', async () => {
+    const sent: unknown[] = [];
+    const win = {
+      webContents: {
+        send: (...args: unknown[]) => {
+          sent.push(args);
+        },
+      },
+      isDestroyed: () => false,
+    } as unknown as import('electron').BrowserWindow;
+
+    try {
+      // Start a fresh server with our custom window getter for this assertion.
+      stopMcpServer();
+      await startMcpServer(
+        3098,
+        () => win,
+        () => false,
+        () => 200_000,
+        () => 4096,
+        () => false,
+        () => 'opencode',
+      );
+
+      const app = capturedApp.current as express.Express;
+      expect(app).toBeTruthy();
+
+      // Create one MCP session so createMcpServerWithTools runs and registers tools.
+      const postReq = {
+        method: 'POST',
+        url: '/mcp',
+        headers: {},
+        httpVersion: '1.1',
+        originalUrl: '/mcp',
+        ip: '127.0.0.1',
+        socket: { remoteAddress: '127.0.0.1' },
+        body: {
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'initialize',
+          params: {
+            protocolVersion: '2024-11-05',
+            capabilities: {},
+            clientInfo: {},
+          },
+        },
+      } as unknown as express.Request;
+
+      const postRes = {
+        setHeader: vi.fn().mockReturnThis(),
+        getHeader: vi.fn(),
+        removeHeader: vi.fn(),
+        writeHead: vi.fn().mockReturnThis(),
+        status: vi.fn().mockReturnThis(),
+        json: vi.fn(),
+        end: vi.fn(),
+        write: vi.fn(() => true),
+        headersSent: false,
+        writableEnded: false,
+        socket: { remoteAddress: '127.0.0.1' },
+        on: vi.fn().mockReturnThis(),
+        once: vi.fn().mockReturnThis(),
+        off: vi.fn().mockReturnThis(),
+        emit: vi.fn(),
+        statusCode: 200,
+      } as unknown as express.Response;
+
+      app(postReq, postRes, () => {});
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      const latestCall = (registerConnectionTool as Mock).mock.calls.at(-1);
+      expect(latestCall).toBeTruthy();
+      const latestOnRegistered = latestCall[7] as (data: {
+        connectionId: string;
+        channelName: string;
+        openCodeSessionId: string | null;
+      }) => Promise<void>;
+
+      await latestOnRegistered({
+        connectionId: 'conn-1',
+        channelName: 'Agent Name',
+        openCodeSessionId: 'ses_1',
+      });
+
+      expect(sent).toContainEqual([
+        'channel-label-updated',
+        {
+          connectionId: 'conn-1',
+          name: 'Agent Name',
+          openCodeSessionId: 'ses_1',
+        },
+      ]);
+    } finally {
+      stopMcpServer();
+    }
   });
 });

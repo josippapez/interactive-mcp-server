@@ -1,3 +1,8 @@
+import {
+  buildOpenCodePortCandidates,
+  fetchJsonFromAllReachable,
+} from './endpoints';
+
 /**
  * Health check for the OpenCode server.
  *
@@ -9,6 +14,8 @@ export interface OpenCodeHealthStatus {
   available: boolean;
   healthy: boolean;
   version: string | null;
+  activePort?: number | null;
+  reachablePorts?: number[];
   error?: string;
 }
 
@@ -21,30 +28,36 @@ export interface OpenCodeHealthStatus {
 export async function checkOpenCodeHealth(
   openCodePort: number,
 ): Promise<OpenCodeHealthStatus> {
-  const url = `http://localhost:${openCodePort}/global/health`;
+  const ports = buildOpenCodePortCandidates(openCodePort);
 
   try {
-    const res = await fetch(url, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000),
-      headers: { Accept: 'application/json' },
-    });
-
-    if (!res.ok) {
+    const results = await fetchJsonFromAllReachable<{
+      healthy?: boolean;
+      version?: string;
+    }>(ports, '/global/health', 3000);
+    if (results.length === 0) {
       return {
-        available: true,
+        available: false,
         healthy: false,
         version: null,
-        error: `HTTP ${res.status}`,
+        activePort: null,
+        reachablePorts: [],
+        error: 'Connection failed',
       };
     }
 
-    const data = (await res.json()) as { healthy?: boolean; version?: string };
+    const firstHealthy = results.find((result) => result.data.healthy === true);
+    const selected = firstHealthy ?? results[0];
 
     return {
       available: true,
-      healthy: data.healthy === true,
-      version: typeof data.version === 'string' ? data.version : null,
+      healthy: selected.data.healthy === true,
+      version:
+        typeof selected.data.version === 'string'
+          ? selected.data.version
+          : null,
+      activePort: selected.port,
+      reachablePorts: results.map((result) => result.port),
     };
   } catch (err) {
     // Server not reachable

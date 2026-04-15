@@ -111,6 +111,9 @@ export type SessionNode = {
   /** Working directory (from OpenCode or register_connection). */
   directory: string;
 
+  /** Unix ms timestamp when this session was created (if known). */
+  createdAt?: number;
+
   /** 0 = root / top-level agent, >0 = subagent depth. */
   depth: number;
 

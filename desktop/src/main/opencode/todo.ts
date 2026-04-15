@@ -5,6 +5,11 @@
  * current task list for the agent session.
  */
 
+import {
+  buildOpenCodePortCandidates,
+  fetchFirstSuccessfulJson,
+} from './endpoints';
+
 export interface Todo {
   content: string;
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
@@ -22,22 +27,16 @@ export async function fetchTodosForSession(
   openCodePort: number,
   sessionId: string,
 ): Promise<Todo[] | null> {
-  const url = `http://localhost:${openCodePort}/session/${sessionId}/todo`;
+  const ports = buildOpenCodePortCandidates(openCodePort);
 
   try {
-    const res = await fetch(url, {
-      signal: AbortSignal.timeout(3000),
-      headers: { Accept: 'application/json' },
-    });
-
-    if (!res.ok) {
-      console.warn(
-        `[opencode-todo] Failed to fetch todos for session ${sessionId}: ${res.status}`,
-      );
-      return null;
-    }
-
-    const data = (await res.json()) as unknown;
+    const response = await fetchFirstSuccessfulJson<unknown>(
+      ports,
+      `/session/${sessionId}/todo`,
+      3000,
+    );
+    if (!response) return null;
+    const data = response.data;
     if (!Array.isArray(data)) {
       console.warn(
         `[opencode-todo] Invalid response format for session ${sessionId}`,

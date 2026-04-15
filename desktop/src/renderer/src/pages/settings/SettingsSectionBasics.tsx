@@ -1,0 +1,227 @@
+import ProviderAuthSection from '../../components/auth/ProviderAuthSection';
+import { Button } from '@/components/ui/button';
+import { NumberInput, Toggle } from './SettingsFormParts';
+import type { AppSettings } from './settings-types';
+
+type SharedProps = {
+  settings: AppSettings;
+  setSettings: React.Dispatch<React.SetStateAction<AppSettings | null>>;
+};
+
+export function ServerSection({
+  portInput,
+  setPortInput,
+  openCodePortInput,
+  setOpenCodePortInput,
+  timeoutInput,
+  setTimeoutInput,
+  isPortValid,
+  isOpenCodePortValid,
+  isTimeoutValid,
+}: {
+  portInput: string;
+  setPortInput: (value: string) => void;
+  openCodePortInput: string;
+  setOpenCodePortInput: (value: string) => void;
+  timeoutInput: string;
+  setTimeoutInput: (value: string) => void;
+  isPortValid: boolean;
+  isOpenCodePortValid: boolean;
+  isTimeoutValid: boolean;
+}): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <NumberInput
+        id="settings-port"
+        value={portInput}
+        onChange={setPortInput}
+        label="MCP Server Port"
+        description="Range: 1024–65535. Requires restart if changed."
+        min={1024}
+        max={65535}
+        isValid={isPortValid}
+        errorMessage="Enter a valid port between 1024 and 65535."
+      />
+      <NumberInput
+        id="settings-opencode-port"
+        value={openCodePortInput}
+        onChange={setOpenCodePortInput}
+        label="Provider API Port"
+        description="Port used to inject context into provider sessions."
+        min={1024}
+        max={65535}
+        isValid={isOpenCodePortValid}
+        errorMessage="Enter a valid port between 1024 and 65535."
+      />
+      <NumberInput
+        id="settings-timeout"
+        value={timeoutInput}
+        onChange={setTimeoutInput}
+        label="Prompt Timeout (seconds)"
+        description="How long to wait for a response before timeout. 0 = no timeout."
+        min={0}
+        isValid={isTimeoutValid}
+        errorMessage="Timeout must be 0 or greater."
+      />
+    </div>
+  );
+}
+
+export function ProviderSection({
+  settings,
+  setSettings,
+  providerStatusText,
+  syncStatus,
+  setSyncStatus,
+}: SharedProps & {
+  providerStatusText: string | null;
+  syncStatus: string | null;
+  setSyncStatus: (value: string | null) => void;
+}): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <div className="py-3">
+        <label
+          htmlFor="settings-agent-backend"
+          className="block text-sm text-[var(--color-text-muted)] mb-1"
+        >
+          Agent Backend
+        </label>
+        <select
+          id="settings-agent-backend"
+          value={settings.agentBackend}
+          onChange={(e) =>
+            setSettings((s) =>
+              s
+                ? {
+                    ...s,
+                    agentBackend: e.target.value as AppSettings['agentBackend'],
+                  }
+                : s,
+            )
+          }
+          className="w-56 bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
+        >
+          <option value="standalone">Standalone (no provider)</option>
+          <option value="opencode">OpenCode (provider)</option>
+          <option value="claude_sdk">Claude SDK (planned)</option>
+        </select>
+        {providerStatusText && (
+          <p className="text-xs text-[var(--color-warning,orange)] mt-1">
+            {providerStatusText}
+          </p>
+        )}
+      </div>
+
+      <Toggle
+        id="settings-auto-start"
+        checked={settings.autoStartOpenCode}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, autoStartOpenCode: !s.autoStartOpenCode } : s,
+          )
+        }
+        label="Auto-start provider server"
+        description="Automatically run opencode serve on startup"
+      />
+      <Toggle
+        id="settings-auto-sync"
+        checked={settings.autoSyncOpencode}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, autoSyncOpencode: !s.autoSyncOpencode } : s,
+          )
+        }
+        label="Auto-sync provider config"
+        description="Write a remote MCP entry into opencode.json on startup"
+      />
+
+      <div className="py-3 border-t border-[var(--color-border)] mt-4">
+        <Button
+          variant="outline"
+          onClick={async () => {
+            setSyncStatus(null);
+            try {
+              const result = await window.api.syncOpencodeConfig();
+              setSyncStatus(result);
+            } catch {
+              setSyncStatus('error');
+            }
+            setTimeout(() => setSyncStatus(null), 4000);
+          }}
+        >
+          Register provider config
+        </Button>
+        {syncStatus && <p className="text-xs mt-1">{syncStatus}</p>}
+      </div>
+
+      <ProviderAuthSection
+        isOpenCodeEnabled={settings.agentBackend === 'opencode'}
+      />
+    </div>
+  );
+}
+
+export function SessionSection({
+  settings,
+  setSettings,
+}: SharedProps): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <Toggle
+        id="settings-auto-restore"
+        checked={settings.autoRestoreSessions}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, autoRestoreSessions: !s.autoRestoreSessions } : s,
+          )
+        }
+        label="Auto-restore unfinished sessions"
+        description="Reopen persisted session tabs when the app starts"
+      />
+      <Toggle
+        id="settings-auto-register"
+        checked={settings.autoRegisterSubagents}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, autoRegisterSubagents: !s.autoRegisterSubagents } : s,
+          )
+        }
+        label="Auto-register sessions"
+        description="Automatically add all OpenCode sessions as channels"
+      />
+    </div>
+  );
+}
+
+export function DocumentationSection({
+  settings,
+  setSettings,
+}: SharedProps): React.ReactElement {
+  return (
+    <div className="space-y-2">
+      <Toggle
+        id="settings-doc-indexing"
+        checked={settings.docIndexingEnabled}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, docIndexingEnabled: !s.docIndexingEnabled } : s,
+          )
+        }
+        label="Repository Doc Indexing"
+        description="Index and inject repo docs when an agent connects"
+      />
+      <Toggle
+        id="settings-doc-debug"
+        checked={settings.docContextDebug}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, docContextDebug: !s.docContextDebug } : s,
+          )
+        }
+        label="Doc Context Debug Mode"
+        description="Inject doc context without wrapper tags"
+      />
+    </div>
+  );
+}

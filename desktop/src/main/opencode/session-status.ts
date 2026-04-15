@@ -4,6 +4,11 @@
  * Uses the OpenCode HTTP API at GET /session/status to get status for all sessions.
  */
 
+import {
+  buildOpenCodePortCandidates,
+  fetchJsonFromAllReachable,
+} from './endpoints';
+
 export type SessionStatusType = 'busy' | 'idle' | 'error' | 'unknown';
 
 export interface SessionStatusMap {
@@ -21,31 +26,25 @@ export interface SessionStatusMap {
 export async function fetchSessionStatus(
   openCodePort: number,
 ): Promise<SessionStatusMap | null> {
-  const url = `http://localhost:${openCodePort}/session/status`;
+  const ports = buildOpenCodePortCandidates(openCodePort);
 
   try {
-    const res = await fetch(url, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000),
-      headers: { Accept: 'application/json' },
-    });
-
-    if (!res.ok) {
+    const responses = await fetchJsonFromAllReachable<
+      Record<string, { type?: string } | undefined>
+    >(ports, '/session/status', 3000);
+    if (responses.length === 0) {
       return null;
     }
 
-    const data = (await res.json()) as Record<
-      string,
-      { type?: string } | undefined
-    >;
-
     // Normalize the response to our SessionStatusMap type
     const result: SessionStatusMap = {};
-    for (const [sessionId, status] of Object.entries(data)) {
-      if (status && typeof status.type === 'string') {
-        result[sessionId] = {
-          type: normalizeStatusType(status.type),
-        };
+    for (const { data } of responses) {
+      for (const [sessionId, status] of Object.entries(data)) {
+        if (status && typeof status.type === 'string') {
+          result[sessionId] = {
+            type: normalizeStatusType(status.type),
+          };
+        }
       }
     }
 

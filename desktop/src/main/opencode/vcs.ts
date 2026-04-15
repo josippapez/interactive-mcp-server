@@ -4,6 +4,11 @@
  * Uses the OpenCode HTTP API at GET /vcs to get accurate git branch info.
  */
 
+import {
+  buildOpenCodePortCandidates,
+  fetchFirstSuccessfulJson,
+} from './endpoints';
+
 export interface VcsInfo {
   branch: string | null;
   defaultBranch: string | null;
@@ -22,23 +27,15 @@ export interface VcsInfo {
 export async function fetchVcsInfo(
   openCodePort: number,
 ): Promise<VcsInfo | null> {
-  const url = `http://localhost:${openCodePort}/vcs`;
+  const ports = buildOpenCodePortCandidates(openCodePort);
 
   try {
-    const res = await fetch(url, {
-      method: 'GET',
-      signal: AbortSignal.timeout(3000),
-      headers: { Accept: 'application/json' },
-    });
-
-    if (!res.ok) {
-      return null;
-    }
-
-    const data = (await res.json()) as {
+    const response = await fetchFirstSuccessfulJson<{
       branch?: string;
       default_branch?: string;
-    };
+    }>(ports, '/vcs', 3000);
+    if (!response) return null;
+    const data = response.data;
 
     return {
       branch: typeof data.branch === 'string' ? data.branch : null,

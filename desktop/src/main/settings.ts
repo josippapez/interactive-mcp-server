@@ -82,6 +82,37 @@ export interface AppSettings {
    * Default: false (collapsed).
    */
   defaultExpandAllTools: boolean;
+  /**
+   * Default state of the "Show Thinking" toggle in the channel header.
+   * When true, thinking sections are expanded by default.
+   * Default: false (collapsed).
+   */
+  defaultShowThinking: boolean;
+  /**
+   * List of folder paths that are allowed for automatic file read approval.
+   * When a file read permission is requested for a path within any of these
+   * folders (including subdirectories), it is auto-approved without user interaction.
+   * Default: [] (no folders auto-approved).
+   */
+  allowedReadFolders: string[];
+  /**
+   * Default model ID to use for new sessions (e.g., 'claude-sonnet-4-20250514').
+   * When set, new channels will use this model by default.
+   * Default: '' (no default — uses provider's default).
+   */
+  defaultModelId: string;
+  /**
+   * Default provider ID for the default model (e.g., 'anthropic', 'openai').
+   * Required when defaultModelId is set.
+   * Default: '' (no default).
+   */
+  defaultProviderId: string;
+  /**
+   * Default reasoning variant/effort level for models that support it.
+   * Options typically include: 'low', 'medium', 'high'.
+   * Default: '' (no default — uses model's default).
+   */
+  defaultReasoningVariant: string;
 }
 
 export const defaultSettings: AppSettings = {
@@ -103,6 +134,11 @@ export const defaultSettings: AppSettings = {
   discoveredTools: [],
   defaultNoReply: true,
   defaultExpandAllTools: false,
+  defaultShowThinking: false,
+  allowedReadFolders: [],
+  defaultModelId: '',
+  defaultProviderId: '',
+  defaultReasoningVariant: '',
 };
 
 export function getSettingsPath(): string {

@@ -8,6 +8,11 @@
  * Falls back gracefully when OpenCode is not reachable.
  */
 
+import {
+  buildOpenCodePortCandidates,
+  resolveReachableOpenCodePorts,
+} from './endpoints';
+
 /** Default name for the MCP server entry in OpenCode. */
 const DEFAULT_MCP_NAME = 'interactive-desktop';
 
@@ -158,4 +163,58 @@ export async function registerMcpWithOpenCode(
     const message = err instanceof Error ? err.message : String(err);
     return { status: 'unreachable', error: message };
   }
+}
+
+/**
+ * Register the desktop MCP server on every reachable OpenCode port.
+ *
+ * This keeps the registration flow aligned with the rest of the app's
+ * multi-port probing behavior.
+ */
+export async function registerMcpAcrossReachablePorts(
+  options: McpRegistrationOptions,
+): Promise<McpRegistrationResult> {
+  const { openCodePort, ...rest } = options;
+
+  const reachablePorts = await resolveReachableOpenCodePorts(openCodePort);
+  const candidatePorts =
+    reachablePorts.length > 0
+      ? reachablePorts
+      : buildOpenCodePortCandidates(openCodePort);
+
+  let sawRegistered = false;
+  let sawError = false;
+  let lastError: string | undefined;
+
+  for (const port of candidatePorts) {
+    const result = await registerMcpWithOpenCode({
+      ...rest,
+      openCodePort: port,
+    });
+
+    if (result.status === 'registered') {
+      sawRegistered = true;
+      continue;
+    }
+
+    if (result.status === 'error') {
+      sawError = true;
+      lastError = result.error;
+      continue;
+    }
+
+    if (!sawError) {
+      lastError = result.error;
+    }
+  }
+
+  if (sawRegistered) {
+    return { status: 'registered' };
+  }
+
+  if (sawError) {
+    return { status: 'error', error: lastError };
+  }
+
+  return { status: 'unreachable', error: lastError };
 }

@@ -1,4 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
+import { useSetSessionBaseModel } from '../store/session-models';
+
+type SessionModelState = {
+  modelId: string | null;
+  providerId: string | null;
+};
 
 /**
  * Hook to fetch the model ID for an OpenCode session.
@@ -13,14 +19,18 @@ import { useState, useEffect, useRef } from 'react';
 export function useSessionModelId(
   openCodeSessionId: string | null,
   isOpenCodeSession: boolean,
-): string | null {
-  const [modelId, setModelId] = useState<string | null>(null);
+): SessionModelState {
+  const setSessionBaseModel = useSetSessionBaseModel();
+  const [state, setState] = useState<SessionModelState>({
+    modelId: null,
+    providerId: null,
+  });
   const fetchedSessionRef = useRef<string | null>(null);
 
   useEffect(() => {
     // Skip if not an OpenCode session or no session ID
     if (!isOpenCodeSession || !openCodeSessionId) {
-      setModelId(null);
+      setState({ modelId: null, providerId: null });
       fetchedSessionRef.current = null;
       return;
     }
@@ -50,7 +60,15 @@ export function useSessionModelId(
         for (let i = messages.length - 1; i >= 0; i--) {
           const msg = messages[i];
           if (msg.role === 'assistant' && msg.modelId) {
-            setModelId(msg.modelId);
+            setSessionBaseModel(
+              openCodeSessionId,
+              msg.modelId,
+              msg.providerId ?? null,
+            );
+            setState({
+              modelId: msg.modelId,
+              providerId: msg.providerId ?? null,
+            });
             fetchedSessionRef.current = openCodeSessionId;
             return;
           }
@@ -72,18 +90,26 @@ export function useSessionModelId(
       sessionId: string;
     }) => {
       if (data.sessionId !== openCodeSessionId) return;
-      if (fetchedSessionRef.current === openCodeSessionId && modelId) return;
+      if (fetchedSessionRef.current === openCodeSessionId && state.modelId)
+        return;
 
       // Re-fetch to get the model ID from the new message
       void fetchModelId();
     };
 
-    window.api.onConversationMessageEvent(handleMessageEvent);
+    const cleanupMessageEvent =
+      window.api.onConversationMessageEvent(handleMessageEvent);
 
     return () => {
       cancelled = true;
+      cleanupMessageEvent();
     };
-  }, [openCodeSessionId, isOpenCodeSession, modelId]);
+  }, [
+    openCodeSessionId,
+    isOpenCodeSession,
+    setSessionBaseModel,
+    state.modelId,
+  ]);
 
-  return modelId;
+  return state;
 }

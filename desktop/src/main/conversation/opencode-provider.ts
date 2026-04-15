@@ -27,6 +27,14 @@ interface OpenCodeMessageInfo {
   agent?: string;
   modelID?: string;
   providerID?: string;
+  /** Reasoning effort variant (e.g., 'low', 'medium', 'high', 'xhigh'). */
+  variant?: string;
+  /** User messages have variant inside model object. */
+  model?: {
+    providerID?: string;
+    modelID?: string;
+    variant?: string;
+  };
   cost?: number;
   tokens?: {
     total?: number;
@@ -38,6 +46,11 @@ interface OpenCodeMessageInfo {
   time?: {
     created?: number;
     completed?: number;
+  };
+  /** Working directory path info. */
+  path?: {
+    cwd?: string;
+    root?: string;
   };
   finish?: string;
 }
@@ -52,11 +65,24 @@ interface OpenCodePart {
     status?: string;
     input?: Record<string, unknown>;
     output?: string;
+    /** Tool state metadata (e.g., sessionId for Task tool subagents). */
+    metadata?: Record<string, unknown>;
   };
+  metadata?: Record<string, unknown>;
   time?: {
     start?: number;
     end?: number;
   };
+  /** Source URL (for 'source-url' parts). */
+  url?: string;
+  /** Source title (for 'source-url' parts). */
+  title?: string;
+  /** Source ID (for 'source-url' parts). */
+  sourceId?: string;
+  /** File media type (for 'file' parts). */
+  mediaType?: string;
+  /** File name (for 'file' parts). */
+  filename?: string;
 }
 
 interface OpenCodeMessageResponse {
@@ -70,6 +96,8 @@ function mapPartType(type: string): PartType {
   switch (type) {
     case 'text':
       return 'text';
+    case 'reasoning':
+      return 'reasoning';
     case 'tool':
       return 'tool-call';
     case 'tool-result':
@@ -82,6 +110,10 @@ function mapPartType(type: string): PartType {
       return 'step-start';
     case 'step-end':
       return 'step-end';
+    case 'compaction':
+      return 'compaction';
+    case 'source-url':
+      return 'source-url';
     default:
       return 'unknown';
   }
@@ -274,9 +306,9 @@ export class OpenCodeConversationProvider implements ConversationProvider {
     if (!type || !properties) return;
 
     // Debug: log event types (except heartbeats)
-    if (type !== 'server.heartbeat' && type !== 'server.connected') {
-      console.log('[opencode-conversation] SSE event:', type);
-    }
+    // if (type !== 'server.heartbeat' && type !== 'server.connected') {
+    //   console.log('[opencode-conversation] SSE event:', type);
+    // }
 
     // Handle message events
     if (type === 'message.created' || type === 'message.updated') {
@@ -358,6 +390,9 @@ export class OpenCodeConversationProvider implements ConversationProvider {
   }
 
   private mapMessage(msg: OpenCodeMessageResponse): ConversationMessage {
+    // Extract variant: assistant messages have it directly, user messages have it in model object
+    const variant = msg.info.variant ?? msg.info.model?.variant ?? undefined;
+
     return {
       id: msg.info.id,
       sessionId: msg.info.sessionID,
@@ -367,16 +402,26 @@ export class OpenCodeConversationProvider implements ConversationProvider {
       modelId: msg.info.modelID,
       providerId: msg.info.providerID,
       agent: msg.info.agent,
+      mode: msg.info.mode,
+      variant,
       createdAt: msg.info.time?.created ?? Date.now(),
       completedAt: msg.info.time?.completed,
       tokens: msg.info.tokens
         ? {
             input: msg.info.tokens.input,
             output: msg.info.tokens.output,
+            reasoning: msg.info.tokens.reasoning,
             total: msg.info.tokens.total,
+            cache: msg.info.tokens.cache
+              ? {
+                  read: msg.info.tokens.cache.read,
+                  write: msg.info.tokens.cache.write,
+                }
+              : undefined,
           }
         : undefined,
       cost: msg.info.cost,
+      path: msg.info.path,
     };
   }
 
@@ -392,6 +437,16 @@ export class OpenCodeConversationProvider implements ConversationProvider {
       toolStatus: part.state?.status
         ? mapToolStatus(part.state.status)
         : undefined,
+      // Tool metadata (e.g., sessionId for Task tool) is stored in state.metadata, not part.metadata
+      toolMetadata: part.state?.metadata ?? part.metadata,
+      // Source URL fields
+      sourceUrl: part.url,
+      sourceTitle: part.title,
+      sourceId: part.sourceId,
+      // File fields
+      mediaType: part.mediaType,
+      filename: part.filename,
+      fileUrl: part.url,
       raw: part,
     };
   }

@@ -1,10 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   ipcMainHandle: vi.fn(),
   ipcMainOn: vi.fn(),
   appGetVersion: vi.fn(() => '1.2.3-test'),
   appSetLoginItemSettings: vi.fn(),
+  createOpenCodeSession: vi.fn().mockResolvedValue({
+    ok: true,
+    session: { id: 'opencode-session-1' },
+  }),
   injectClaudeMessageForConnection: vi.fn(),
   listSkillsAndInstructions: vi.fn(() => []),
   matchSkillsForMessage: vi.fn(() => []),
@@ -39,6 +43,7 @@ vi.mock('../opencode/injector', () => ({
 
 vi.mock('../opencode/session', () => ({
   autoDetectOpenCodeSessionId: vi.fn().mockResolvedValue(null),
+  createOpenCodeSession: mocks.createOpenCodeSession,
 }));
 
 vi.mock('../database', () => ({
@@ -56,6 +61,7 @@ vi.mock('../database', () => ({
   listSkillsAndInstructions: mocks.listSkillsAndInstructions,
   getSkillOrInstructionByName: vi.fn(() => null),
   deleteSkillOrInstruction: vi.fn(() => false),
+  updateConnectionBaseDirectory: vi.fn(),
 }));
 
 vi.mock('../tools/skill-match', () => ({
@@ -97,6 +103,7 @@ vi.mock('../tools/connection-guard', () => ({
 vi.mock('../session/tree-manager', () => ({
   triggerSessionTreeUpdate: vi.fn(),
   tombstoneOpenCodeSession: vi.fn(),
+  refreshSessionTreeCache: vi.fn(),
 }));
 
 vi.mock('../opencode/server', () => ({
@@ -109,7 +116,9 @@ vi.mock('../opencode/config-sync', () => ({
 }));
 
 vi.mock('../opencode/mcp-register', () => ({
-  registerMcpWithOpenCode: vi.fn().mockResolvedValue({ status: 'registered' }),
+  registerMcpAcrossReachablePorts: vi
+    .fn()
+    .mockResolvedValue({ status: 'registered' }),
 }));
 
 vi.mock('../remove-persisted-session', () => ({
@@ -144,6 +153,7 @@ vi.mock('../session/resolver', () => ({
 import { registerIpcHandlers } from './handlers';
 import { queueSessionMessage } from '../database';
 import { injectOpenCodeMessage } from '../opencode/injector';
+import { registerMcpAcrossReachablePorts } from '../opencode/mcp-register';
 
 function getRegisteredHandle(channel: string) {
   const call = mocks.ipcMainHandle.mock.calls.find(
@@ -162,6 +172,28 @@ function registerHandlers() {
       openCodePort: 4096,
       soundEnabled: false,
       agentBackend: 'claude_sdk',
+      autoStartOpenCode: false,
+      autoSyncOpencode: false,
+      launchAtLogin: false,
+      docContextDebug: false,
+      docIndexingEnabled: true,
+      autoRestoreSessions: false,
+      autoRegisterSubagents: true,
+      extraMcpServers: '',
+    }),
+    setSettings: vi.fn(),
+  });
+}
+
+function registerHandlersWithBackend(agentBackend: 'opencode' | 'claude_sdk') {
+  registerIpcHandlers({
+    getMainWindow: () => null,
+    getSettings: () => ({
+      port: 3100,
+      promptTimeoutSeconds: 30,
+      openCodePort: 4096,
+      soundEnabled: false,
+      agentBackend,
       autoStartOpenCode: false,
       autoSyncOpencode: false,
       launchAtLogin: false,
@@ -204,7 +236,7 @@ describe('registerIpcHandlers reply-permission', () => {
     );
 
     expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:4096/session/sess-abc/permission/req-123',
+      'http://localhost:4096/permission/req-123/reply',
       expect.objectContaining({
         method: 'POST',
         headers: expect.objectContaining({
@@ -443,6 +475,7 @@ describe('registerIpcHandlers skill auto-match — inject-opencode-message', () 
       expect.any(Number),
       expect.any(Number),
       true,
+      undefined,
     );
     expect(injectOpenCodeMessage).toHaveBeenCalledWith(
       'oc-ses-1',
@@ -451,6 +484,7 @@ describe('registerIpcHandlers skill auto-match — inject-opencode-message', () 
       expect.any(Number),
       expect.any(Number),
       true,
+      undefined,
     );
   });
 
@@ -475,6 +509,100 @@ describe('registerIpcHandlers skill auto-match — inject-opencode-message', () 
       expect.any(Number),
       expect.any(Number),
       true,
+      undefined,
     );
+  });
+});
+
+describe('registerIpcHandlers create-opencode-session model selection', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.createOpenCodeSession.mockResolvedValue({
+      ok: true,
+      session: { id: 'opencode-session-1' },
+    });
+    (injectOpenCodeMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+    });
+  });
+
+  it('injects initial message with model override when model selection is provided', async () => {
+    registerHandlersWithBackend('opencode');
+
+    const handler = getRegisteredHandle('create-opencode-session');
+    const result = await handler(
+      {},
+      {
+        initialMessage: 'Use this model for this task',
+        baseDirectory: '/repo/path',
+        modelSelection: {
+          providerId: 'github-copilot',
+          modelId: 'claude-opus-4.5',
+          variant: 'high',
+        },
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: 'opencode-session-1' });
+
+    expect(mocks.createOpenCodeSession).toHaveBeenCalledWith(4096, {
+      title: undefined,
+      parentID: undefined,
+      initialMessage: undefined,
+      directory: '/repo/path',
+    });
+
+    expect(injectOpenCodeMessage).toHaveBeenCalledWith(
+      'opencode-session-1',
+      'Use this model for this task',
+      undefined,
+      4096,
+      3100,
+      false,
+      {
+        providerId: 'github-copilot',
+        modelId: 'claude-opus-4.5',
+        variant: 'high',
+      },
+    );
+  });
+});
+
+describe('registerIpcHandlers refresh-session-tree', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('re-registers MCP across reachable OpenCode ports before refresh', async () => {
+    registerHandlersWithBackend('opencode');
+
+    const handler = getRegisteredHandle('refresh-session-tree');
+    await handler({});
+
+    expect(registerMcpAcrossReachablePorts).toHaveBeenCalledWith({
+      appPort: 3100,
+      openCodePort: 4096,
+      promptTimeoutSeconds: 30,
+    });
+  });
+});
+
+describe('registerIpcHandlers sync-opencode-config', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('uses multi-port MCP registration and returns combined status string', async () => {
+    registerHandlersWithBackend('opencode');
+
+    const handler = getRegisteredHandle('sync-opencode-config');
+    const result = await handler({});
+
+    expect(registerMcpAcrossReachablePorts).toHaveBeenCalledWith({
+      appPort: 3100,
+      openCodePort: 4096,
+      promptTimeoutSeconds: 30,
+    });
+    expect(result).toContain('register=registered');
   });
 });

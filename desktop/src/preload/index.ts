@@ -18,6 +18,14 @@ export type PromptRequest = {
   openCodeSessionId?: string | null;
 };
 
+export type PromptClearData = {
+  id: string;
+  connectionId: string;
+  openCodeSessionId?: string | null;
+  answer?: string;
+  rejected?: boolean;
+};
+
 export type Attachment = {
   data: string;
   mimeType: string;
@@ -63,6 +71,8 @@ export type AppSettings = {
   discoveredTools: string[];
   defaultNoReply: boolean;
   defaultExpandAllTools: boolean;
+  defaultShowThinking: boolean;
+  allowedReadFolders: string[];
 };
 
 export type ProviderStatus = {
@@ -91,18 +101,59 @@ export type SkillOrInstructionRecord = {
   updatedAt: string;
 };
 
+// ─── Provider Auth Types ─────────────────────────────────────────────────────
+
+export type PromptWhen = {
+  key: string;
+  op: 'eq' | 'neq';
+  value: string;
+};
+
+export type TextPrompt = {
+  type: 'text';
+  key: string;
+  message: string;
+  placeholder?: string;
+  when?: PromptWhen;
+};
+
+export type SelectPrompt = {
+  type: 'select';
+  key: string;
+  message: string;
+  options: Array<{ label: string; value: string; hint?: string }>;
+  when?: PromptWhen;
+};
+
+export type AuthPrompt = TextPrompt | SelectPrompt;
+
+export type AuthMethod = {
+  type: 'oauth' | 'api';
+  label: string;
+  prompts?: AuthPrompt[];
+};
+
+export type AuthorizeResult = {
+  url: string;
+  method: 'auto' | 'code';
+  instructions: string;
+};
+
 // ─── Conversation Mirroring Types ─────────────────────────────────────────────
 
 export type ConversationMessageRole = 'user' | 'assistant' | 'system';
 
 export type ConversationPartType =
   | 'text'
+  | 'reasoning'
   | 'tool-call'
   | 'tool-result'
   | 'image'
   | 'file'
   | 'step-start'
   | 'step-end'
+  | 'compaction'
+  | 'source-url'
   | 'unknown';
 
 export type ConversationMessagePart = {
@@ -114,6 +165,20 @@ export type ConversationMessagePart = {
   toolInput?: Record<string, unknown>;
   toolOutput?: string;
   toolStatus?: 'pending' | 'running' | 'completed' | 'error';
+  /** Tool metadata (for 'tool-call' parts, includes sessionId for Task tools). */
+  toolMetadata?: Record<string, unknown>;
+  /** Source URL (for 'source-url' parts). */
+  sourceUrl?: string;
+  /** Source title (for 'source-url' parts). */
+  sourceTitle?: string;
+  /** Source ID (for 'source-url' parts). */
+  sourceId?: string;
+  /** File media type (for 'file' parts). */
+  mediaType?: string;
+  /** File name (for 'file' parts). */
+  filename?: string;
+  /** File URL (for 'file' parts). */
+  fileUrl?: string;
 };
 
 export type ConversationMessage = {
@@ -125,14 +190,28 @@ export type ConversationMessage = {
   modelId?: string;
   providerId?: string;
   agent?: string;
+  /** Message mode (e.g., 'compaction' for context compaction summaries). */
+  mode?: string;
+  /** Reasoning effort variant (e.g., 'low', 'medium', 'high', 'xhigh'). */
+  variant?: string;
   createdAt: number;
   completedAt?: number;
   tokens?: {
     input?: number;
     output?: number;
+    reasoning?: number;
     total?: number;
+    cache?: {
+      read?: number;
+      write?: number;
+    };
   };
   cost?: number;
+  /** Working directory path info. */
+  path?: {
+    cwd?: string;
+    root?: string;
+  };
 };
 
 const api = {
@@ -141,13 +220,7 @@ const api = {
     ipcRenderer.removeAllListeners('prompt-request');
     ipcRenderer.on('prompt-request', (_event, data) => callback(data));
   },
-  onPromptClear: (
-    callback: (data: {
-      id: string;
-      connectionId: string;
-      openCodeSessionId?: string | null;
-    }) => void,
-  ) => {
+  onPromptClear: (callback: (data: PromptClearData) => void) => {
     ipcRenderer.removeAllListeners('prompt-clear');
     ipcRenderer.on('prompt-clear', (_event, data) => callback(data));
   },
@@ -206,11 +279,50 @@ const api = {
           | 'claude-sdk'
           | 'standalone'
           | null;
+        vcsInfo: {
+          branch: string | null;
+          additions: number;
+          deletions: number;
+          files: number;
+        } | null;
       }[],
     ) => void,
   ) => {
     ipcRenderer.removeAllListeners('session-tree-updated');
     ipcRenderer.on('session-tree-updated', (_event, data) => callback(data));
+  },
+  onOptimisticSessionNodeCreated: (
+    callback: (node: {
+      openCodeSessionId: string;
+      openCodeParentId: string | null;
+      title: string;
+      directory: string;
+      createdAt: number;
+      updatedAt: number;
+      depth: number;
+      connectionId: string | null;
+      channelName: string | null;
+      hasMcpChannel: boolean;
+      baseDirectory: string | null;
+      registeredParentSessionId: string | null;
+      providerType:
+        | 'opencode'
+        | 'copilot-cli'
+        | 'claude-sdk'
+        | 'standalone'
+        | null;
+      vcsInfo: {
+        branch: string | null;
+        additions: number;
+        deletions: number;
+        files: number;
+      } | null;
+    }) => void,
+  ) => {
+    ipcRenderer.removeAllListeners('session-node-created-optimistic');
+    ipcRenderer.on('session-node-created-optimistic', (_event, data) =>
+      callback(data),
+    );
   },
 
   // Direct-connection lifecycle — fired when an MCP agent connects/disconnects
@@ -233,7 +345,11 @@ const api = {
     ipcRenderer.on('connection-closed', (_event, data) => callback(data));
   },
   onChannelLabelUpdated: (
-    callback: (data: { connectionId: string; name: string }) => void,
+    callback: (data: {
+      connectionId: string;
+      name: string;
+      openCodeSessionId?: string | null;
+    }) => void,
   ) => {
     ipcRenderer.removeAllListeners('channel-label-updated');
     ipcRenderer.on('channel-label-updated', (_event, data) => callback(data));
@@ -253,6 +369,13 @@ const api = {
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
   saveSettings: (settings: AppSettings): Promise<boolean> =>
     ipcRenderer.invoke('save-settings', settings),
+  onSettingsChanged: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('settings-changed', handler);
+    return () => {
+      ipcRenderer.removeListener('settings-changed', handler);
+    };
+  },
 
   // Server status
   getServerStatus: (): Promise<{ running: boolean; port: number }> =>
@@ -299,6 +422,8 @@ const api = {
   // File dialog and file reading
   openFileDialog: (): Promise<string[]> =>
     ipcRenderer.invoke('open-file-dialog'),
+  openFolderDialog: (): Promise<string | null> =>
+    ipcRenderer.invoke('open-folder-dialog'),
   readFileForAttachment: (
     filePath: string,
   ): Promise<{
@@ -310,6 +435,15 @@ const api = {
   } | null> => ipcRenderer.invoke('read-file-for-attachment', filePath),
   forceTerminateChat: (connectionId: string): Promise<void> =>
     ipcRenderer.invoke('force-terminate-chat', connectionId),
+
+  // Pinned projects management
+  getPinnedProjects: (): Promise<
+    { path: string; name: string; createdAt: string }[]
+  > => ipcRenderer.invoke('get-pinned-projects'),
+  addPinnedProject: (path: string, name: string): Promise<boolean> =>
+    ipcRenderer.invoke('add-pinned-project', { path, name }),
+  removePinnedProject: (path: string): Promise<boolean> =>
+    ipcRenderer.invoke('remove-pinned-project', path),
 
   // Return all currently-active prompts so the renderer can recover them on startup.
   getActivePrompts: (): Promise<PromptRequest[]> =>
@@ -350,12 +484,18 @@ const api = {
     message: string,
     attachments?: Attachment[],
     noReply = true,
+    modelOverride?: {
+      providerId: string;
+      modelId: string;
+      variant?: string;
+    },
   ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> =>
     ipcRenderer.invoke('inject-opencode-message', {
       openCodeSessionId,
       message,
       attachments,
       noReply,
+      modelOverride,
     }),
 
   injectClaudeMessage: (
@@ -569,6 +709,29 @@ const api = {
   ): Promise<{ success: boolean; error?: string }> =>
     ipcRenderer.invoke('abort-session', sessionId),
 
+  // Create a new OpenCode session
+  createOpenCodeSession: (options?: {
+    title?: string;
+    parentID?: string;
+    initialMessage?: string;
+    baseDirectory?: string;
+    attachments?: {
+      data: string;
+      mimeType: string;
+      name: string;
+      size: number;
+    }[];
+    modelSelection?: {
+      providerId: string;
+      modelId: string;
+      variant?: string;
+    };
+  }): Promise<{
+    ok: boolean;
+    sessionId?: string;
+    error?: string;
+  }> => ipcRenderer.invoke('create-opencode-session', options ?? {}),
+
   // Listen for todo updates (emitted by the main process when todos change)
   onTodosUpdated: (
     callback: (data: {
@@ -668,12 +831,21 @@ const api = {
   /**
    * Real-time session status updates via SSE (session.status event)
    * Replaces polling when available
+   *
+   * NOTE: Returns a cleanup function to support multiple subscribers.
+   * Each caller should invoke the returned function in their effect cleanup.
    */
   onOpenCodeSessionStatus: (
     callback: (data: { sessionID: string; status: string }) => void,
-  ): void => {
-    ipcRenderer.removeAllListeners('opencode-session-status');
-    ipcRenderer.on('opencode-session-status', (_event, data) => callback(data));
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: { sessionID: string; status: string },
+    ) => callback(data);
+    ipcRenderer.on('opencode-session-status', handler);
+    return () => {
+      ipcRenderer.removeListener('opencode-session-status', handler);
+    };
   },
 
   // ─── Conversation Mirroring ─────────────────────────────────────────────────
@@ -696,37 +868,75 @@ const api = {
 
   /**
    * Listen for conversation message events (created, updated, completed).
+   *
+   * NOTE: Returns a cleanup function to support multiple subscribers.
+   * Each caller should invoke the returned function in their effect cleanup.
    */
   onConversationMessageEvent: (
     callback: (data: {
-      type: 'message.created' | 'message.updated' | 'message.completed';
+      type:
+        | 'message.created'
+        | 'message.updated'
+        | 'message.completed'
+        | 'message.removed';
       sessionId: string;
       messageId?: string;
     }) => void,
-  ): void => {
-    ipcRenderer.removeAllListeners('conversation-message-event');
-    ipcRenderer.on('conversation-message-event', (_event, data) =>
-      callback(data),
-    );
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        type:
+          | 'message.created'
+          | 'message.updated'
+          | 'message.completed'
+          | 'message.removed';
+        sessionId: string;
+        messageId?: string;
+      },
+    ) => callback(data);
+    ipcRenderer.on('conversation-message-event', handler);
+    return () => {
+      ipcRenderer.removeListener('conversation-message-event', handler);
+    };
   },
 
   /**
    * Listen for conversation part events (added, updated).
+   *
+   * NOTE: Returns a cleanup function to support multiple subscribers.
+   * Each caller should invoke the returned function in their effect cleanup.
    */
   onConversationPartEvent: (
     callback: (data: {
-      type: 'part.added' | 'part.updated';
+      type: 'part.added' | 'part.updated' | 'part.removed';
       sessionId: string;
       messageId?: string;
       part?: ConversationMessagePart;
+      partId?: string;
     }) => void,
-  ): void => {
-    ipcRenderer.removeAllListeners('conversation-part-event');
-    ipcRenderer.on('conversation-part-event', (_event, data) => callback(data));
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        type: 'part.added' | 'part.updated' | 'part.removed';
+        sessionId: string;
+        messageId?: string;
+        part?: ConversationMessagePart;
+        partId?: string;
+      },
+    ) => callback(data);
+    ipcRenderer.on('conversation-part-event', handler);
+    return () => {
+      ipcRenderer.removeListener('conversation-part-event', handler);
+    };
   },
 
   /**
    * Listen for conversation part delta events (streaming text updates).
+   *
+   * NOTE: Returns a cleanup function to support multiple subscribers.
+   * Each caller should invoke the returned function in their effect cleanup.
    */
   onConversationPartDelta: (
     callback: (data: {
@@ -737,9 +947,364 @@ const api = {
       deltaField: string;
       deltaValue: string;
     }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        type: 'part.delta';
+        sessionId: string;
+        messageId: string;
+        partId: string;
+        deltaField: string;
+        deltaValue: string;
+      },
+    ) => callback(data);
+    ipcRenderer.on('conversation-part-delta', handler);
+    return () => {
+      ipcRenderer.removeListener('conversation-part-delta', handler);
+    };
+  },
+
+  // ─── Allowed Read Folders Management ─────────────────────────────────────────
+
+  addAllowedReadFolder: (folderPath: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('add-allowed-read-folder', folderPath),
+
+  removeAllowedReadFolder: (folderPath: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('remove-allowed-read-folder', folderPath),
+
+  getAllowedReadFolders: (): Promise<string[]> =>
+    ipcRenderer.invoke('get-allowed-read-folders'),
+
+  selectFolderDialog: (): Promise<{ canceled: boolean; folderPath?: string }> =>
+    ipcRenderer.invoke('select-folder-dialog'),
+
+  // ─── Context Tracking ─────────────────────────────────────────────────────────
+
+  /**
+   * Get current context/token usage for a session.
+   */
+  getContextUsage: (
+    sessionId: string,
+  ): Promise<{
+    sessionId: string;
+    totalTokens: number;
+    contextLimit: number;
+    usableLimit: number;
+    usagePercent: number;
+    isNearOverflow: boolean;
+    isOverflow: boolean;
+    updatedAt: number;
+  } | null> => ipcRenderer.invoke('get-context-usage', sessionId),
+
+  /**
+   * Trigger context compaction for a session.
+   */
+  triggerCompaction: (options: {
+    sessionId: string;
+    providerId?: string;
+    modelId?: string;
+  }): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('trigger-compaction', options),
+
+  /**
+   * Fetch current token count for a session from OpenCode API.
+   */
+  fetchSessionTokens: (
+    sessionId: string,
+  ): Promise<{
+    id: string;
+    tokens?: number;
+    modelId?: string;
+  } | null> => ipcRenderer.invoke('fetch-session-tokens', sessionId),
+
+  /**
+   * Listen for context usage updates (emitted when token counts change).
+   */
+  onContextUsageUpdated: (
+    callback: (data: {
+      sessionId: string;
+      totalTokens: number;
+      contextLimit: number;
+      usableLimit: number;
+      usagePercent: number;
+      isNearOverflow: boolean;
+      isOverflow: boolean;
+    }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        sessionId: string;
+        totalTokens: number;
+        contextLimit: number;
+        usableLimit: number;
+        usagePercent: number;
+        isNearOverflow: boolean;
+        isOverflow: boolean;
+      },
+    ) => callback(data);
+    ipcRenderer.on('context-usage-updated', handler);
+    return () => {
+      ipcRenderer.removeListener('context-usage-updated', handler);
+    };
+  },
+
+  /**
+   * Listen for compaction events (emitted when a session is compacted).
+   *
+   * NOTE: This uses addListener instead of removeAllListeners to support
+   * multiple React hooks subscribing to the same event (useConversation +
+   * useContextUsage both need this). Returns a cleanup function that removes
+   * only this specific listener.
+   */
+  onSessionCompacted: (
+    callback: (data: {
+      sessionId: string;
+      beforeTokens: number;
+      afterTokens: number;
+    }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      data: {
+        sessionId: string;
+        beforeTokens: number;
+        afterTokens: number;
+      },
+    ) => callback(data);
+    ipcRenderer.on('session-compacted', handler);
+    return () => {
+      ipcRenderer.removeListener('session-compacted', handler);
+    };
+  },
+
+  // ─── Provider/Model API ─────────────────────────────────────────────────────
+
+  /**
+   * Fetch all available providers and their models from OpenCode.
+   */
+  fetchProviders: (): Promise<
+    | {
+        id: string;
+        name: string;
+        models: {
+          id: string;
+          name: string;
+          contextWindow?: number;
+          inputLimit?: number;
+          outputLimit?: number;
+          reasoning?: boolean;
+          variants?: string[];
+          defaultVariant?: string;
+        }[];
+      }[]
+    | null
+  > => ipcRenderer.invoke('fetch-providers'),
+
+  /**
+   * Fetch full providers info including connected status.
+   * Use this when you need to know which providers are authenticated.
+   */
+  fetchProvidersInfo: (): Promise<{
+    providers: {
+      id: string;
+      name: string;
+      models: {
+        id: string;
+        name: string;
+        contextWindow?: number;
+        inputLimit?: number;
+        outputLimit?: number;
+        reasoning?: boolean;
+        variants?: string[];
+        defaultVariant?: string;
+      }[];
+    }[];
+    connectedProviderIds: string[];
+    defaults: Record<string, string>;
+  } | null> => ipcRenderer.invoke('fetch-providers-info'),
+
+  /**
+   * Fetch all models from all providers, flattened with provider info.
+   */
+  fetchModels: (): Promise<
+    {
+      id: string;
+      name: string;
+      providerId: string;
+      providerName: string;
+      contextWindow?: number;
+      inputLimit?: number;
+      outputLimit?: number;
+      reasoning?: boolean;
+      variants?: string[];
+      defaultVariant?: string;
+    }[]
+  > => ipcRenderer.invoke('fetch-models'),
+
+  /**
+   * Fetch available auth methods for all providers.
+   */
+  fetchProviderAuthMethods: (): Promise<Record<string, AuthMethod[]> | null> =>
+    ipcRenderer.invoke('fetch-provider-auth-methods'),
+
+  /**
+   * Start OAuth authorization flow for a provider.
+   *
+   * @param providerId - The provider to authorize
+   * @param method - The auth method index (from fetchProviderAuthMethods)
+   * @param inputs - Optional inputs from prompts (for OAuth methods with prompts)
+   * @returns Authorization result with URL and method, or null on failure
+   */
+  authorizeProvider: (
+    providerId: string,
+    method: number,
+    inputs?: Record<string, string>,
+  ): Promise<AuthorizeResult | null> =>
+    ipcRenderer.invoke('authorize-provider', { providerId, method, inputs }),
+
+  /**
+   * Complete OAuth callback for a provider.
+   *
+   * @param providerId - The provider to complete auth for
+   * @param method - The auth method index
+   * @param code - Optional OAuth code (required for "code" method, not for "auto")
+   * @returns true if callback succeeded, false otherwise
+   */
+  callbackProvider: (
+    providerId: string,
+    method: number,
+    code?: string,
+  ): Promise<boolean> =>
+    ipcRenderer.invoke('callback-provider', { providerId, method, code }),
+
+  /**
+   * Set an API key for a provider.
+   * This is the "api" auth type flow — user pastes their API key.
+   *
+   * @param providerId - The provider to set the API key for
+   * @param apiKey - The API key to store
+   * @returns true if the key was set successfully, false otherwise
+   */
+  setProviderApiKey: (providerId: string, apiKey: string): Promise<boolean> =>
+    ipcRenderer.invoke('set-provider-api-key', { providerId, apiKey }),
+
+  // ─── Slash Command API ────────────────────────────────────────────────────────
+
+  /**
+   * Fetch all available slash commands from OpenCode.
+   */
+  fetchCommands: (): Promise<
+    | {
+        name: string;
+        description: string;
+        args: { name: string; description: string; required?: boolean }[];
+      }[]
+    | null
+  > => ipcRenderer.invoke('fetch-commands'),
+
+  /**
+   * Execute a slash command in an OpenCode session.
+   */
+  executeCommand: (
+    sessionId: string,
+    commandName: string,
+    args?: Record<string, string>,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('execute-command', { sessionId, commandName, args }),
+
+  // ─── MCP Status API ─────────────────────────────────────────────────────────
+
+  /**
+   * Fetch the status of all MCP servers from OpenCode.
+   *
+   * @param directory - Optional directory context for project-specific MCPs
+   * @returns Status of all MCP servers including tools, resources, and prompts
+   */
+  fetchMcpStatus: (
+    directory?: string,
+  ): Promise<{
+    ok: boolean;
+    servers?: Array<{
+      name: string;
+      type: 'local' | 'remote';
+      status: 'connected' | 'disconnected' | 'connecting' | 'error';
+      error?: string;
+      url?: string;
+      command?: string[];
+      environmentKeys?: string[];
+      tools?: Array<{ name: string; description?: string }>;
+      resources?: Array<{
+        name: string;
+        uri: string;
+        description?: string;
+        mimeType?: string;
+      }>;
+      prompts?: Array<{ name: string; description?: string }>;
+    }>;
+    error?: string;
+  }> => ipcRenderer.invoke('fetch-mcp-status', { directory }),
+
+  /**
+   * Connect or reconnect an MCP server.
+   *
+   * @param name - The MCP server name
+   * @param directory - Optional directory context
+   */
+  connectMcp: (
+    name: string,
+    directory?: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('connect-mcp', { name, directory }),
+
+  /**
+   * Disconnect an MCP server.
+   *
+   * @param name - The MCP server name
+   * @param directory - Optional directory context
+   */
+  disconnectMcp: (
+    name: string,
+    directory?: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('disconnect-mcp', { name, directory }),
+
+  /**
+   * Register a new MCP server with OpenCode.
+   *
+   * @param name - The name for the MCP server
+   * @param config - The MCP server configuration
+   * @param directory - Optional directory context
+   */
+  registerMcp: (
+    name: string,
+    config: {
+      type: 'local' | 'remote';
+      url?: string;
+      command?: string[];
+      environment?: Record<string, string>;
+      timeout?: number;
+    },
+    directory?: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('register-mcp', { name, config, directory }),
+
+  // ─── Renderer Logging ─────────────────────────────────────────────────────
+  /**
+   * Log a message from the renderer to the main process log file.
+   * Use this for routing diagnostics and debugging that need to be persisted.
+   *
+   * @param level - Log level (debug, info, warn, error)
+   * @param category - Category/subsystem name (e.g., 'message-dispatch', 'routing')
+   * @param message - The log message
+   */
+  log: (
+    level: 'debug' | 'info' | 'warn' | 'error',
+    category: string,
+    message: string,
   ): void => {
-    ipcRenderer.removeAllListeners('conversation-part-delta');
-    ipcRenderer.on('conversation-part-delta', (_event, data) => callback(data));
+    ipcRenderer.send('renderer-log', { level, category, message });
   },
 };
 

@@ -1,0 +1,116 @@
+import { useEffect, useRef } from 'react';
+import type { ChannelMessage, SessionNode } from '../../types';
+import type { IpcListenerOpts } from './types';
+import { useSessionTreeHandler } from './useSessionTreeHandler';
+import { useConnectionHandlers } from './useConnectionHandlers';
+import { usePromptHandlers } from './usePromptHandlers';
+import { useStatusHandlers } from './useStatusHandlers';
+import { usePermissionHandlers } from './usePermissionHandlers';
+import { useSessionChannelHandlers } from './useSessionChannelHandlers';
+
+// Re-export types and helpers for external consumers
+export type { IpcListenerOpts, SessionStatusType } from './types';
+export {
+  createDirectConnectionNode,
+  findKeyByConnectionId,
+  findPromptTargetKey,
+  collectDescendantKeys,
+} from './helpers';
+
+/**
+ * Registers all IPC listeners on mount.
+ *
+ * Session topology (tree shape, names, depths) comes from `session-tree-updated`
+ * snapshots emitted by the main-process session-tree-manager.
+ *
+ * All prompt / channel / status events carry a `connectionId` and update the
+ * matching node in place.
+ */
+export function useIpcListeners({
+  getActiveConnectionId,
+  activateRef,
+  setNodes,
+  selectChannel,
+  setClientInfo,
+  withNode,
+  clearAllNodes,
+  loadChannelHistory,
+  applyStartupHistoryBuffer,
+  applyStartupPromptBuffer,
+  bufferPrompt,
+  rehydrateActivePrompts,
+}: IpcListenerOpts): void {
+  const listenersRegistered = useRef(false);
+  // Track which connectionIds we've already loaded history for.
+  const loadedHistoryIds = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (listenersRegistered.current) return;
+    listenersRegistered.current = true;
+
+    // ------------------------------------------------------------------
+    // Local helper: append a message to a node by its map key
+    // ------------------------------------------------------------------
+    const appendMessage = (
+      nodeId: string,
+      message: Omit<ChannelMessage, 'id'>,
+    ): void => {
+      withNode(nodeId, (node: SessionNode) => ({
+        ...node,
+        channelMessages: [
+          ...node.channelMessages,
+          {
+            ...message,
+            id: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          },
+        ],
+        unreadCount:
+          getActiveConnectionId() === nodeId
+            ? node.unreadCount
+            : node.unreadCount + 1,
+      }));
+    };
+
+    // Build the shared handler context
+    const context = {
+      getActiveConnectionId,
+      activateRef,
+      setNodes,
+      selectChannel,
+      setClientInfo,
+      withNode,
+      clearAllNodes,
+      loadChannelHistory,
+      applyStartupHistoryBuffer,
+      applyStartupPromptBuffer,
+      bufferPrompt,
+      rehydrateActivePrompts,
+      loadedHistoryIds,
+      appendMessage,
+    };
+
+    // Register all handler groups
+    useSessionTreeHandler(context);
+    useConnectionHandlers(context);
+    usePromptHandlers(context);
+    useStatusHandlers(context);
+    usePermissionHandlers(context);
+    useSessionChannelHandlers(context);
+
+    // No cleanup needed — app-lifetime registrations.
+    // listenersRegistered guard prevents double-registration in StrictMode.
+  }, [
+    getActiveConnectionId,
+    activateRef,
+    loadChannelHistory,
+    selectChannel,
+    setClientInfo,
+    setNodes,
+    withNode,
+    clearAllNodes,
+    applyStartupHistoryBuffer,
+    applyStartupPromptBuffer,
+    bufferPrompt,
+    rehydrateActivePrompts,
+  ]);
+}
