@@ -29,7 +29,7 @@ export function getRegisteredConnectionForSession(
   sessionID: string,
 ): RegisteredConnection | null {
   const connections = getAllRegisteredConnections();
-  return connections.find((c) => c.openCodeSessionId === sessionID) ?? null;
+  return connections.find((c) => c.providerSessionId === sessionID) ?? null;
 }
 
 export function getStringProperty(

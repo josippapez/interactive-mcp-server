@@ -115,7 +115,6 @@ export function startProjectMcpInjection(
       options.openCodeSessionId ?? options.connectionId;
     sendSessionStatus(
       options.getWindow(),
-      options.connectionId,
       options.openCodeSessionId,
       'Checking for project MCPs...',
       'working',
@@ -134,7 +133,6 @@ export function startProjectMcpInjection(
       if (result.parseError) {
         sendSessionStatus(
           options.getWindow(),
-          options.connectionId,
           options.openCodeSessionId,
           `Failed to parse project config: ${result.parseError}`,
           'error',
@@ -146,7 +144,6 @@ export function startProjectMcpInjection(
         recordInjectedMcps(sessionIdForTracking, result.injectedMcps);
         sendSessionStatus(
           options.getWindow(),
-          options.connectionId,
           options.openCodeSessionId,
           `Injected ${result.injectedMcps.length} project MCP(s): ${result.injectedMcps.join(', ')}`,
           'success',
@@ -160,7 +157,6 @@ export function startProjectMcpInjection(
 
       sendSessionStatus(
         options.getWindow(),
-        options.connectionId,
         options.openCodeSessionId,
         `Failed to inject ${errors.length} MCP(s): ${errors.map((entry) => entry.name).join(', ')}`,
         'error',
@@ -169,7 +165,6 @@ export function startProjectMcpInjection(
       const message = error instanceof Error ? error.message : String(error);
       sendSessionStatus(
         options.getWindow(),
-        options.connectionId,
         options.openCodeSessionId,
         `MCP injection failed: ${message}`,
         'error',
@@ -184,7 +179,6 @@ export function startStartupContextInjection(
   if (options.supportsProviderInjection && options.openCodeSessionId) {
     sendSessionStatus(
       options.getWindow(),
-      options.connectionId,
       options.openCodeSessionId,
       'Injecting startup context into OpenCode session…',
       'working',
@@ -207,7 +201,6 @@ export function startStartupContextInjection(
       if (injectionResult.ok) {
         sendSessionStatus(
           options.getWindow(),
-          options.connectionId,
           options.openCodeSessionId,
           'Startup context injected into OpenCode session',
           'success',
@@ -217,7 +210,6 @@ export function startStartupContextInjection(
 
       sendSessionStatus(
         options.getWindow(),
-        options.connectionId,
         options.openCodeSessionId,
         `Startup context injection failed: ${injectionResult.error ?? 'unknown error'}`,
         'error',
@@ -228,7 +220,6 @@ export function startStartupContextInjection(
 
   sendSessionStatus(
     options.getWindow(),
-    options.connectionId,
     options.openCodeSessionId,
     `Startup context prepared (${options.backendName} mode)`,
     'info',
@@ -240,7 +231,6 @@ export function startStartupContextInjection(
 
   sendSessionStatus(
     options.getWindow(),
-    options.connectionId,
     options.openCodeSessionId,
     options.runtime.message,
     'error',

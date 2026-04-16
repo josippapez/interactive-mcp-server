@@ -31,7 +31,7 @@ export {
 export {
   resolveSession,
   reResolveStaleSession,
-  resolveOpenCodeSessionId,
+  resolveProviderSessionId,
   type ResolutionMethod,
   type ResolvedSession,
   type ResolverOptions,

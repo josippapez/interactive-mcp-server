@@ -52,19 +52,19 @@ export async function reconcileSessionConnections(
   let cleaned = 0;
 
   for (const conn of registeredConnections) {
-    // Skip connections without an openCodeSessionId — nothing to reconcile.
-    if (!conn.openCodeSessionId) continue;
+    // Skip connections without a providerSessionId — nothing to reconcile.
+    if (!conn.providerSessionId) continue;
 
-    if (liveSessionIds.has(conn.openCodeSessionId)) {
+    if (liveSessionIds.has(conn.providerSessionId)) {
       matched++;
       console.log(
-        `[session-reconnect] matched connection "${conn.channelName}" (${conn.connectionId}) → session ${conn.openCodeSessionId}`,
+        `[session-reconnect] matched connection "${conn.channelName}" (${conn.connectionId}) → session ${conn.providerSessionId}`,
       );
     } else {
-      deleteRegisteredConnection(conn.openCodeSessionId);
+      deleteRegisteredConnection(conn.providerSessionId, conn.providerType);
       cleaned++;
       console.log(
-        `[session-reconnect] cleaned stale connection "${conn.channelName}" (${conn.connectionId}) — session ${conn.openCodeSessionId} no longer exists`,
+        `[session-reconnect] cleaned stale connection "${conn.channelName}" (${conn.connectionId}) — session ${conn.providerSessionId} no longer exists`,
       );
     }
   }

@@ -3,10 +3,10 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { claimContextInjections } from '../database';
 import {
-  staleConnectionError,
-  missingSessionIdParamError,
+  staleSessionError,
+  requireProviderSessionId,
 } from './connection-guard';
-import { resolveOpenCodeSessionId } from '../session/resolver';
+import { resolveProviderSessionId } from '../session/resolver';
 
 /**
  * Register the `poll_context_injections` MCP tool.
@@ -57,20 +57,29 @@ desktop has prepared for you. Each injection is delivered exactly once and clear
       },
     },
     ({ openCodeSessionId }): CallToolResult => {
-      const staleErr = staleConnectionError(connectionId);
+      // Resolve providerSessionId at the tool boundary.
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
+        openCodeSessionId,
+      );
+
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
       if (staleErr) return staleErr;
 
-      const missingParamErr = missingSessionIdParamError(
-        openCodeSessionId,
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
 
-      // Use the centralized resolver for consistent priority ordering
-      const injectionKey =
-        resolveOpenCodeSessionId(connectionId, openCodeSessionId) ??
-        connectionId;
-      const items = claimContextInjections(injectionKey);
+      // When requireSessionId is true we have a non-null providerSessionId
+      // (guard above). For standalone/non-OpenCode callers that don't supply
+      // one, fall back to connectionId for keying.
+      const injectionKey = providerSessionId ?? connectionId;
+      const providerType = requireSessionId ? 'opencode' : 'standalone';
+      const items = claimContextInjections(injectionKey, providerType);
       if (items.length === 0) {
         return {
           content: [

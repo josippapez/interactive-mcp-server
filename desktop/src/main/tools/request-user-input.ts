@@ -6,10 +6,10 @@ import { randomUUID } from 'crypto';
 import type { PromptUserFn } from '../ipc/prompt';
 import { getPromptTimeoutSeconds } from '../ipc/prompt';
 import {
-  staleConnectionError,
-  missingSessionIdError,
-  missingSessionIdParamError,
+  staleSessionError,
+  requireProviderSessionId,
 } from './connection-guard';
+import { resolveProviderSessionId } from '../session/resolver';
 import { claimContextInjections } from '../database';
 
 export function registerRequestUserInput(
@@ -146,14 +146,18 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
       },
       extra,
     ): Promise<CallToolResult> => {
-      const staleErr = staleConnectionError(connectionId);
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
+        openCodeSessionId,
+      );
+
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
       if (staleErr) return staleErr;
 
-      const missingErr = missingSessionIdError(connectionId, requireSessionId);
-      if (missingErr) return missingErr;
-
-      const missingParamErr = missingSessionIdParamError(
-        openCodeSessionId,
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
@@ -174,7 +178,7 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
           connectionName,
           timeoutSeconds,
           expiresAt,
-          openCodeSessionId,
+          providerSessionId,
         },
         extra.signal,
       );
@@ -199,14 +203,22 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
 
       const content: CallToolResult['content'] = [];
 
-      // Auto-prepend any pending context injections as system notifications
-      const injectionKey = openCodeSessionId ?? connectionId;
-      const injections = claimContextInjections(injectionKey);
-      for (const injection of injections) {
-        content.push({
-          type: 'text' as const,
-          text: `<system_notification>\n${injection.payload}\n</system_notification>`,
-        });
+      // Auto-prepend any pending context injections as system notifications.
+      // Use the resolved providerSessionId as the injection key; provider type
+      // is 'opencode' when sessionId was required (OpenCode transport) else
+      // 'standalone'.
+      if (providerSessionId) {
+        const providerType = requireSessionId ? 'opencode' : 'standalone';
+        const injections = claimContextInjections(
+          providerSessionId,
+          providerType,
+        );
+        for (const injection of injections) {
+          content.push({
+            type: 'text' as const,
+            text: `<system_notification>\n${injection.payload}\n</system_notification>`,
+          });
+        }
       }
 
       content.push({ type: 'text' as const, text: `User replied: ${answer}` });

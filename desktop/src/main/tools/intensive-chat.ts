@@ -6,11 +6,10 @@ import { randomUUID } from 'crypto';
 import type { PromptUserFn } from '../ipc/prompt';
 import { getPromptTimeoutSeconds } from '../ipc/prompt';
 import {
-  staleConnectionError,
-  missingSessionIdError,
-  missingSessionIdParamError,
+  staleSessionError,
+  requireProviderSessionId,
 } from './connection-guard';
-import { resolveOpenCodeSessionId } from '../session/resolver';
+import { resolveProviderSessionId } from '../session/resolver';
 import { sendIntensiveChatStart, sendIntensiveChatStop } from '../ipc/channel';
 
 interface IntensiveChatSession {
@@ -114,14 +113,18 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
       baseDirectory,
       openCodeSessionId,
     }): Promise<CallToolResult> => {
-      const staleErr = staleConnectionError(connectionId);
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
+        openCodeSessionId,
+      );
+
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
       if (staleErr) return staleErr;
 
-      const missingErr = missingSessionIdError(connectionId, requireSessionId);
-      if (missingErr) return missingErr;
-
-      const missingParamErr = missingSessionIdParamError(
-        openCodeSessionId,
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
@@ -132,8 +135,7 @@ Especially useful for brainstorming ideas or discussing complex topics with the 
       // Use the centralized IPC channel abstraction
       sendIntensiveChatStart(
         getWindow(),
-        connectionId,
-        openCodeSessionId,
+        providerSessionId,
         sessionId,
         sessionTitle,
       );
@@ -237,11 +239,18 @@ Ask a new question in an active intensive chat session previously started with '
       },
       extra,
     ): Promise<CallToolResult> => {
-      const missingErr = missingSessionIdError(connectionId, requireSessionId);
-      if (missingErr) return missingErr;
-
-      const missingParamErr = missingSessionIdParamError(
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
         openCodeSessionId,
+      );
+
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
+      if (staleErr) return staleErr;
+
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
@@ -262,10 +271,6 @@ Ask a new question in an active intensive chat session previously started with '
       const timeoutSeconds = getPromptTimeoutSeconds();
       const expiresAt =
         timeoutSeconds > 0 ? Date.now() + timeoutSeconds * 1000 : 0;
-      const resolvedSessionId = resolveOpenCodeSessionId(
-        connectionId,
-        openCodeSessionId,
-      );
       const result = await promptFn(
         getWindow(),
         {
@@ -279,7 +284,7 @@ Ask a new question in an active intensive chat session previously started with '
           connectionName,
           timeoutSeconds,
           expiresAt,
-          openCodeSessionId: resolvedSessionId,
+          providerSessionId,
         },
         extra.signal,
       );
@@ -387,11 +392,18 @@ Ask a new question in an active intensive chat session previously started with '
       },
     },
     async ({ sessionId, openCodeSessionId }): Promise<CallToolResult> => {
-      const missingErr = missingSessionIdError(connectionId, requireSessionId);
-      if (missingErr) return missingErr;
-
-      const missingParamErr = missingSessionIdParamError(
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
         openCodeSessionId,
+      );
+
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
+      if (staleErr) return staleErr;
+
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
@@ -411,12 +423,7 @@ Ask a new question in an active intensive chat session previously started with '
       activeChatSessions.delete(sessionId);
 
       // Use the centralized IPC channel abstraction
-      sendIntensiveChatStop(
-        getWindow(),
-        connectionId,
-        openCodeSessionId,
-        sessionId,
-      );
+      sendIntensiveChatStop(getWindow(), providerSessionId, sessionId);
 
       return {
         content: [

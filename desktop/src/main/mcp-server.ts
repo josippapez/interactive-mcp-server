@@ -34,9 +34,10 @@ import {
   deleteSessionChannel,
   getAllRegisteredConnections,
   upsertRegisteredConnection,
+  getRegisteredConnection,
   getRegisteredConnectionBySessionId,
   updateConnectionId,
-  deleteContextInjectionsForConnection,
+  deleteContextInjectionsForSession,
 } from './database';
 import {
   writeSessionFile,
@@ -528,7 +529,13 @@ export async function startMcpServer(
       delete sessions[sid];
       cancelActivePrompt(entry.connectionId);
       deleteSessionChannel(entry.connectionId);
-      deleteContextInjectionsForConnection(entry.connectionId);
+      const entryConn = getRegisteredConnection(entry.connectionId);
+      if (entryConn?.providerSessionId) {
+        deleteContextInjectionsForSession(
+          entryConn.providerSessionId,
+          entry.providerType,
+        );
+      }
       // Close the MCP server first so the SDK aborts in-flight tool handler
       // AbortControllers (via Protocol._onclose), then close the transport.
       // This ensures tool handlers see the abort signal before the HTTP
@@ -675,12 +682,18 @@ export async function startMcpServer(
         t.onclose = () => {
           const sid = t.sessionId;
           if (sid && sessions[sid]) {
-            const { connectionId: connId } = sessions[sid];
+            const { connectionId: connId, providerType: pt } = sessions[sid];
             delete sessions[sid];
             // NOTE: We intentionally do NOT cancel active prompts here.
             // See the comment in the POST /mcp handler's transport.onclose.
             deleteSessionChannel(connId);
-            deleteContextInjectionsForConnection(connId);
+            const closedConn = getRegisteredConnection(connId);
+            if (closedConn?.providerSessionId) {
+              deleteContextInjectionsForSession(
+                closedConn.providerSessionId,
+                pt,
+              );
+            }
             clearSessionFile();
             getWindow()?.webContents.send('connection-closed', {
               connectionId: connId,
@@ -854,7 +867,7 @@ export async function startMcpServer(
       transport.onclose = () => {
         const sid = transport.sessionId;
         if (sid && sessions[sid]) {
-          const { connectionId: connId } = sessions[sid];
+          const { connectionId: connId, providerType: pt } = sessions[sid];
           delete sessions[sid];
           // NOTE: We intentionally do NOT cancel active prompts here.
           // transport.onclose fires when the HTTP/SSE connection drops, but
@@ -862,7 +875,10 @@ export async function startMcpServer(
           // pattern). Prompts are only cancelled by explicit user/agent
           // actions: DELETE /mcp, force-terminate, or _clearAllSessions.
           deleteSessionChannel(connId);
-          deleteContextInjectionsForConnection(connId);
+          const closedConn = getRegisteredConnection(connId);
+          if (closedConn?.providerSessionId) {
+            deleteContextInjectionsForSession(closedConn.providerSessionId, pt);
+          }
           clearSessionFile();
           getWindow()?.webContents.send('connection-closed', {
             connectionId: connId,

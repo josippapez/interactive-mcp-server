@@ -62,11 +62,11 @@ export function startSessionTreePoller(
 
     const registeredConnections = getAllRegisteredConnections();
 
-    // Build a set of all openCodeSessionIds already known to the app so we
+    // Build a set of all providerSessionIds already known to the app so we
     // don't fire events for sessions that are already tracked.
     const knownOpenCodeIds = new Set<string>(
       registeredConnections
-        .map((c) => c.openCodeSessionId)
+        .map((c) => c.providerSessionId)
         .filter((id): id is string => id !== null),
     );
 
@@ -74,10 +74,10 @@ export function startSessionTreePoller(
     const newChildren: DetectedChildSession[] = [];
 
     for (const conn of registeredConnections) {
-      if (!conn.openCodeSessionId) continue;
+      if (!conn.providerSessionId) continue;
       // Walk all descendants of this connection's OpenCode session
       const descendants = collectDescendants(
-        conn.openCodeSessionId,
+        conn.providerSessionId,
         allSessions,
       );
       for (const child of descendants) {
@@ -89,7 +89,7 @@ export function startSessionTreePoller(
 
         // Resolve the direct parent ID (may be the registered session or an
         // intermediate ancestor that is also a new child).
-        const directParentId = child.parentID ?? conn.openCodeSessionId;
+        const directParentId = child.parentID ?? conn.providerSessionId;
         newChildren.push({
           openCodeSessionId: child.id,
           parentOpenCodeSessionId: directParentId,

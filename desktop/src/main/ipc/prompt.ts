@@ -41,11 +41,8 @@ export interface PromptData {
    * captured at first registration. Callers MUST resolve this before invoking
    * `promptUser` — it is the key used for the activePrompts map and all
    * downstream routing.
-   *
-   * Marked optional on the type for incremental migration; Phase 3 will make
-   * this required at the type level once all callers pass it.
    */
-  providerSessionId?: string | null;
+  providerSessionId: string | null;
 }
 
 export interface PromptResponse {
@@ -383,13 +380,17 @@ export function promptUser(
   data: PromptData,
   signal?: AbortSignal,
 ): Promise<PromptResponse> {
-  // The caller is now responsible for resolving providerSessionId before
-  // invoking promptUser. This function no longer performs its own resolution.
-  //
-  // TODO(Phase 3): make data.providerSessionId required at the type level
-  // and delete the connectionId fallback below. For Phase 2 we keep a
-  // defensive fallback so callers that haven't been migrated yet still work.
-  const promptKey = data.providerSessionId ?? data.connectionId;
+  // Phase 3: providerSessionId is now required on PromptData. The resolver at
+  // the tool-call boundary is responsible for converting the wire parameter
+  // `openCodeSessionId` (+ connectionId DB lookup) into a canonical
+  // providerSessionId and storing it on PromptData. No connectionId fallback.
+  const promptKey = data.providerSessionId ?? '';
+  if (!promptKey) {
+    return Promise.resolve({
+      answer:
+        'Error: providerSessionId could not be resolved — the agent session is not registered.',
+    });
+  }
 
   // DEBUG: Log prompt routing resolution
   console.log(
@@ -463,11 +464,10 @@ export function promptUser(
 
         const sendPromptClear = (): void => {
           if (win && !win.isDestroyed()) {
-            // Dual-emit for Phase 5 migration; drop legacy fields
-            // (connectionId, openCodeSessionId) when Phase 5 lands.
+            // Dual-emit openCodeSessionId + providerSessionId for Phase 5
+            // migration; drop openCodeSessionId when Phase 5 lands.
             win.webContents.send('prompt-clear', {
               id: data.id,
-              connectionId: data.connectionId,
               openCodeSessionId: promptWithExpiry.providerSessionId ?? null,
               providerSessionId: promptWithExpiry.providerSessionId ?? null,
             });
@@ -494,10 +494,23 @@ export function promptUser(
         void durablePromise.then(resolveOuter);
 
         // ── Send prompt to renderer ───────────────────────────────────────────
-        // Dual-emit for Phase 5 migration; drop the legacy openCodeSessionId
-        // field from the payload when the renderer consumes providerSessionId.
+        // Dual-emit openCodeSessionId + providerSessionId during Phase 5
+        // migration; drop openCodeSessionId when the renderer consumes
+        // providerSessionId exclusively. connectionId is intentionally NOT
+        // included in the renderer payload — it is an internal transport
+        // handle only.
         win.webContents.send('prompt-request', {
-          ...promptWithExpiry,
+          id: promptWithExpiry.id,
+          message: promptWithExpiry.message,
+          projectName: promptWithExpiry.projectName,
+          predefinedOptions: promptWithExpiry.predefinedOptions,
+          sessionId: promptWithExpiry.sessionId,
+          connectionName: promptWithExpiry.connectionName,
+          timeoutSeconds: promptWithExpiry.timeoutSeconds,
+          expiresAt: promptWithExpiry.expiresAt,
+          baseDirectory: promptWithExpiry.baseDirectory,
+          clientInfo: promptWithExpiry.clientInfo,
+          providerSessionId: promptWithExpiry.providerSessionId,
           openCodeSessionId: promptWithExpiry.providerSessionId ?? null,
         });
         appendSessionChannelMessage({

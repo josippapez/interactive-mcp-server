@@ -2,10 +2,10 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import {
-  staleConnectionError,
-  missingSessionIdError,
-  missingSessionIdParamError,
+  staleSessionError,
+  requireProviderSessionId,
 } from './connection-guard';
+import { resolveProviderSessionId } from '../session/resolver';
 import {
   getRegisteredConnection,
   getRegisteredConnectionBySessionId,
@@ -53,23 +53,27 @@ IMPORTANT: You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) wit
       },
     },
     async ({ query, limit, openCodeSessionId }): Promise<CallToolResult> => {
-      // Check for stale/deleted connection
-      const staleError = staleConnectionError(connectionId);
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
+        openCodeSessionId,
+      );
+
+      // Check for stale/deleted session
+      const staleError = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
       if (staleError) return staleError;
 
-      // Check for missing OpenCode session ID (required in OpenCode mode)
-      const missingErr = missingSessionIdError(connectionId, requireSessionId);
-      if (missingErr) return missingErr;
-
-      const missingParamErr = missingSessionIdParamError(
-        openCodeSessionId,
+      // Check for missing provider session ID (required in OpenCode mode)
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
 
-      // Look up the registered connection - prefer openCodeSessionId for lookup
-      const connection = openCodeSessionId
-        ? getRegisteredConnectionBySessionId(openCodeSessionId)
+      // Look up the registered connection - prefer providerSessionId for lookup
+      const connection = providerSessionId
+        ? getRegisteredConnectionBySessionId(providerSessionId)
         : getRegisteredConnection(connectionId);
       if (!connection?.baseDirectory) {
         return {

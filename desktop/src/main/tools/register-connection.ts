@@ -97,7 +97,6 @@ export function registerConnectionTool(
       if (backend.backend === 'claude_sdk' && backend.runtime?.available) {
         sendSessionStatus(
           getWindow(),
-          connectionId,
           openCodeSessionId,
           'Claude SDK backend active (session injection adapter scaffolded)',
           'info',
@@ -197,7 +196,6 @@ export function registerConnectionTool(
       if (backend.supportsProviderInjection && baseDirectory) {
         sendSessionStatus(
           getWindow(),
-          connectionId,
           openCodeSessionId,
           'Using OpenCode workspace MCP config for this session',
           'info',

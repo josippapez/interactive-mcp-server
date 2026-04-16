@@ -4,25 +4,31 @@
  * This module provides a single abstraction for all main process → renderer
  * communication that involves session routing. It ensures:
  *
- * 1. Consistent openCodeSessionId resolution (explicit param > DB lookup)
- * 2. Type-safe IPC message payloads
- * 3. Single point of maintenance for routing logic
+ * 1. Type-safe IPC message payloads
+ * 2. Single point of maintenance for routing logic
+ *
+ * Callers MUST resolve `providerSessionId` at the tool boundary using
+ * `resolveProviderSessionId` and pass it explicitly. `sendToRenderer` does
+ * NOT perform any resolution itself.
  *
  * All tools that need to send messages to the renderer should use these
  * functions instead of calling `webContents.send()` directly.
  */
 
 import type { BrowserWindow } from 'electron';
-import { resolveOpenCodeSessionId } from '../session/resolver';
 
 // ─── Base payload type ─────────────────────────────────────────────────────
 
 /**
  * Base payload included in all session-routed IPC messages.
  * The renderer uses these fields to route messages to the correct channel.
+ *
+ * Both `providerSessionId` and `openCodeSessionId` are emitted during the
+ * rename transition (Phase 3). Phase 5 will drop `openCodeSessionId` from
+ * all renderer consumers.
  */
 export interface SessionRoutedPayload {
-  connectionId: string;
+  providerSessionId: string | null;
   openCodeSessionId: string | null;
 }
 
@@ -55,33 +61,28 @@ export interface PromptClearPayload extends SessionRoutedPayload {
 /**
  * Send an IPC message to the renderer with proper session routing.
  *
- * This is the core function that all session-routed IPC communication
- * should go through. It resolves the openCodeSessionId using the centralized
- * resolver, ensuring consistent priority ordering.
+ * Callers MUST resolve `providerSessionId` at the tool boundary before calling
+ * this function — no resolution is performed here.
+ *
+ * Emits both `providerSessionId` and `openCodeSessionId` (set to the same
+ * value) in the payload during the rename transition.
  *
  * @param win - The BrowserWindow to send to (null-safe)
  * @param channel - The IPC channel name
- * @param connectionId - The MCP transport UUID
- * @param explicitSessionId - Optional explicit openCodeSessionId from the agent
+ * @param providerSessionId - The resolved provider session ID (nullable)
  * @param payload - Additional payload data specific to this channel
  */
 export function sendToRenderer<T extends Record<string, unknown>>(
   win: BrowserWindow | null,
   channel: string,
-  connectionId: string,
-  explicitSessionId: string | null | undefined,
+  providerSessionId: string | null,
   payload: T,
 ): void {
   if (!win || win.isDestroyed()) return;
 
-  const resolvedSessionId = resolveOpenCodeSessionId(
-    connectionId,
-    explicitSessionId,
-  );
-
   win.webContents.send(channel, {
-    connectionId,
-    openCodeSessionId: resolvedSessionId,
+    providerSessionId,
+    openCodeSessionId: providerSessionId,
     ...payload,
   });
 }
@@ -94,21 +95,14 @@ export function sendToRenderer<T extends Record<string, unknown>>(
  */
 export function sendSessionStatus(
   win: BrowserWindow | null,
-  connectionId: string,
-  explicitSessionId: string | null | undefined,
+  providerSessionId: string | null,
   status: string,
   type: 'info' | 'working' | 'success' | 'error',
 ): void {
-  sendToRenderer(
-    win,
-    'session-status-update',
-    connectionId,
-    explicitSessionId,
-    {
-      status,
-      type,
-    },
-  );
+  sendToRenderer(win, 'session-status-update', providerSessionId, {
+    status,
+    type,
+  });
 }
 
 /**
@@ -117,11 +111,10 @@ export function sendSessionStatus(
  */
 export function sendAgentMessage(
   win: BrowserWindow | null,
-  connectionId: string,
-  explicitSessionId: string | null | undefined,
+  providerSessionId: string | null,
   message: string,
 ): void {
-  sendToRenderer(win, 'agent-message', connectionId, explicitSessionId, {
+  sendToRenderer(win, 'agent-message', providerSessionId, {
     message,
   });
 }
@@ -132,12 +125,11 @@ export function sendAgentMessage(
  */
 export function sendIntensiveChatStart(
   win: BrowserWindow | null,
-  connectionId: string,
-  explicitSessionId: string | null | undefined,
+  providerSessionId: string | null,
   sessionId: string,
   title: string,
 ): void {
-  sendToRenderer(win, 'intensive-chat-start', connectionId, explicitSessionId, {
+  sendToRenderer(win, 'intensive-chat-start', providerSessionId, {
     sessionId,
     title,
   });
@@ -149,11 +141,10 @@ export function sendIntensiveChatStart(
  */
 export function sendIntensiveChatStop(
   win: BrowserWindow | null,
-  connectionId: string,
-  explicitSessionId: string | null | undefined,
+  providerSessionId: string | null,
   sessionId: string,
 ): void {
-  sendToRenderer(win, 'intensive-chat-stop', connectionId, explicitSessionId, {
+  sendToRenderer(win, 'intensive-chat-stop', providerSessionId, {
     sessionId,
   });
 }
@@ -164,11 +155,10 @@ export function sendIntensiveChatStop(
  */
 export function sendPromptClear(
   win: BrowserWindow | null,
-  connectionId: string,
-  explicitSessionId: string | null | undefined,
+  providerSessionId: string | null,
   promptId: string,
 ): void {
-  sendToRenderer(win, 'prompt-clear', connectionId, explicitSessionId, {
+  sendToRenderer(win, 'prompt-clear', providerSessionId, {
     id: promptId,
   });
 }

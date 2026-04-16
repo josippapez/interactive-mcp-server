@@ -1,7 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
-import { staleConnectionError } from './connection-guard';
+import { staleSessionError } from './connection-guard';
+import { resolveProviderSessionId } from '../session/resolver';
 import {
   upsertSkillOrInstruction,
   listSkillsAndInstructions,
@@ -127,7 +128,10 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
       filterType,
       filterCategory,
     }): Promise<CallToolResult> => {
-      const staleErr = staleConnectionError(connectionId);
+      const providerSessionId = resolveProviderSessionId(connectionId);
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
       if (staleErr) return staleErr;
 
       switch (action) {

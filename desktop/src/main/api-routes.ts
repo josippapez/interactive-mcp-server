@@ -12,7 +12,7 @@ import {
 import { resolveAttachmentPath } from './attachment-store';
 import { forceTerminateChat } from './ipc/prompt';
 import { closeSessionByConnectionId } from './mcp-server';
-import { markConnectionDeleted } from './tools/connection-guard';
+import { markSessionDeleted } from './tools/connection-guard';
 import {
   triggerSessionTreeUpdate,
   tombstoneOpenCodeSession,
@@ -96,7 +96,7 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
       closeSessionByConnectionId,
       deleteSessionChannel,
       deleteRegisteredConnection,
-      markConnectionDeleted,
+      markSessionDeleted,
       triggerSessionTreeUpdate,
       getRegisteredConnection,
       tombstoneOpenCodeSession,

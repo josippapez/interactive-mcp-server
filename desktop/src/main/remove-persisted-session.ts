@@ -8,28 +8,28 @@ export interface RemovePersistedSessionDeps {
   deleteSessionChannel: (sessionId: string) => void;
   /**
    * Delete the registered connection record.
-   * Parameter is the openCodeSessionId (PK after Phase 2 schema change).
+   * Parameter is the providerSessionId (PK after Phase 2 schema change).
    */
-  deleteRegisteredConnection: (openCodeSessionId: string) => void;
-  markConnectionDeleted: (connectionId: string) => void;
+  deleteRegisteredConnection: (providerSessionId: string) => void;
+  markSessionDeleted: (providerSessionId: string) => void;
   triggerSessionTreeUpdate: (
     getWindow: () => BrowserWindow | null,
     getOpenCodePort: () => number,
   ) => void | Promise<void>;
   /**
    * Look up the registered connection record for a given connectionId.
-   * Used to resolve the OpenCode session ID before the record is deleted,
+   * Used to resolve the provider session ID before the record is deleted,
    * so that we can tombstone it and prevent the session-tree poller from
    * re-adding the just-deleted node.
    */
   getRegisteredConnection: (
     connectionId: string,
-  ) => { openCodeSessionId: string } | null | undefined;
+  ) => { providerSessionId: string } | null | undefined;
   /**
-   * Mark an OpenCode session ID as tombstoned so the session-tree poller
+   * Mark a provider session ID as tombstoned so the session-tree poller
    * excludes it from all subsequent snapshots.
    */
-  tombstoneOpenCodeSession: (openCodeSessionId: string) => void;
+  tombstoneOpenCodeSession: (providerSessionId: string) => void;
 }
 
 /**
@@ -46,19 +46,19 @@ export async function removePersistedSession(
   sessionId: string,
   deps: RemovePersistedSessionDeps,
 ): Promise<boolean> {
-  // Look up the OpenCode session ID BEFORE deleting the registered-connection
+  // Look up the provider session ID BEFORE deleting the registered-connection
   // row so we can tombstone it.  Once deleteRegisteredConnection runs, the row
   // is gone and we can no longer resolve the mapping.
   //
   // Priority:
-  //   1. rc.openCodeSessionId — for sessions that have a registered MCP channel.
-  //      The sessionId here is the connectionId; the OpenCode session ID is
+  //   1. rc.providerSessionId — for sessions that have a registered MCP channel.
+  //      The sessionId here is the connectionId; the provider session ID is
   //      stored in the registered_connections row.
   //   2. sessionId itself — for sessions that were never registered (or whose
   //      channel has already been cleaned up).  In that path the caller passes
-  //      the openCodeSessionId directly as the sessionId.
+  //      the providerSessionId directly as the sessionId.
   const rc = deps.getRegisteredConnection(sessionId);
-  const openCodeSessionId: string = rc?.openCodeSessionId ?? sessionId;
+  const providerSessionId: string = rc?.providerSessionId ?? sessionId;
 
   deps.forceTerminateChat(sessionId);
 
@@ -75,14 +75,14 @@ export async function removePersistedSession(
 
   // Always clean up DB state — even if the transport close failed.
   deps.deleteSessionChannel(sessionId);
-  deps.deleteRegisteredConnection(openCodeSessionId);
-  deps.markConnectionDeleted(sessionId);
+  deps.deleteRegisteredConnection(providerSessionId);
+  deps.markSessionDeleted(providerSessionId);
 
-  // Tombstone the OpenCode session so the session-tree poller never re-adds
+  // Tombstone the provider session so the session-tree poller never re-adds
   // the just-deleted node while the OpenCode session itself still lives.
   // Also tombstones all descendant sessions (children of children, etc.) so
   // the entire subtree disappears from the sidebar.
-  deps.tombstoneOpenCodeSession(openCodeSessionId);
+  deps.tombstoneOpenCodeSession(providerSessionId);
 
   void deps.triggerSessionTreeUpdate(deps.getWindow, deps.getOpenCodePort);
 

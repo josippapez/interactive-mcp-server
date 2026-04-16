@@ -70,7 +70,7 @@ import {
 } from '../mcp-server';
 import { indexFiles, rankFileSuggestions } from '../docs/file-indexer';
 import { forceTerminateChat, getActivePromptData } from './prompt';
-import { markConnectionDeleted } from '../tools/connection-guard';
+import { markSessionDeleted } from '../tools/connection-guard';
 import {
   triggerSessionTreeUpdate,
   tombstoneOpenCodeSession,
@@ -99,7 +99,6 @@ import {
 } from '../tools/skill-match';
 import { searchGlobal } from '../docs/search';
 import {
-  getSessionContextUsage,
   triggerCompaction,
   fetchSessionTokens,
   setSessionTotalTokens,
@@ -114,7 +113,6 @@ import {
   setProviderApiKey,
 } from '../opencode/provider';
 import { fetchCommands, executeCommand } from '../opencode/command';
-import { getClient } from '../opencode/sdk-client';
 import { createLogger } from '../utils/logger';
 
 const ipcLog = createLogger('ipc');
@@ -499,7 +497,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       closeSessionByConnectionId,
       deleteSessionChannel,
       deleteRegisteredConnection,
-      markConnectionDeleted,
+      markSessionDeleted,
       triggerSessionTreeUpdate,
       getRegisteredConnection,
       tombstoneOpenCodeSession,
@@ -596,8 +594,17 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       responseText?: string;
       error?: string;
     }> => {
+      // Resolve connectionId → providerSessionId via DB lookup.
+      const conn = getRegisteredConnection(data.connectionId);
+      const providerSessionId = conn?.providerSessionId;
+      if (!providerSessionId) {
+        return {
+          ok: false,
+          error: `No provider session found for connectionId=${data.connectionId}`,
+        };
+      }
       return injectClaudeMessageForConnection({
-        connectionId: data.connectionId,
+        providerSessionId,
         message: data.message,
         baseDirectory: data.baseDirectory,
         attachments: data.attachments,
@@ -631,14 +638,9 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
           searchDocs,
           injectOpenCodeMessage,
           upsertContextInjection,
-          sendAgentMessage: (connectionId, openCodeSessionId, message) => {
+          sendAgentMessage: (providerSessionId, message) => {
             // Use the centralized IPC channel abstraction
-            sendAgentMessage(
-              deps.getMainWindow(),
-              connectionId,
-              openCodeSessionId,
-              message,
-            );
+            sendAgentMessage(deps.getMainWindow(), providerSessionId, message);
           },
         },
       );
@@ -845,6 +847,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         sessionID: string;
         requestID: string;
         reply: 'once' | 'always' | 'reject';
+        directory?: string;
       },
     ): Promise<{ ok: boolean; error?: string }> => {
       const { openCodePort } = deps.getSettings();

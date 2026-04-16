@@ -19,14 +19,6 @@ export function markSessionDeleted(providerSessionId: string): void {
 }
 
 /**
- * @deprecated Phase 4 will remove this alias. Use `markSessionDeleted`.
- * Back-compat shim during the connectionId → providerSessionId refactor.
- * Callers that still pass a connectionId should migrate to passing the
- * resolved providerSessionId instead.
- */
-export const markConnectionDeleted = markSessionDeleted;
-
-/**
  * If `providerSessionId` was explicitly deleted by the user, returns a
  * structured, actionable `CallToolResult` error instructing the agent to call
  * `register_connection`. Returns `null` if the session is still active.
@@ -63,31 +55,27 @@ export function staleSessionError(
 }
 
 /**
- * @deprecated Phase 4 will remove this alias. Use `staleSessionError`.
- * Back-compat shim during the connectionId → providerSessionId refactor.
- */
-export const staleConnectionError = staleSessionError;
-
-/**
+ * Unified guard that validates the agent supplied a provider session ID on the
+ * tool call. Consolidates the former `missingSessionIdError` and
+ * `missingSessionIdParamError` into a single entry point.
+ *
  * When `requireSessionId` is true (OpenCode backend with provider injection
- * enabled), checks that a providerSessionId has been resolved (i.e. is a
- * non-empty string). Returns a structured `MISSING_SESSION_ID` error if it is
- * absent, instructing the agent to call `register_connection` again with
- * their session ID. Returns `null` if the check passes or is not applicable.
+ * enabled), returns a structured `MISSING_SESSION_ID` error if `providerSessionId`
+ * is missing or empty. Returns `null` when the check passes or is not applicable.
  *
- * Phase 3 will collapse this with `missingSessionIdParamError` into a single
- * `requireProviderSessionId` helper. For Phase 2 the signature has been
- * flattened: this function no longer performs a DB lookup — the caller is
- * responsible for resolving providerSessionId before calling in.
+ * NOTE: the variable is named `providerSessionId` to match the new internal
+ * identity terminology, but the MCP wire parameter that carries it remains
+ * `openCodeSessionId` (public API, agent back-compat). Error message wording
+ * therefore still uses `openCodeSessionId`.
  *
- * @param providerSessionId The resolved provider-session identity, or null.
+ * @param providerSessionId The session ID passed by the agent in the tool call
+ *                          (arrives on the wire as `openCodeSessionId`).
  * @param requireSessionId  Pass `true` only when the backend supports provider
  *                          injection (i.e. `AgentBackend === 'opencode'`).
- *                          Pass `false` for standalone/non-OpenCode clients —
- *                          they have no session ID and that is expected.
+ *                          Pass `false` for standalone/non-OpenCode clients.
  */
-export function missingSessionIdError(
-  providerSessionId: string | null,
+export function requireProviderSessionId(
+  providerSessionId: string | undefined | null,
   requireSessionId: boolean,
 ): CallToolResult | null {
   if (!requireSessionId) return null;
@@ -106,50 +94,6 @@ export function missingSessionIdError(
         type: 'text' as const,
         text: JSON.stringify({
           error: 'MISSING_SESSION_ID',
-          message:
-            'This tool requires your OpenCode session ID to route correctly. ' +
-            'Your session ID was not found for this connection.',
-          action:
-            'Call register_connection again and include openCodeSessionId set to your OpenCode session ID ' +
-            '(format: ses_<alphanumeric>). It was injected into your context at session start via a system-reminder message.',
-        }),
-      },
-    ],
-  };
-}
-
-/**
- * Validates that the agent passed `openCodeSessionId` in the tool call parameters.
- * This is required for OpenCode provider connections to ensure correct message routing.
- *
- * Returns a structured `MISSING_SESSION_ID_PARAM` error if the parameter is missing
- * or empty. Returns `null` if the check passes or is not applicable.
- *
- * NOTE: the parameter is named `providerSessionId` to match the new internal
- * identity terminology, but the MCP wire parameter that carries it remains
- * `openCodeSessionId` (public API, agent back-compat). Error message wording
- * therefore still uses `openCodeSessionId`.
- *
- * @param providerSessionId The session ID passed by the agent in the tool call
- *                          (arrives on the wire as `openCodeSessionId`).
- * @param requireSessionId  Pass `true` only when the backend supports provider
- *                          injection (i.e. `AgentBackend === 'opencode'`).
- */
-export function missingSessionIdParamError(
-  providerSessionId: string | undefined | null,
-  requireSessionId: boolean,
-): CallToolResult | null {
-  if (!requireSessionId) return null;
-
-  if (providerSessionId && providerSessionId.trim().length > 0) return null;
-
-  return {
-    isError: true,
-    content: [
-      {
-        type: 'text' as const,
-        text: JSON.stringify({
-          error: 'MISSING_SESSION_ID_PARAM',
           message:
             'You MUST pass your openCodeSessionId parameter on every tool call. ' +
             'This is required for correct message routing in multi-agent scenarios.',

@@ -44,11 +44,7 @@ export interface InjectDocContextDeps {
   searchDocs: typeof searchDocs;
   injectOpenCodeMessage: typeof injectOpenCodeMessage;
   upsertContextInjection: typeof upsertContextInjection;
-  sendAgentMessage: (
-    connectionId: string,
-    openCodeSessionId: string | null,
-    message: string,
-  ) => void;
+  sendAgentMessage: (providerSessionId: string | null, message: string) => void;
 }
 
 /**
@@ -121,9 +117,20 @@ export async function handleInjectDocContext(
     : `<system-reminder>\n${innerText}\n</system-reminder>`;
 
   if (!openCodeSessionId) {
-    // Standalone mode (no OpenCode) — queue into SQLite for poll_context_injections delivery
+    // Standalone mode (no OpenCode) — queue into SQLite for poll_context_injections delivery.
+    // Resolve the provider session id from the connection row so the injection is keyed
+    // consistently with the rest of the unified DB schema.
+    const standaloneProviderSessionId = effectiveConn?.providerSessionId;
+    if (!standaloneProviderSessionId) {
+      return {
+        ok: false,
+        injectedCount: 0,
+        error: `No provider session found for connectionId=${connectionId}`,
+      };
+    }
     deps.upsertContextInjection(
-      connectionId,
+      standaloneProviderSessionId,
+      'standalone',
       summaryText,
       'doc-context',
       'doc-context',
@@ -134,7 +141,7 @@ export async function handleInjectDocContext(
       `**Context queued for agent (${results.length} docs):**`,
       ...results.map((r, i) => `${i + 1}. \`${r.path}\``),
     ].join('\n');
-    deps.sendAgentMessage(connectionId, openCodeSessionId, visibleSummary);
+    deps.sendAgentMessage(standaloneProviderSessionId, visibleSummary);
 
     return { ok: true, injectedCount: results.length };
   }
@@ -162,7 +169,7 @@ export async function handleInjectDocContext(
   ].join('\n');
 
   // Emit to renderer so it shows up in chat immediately (not persisted to DB per Option A)
-  deps.sendAgentMessage(connectionId, openCodeSessionId, visibleSummary);
+  deps.sendAgentMessage(openCodeSessionId, visibleSummary);
 
   return { ok: true, injectedCount: results.length };
 }

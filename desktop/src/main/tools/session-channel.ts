@@ -3,16 +3,15 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import type { BrowserWindow } from 'electron';
 import {
-  staleConnectionError,
-  missingSessionIdError,
-  missingSessionIdParamError,
+  staleSessionError,
+  requireProviderSessionId,
 } from './connection-guard';
 import {
   appendSessionChannelMessage,
   getRegisteredConnection,
 } from '../database';
 import { sendSessionStatus, sendAgentMessage } from '../ipc/channel';
-import { resolveOpenCodeSessionId } from '../session/resolver';
+import { resolveProviderSessionId } from '../session/resolver';
 
 /** Returns an actionable error if the agent hasn't called register_connection yet. */
 function unregisteredConnectionError(
@@ -113,26 +112,24 @@ Push a non-blocking status update to the UI. Returns immediately. Use to keep th
       type = 'info',
       openCodeSessionId,
     }): Promise<CallToolResult> => {
-      const staleErr = staleConnectionError(connectionId);
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
+        openCodeSessionId,
+      );
+
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
       if (staleErr) return staleErr;
 
-      const missingErr = missingSessionIdError(connectionId, requireSessionId);
-      if (missingErr) return missingErr;
-
-      const missingParamErr = missingSessionIdParamError(
-        openCodeSessionId,
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
 
       // Use the centralized IPC channel abstraction
-      sendSessionStatus(
-        getWindow(),
-        connectionId,
-        openCodeSessionId,
-        status,
-        type,
-      );
+      sendSessionStatus(getWindow(), providerSessionId, status, type);
 
       return {
         content: [
@@ -203,14 +200,18 @@ Send a visible, persistent message directly into the desktop app channel history
       },
     },
     async ({ message, openCodeSessionId }): Promise<CallToolResult> => {
-      const staleErr = staleConnectionError(connectionId);
+      const providerSessionId = resolveProviderSessionId(
+        connectionId,
+        openCodeSessionId,
+      );
+
+      const staleErr = providerSessionId
+        ? staleSessionError(providerSessionId)
+        : null;
       if (staleErr) return staleErr;
 
-      const missingErr = missingSessionIdError(connectionId, requireSessionId);
-      if (missingErr) return missingErr;
-
-      const missingParamErr = missingSessionIdParamError(
-        openCodeSessionId,
+      const missingParamErr = requireProviderSessionId(
+        providerSessionId,
         requireSessionId,
       );
       if (missingParamErr) return missingParamErr;
@@ -219,10 +220,7 @@ Send a visible, persistent message directly into the desktop app channel history
       if (unregisteredErr) return unregisteredErr;
 
       // Resolve the correct session ID for persistence.
-      // openCodeSessionId (explicit param) takes priority over connectionId (transport handle).
-      const resolvedSessionId =
-        resolveOpenCodeSessionId(connectionId, openCodeSessionId) ??
-        connectionId;
+      const resolvedSessionId = providerSessionId ?? connectionId;
 
       appendSessionChannelMessage({
         sessionId: resolvedSessionId,
@@ -231,7 +229,7 @@ Send a visible, persistent message directly into the desktop app channel history
       });
 
       // Use the centralized IPC channel abstraction
-      sendAgentMessage(getWindow(), connectionId, openCodeSessionId, message);
+      sendAgentMessage(getWindow(), providerSessionId, message);
 
       return {
         content: [
