@@ -53,7 +53,7 @@ export function useUiHandlers({
   /** Jump focus to the first channel that has a pending prompt, if any. */
   const jumpToFirstPendingPrompt = useCallback(() => {
     for (const [id, node] of nodesRef.current) {
-      if (node.hasPendingPrompt) {
+      if (node.hasPendingPrompt || node.pendingQuestions.length > 0) {
         selectChannel(id, 'keyboard-shortcut');
         return;
       }

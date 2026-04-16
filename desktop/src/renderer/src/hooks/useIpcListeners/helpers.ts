@@ -30,6 +30,7 @@ export function createDirectConnectionNode(
     sessionChannel,
     sessionStatuses: [],
     pendingPermissions: [],
+    pendingQuestions: [],
     baseDirectory: null,
     vcsInfo: null,
   };

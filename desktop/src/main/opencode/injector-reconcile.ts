@@ -1,4 +1,4 @@
-import { getClient } from './sdk-client';
+import { sessionMessages, sessionStatus } from './session-api';
 
 type LoggerLike = {
   warn: (message: string) => void;
@@ -40,8 +40,7 @@ async function isSessionBusy(
   reconcileTimeoutMs: number,
 ): Promise<boolean> {
   try {
-    const client = getClient(port);
-    const response = await client.session.status({
+    const response = await sessionStatus(port, {
       signal: AbortSignal.timeout(reconcileTimeoutMs),
     });
 
@@ -66,13 +65,11 @@ async function hasDeliveredMessage(
   message: string,
 ): Promise<boolean> {
   try {
-    const client = getClient(port);
-    // SDK expects { path: { id }, query: { limit } } structure
-    const response = await client.session.messages(
-      {
-        path: { id: openCodeSessionId },
-        query: { limit: reconcileMessageLimit },
-      },
+    // SDK v2 flattens path+query params onto the first argument.
+    const response = await sessionMessages(
+      port,
+      openCodeSessionId,
+      { limit: reconcileMessageLimit },
       { signal: AbortSignal.timeout(reconcileTimeoutMs) },
     );
 

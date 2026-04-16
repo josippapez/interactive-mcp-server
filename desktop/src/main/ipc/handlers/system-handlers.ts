@@ -14,7 +14,6 @@ import { rankFileSuggestions, indexFiles } from '../../docs/file-indexer';
 import { getBackendAdapter } from '../../backend-adapter';
 import { forceTerminateChat, getActivePromptData } from '../prompt';
 import { SUPPORTED_FILE_EXTENSIONS } from '../../opencode/injector';
-import { replyToOpenCodePermission } from '../../opencode/permission-reply';
 import { IpcHandlerDeps } from './types';
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
@@ -154,16 +153,6 @@ export function registerSystemHandlers(deps: IpcHandlerDeps): void {
     forceTerminateChat(connectionId);
     const win = deps.getMainWindow();
     win?.webContents.send('connection-closed', { connectionId });
-  });
-
-  ipcMain.handle('reply-permission', async (_event, data) => {
-    const { openCodePort } = deps.getSettings();
-    return replyToOpenCodePermission(
-      openCodePort,
-      data.sessionID,
-      data.requestID,
-      data.reply,
-    );
   });
 
   ipcMain.handle('add-allowed-read-folder', (_event, folderPath: string) => {

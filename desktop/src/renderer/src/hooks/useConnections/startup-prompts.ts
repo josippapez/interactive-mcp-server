@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { PromptData, SessionNode } from '../../types';
+import type {
+  PendingPermission,
+  PendingQuestion,
+  PromptData,
+  SessionNode,
+} from '../../types';
 import { findKeyByConnectionId } from '../useIpcListeners';
 import type { StartupPromptBuffer } from './types';
 
@@ -13,27 +18,34 @@ interface UseStartupPromptsOptions {
  */
 export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
   const startupPromptBuffer = useRef<StartupPromptBuffer>(new Map());
+  const startupPermissionBuffer = useRef<
+    Map<string, PendingPermission[]>
+  >(new Map());
+  const startupQuestionBuffer = useRef<Map<string, PendingQuestion[]>>(new Map());
 
-  const ensureQuestionMessage = (node: SessionNode, promptData: PromptData) => {
-    const hasQuestion = node.channelMessages.some(
-      (message) =>
-        message.kind === 'question' && message.text === promptData.message,
-    );
+  const ensureQuestionMessage = useCallback(
+    (node: SessionNode, promptData: PromptData) => {
+      const hasQuestion = node.channelMessages.some(
+        (message) =>
+          message.kind === 'question' && message.text === promptData.message,
+      );
 
-    if (hasQuestion) {
-      return node.channelMessages;
-    }
+      if (hasQuestion) {
+        return node.channelMessages;
+      }
 
-    return [
-      ...node.channelMessages,
-      {
-        id: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        kind: 'question' as const,
-        text: promptData.message,
-        timestamp: new Date(),
-      },
-    ];
-  };
+      return [
+        ...node.channelMessages,
+        {
+          id: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          kind: 'question' as const,
+          text: promptData.message,
+          timestamp: new Date(),
+        },
+      ];
+    },
+    [],
+  );
 
   // ---------------------------------------------------------------------------
   // Startup — recover any prompts that arrived while the renderer was restarting.
@@ -83,12 +95,112 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
         return next;
       });
     }
+  }, [ensureQuestionMessage, setNodes]);
+
+  const rehydratePendingPermissions = useCallback(async (): Promise<void> => {
+    const pendingPermissions = await window.api.getPendingPermissions?.();
+    if (!pendingPermissions || pendingPermissions.length === 0) return;
+
+    for (const pendingPermission of pendingPermissions) {
+      const permission: PendingPermission = {
+        requestId: pendingPermission.requestId,
+        sessionID: pendingPermission.sessionID,
+        permission: pendingPermission.permission,
+        patterns: pendingPermission.patterns,
+        always: pendingPermission.always,
+        tool: pendingPermission.tool,
+        metadata: pendingPermission.metadata,
+      };
+
+      setNodes((prev) => {
+        const nodeId = findKeyByConnectionId(
+          prev,
+          pendingPermission.sessionID,
+          pendingPermission.sessionID,
+        );
+        if (!nodeId) {
+          const buffered =
+            startupPermissionBuffer.current.get(pendingPermission.sessionID) ?? [];
+          if (!buffered.some((item) => item.requestId === permission.requestId)) {
+            startupPermissionBuffer.current.set(pendingPermission.sessionID, [
+              ...buffered,
+              permission,
+            ]);
+          }
+          return prev;
+        }
+
+        const node = prev.get(nodeId)!;
+        if (
+          node.pendingPermissions.some(
+            (item) => item.requestId === permission.requestId,
+          )
+        ) {
+          return prev;
+        }
+
+        const next = new Map(prev);
+        next.set(nodeId, {
+          ...node,
+          pendingPermissions: [...node.pendingPermissions, permission],
+        });
+        return next;
+      });
+    }
+  }, [setNodes]);
+
+  const rehydratePendingQuestions = useCallback(async (): Promise<void> => {
+    const pendingQuestions = await window.api.getPendingQuestions?.();
+    if (!pendingQuestions || pendingQuestions.length === 0) return;
+
+    for (const pendingQuestion of pendingQuestions) {
+      const question: PendingQuestion = {
+        requestId: pendingQuestion.requestId,
+        sessionID: pendingQuestion.sessionID,
+        questions: pendingQuestion.questions,
+        tool: pendingQuestion.tool,
+      };
+
+      setNodes((prev) => {
+        const nodeId = findKeyByConnectionId(
+          prev,
+          pendingQuestion.sessionID,
+          pendingQuestion.sessionID,
+        );
+        if (!nodeId) {
+          const buffered =
+            startupQuestionBuffer.current.get(pendingQuestion.sessionID) ?? [];
+          if (!buffered.some((item) => item.requestId === question.requestId)) {
+            startupQuestionBuffer.current.set(pendingQuestion.sessionID, [
+              ...buffered,
+              question,
+            ]);
+          }
+          return prev;
+        }
+
+        const node = prev.get(nodeId)!;
+        if (node.pendingQuestions.some((item) => item.requestId === question.requestId)) {
+          return prev;
+        }
+
+        const next = new Map(prev);
+        next.set(nodeId, {
+          ...node,
+          pendingQuestions: [...node.pendingQuestions, question],
+          hasPendingPrompt: true,
+        });
+        return next;
+      });
+    }
   }, [setNodes]);
 
   useEffect(() => {
     let cancelled = false;
     const run = async (): Promise<void> => {
       await rehydrateActivePrompts();
+      await rehydratePendingPermissions();
+      await rehydratePendingQuestions();
       if (cancelled) {
         return;
       }
@@ -97,7 +209,7 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
     return () => {
       cancelled = true;
     };
-  }, [rehydrateActivePrompts]);
+  }, [rehydrateActivePrompts, rehydratePendingPermissions, rehydratePendingQuestions]);
 
   /**
    * Apply any buffered startup prompt for a given openCodeSessionId or connectionId.
@@ -145,6 +257,91 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
         return next;
       });
     },
+    [ensureQuestionMessage, setNodes],
+  );
+
+  const applyStartupPermissionBuffer = useCallback(
+    (openCodeSessionId: string, connectionId: string | null) => {
+      let buffered = startupPermissionBuffer.current.get(openCodeSessionId);
+      if (!buffered && connectionId) {
+        buffered = startupPermissionBuffer.current.get(connectionId);
+        if (buffered) {
+          startupPermissionBuffer.current.delete(connectionId);
+        }
+      } else if (buffered) {
+        startupPermissionBuffer.current.delete(openCodeSessionId);
+      }
+
+      if (!buffered) return;
+
+      setNodes((prev) => {
+        const nodeId = findKeyByConnectionId(
+          prev,
+          connectionId ?? openCodeSessionId,
+          openCodeSessionId,
+        );
+        if (!nodeId) return prev;
+
+        const node = prev.get(nodeId)!;
+        const incoming = buffered.filter(
+          (permission) =>
+            !node.pendingPermissions.some(
+              (item) => item.requestId === permission.requestId,
+            ),
+        );
+        if (incoming.length === 0) return prev;
+
+        const next = new Map(prev);
+        next.set(nodeId, {
+          ...node,
+          pendingPermissions: [...node.pendingPermissions, ...incoming],
+        });
+        return next;
+      });
+    },
+    [setNodes],
+  );
+
+  const applyStartupQuestionBuffer = useCallback(
+    (openCodeSessionId: string, connectionId: string | null) => {
+      let buffered = startupQuestionBuffer.current.get(openCodeSessionId);
+      if (!buffered && connectionId) {
+        buffered = startupQuestionBuffer.current.get(connectionId);
+        if (buffered) {
+          startupQuestionBuffer.current.delete(connectionId);
+        }
+      } else if (buffered) {
+        startupQuestionBuffer.current.delete(openCodeSessionId);
+      }
+
+      if (!buffered) return;
+
+      setNodes((prev) => {
+        const nodeId = findKeyByConnectionId(
+          prev,
+          connectionId ?? openCodeSessionId,
+          openCodeSessionId,
+        );
+        if (!nodeId) return prev;
+
+        const node = prev.get(nodeId)!;
+        const incoming = buffered.filter(
+          (question) =>
+            !node.pendingQuestions.some(
+              (item) => item.requestId === question.requestId,
+            ),
+        );
+        if (incoming.length === 0) return prev;
+
+        const next = new Map(prev);
+        next.set(nodeId, {
+          ...node,
+          pendingQuestions: [...node.pendingQuestions, ...incoming],
+          hasPendingPrompt: true,
+        });
+        return next;
+      });
+    },
     [setNodes],
   );
 
@@ -163,9 +360,33 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
     startupPromptBuffer.current.set(bufferKey, promptData);
   }, []);
 
+  const bufferPermission = useCallback((permission: PendingPermission) => {
+    const bufferKey = permission.sessionID;
+    const buffered = startupPermissionBuffer.current.get(bufferKey) ?? [];
+    if (buffered.some((item) => item.requestId === permission.requestId)) {
+      return;
+    }
+    startupPermissionBuffer.current.set(bufferKey, [...buffered, permission]);
+  }, []);
+
+  const bufferQuestion = useCallback((question: PendingQuestion) => {
+    const bufferKey = question.sessionID;
+    const buffered = startupQuestionBuffer.current.get(bufferKey) ?? [];
+    if (buffered.some((item) => item.requestId === question.requestId)) {
+      return;
+    }
+    startupQuestionBuffer.current.set(bufferKey, [...buffered, question]);
+  }, []);
+
   return {
     applyStartupPromptBuffer,
+    applyStartupPermissionBuffer,
+    applyStartupQuestionBuffer,
     bufferPrompt,
+    bufferPermission,
+    bufferQuestion,
     rehydrateActivePrompts,
+    rehydratePendingPermissions,
+    rehydratePendingQuestions,
   };
 }

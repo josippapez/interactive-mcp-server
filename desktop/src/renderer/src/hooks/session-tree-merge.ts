@@ -98,6 +98,7 @@ function mergeSnapshotNode(
     hasPendingPrompt: promptSource?.hasPendingPrompt ?? false,
     sessionStatuses: mergeSource?.sessionStatuses ?? [],
     pendingPermissions: mergeSource?.pendingPermissions ?? [],
+    pendingQuestions: mergeSource?.pendingQuestions ?? [],
   };
 }
 

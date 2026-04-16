@@ -605,6 +605,234 @@ describe('applyPendingParts', () => {
     expect(result[1]).not.toBe(m2);
     expect(result[1].parts).toHaveLength(2);
   });
+
+  // ── Tool-call status transitions ──────────────────────────────────────────
+  // These tests document the behavior that matters for the "Running" badge
+  // getting stuck after a question tool is answered.
+
+  it('updates tool-call status from running to completed', () => {
+    const msgs: ConversationMessage[] = [
+      {
+        id: 'm1',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        createdAt: Date.now(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'question',
+            toolCallId: 'call-1',
+            toolStatus: 'running',
+          },
+        ],
+      },
+    ];
+
+    const buf: PendingPartsBuffer = new Map();
+    const pendingPart: ConversationMessagePart = {
+      id: 'tool-1',
+      type: 'tool-call',
+      toolName: 'question',
+      toolCallId: 'call-1',
+      toolStatus: 'completed',
+      toolOutput: 'User answered...',
+    };
+    const { key, value } = makePendingPart('m1', pendingPart);
+    buf.set(key, value);
+
+    const result = applyPendingParts(msgs, buf);
+
+    expect(result[0].parts[0].toolStatus).toBe('completed');
+    expect(result[0].parts[0].toolOutput).toBe('User answered...');
+  });
+
+  it('updates tool-call status even when both existing and incoming have no text', () => {
+    // Regression: tool-call parts typically have no `text` field, so the
+    // `newText.length < existingText.length` guard must not block updates.
+    const msgs: ConversationMessage[] = [
+      {
+        id: 'm1',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        createdAt: Date.now(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'bash',
+            toolStatus: 'pending',
+          },
+        ],
+      },
+    ];
+
+    const buf: PendingPartsBuffer = new Map();
+    const pendingPart: ConversationMessagePart = {
+      id: 'tool-1',
+      type: 'tool-call',
+      toolName: 'bash',
+      toolStatus: 'running',
+    };
+    const { key, value } = makePendingPart('m1', pendingPart);
+    buf.set(key, value);
+
+    const result = applyPendingParts(msgs, buf);
+
+    expect(result[0].parts[0].toolStatus).toBe('running');
+  });
+
+  it('merges tool-call gaining toolOutput while status transitions', () => {
+    const msgs: ConversationMessage[] = [
+      {
+        id: 'm1',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        createdAt: Date.now(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'bash',
+            toolCallId: 'call-1',
+            toolStatus: 'running',
+            toolInput: { command: 'ls' },
+          },
+        ],
+      },
+    ];
+
+    const buf: PendingPartsBuffer = new Map();
+    const pendingPart: ConversationMessagePart = {
+      id: 'tool-1',
+      type: 'tool-call',
+      toolName: 'bash',
+      toolCallId: 'call-1',
+      toolStatus: 'completed',
+      toolInput: { command: 'ls' },
+      toolOutput: 'file1.txt\nfile2.txt\n',
+    };
+    const { key, value } = makePendingPart('m1', pendingPart);
+    buf.set(key, value);
+
+    const result = applyPendingParts(msgs, buf);
+
+    expect(result[0].parts[0].toolStatus).toBe('completed');
+    expect(result[0].parts[0].toolOutput).toBe('file1.txt\nfile2.txt\n');
+  });
+
+  it('merges tool-call gaining toolMetadata on completion', () => {
+    const msgs: ConversationMessage[] = [
+      {
+        id: 'm1',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        createdAt: Date.now(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'task',
+            toolCallId: 'call-1',
+            toolStatus: 'running',
+          },
+        ],
+      },
+    ];
+
+    const buf: PendingPartsBuffer = new Map();
+    const pendingPart: ConversationMessagePart = {
+      id: 'tool-1',
+      type: 'tool-call',
+      toolName: 'task',
+      toolCallId: 'call-1',
+      toolStatus: 'completed',
+      toolMetadata: { sessionId: 'child-sess-42' },
+    };
+    const { key, value } = makePendingPart('m1', pendingPart);
+    buf.set(key, value);
+
+    const result = applyPendingParts(msgs, buf);
+
+    expect(result[0].parts[0].toolStatus).toBe('completed');
+    expect(result[0].parts[0].toolMetadata).toEqual({
+      sessionId: 'child-sess-42',
+    });
+  });
+
+  it('does not let a late tool-call update regress completed back to running', () => {
+    // After a tool is completed, a subsequent stale update with status=running
+    // must not overwrite the completed state. We key the guard on the incoming
+    // pending part — if it carries a non-advancing status, skip.
+    const msgs: ConversationMessage[] = [
+      {
+        id: 'm1',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        createdAt: Date.now(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'question',
+            toolCallId: 'call-1',
+            toolStatus: 'completed',
+            toolOutput: 'User answered',
+          },
+        ],
+      },
+    ];
+
+    const buf: PendingPartsBuffer = new Map();
+    const pendingPart: ConversationMessagePart = {
+      id: 'tool-1',
+      type: 'tool-call',
+      toolName: 'question',
+      toolCallId: 'call-1',
+      toolStatus: 'running',
+    };
+    const { key, value } = makePendingPart('m1', pendingPart);
+    buf.set(key, value);
+
+    const result = applyPendingParts(msgs, buf);
+
+    // Completed state is terminal — must not regress.
+    expect(result[0].parts[0].toolStatus).toBe('completed');
+    expect(result[0].parts[0].toolOutput).toBe('User answered');
+  });
+
+  it('does not regress tool-call status from error back to running', () => {
+    const msgs: ConversationMessage[] = [
+      {
+        id: 'm1',
+        sessionId: 'sess-1',
+        role: 'assistant',
+        createdAt: Date.now(),
+        parts: [
+          {
+            id: 'tool-1',
+            type: 'tool-call',
+            toolName: 'bash',
+            toolStatus: 'error',
+          },
+        ],
+      },
+    ];
+
+    const buf: PendingPartsBuffer = new Map();
+    const pendingPart: ConversationMessagePart = {
+      id: 'tool-1',
+      type: 'tool-call',
+      toolName: 'bash',
+      toolStatus: 'running',
+    };
+    const { key, value } = makePendingPart('m1', pendingPart);
+    buf.set(key, value);
+
+    const result = applyPendingParts(msgs, buf);
+
+    expect(result[0].parts[0].toolStatus).toBe('error');
+  });
 });
 
 // ── inferPartType ────────────────────────────────────────────────────────────

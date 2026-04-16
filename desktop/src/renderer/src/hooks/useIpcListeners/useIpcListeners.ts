@@ -1,12 +1,13 @@
 import { useEffect, useRef } from 'react';
 import type { ChannelMessage, SessionNode } from '../../types';
 import type { IpcListenerOpts } from './types';
-import { useSessionTreeHandler } from './useSessionTreeHandler';
-import { useConnectionHandlers } from './useConnectionHandlers';
-import { usePromptHandlers } from './usePromptHandlers';
-import { useStatusHandlers } from './useStatusHandlers';
-import { usePermissionHandlers } from './usePermissionHandlers';
-import { useSessionChannelHandlers } from './useSessionChannelHandlers';
+import { useSessionTreeHandler as registerSessionTreeHandler } from './useSessionTreeHandler';
+import { useConnectionHandlers as registerConnectionHandlers } from './useConnectionHandlers';
+import { usePromptHandlers as registerPromptHandlers } from './usePromptHandlers';
+import { useStatusHandlers as registerStatusHandlers } from './useStatusHandlers';
+import { usePermissionHandlers as registerPermissionHandlers } from './usePermissionHandlers';
+import { useQuestionHandlers as registerQuestionHandlers } from './useQuestionHandlers';
+import { useSessionChannelHandlers as registerSessionChannelHandlers } from './useSessionChannelHandlers';
 
 // Re-export types and helpers for external consumers
 export type { IpcListenerOpts, SessionStatusType } from './types';
@@ -37,9 +38,15 @@ export function useIpcListeners({
   loadChannelHistory,
   applyStartupHistoryBuffer,
   applyStartupPromptBuffer,
+  applyStartupPermissionBuffer,
+  applyStartupQuestionBuffer,
   bufferPrompt,
+  bufferPermission,
+  bufferQuestion,
   rehydrateActivePrompts,
-}: IpcListenerOpts): void {
+  rehydratePendingPermissions,
+  rehydratePendingQuestions,
+  }: IpcListenerOpts): void {
   const listenersRegistered = useRef(false);
   // Track which connectionIds we've already loaded history for.
   const loadedHistoryIds = useRef(new Set<string>());
@@ -83,19 +90,26 @@ export function useIpcListeners({
       loadChannelHistory,
       applyStartupHistoryBuffer,
       applyStartupPromptBuffer,
+      applyStartupPermissionBuffer,
+      applyStartupQuestionBuffer,
       bufferPrompt,
+      bufferPermission,
+      bufferQuestion,
       rehydrateActivePrompts,
+      rehydratePendingPermissions,
+      rehydratePendingQuestions,
       loadedHistoryIds,
       appendMessage,
     };
 
     // Register all handler groups
-    useSessionTreeHandler(context);
-    useConnectionHandlers(context);
-    usePromptHandlers(context);
-    useStatusHandlers(context);
-    usePermissionHandlers(context);
-    useSessionChannelHandlers(context);
+    registerSessionTreeHandler(context);
+    registerConnectionHandlers(context);
+    registerPromptHandlers(context);
+    registerStatusHandlers(context);
+    registerPermissionHandlers(context);
+    registerQuestionHandlers(context);
+    registerSessionChannelHandlers(context);
 
     // Request the current session tree snapshot from the main process.
     // This ensures we get the initial state even if the main process emitted
@@ -115,7 +129,13 @@ export function useIpcListeners({
     clearAllNodes,
     applyStartupHistoryBuffer,
     applyStartupPromptBuffer,
+    applyStartupPermissionBuffer,
+    applyStartupQuestionBuffer,
     bufferPrompt,
+    bufferPermission,
+    bufferQuestion,
     rehydrateActivePrompts,
+    rehydratePendingPermissions,
+    rehydratePendingQuestions,
   ]);
 }

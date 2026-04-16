@@ -10,7 +10,13 @@ import { createConversationStreamStore } from '../store/conversation-stream-stor
 
 const PACE_MS = 24;
 
-export type { TextDelta, PendingPart } from './delta-batcher-types';
+export type {
+  TextDelta,
+  PendingPart,
+  DeltaBuffer,
+  PendingPartsBuffer,
+  PartType,
+} from './delta-batcher-types';
 export {
   deltaKey,
   accumulateDelta,

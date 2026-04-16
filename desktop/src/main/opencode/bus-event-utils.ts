@@ -15,6 +15,16 @@ export type BusEventHandlerDependencies = {
   getSettings?: (() => AppSettings) | null;
 };
 
+export function shouldAutoApprovePermission(
+  permission: string,
+  allowedPermissions: string[],
+): boolean {
+  const normalizedPermission = permission.toLowerCase();
+  return allowedPermissions.some(
+    (item) => item.toLowerCase() === normalizedPermission,
+  );
+}
+
 export function getRegisteredConnectionForSession(
   sessionID: string,
 ): RegisteredConnection | null {
@@ -118,6 +128,7 @@ export async function autoReplyPermission(
   requestId: string,
   reply: PromptReply,
   getOpenCodePort?: (() => number) | null,
+  directory?: string,
 ): Promise<void> {
   const port = getOpenCodePort?.() ?? 4096;
 
@@ -127,6 +138,7 @@ export async function autoReplyPermission(
       sessionID,
       requestId,
       reply,
+      directory,
     );
 
     if (result.ok) {

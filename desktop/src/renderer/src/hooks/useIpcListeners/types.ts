@@ -1,4 +1,10 @@
-import type { SessionNode, ChannelMessage, PromptData } from '../../types';
+import type {
+  SessionNode,
+  ChannelMessage,
+  PromptData,
+  PendingPermission,
+  PendingQuestion,
+} from '../../types';
 import type { ChannelSelectionSource } from '../../store/channel-selection';
 
 export type SessionStatusType = 'info' | 'working' | 'success' | 'error';
@@ -29,10 +35,24 @@ export type IpcListenerOpts = {
     openCodeSessionId: string,
     connectionId: string | null,
   ) => void;
+  applyStartupPermissionBuffer: (
+    openCodeSessionId: string,
+    connectionId: string | null,
+  ) => void;
+  applyStartupQuestionBuffer: (
+    openCodeSessionId: string,
+    connectionId: string | null,
+  ) => void;
   /** Buffer a prompt for later application when its target node arrives. */
   bufferPrompt: (promptData: PromptData) => void;
+  /** Buffer a permission request for later application when its target node arrives. */
+  bufferPermission: (permission: PendingPermission) => void;
+  /** Buffer a question request for later application when its target node arrives. */
+  bufferQuestion: (question: PendingQuestion) => void;
   /** Re-fetch and re-apply any still-active prompts from the main process. */
   rehydrateActivePrompts: () => Promise<void>;
+  rehydratePendingPermissions: () => Promise<void>;
+  rehydratePendingQuestions: () => Promise<void>;
 };
 
 /**

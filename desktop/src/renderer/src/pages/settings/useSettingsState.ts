@@ -92,7 +92,6 @@ export function useSettingsState() {
       settings.agentBackend !== initialSettings.agentBackend ||
       settings.autoRegisterSubagents !==
         initialSettings.autoRegisterSubagents ||
-      settings.extraMcpServers !== initialSettings.extraMcpServers ||
       settings.compactMode !== initialSettings.compactMode ||
       settings.hideSystemReminders !== initialSettings.hideSystemReminders ||
       settings.hideDocInjections !== initialSettings.hideDocInjections ||

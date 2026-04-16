@@ -37,22 +37,16 @@ function computeMcpTimeout(promptTimeoutSeconds: number): number {
 
 /**
  * Ensure the user's `~/.config/opencode/opencode.json` has an
- * `interactive-desktop` MCP entry pointing to the desktop app's HTTP endpoint,
- * and optionally merges additional MCP server entries from a raw JSON string.
+ * `interactive-desktop` MCP entry pointing to the desktop app's HTTP endpoint.
  *
  * @param appPort — the port the desktop app's MCP HTTP server listens on.
  * @param promptTimeoutSeconds — current prompt timeout from settings.
  *   Used to compute the MCP entry timeout dynamically. Defaults to 800s.
- * @param extraMcpServersJson — optional raw JSON string of extra MCP server
- *   entries to include alongside `interactive-desktop`. Must be a JSON object
- *   whose keys are server names and values are MCP server config objects.
- *   If empty or invalid JSON, it is silently ignored.
  * @returns a short status string for logging.
  */
 export function syncRemoteConfig(
   appPort: number,
   promptTimeoutSeconds?: number,
-  extraMcpServersJson?: string,
 ): string {
   const mcpTimeout = computeMcpTimeout(
     promptTimeoutSeconds ?? DEFAULT_PROMPT_TIMEOUT_S,
@@ -111,33 +105,7 @@ export function syncRemoteConfig(
     existing.timeout === mcpTimeout &&
     !existing.command; // must not be a leftover local entry
 
-  // Parse extra MCP server entries (silently ignore empty/invalid JSON)
-  let extraServers: Record<string, unknown> = {};
-  if (extraMcpServersJson && extraMcpServersJson.trim() !== '') {
-    try {
-      const parsed: unknown = JSON.parse(extraMcpServersJson);
-      if (
-        parsed !== null &&
-        typeof parsed === 'object' &&
-        !Array.isArray(parsed)
-      ) {
-        extraServers = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Invalid JSON — ignore
-    }
-  }
-
-  // Check whether any extra server entries differ from what's on disk
-  let extraServersDiffer = false;
-  for (const [key, value] of Object.entries(extraServers)) {
-    if (JSON.stringify(mcp[key]) !== JSON.stringify(value)) {
-      extraServersDiffer = true;
-      break;
-    }
-  }
-
-  if (alreadyCurrent && !needsWrite && !extraServersDiffer) {
+  if (alreadyCurrent && !needsWrite) {
     return 'already-current';
   }
 
@@ -148,11 +116,6 @@ export function syncRemoteConfig(
       url: desiredUrl,
       timeout: mcpTimeout,
     };
-  }
-
-  // Merge extra server entries (upsert — existing entries with the same key are overwritten)
-  for (const [key, value] of Object.entries(extraServers)) {
-    mcp[key] = value;
   }
 
   // Write back. We re-serialize the stripped JSON (comments are lost, which is

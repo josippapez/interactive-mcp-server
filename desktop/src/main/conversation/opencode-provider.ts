@@ -7,6 +7,7 @@
  */
 
 import { getClient } from '../opencode/sdk-client';
+import { sessionList, sessionMessages } from '../opencode/session-api';
 import type {
   ConversationProvider,
   ConversationMessage,
@@ -164,9 +165,8 @@ export class OpenCodeConversationProvider implements ConversationProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      const client = getClient(this.port);
       // Use session.list() as a health check since SDK doesn't have global.health
-      const result = await client.session.list(undefined, {
+      const result = await sessionList(this.port, undefined, {
         signal: AbortSignal.timeout(3000),
       });
       return !result.error;
@@ -183,12 +183,8 @@ export class OpenCodeConversationProvider implements ConversationProvider {
       `[opencode-conversation] fetchMessages called: sessionId=${sessionId} limit=${limit}`,
     );
     try {
-      const client = getClient(this.port);
-      // SDK expects { path: { id }, query: { limit } } structure
-      const result = await client.session.messages({
-        path: { id: sessionId },
-        query: { limit },
-      });
+      // SDK v2 flattens path+query params onto the first argument.
+      const result = await sessionMessages(this.port, sessionId, { limit });
 
       console.log(
         `[opencode-conversation] fetchMessages result: error=${JSON.stringify(result.error) ?? 'none'} dataLength=${Array.isArray(result.data) ? result.data.length : 'N/A'}`,

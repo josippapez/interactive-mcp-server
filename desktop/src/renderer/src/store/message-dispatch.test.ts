@@ -35,6 +35,7 @@ function createMockNode(overrides: Partial<SessionNode> = {}): SessionNode {
     sessionChannel: null,
     sessionStatuses: [],
     pendingPermissions: [],
+    pendingQuestions: [],
     vcsInfo: null,
     ...overrides,
   };

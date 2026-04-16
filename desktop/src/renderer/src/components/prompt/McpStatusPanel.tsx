@@ -1,5 +1,11 @@
 import React, { useState, useCallback, memo } from 'react';
 import type { McpServer } from '../../hooks/useMcpServers';
+import {
+  getMcpPrimaryAction,
+  getMcpStatusIndicatorClass,
+  getMcpStatusLabel,
+  shouldShowRemoveAuth,
+} from './mcp-status-utils';
 
 // ─── Icons ────────────────────────────────────────────────────────────────────
 
@@ -105,17 +111,10 @@ function StatusBadge({
 }: {
   status: McpServer['status'];
 }): React.ReactElement {
-  const colors: Record<McpServer['status'], string> = {
-    connected: 'bg-green-500',
-    disconnected: 'bg-gray-400',
-    connecting: 'bg-yellow-500 animate-pulse',
-    error: 'bg-red-500',
-  };
-
   return (
     <span
-      className={`w-2 h-2 rounded-full flex-shrink-0 ${colors[status]}`}
-      title={status}
+      className={`w-2 h-2 rounded-full flex-shrink-0 ${getMcpStatusIndicatorClass(status)}`}
+      title={getMcpStatusLabel(status)}
     />
   );
 }
@@ -124,8 +123,11 @@ function StatusBadge({
 
 interface McpServerItemProps {
   server: McpServer;
-  onConnect: (name: string) => void;
-  onDisconnect: (name: string) => void;
+  onConnect: (name: string) => Promise<void>;
+  onDisconnect: (name: string) => Promise<void>;
+  onAuthenticate: (name: string) => Promise<void>;
+  onRemoveAuth: (name: string) => Promise<void>;
+  actionInProgress: string | null;
   isExpanded: boolean;
   onToggleExpand: () => void;
 }
@@ -134,6 +136,9 @@ const McpServerItem = memo(function McpServerItem({
   server,
   onConnect,
   onDisconnect,
+  onAuthenticate,
+  onRemoveAuth,
+  actionInProgress,
   isExpanded,
   onToggleExpand,
 }: McpServerItemProps): React.ReactElement {
@@ -141,16 +146,45 @@ const McpServerItem = memo(function McpServerItem({
   const resourceCount = server.resources?.length ?? 0;
   const promptCount = server.prompts?.length ?? 0;
   const hasCapabilities = toolCount > 0 || resourceCount > 0 || promptCount > 0;
+  const primaryAction = getMcpPrimaryAction(server.status);
+  const isBusy = actionInProgress === server.name;
+
+  const handlePrimaryAction = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    if (primaryAction.action === 'disconnect') {
+      void onDisconnect(server.name);
+      return;
+    }
+    if (
+      primaryAction.action === 'authenticate' ||
+      primaryAction.action === 'configure_auth'
+    ) {
+      void onAuthenticate(server.name);
+      return;
+    }
+    void onConnect(server.name);
+  };
+
+  const primaryButtonClass =
+    primaryAction.action === 'disconnect'
+      ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20'
+      : primaryAction.action === 'authenticate' ||
+          primaryAction.action === 'configure_auth'
+        ? 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20'
+        : 'bg-green-500/10 text-green-500 hover:bg-green-500/20';
 
   return (
     <div className="border border-[var(--color-border)] rounded-md overflow-hidden">
       {/* Header */}
-      <div
-        className="flex items-center gap-2 px-2 py-1.5 bg-[var(--color-surface-alt)] cursor-pointer hover:bg-[var(--color-surface-alt)]/80"
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 px-2 py-1.5 bg-[var(--color-surface-alt)] cursor-pointer hover:bg-[var(--color-surface-alt)]/80"
         onClick={onToggleExpand}
       >
         <StatusBadge status={server.status} />
-        <span className="font-medium text-xs flex-1 truncate">{server.name}</span>
+        <span className="font-medium text-xs flex-1 truncate">
+          {server.name}
+        </span>
         <span className="text-[10px] text-[var(--color-text-faint)] px-1 py-0.5 rounded bg-[var(--color-surface)]">
           {server.type}
         </span>
@@ -161,7 +195,7 @@ const McpServerItem = memo(function McpServerItem({
           </span>
         )}
         <ChevronIcon open={isExpanded} />
-      </div>
+      </button>
 
       {/* Expanded Content */}
       {isExpanded && (
@@ -169,35 +203,55 @@ const McpServerItem = memo(function McpServerItem({
           {/* Status and Actions */}
           <div className="flex items-center justify-between">
             <span className="text-[10px] text-[var(--color-text-faint)]">
-              Status: <span className="capitalize">{server.status}</span>
+              Status: <span>{getMcpStatusLabel(server.status)}</span>
               {server.error && (
                 <span className="text-red-500 ml-1">({server.error})</span>
               )}
             </span>
             <div className="flex gap-1">
-              {server.status === 'connected' ? (
+              <button
+                type="button"
+                onClick={handlePrimaryAction}
+                disabled={isBusy || server.status === 'connecting'}
+                className={`text-[10px] px-2 py-0.5 rounded disabled:opacity-50 ${primaryButtonClass}`}
+              >
+                {isBusy
+                  ? primaryAction.action === 'disconnect'
+                    ? 'Disconnecting...'
+                    : primaryAction.action === 'authenticate' ||
+                        primaryAction.action === 'configure_auth'
+                      ? 'Authenticating...'
+                      : 'Connecting...'
+                  : primaryAction.label}
+              </button>
+              {shouldShowRemoveAuth(server) && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    onDisconnect(server.name);
+                    void onRemoveAuth(server.name);
                   }}
-                  className="text-[10px] px-2 py-0.5 rounded bg-red-500/10 text-red-500 hover:bg-red-500/20"
+                  disabled={isBusy}
+                  className="text-[10px] px-2 py-0.5 rounded bg-[var(--color-surface-alt)] text-[var(--color-text-faint)] hover:text-[var(--color-text)] disabled:opacity-50"
                 >
-                  Disconnect
-                </button>
-              ) : (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onConnect(server.name);
-                  }}
-                  className="text-[10px] px-2 py-0.5 rounded bg-green-500/10 text-green-500 hover:bg-green-500/20"
-                >
-                  Connect
+                  Clear auth
                 </button>
               )}
             </div>
           </div>
+
+          {server.status === 'needs_auth' && (
+            <div className="text-[10px] text-amber-600 bg-amber-500/10 px-2 py-1 rounded">
+              Authentication is required before this MCP server can connect.
+            </div>
+          )}
+
+          {server.status === 'needs_client_registration' && (
+            <div className="text-[10px] text-orange-600 bg-orange-500/10 px-2 py-1 rounded">
+              This MCP server needs OAuth client registration or a configured
+              client ID before authentication can complete.
+            </div>
+          )}
 
           {/* Connection Info */}
           {server.url && (
@@ -207,7 +261,8 @@ const McpServerItem = memo(function McpServerItem({
           )}
           {server.command && (
             <div className="text-[10px] text-[var(--color-text-faint)]">
-              Command: <span className="font-mono">{server.command.join(' ')}</span>
+              Command:{' '}
+              <span className="font-mono">{server.command.join(' ')}</span>
             </div>
           )}
 
@@ -298,8 +353,10 @@ interface McpStatusPanelProps {
   isLoading: boolean;
   error: string | null;
   onRefresh: () => void;
-  onConnect: (name: string) => void;
-  onDisconnect: (name: string) => void;
+  onConnect: (name: string) => Promise<boolean>;
+  onDisconnect: (name: string) => Promise<boolean>;
+  onAuthenticate: (name: string) => Promise<boolean>;
+  onRemoveAuth: (name: string) => Promise<boolean>;
   onOpenSettings?: () => void;
 }
 
@@ -310,12 +367,27 @@ export default function McpStatusPanel({
   onRefresh,
   onConnect,
   onDisconnect,
+  onAuthenticate,
+  onRemoveAuth,
   onOpenSettings,
 }: McpStatusPanelProps): React.ReactElement {
   const [isExpanded, setIsExpanded] = useState(false);
-  const [expandedServers, setExpandedServers] = useState<Set<string>>(new Set());
+  const [expandedServers, setExpandedServers] = useState<Set<string>>(
+    new Set(),
+  );
+  // Track multiple actions in progress (allows concurrent operations)
+  const [actionsInProgress, setActionsInProgress] = useState<Set<string>>(
+    new Set(),
+  );
+  const [reconnectAllInProgress, setReconnectAllInProgress] = useState(false);
 
   const connectedCount = servers.filter((s) => s.status === 'connected').length;
+  const needsAuthCount = servers.filter(
+    (s) => s.status === 'needs_auth',
+  ).length;
+  const disconnectedCount = servers.filter(
+    (s) => s.status === 'disconnected' || s.status === 'error',
+  ).length;
   const totalCount = servers.length;
 
   const toggleServerExpand = useCallback((name: string) => {
@@ -330,6 +402,98 @@ export default function McpStatusPanel({
     });
   }, []);
 
+  const addActionInProgress = useCallback((name: string) => {
+    setActionsInProgress((prev) => new Set(prev).add(name));
+  }, []);
+
+  const removeActionInProgress = useCallback((name: string) => {
+    setActionsInProgress((prev) => {
+      const next = new Set(prev);
+      next.delete(name);
+      return next;
+    });
+  }, []);
+
+  const handleConnect = useCallback(
+    async (name: string) => {
+      addActionInProgress(name);
+      try {
+        await onConnect(name);
+      } finally {
+        removeActionInProgress(name);
+      }
+    },
+    [onConnect, addActionInProgress, removeActionInProgress],
+  );
+  const handleDisconnect = useCallback(
+    async (name: string) => {
+      addActionInProgress(name);
+      try {
+        await onDisconnect(name);
+      } finally {
+        removeActionInProgress(name);
+      }
+    },
+    [onDisconnect, addActionInProgress, removeActionInProgress],
+  );
+  const handleAuthenticate = useCallback(
+    async (name: string) => {
+      addActionInProgress(name);
+      try {
+        await onAuthenticate(name);
+      } finally {
+        removeActionInProgress(name);
+      }
+    },
+    [onAuthenticate, addActionInProgress, removeActionInProgress],
+  );
+  const handleRemoveAuth = useCallback(
+    async (name: string) => {
+      addActionInProgress(name);
+      try {
+        await onRemoveAuth(name);
+      } finally {
+        removeActionInProgress(name);
+      }
+    },
+    [onRemoveAuth, addActionInProgress, removeActionInProgress],
+  );
+
+  // Reconnect all disconnected/errored servers in parallel
+  const handleReconnectAll = useCallback(async () => {
+    const toReconnect = servers.filter(
+      (s) => s.status === 'disconnected' || s.status === 'error',
+    );
+    if (toReconnect.length === 0) return;
+
+    setReconnectAllInProgress(true);
+    // Add all to in-progress set
+    for (const server of toReconnect) {
+      addActionInProgress(server.name);
+    }
+
+    // Connect all in parallel
+    await Promise.allSettled(
+      toReconnect.map(async (server) => {
+        try {
+          await onConnect(server.name);
+        } finally {
+          removeActionInProgress(server.name);
+        }
+      }),
+    );
+
+    setReconnectAllInProgress(false);
+  }, [servers, onConnect, addActionInProgress, removeActionInProgress]);
+
+  // Convert Set to string for actionInProgress prop (for compatibility)
+  const getActionInProgress = useCallback(
+    (name: string): string | null => {
+      return actionsInProgress.has(name) ? name : null;
+    },
+    [actionsInProgress],
+  );
+
   return (
     <div className="border border-[var(--color-border)] rounded-lg overflow-hidden bg-[var(--color-surface)]">
       {/* Header */}
@@ -339,10 +503,17 @@ export default function McpStatusPanel({
         className="w-full flex items-center gap-2 px-3 py-2 bg-[var(--color-surface-alt)] hover:bg-[var(--color-surface-alt)]/80 transition-colors"
       >
         <PlugIcon />
-        <span className="text-xs font-medium flex-1 text-left">MCP Servers</span>
+        <span className="text-xs font-medium flex-1 text-left">
+          MCP Servers
+        </span>
         <span className="text-[10px] text-[var(--color-text-faint)]">
           {connectedCount}/{totalCount} connected
         </span>
+        {needsAuthCount > 0 && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600">
+            {needsAuthCount} needs auth
+          </span>
+        )}
         {isLoading && (
           <span className="w-3 h-3 border-2 border-[var(--color-agent)] border-t-transparent rounded-full animate-spin" />
         )}
@@ -360,7 +531,24 @@ export default function McpStatusPanel({
                 : `${totalCount} server${totalCount !== 1 ? 's' : ''}`}
             </span>
             <div className="flex gap-1">
+              {disconnectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    void handleReconnectAll();
+                  }}
+                  disabled={reconnectAllInProgress || isLoading}
+                  className="text-[10px] px-2 py-0.5 rounded bg-green-500/10 text-green-500 hover:bg-green-500/20 disabled:opacity-50"
+                  title={`Reconnect ${disconnectedCount} disconnected server${disconnectedCount !== 1 ? 's' : ''}`}
+                >
+                  {reconnectAllInProgress
+                    ? 'Reconnecting...'
+                    : `Reconnect All (${disconnectedCount})`}
+                </button>
+              )}
               <button
+                type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   onRefresh();
@@ -373,6 +561,7 @@ export default function McpStatusPanel({
               </button>
               {onOpenSettings && (
                 <button
+                  type="button"
                   onClick={(e) => {
                     e.stopPropagation();
                     onOpenSettings();
@@ -400,8 +589,11 @@ export default function McpStatusPanel({
                 <McpServerItem
                   key={server.name}
                   server={server}
-                  onConnect={onConnect}
-                  onDisconnect={onDisconnect}
+                  onConnect={handleConnect}
+                  onDisconnect={handleDisconnect}
+                  onAuthenticate={handleAuthenticate}
+                  onRemoveAuth={handleRemoveAuth}
+                  actionInProgress={getActionInProgress(server.name)}
                   isExpanded={expandedServers.has(server.name)}
                   onToggleExpand={() => toggleServerExpand(server.name)}
                 />

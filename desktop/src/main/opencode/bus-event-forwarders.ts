@@ -8,6 +8,7 @@ import {
   getStringArrayProperty,
   getStringProperty,
   isFileReadPermission,
+  shouldAutoApprovePermission,
 } from './bus-event-utils';
 import { createLogger } from '../utils/logger';
 
@@ -66,14 +67,32 @@ export function forwardPermissionEvent(
             requestId,
             'always',
             dependencies.getOpenCodePort,
+            directory,
           );
           return true;
         }
       }
     }
 
+    const allowedPermissions =
+      dependencies.getSettings?.().allowedPermissions ?? [];
+    if (shouldAutoApprovePermission(permission, allowedPermissions)) {
+      sseLog.info(
+        `auto-approving permission request=${requestId} session=${sessionID} permission=${permission} from allowed permissions`,
+      );
+      void autoReplyPermission(
+        sessionID,
+        requestId,
+        'always',
+        dependencies.getOpenCodePort,
+        directory,
+      );
+      return true;
+    }
+
     sendToWindow(win, 'permission-asked', {
       connectionId,
+      openCodeSessionId: sessionID,
       requestId,
       sessionID,
       permission,
@@ -88,7 +107,7 @@ export function forwardPermissionEvent(
     return true;
   }
 
-    if (type === 'permission.replied') {
+  if (type === 'permission.replied') {
     sseLog.info(
       `permission.replied session=${getStringProperty(properties, ['sessionID']) ?? ''} request=${getStringProperty(properties, ['requestID']) ?? ''} reply=${String(properties['reply'] ?? '')}`,
     );
@@ -121,30 +140,63 @@ export function forwardQuestionEvent(
       'text',
       'prompt',
     ]);
-    if (!sessionID || !questionId || !message) return true;
+    if (!sessionID || !questionId) return true;
 
     const registeredConnection = getRegisteredConnectionForSession(sessionID);
-    const connectionId = registeredConnection?.connectionId;
-    if (!registeredConnection || !connectionId) return true;
+    const connectionId = registeredConnection?.connectionId ?? sessionID;
 
-    sendToWindow(win, 'prompt-request', {
-      id: questionId,
-      message,
-      projectName:
-        getStringProperty(properties, ['projectName']) ??
-        registeredConnection.projectName,
-      predefinedOptions: getQuestionOptions(properties),
-      sessionId: getStringProperty(properties, ['sessionId']),
+    const questions = Array.isArray(properties['questions'])
+      ? (properties['questions'] as Array<Record<string, unknown>>).map(
+          (question) => ({
+            question:
+              getStringProperty(question, ['question', 'message', 'text']) ??
+              '',
+            header: getStringProperty(question, ['header']) ?? 'Question',
+            options: Array.isArray(question['options'])
+              ? (question['options'] as Array<Record<string, unknown>>).map(
+                  (option) => ({
+                    label: getStringProperty(option, ['label', 'value']) ?? '',
+                    description:
+                      getStringProperty(option, ['description']) ?? '',
+                  }),
+                )
+              : [],
+            multiple: question['multiple'] === true,
+            custom: question['custom'] !== false,
+          }),
+        )
+      : message
+        ? [
+            {
+              question: message,
+              header: 'Question',
+              options: (getQuestionOptions(properties) ?? []).map((label) => ({
+                label,
+                description: '',
+              })),
+              multiple: properties['multiple'] === true,
+              custom: properties['custom'] !== false,
+            },
+          ]
+        : [];
+
+    if (questions.length === 0) return true;
+
+    sseLog.info(
+      `question.asked session=${sessionID} request=${questionId} connection=${connectionId} questions=${questions.length}`,
+    );
+
+    sendToWindow(win, 'question-asked', {
       connectionId,
-      connectionName: registeredConnection.channelName,
-      timeoutSeconds: 0,
-      expiresAt: 0,
-      baseDirectory:
-        getStringProperty(properties, ['baseDirectory', 'directory']) ??
-        registeredConnection.baseDirectory ??
-        undefined,
       openCodeSessionId: sessionID,
+      requestId: questionId,
+      sessionID,
+      questions,
+      tool: properties['tool'] as
+        | { messageID: string; callID: string }
+        | undefined,
     });
+
     return true;
   }
 
@@ -157,14 +209,18 @@ export function forwardQuestionEvent(
     ]);
     if (!sessionID || !questionId) return true;
 
-    const registeredConnection = getRegisteredConnectionForSession(sessionID);
-    const connectionId = registeredConnection?.connectionId;
-    if (!connectionId) return true;
+    sseLog.info(
+      `${type} session=${sessionID} request=${questionId} answer=${
+        type === 'question.replied'
+          ? (getStringProperty(properties, ['answer', 'reply', 'text']) ??
+            '(none)')
+          : '(rejected)'
+      }`,
+    );
 
-    sendToWindow(win, 'prompt-clear', {
-      id: questionId,
-      connectionId,
-      openCodeSessionId: sessionID,
+    sendToWindow(win, 'question-cleared', {
+      requestId: questionId,
+      sessionID,
       answer:
         type === 'question.replied'
           ? getStringProperty(properties, ['answer', 'reply', 'text'])

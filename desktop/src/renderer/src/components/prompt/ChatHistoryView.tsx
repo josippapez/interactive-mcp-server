@@ -111,12 +111,12 @@ export default function ChatHistoryView({
   // ---------------------------------------------------------------------------
   const {
     scrollRef,
-    pinnedToBottom,
+    isStickyToBottom,
     userScrolled,
     isAtBottom,
     showJump,
-    pauseVersion,
-    scrollToBottom,
+    forceScrollToBottom,
+    jumpToBottom,
     handleScroll: handleAutoScroll,
     handleWheel: handleAutoScrollWheel,
     reset: resetAutoScroll,
@@ -309,10 +309,12 @@ export default function ChatHistoryView({
     setExpandedImage(null);
   }, []);
 
-  // Stable callback for scrolling to bottom (smooth for user-triggered)
+  // Stable callback for scrolling to bottom (smooth for user-triggered).
+  // Both the jump button and the End-key shortcut go through jumpToBottom(),
+  // which force-scrolls AND sets sticky=true so new content re-follows.
   const handleScrollToBottom = useCallback(() => {
-    scrollToBottom('smooth');
-  }, [scrollToBottom]);
+    jumpToBottom();
+  }, [jumpToBottom]);
 
   // Keyboard shortcut: End key scrolls to bottom
   useEffect(() => {
@@ -329,13 +331,13 @@ export default function ChatHistoryView({
           return;
         }
         e.preventDefault();
-        scrollToBottom('smooth');
+        jumpToBottom();
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [scrollToBottom]);
+  }, [jumpToBottom]);
 
   // Combined scroll handler for both backfill and auto-scroll
   const handleScroll = useCallback(
@@ -398,12 +400,12 @@ export default function ChatHistoryView({
           toolAutoExpandExclusions={toolAutoExpandExclusions}
           onNavigateToSession={onNavigateToSession}
           showThinking={showThinking}
-          followOutput={pinnedToBottom}
-          pauseVersion={pauseVersion}
+          followOutput={isStickyToBottom}
+          onAutoFollowContent={forceScrollToBottom}
           matchedMessageIds={matchedMessageIds}
           activeSearchMatchId={
             activeSearchMatchIndex >= 0
-              ? matchedMessageIds[activeSearchMatchIndex] ?? null
+              ? (matchedMessageIds[activeSearchMatchIndex] ?? null)
               : null
           }
         />

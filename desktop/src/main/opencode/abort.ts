@@ -4,7 +4,7 @@
  * Uses the OpenCode SDK to stop a running agent session.
  */
 
-import { getClient } from './sdk-client';
+import { sessionAbort } from './session-api';
 
 /**
  * Abort an OpenCode session by ID.
@@ -18,11 +18,15 @@ export async function abortOpenCodeSession(
   sessionId: string,
 ): Promise<boolean> {
   try {
-    const client = getClient(openCodePort);
-    const response = await client.session.abort({
-      path: { id: sessionId },
+    console.info(`[opencode-abort] Attempting to abort session ${sessionId}`);
+    const response = await sessionAbort(openCodePort, sessionId, {
       signal: AbortSignal.timeout(5000),
     });
+
+    console.info(
+      `[opencode-abort] Abort response for ${sessionId}:`,
+      JSON.stringify({ data: response.data, error: response.error }),
+    );
 
     if (response.error) {
       console.warn(

@@ -33,6 +33,7 @@ function makeSessionNode(overrides: Partial<SessionNode> = {}): SessionNode {
     sessionStatuses: [],
     baseDirectory: null,
     pendingPermissions: [],
+    pendingQuestions: [],
     vcsInfo: null,
     ...overrides,
   };

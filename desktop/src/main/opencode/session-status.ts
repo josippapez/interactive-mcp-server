@@ -4,7 +4,7 @@
  * Uses the OpenCode SDK's session.status() to get status for all sessions.
  */
 
-import { getClient } from './sdk-client';
+import { sessionStatus } from './session-api';
 
 export type SessionStatusType = 'busy' | 'idle' | 'error' | 'unknown';
 
@@ -24,8 +24,7 @@ export async function fetchSessionStatus(
   openCodePort: number,
 ): Promise<SessionStatusMap | null> {
   try {
-    const client = getClient(openCodePort);
-    const response = await client.session.status({
+    const response = await sessionStatus(openCodePort, {
       signal: AbortSignal.timeout(3000),
     });
 

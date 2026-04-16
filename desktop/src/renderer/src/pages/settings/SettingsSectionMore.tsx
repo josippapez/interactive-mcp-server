@@ -1,4 +1,3 @@
-import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Toggle, ToolExclusionsSection } from './SettingsFormParts';
 import type { AppSettings } from './settings-types';
@@ -279,27 +278,6 @@ export function AdvancedSection({
 }): React.ReactElement {
   return (
     <div className="space-y-6">
-      <div>
-        <label
-          htmlFor="settings-extra-mcp"
-          className="block text-sm text-[var(--color-text-muted)] mb-1"
-        >
-          Extra MCP Servers
-        </label>
-        <Textarea
-          id="settings-extra-mcp"
-          rows={6}
-          value={settings.extraMcpServers}
-          onChange={(e) =>
-            setSettings((s) =>
-              s ? { ...s, extraMcpServers: e.target.value } : s,
-            )
-          }
-          spellCheck={false}
-          className="w-full font-mono text-xs"
-        />
-      </div>
-
       <div className="pt-4 border-t border-[var(--color-border)]">
         <Button
           variant="destructive"

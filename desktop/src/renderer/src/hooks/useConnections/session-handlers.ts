@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { SessionNode } from '../../types';
 import { getRemoveSessionTarget } from '../remove-session-target';
+import { removePendingQuestion } from './remove-pending-question';
 
 interface SessionHandlersOptions {
   nodesRef: React.MutableRefObject<Map<string, SessionNode>>;
@@ -44,9 +45,59 @@ export function useSessionHandlers({
     [],
   );
 
+  const handleReplyQuestion = useCallback(
+    (requestId: string, answers: string[][], sessionID: string) => {
+      console.log(
+        '[session-handlers] handleReplyQuestion called, requestId:',
+        requestId,
+        'sessionID:',
+        sessionID,
+        'answers:',
+        answers,
+      );
+      void window.api
+        .replyQuestion(requestId, answers, sessionID)
+        .then((result) => {
+          console.log('[session-handlers] replyQuestion result:', result);
+          if (result?.ok) {
+            setNodes((prev) => removePendingQuestion(prev, requestId));
+          }
+        })
+        .catch((err) => {
+          console.error('[session-handlers] replyQuestion error:', err);
+        });
+    },
+    [setNodes],
+  );
+
+  const handleRejectQuestion = useCallback(
+    (requestId: string, sessionID: string) => {
+      console.log(
+        '[session-handlers] handleRejectQuestion called, requestId:',
+        requestId,
+        'sessionID:',
+        sessionID,
+      );
+      void window.api
+        .rejectQuestion(requestId, sessionID)
+        .then((result) => {
+          console.log('[session-handlers] rejectQuestion result:', result);
+          if (result?.ok) {
+            setNodes((prev) => removePendingQuestion(prev, requestId));
+          }
+        })
+        .catch((err) => {
+          console.error('[session-handlers] rejectQuestion error:', err);
+        });
+    },
+    [setNodes],
+  );
+
   return {
     handleDismissSession,
     handleRemoveSession,
     handleReplyPermission,
+    handleReplyQuestion,
+    handleRejectQuestion,
   };
 }

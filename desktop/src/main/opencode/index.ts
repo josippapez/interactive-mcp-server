@@ -21,6 +21,22 @@ export {
   _handleBusEventForTest,
 } from './bus-events';
 
+// permission-list.ts
+export {
+  fetchPendingPermissions,
+  type PendingPermissionRecord,
+} from './permission-list';
+
+// question-list.ts
+export {
+  fetchPendingQuestions,
+  replyToOpenCodeQuestion,
+  rejectOpenCodeQuestion,
+  type PendingQuestionRecord,
+  type PendingQuestionInfo,
+  type PendingQuestionOption,
+} from './question-list';
+
 // config-sync.ts
 export { syncRemoteConfig } from './config-sync';
 

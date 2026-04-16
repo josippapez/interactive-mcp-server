@@ -10,8 +10,13 @@ vi.mock('../attachment-store', () => ({
   ),
 }));
 
+vi.mock('../database', () => ({
+  getRegisteredConnectionBySessionId: vi.fn(() => null),
+}));
+
 import { injectOpenCodeMessage } from './injector';
 import { _setClientFactory, _resetClientFactory } from './sdk-client';
+import { getRegisteredConnectionBySessionId } from '../database';
 
 // ---------------------------------------------------------------------------
 // Test HTTP server that simulates the OpenCode /session/:id/prompt_async endpoint
@@ -242,7 +247,7 @@ describe('injectOpenCodeMessage', () => {
             status: async () => ({ data: {} }),
           },
           global: {},
-        }) as ReturnType<typeof import('./sdk-client').getClient>,
+        }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
     );
 
     const result = await injectOpenCodeMessage(
@@ -274,7 +279,7 @@ describe('injectOpenCodeMessage', () => {
             status: async () => ({ data: {} }),
           },
           global: {},
-        }) as ReturnType<typeof import('./sdk-client').getClient>,
+        }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
     );
 
     const result = await injectOpenCodeMessage(
@@ -307,7 +312,7 @@ describe('injectOpenCodeMessage', () => {
             }),
           },
           global: {},
-        }) as ReturnType<typeof import('./sdk-client').getClient>,
+        }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
     );
 
     const result = await injectOpenCodeMessage(
@@ -340,6 +345,42 @@ describe('injectOpenCodeMessage', () => {
     await injectOpenCodeMessage('s1', 'test', undefined, serverPort);
 
     expect(lastRequest!.headers['content-type']).toBe('application/json');
+  });
+
+  it('uses the registered session baseDirectory for prompt injection', async () => {
+    vi.mocked(getRegisteredConnectionBySessionId).mockReturnValue({
+      providerType: 'opencode',
+      providerSessionId: 's1',
+      openCodeSessionId: 's1',
+      connectionId: 'c1',
+      channelName: 'Channel',
+      projectName: 'Project',
+      baseDirectory: '/workspace/sciensus-nx',
+      idFilePath: '',
+      parentSessionId: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    const directorySpy = vi.fn();
+    _setClientFactory((_port, directory) => {
+      directorySpy(directory);
+      return {
+        session: {
+          promptAsync: async () => ({ data: {}, error: undefined }),
+        },
+      } as unknown as ReturnType<typeof import('./sdk-client').getClient>;
+    });
+
+    const result = await injectOpenCodeMessage(
+      's1',
+      'test',
+      undefined,
+      serverPort,
+    );
+
+    expect(result.ok).toBe(true);
+    expect(directorySpy).toHaveBeenCalledWith('/workspace/sciensus-nx');
   });
 
   // Skip: This test would take 60+ seconds with the new timeout value.

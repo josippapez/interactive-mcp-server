@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   ipcMainHandle: vi.fn(),
@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   upsertRegisteredConnection: vi.fn(),
   refreshSessionTreeCache: vi.fn(),
   triggerSessionTreeUpdate: vi.fn(),
+  fetchPendingPermissions: vi.fn().mockResolvedValue([]),
+  fetchPendingQuestions: vi.fn().mockResolvedValue([]),
+  sdkQuestionReply: vi.fn(),
+  sdkQuestionReject: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -39,6 +43,17 @@ vi.mock('electron', () => ({
 
 vi.mock('../settings', () => ({
   saveSettings: vi.fn(),
+}));
+
+vi.mock('../attachment-store', () => ({
+  saveAttachment: vi.fn(() => 'mock-uuid.png'),
+  getAttachmentsDir: vi.fn(() => '/mock/attachments'),
+  resolveAttachmentPath: vi.fn(() => null),
+  attachmentUrl: vi.fn(
+    (filename: string, port: number) =>
+      `http://localhost:${port}/attachments/${filename}`,
+  ),
+  cleanupOldAttachments: vi.fn(() => 0),
 }));
 
 vi.mock('../opencode/injector', () => ({
@@ -128,6 +143,16 @@ vi.mock('../opencode/mcp-register', () => ({
     .mockResolvedValue({ status: 'registered' }),
 }));
 
+vi.mock('../opencode/permission-list', () => ({
+  fetchPendingPermissions: mocks.fetchPendingPermissions,
+}));
+
+vi.mock('../opencode/question-list', () => ({
+  fetchPendingQuestions: mocks.fetchPendingQuestions,
+  replyToOpenCodeQuestion: mocks.sdkQuestionReply,
+  rejectOpenCodeQuestion: mocks.sdkQuestionReject,
+}));
+
 vi.mock('../remove-persisted-session', () => ({
   removePersistedSession: vi.fn().mockResolvedValue(true),
 }));
@@ -188,6 +213,7 @@ import { registerIpcHandlers } from './handlers';
 import { queueSessionMessage } from '../database';
 import { injectOpenCodeMessage } from '../opencode/injector';
 import { registerMcpAcrossReachablePorts } from '../opencode/mcp-register';
+import * as mcpStatus from '../opencode/mcp-status';
 
 function getRegisteredHandle(channel: string) {
   const call = mocks.ipcMainHandle.mock.calls.find(
@@ -213,7 +239,8 @@ function registerHandlers() {
       docIndexingEnabled: true,
       autoRestoreSessions: false,
       autoRegisterSubagents: true,
-      extraMcpServers: '',
+      allowedReadFolders: [],
+      allowedPermissions: [],
     }),
     setSettings: vi.fn(),
   });
@@ -235,7 +262,8 @@ function registerHandlersWithBackend(agentBackend: 'opencode' | 'claude_sdk') {
       docIndexingEnabled: true,
       autoRestoreSessions: false,
       autoRegisterSubagents: true,
-      extraMcpServers: '',
+      allowedReadFolders: [],
+      allowedPermissions: [],
     }),
     setSettings: vi.fn(),
   });
@@ -302,6 +330,129 @@ describe('registerIpcHandlers reply-permission', () => {
       ok: false,
       error: expect.stringContaining('Network error'),
     });
+  });
+});
+
+describe('registerIpcHandlers get-pending-permissions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers the get-pending-permissions channel', () => {
+    registerHandlers();
+    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: [string]) => ch);
+    expect(channels).toContain('get-pending-permissions');
+  });
+
+  it('returns fetched pending permissions for opencode backend', async () => {
+    mocks.fetchPendingPermissions.mockResolvedValue([
+      {
+        requestId: 'req-1',
+        sessionID: 'ses-1',
+        permission: 'glob',
+      },
+    ]);
+
+    registerIpcHandlers({
+      getMainWindow: () => null,
+      getSettings: () => ({
+        port: 3100,
+        promptTimeoutSeconds: 30,
+        openCodePort: 4096,
+        soundEnabled: false,
+        agentBackend: 'opencode',
+        autoStartOpenCode: false,
+        autoSyncOpencode: false,
+        launchAtLogin: false,
+        docContextDebug: false,
+        docIndexingEnabled: true,
+        autoRestoreSessions: false,
+        autoRegisterSubagents: true,
+        allowedReadFolders: [],
+        allowedPermissions: [],
+      }),
+      setSettings: vi.fn(),
+    });
+
+    const handler = getRegisteredHandle('get-pending-permissions');
+    const result = await handler({});
+
+    expect(mocks.fetchPendingPermissions).toHaveBeenCalledWith(4096);
+    expect(result).toEqual([
+      {
+        requestId: 'req-1',
+        sessionID: 'ses-1',
+        permission: 'glob',
+      },
+    ]);
+  });
+});
+
+describe('registerIpcHandlers question handlers', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers question channels', () => {
+    registerHandlers();
+    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: [string]) => ch);
+    expect(channels).toContain('get-pending-questions');
+    expect(channels).toContain('reply-question');
+    expect(channels).toContain('reject-question');
+  });
+
+  it('returns fetched pending questions for opencode backend', async () => {
+    mocks.fetchPendingQuestions.mockResolvedValue([
+      {
+        requestId: 'q-1',
+        sessionID: 'ses-1',
+        questions: [
+          {
+            question: 'Pick one',
+            header: 'Choice',
+            options: [{ label: 'A', description: 'Option A' }],
+          },
+        ],
+      },
+    ]);
+
+    registerHandlersWithBackend('opencode');
+
+    const handler = getRegisteredHandle('get-pending-questions');
+    const result = await handler({});
+
+    expect(mocks.fetchPendingQuestions).toHaveBeenCalledWith(4096);
+    expect(result).toHaveLength(1);
+  });
+
+  it('replies to a question request', async () => {
+    mocks.sdkQuestionReply.mockResolvedValue({ ok: true });
+    registerHandlers();
+
+    const handler = getRegisteredHandle('reply-question');
+    const result = await handler(
+      {},
+      { requestID: 'q-1', answers: [['A']], sessionID: 'ses-1' },
+    );
+
+    expect(mocks.sdkQuestionReply).toHaveBeenCalledWith(
+      4096,
+      'q-1',
+      [['A']],
+      'ses-1',
+    );
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('rejects a question request', async () => {
+    mocks.sdkQuestionReject.mockResolvedValue({ ok: true });
+    registerHandlers();
+
+    const handler = getRegisteredHandle('reject-question');
+    const result = await handler({}, { requestID: 'q-1', sessionID: 'ses-1' });
+
+    expect(mocks.sdkQuestionReject).toHaveBeenCalledWith(4096, 'q-1', 'ses-1');
+    expect(result).toEqual({ ok: true });
   });
 });
 
@@ -640,5 +791,136 @@ describe('registerIpcHandlers sync-opencode-config', () => {
       promptTimeoutSeconds: 30,
     });
     expect(result).toContain('register=registered');
+  });
+});
+
+describe('registerIpcHandlers MCP auth', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers MCP auth channels and forwards to mcp-status helpers', async () => {
+    const startSpy = vi
+      .spyOn(mcpStatus, 'startMcpAuth')
+      .mockResolvedValue({ ok: true, authorizationUrl: 'https://example.com' });
+    const callbackSpy = vi
+      .spyOn(mcpStatus, 'callbackMcpAuth')
+      .mockResolvedValue({ ok: true, status: 'connected' });
+    const authenticateSpy = vi
+      .spyOn(mcpStatus, 'authenticateMcp')
+      .mockResolvedValue({ ok: true, status: 'needs_auth' });
+    const removeSpy = vi
+      .spyOn(mcpStatus, 'removeMcpAuth')
+      .mockResolvedValue({ ok: true });
+
+    registerHandlersWithBackend('opencode');
+
+    const startHandler = getRegisteredHandle('start-mcp-auth');
+    const callbackHandler = getRegisteredHandle('callback-mcp-auth');
+    const authenticateHandler = getRegisteredHandle('authenticate-mcp');
+    const removeHandler = getRegisteredHandle('remove-mcp-auth');
+
+    await expect(
+      startHandler({}, { name: 'remote-a', directory: '/repo' }),
+    ).resolves.toEqual({
+      ok: true,
+      authorizationUrl: 'https://example.com',
+    });
+    await expect(
+      callbackHandler(
+        {},
+        { name: 'remote-a', code: 'oauth-code', directory: '/repo' },
+      ),
+    ).resolves.toEqual({ ok: true, status: 'connected' });
+    await expect(
+      authenticateHandler({}, { name: 'remote-a', directory: '/repo' }),
+    ).resolves.toEqual({ ok: true, status: 'needs_auth' });
+    await expect(
+      removeHandler({}, { name: 'remote-a', directory: '/repo' }),
+    ).resolves.toEqual({
+      ok: true,
+    });
+
+    expect(startSpy).toHaveBeenCalledWith(4096, 'remote-a', '/repo');
+    expect(callbackSpy).toHaveBeenCalledWith(
+      4096,
+      'remote-a',
+      'oauth-code',
+      '/repo',
+    );
+    expect(authenticateSpy).toHaveBeenCalledWith(4096, 'remote-a', '/repo');
+    expect(removeSpy).toHaveBeenCalledWith(4096, 'remote-a', '/repo');
+  });
+});
+
+describe('registerIpcHandlers save-clipboard-attachment', () => {
+  beforeEach(() => {
+    mocks.ipcMainHandle.mockClear();
+  });
+
+  it('saves a base64 image and returns filename + absolute path + public URL', async () => {
+    registerHandlers();
+    const handler = getRegisteredHandle('save-clipboard-attachment');
+    const result = (await handler(
+      {},
+      {
+        data: 'dGVzdA==',
+        mimeType: 'image/png',
+      },
+    )) as {
+      filename: string;
+      absolutePath: string;
+      url: string | null;
+    } | null;
+    expect(result).not.toBeNull();
+    expect(result?.filename).toBe('mock-uuid.png');
+    expect(result?.absolutePath).toContain('mock-uuid.png');
+    // port is 3100 from registerHandlers() settings
+    expect(result?.url).toBe('http://localhost:3100/attachments/mock-uuid.png');
+  });
+
+  it('returns url:null when MCP server port is not available', async () => {
+    registerIpcHandlers({
+      getMainWindow: () => null,
+      getSettings: () => ({
+        port: 0,
+        promptTimeoutSeconds: 30,
+        openCodePort: 4096,
+        soundEnabled: false,
+        agentBackend: 'claude_sdk',
+        autoStartOpenCode: false,
+        autoSyncOpencode: false,
+        launchAtLogin: false,
+        docContextDebug: false,
+        docIndexingEnabled: true,
+        autoRestoreSessions: false,
+        autoRegisterSubagents: true,
+        allowedReadFolders: [],
+        allowedPermissions: [],
+      }),
+      setSettings: vi.fn(),
+    });
+    const handler = getRegisteredHandle('save-clipboard-attachment');
+    const result = (await handler(
+      {},
+      {
+        data: 'dGVzdA==',
+        mimeType: 'image/png',
+      },
+    )) as {
+      filename: string;
+      absolutePath: string;
+      url: string | null;
+    } | null;
+    expect(result).not.toBeNull();
+    expect(result?.url).toBeNull();
+    expect(result?.absolutePath).toContain('mock-uuid.png');
+  });
+
+  it('returns null when payload is missing data', async () => {
+    registerHandlers();
+    const handler = getRegisteredHandle('save-clipboard-attachment');
+    const result = await handler({}, null);
+    expect(result).toBeNull();
   });
 });

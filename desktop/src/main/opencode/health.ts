@@ -5,7 +5,7 @@
  * The SDK doesn't expose a health endpoint, so we use session.list as a proxy.
  */
 
-import { getClient } from './sdk-client';
+import { sessionList } from './session-api';
 
 export interface OpenCodeHealthStatus {
   available: boolean;
@@ -27,10 +27,7 @@ export async function checkOpenCodeHealth(
   openCodePort: number,
 ): Promise<OpenCodeHealthStatus> {
   try {
-    const client = getClient(openCodePort);
-    // Use session.list() as a health check - if we can list sessions,
-    // the server is healthy
-    const response = await client.session.list(undefined, {
+    const response = await sessionList(openCodePort, undefined, {
       signal: AbortSignal.timeout(3000),
     });
 

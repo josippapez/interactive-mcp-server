@@ -46,14 +46,6 @@ export interface AppSettings {
   /** When true, child OpenCode sessions are automatically registered as channels in the sidebar. Default: true. */
   autoRegisterSubagents: boolean;
   /**
-   * Raw JSON object string of additional MCP server entries to include alongside
-   * `interactive-desktop` when syncing `opencode.json`. Each key is a server name,
-   * each value is a valid MCP server config object.
-   * Example: `{ "test": { "type": "stdio", "command": "python", "args": ["-m", "test.mcp_server"] } }`
-   * Default: "" (empty — no extra servers).
-   */
-  extraMcpServers: string;
-  /**
    * When true, reduces padding, margins, and font sizes across the UI for a denser layout.
    * Default: false.
    */
@@ -147,7 +139,6 @@ export const defaultSettings: AppSettings = {
   docContextDebug: false,
   agentBackend: 'opencode',
   autoRegisterSubagents: true,
-  extraMcpServers: '',
   compactMode: false,
   toolAutoExpandExclusions: [],
   discoveredTools: [],

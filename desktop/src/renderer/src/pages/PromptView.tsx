@@ -8,6 +8,7 @@ import RemoveErrorBanner from '../components/prompt/RemoveErrorBanner';
 import TasksSidebar from '../components/prompt/TasksSidebar';
 import McpStatusPanel from '../components/prompt/McpStatusPanel';
 import McpSettingsModal from '../components/prompt/McpSettingsModal';
+import QuestionDock from '../components/prompt/QuestionDock';
 import { ContextUsageBar } from '../components/prompt/ContextUsageBar';
 import { gsap, prefersReducedMotion, useGSAP } from '../lib/gsap';
 import { PromptComposerSection } from './prompt/PromptComposerSection';
@@ -26,6 +27,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
     activeConnectionId,
     onSelectConnection,
     prompt,
+    pendingQuestions,
     activeSession,
     channelMessages,
     connectionId,
@@ -37,6 +39,8 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
     onQueueSessionMessage,
     onInjectWithReply,
     onToggleDocContext,
+    onReplyQuestion,
+    onRejectQuestion,
   } = props;
 
   const view = usePromptViewState(props);
@@ -147,10 +151,17 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     connectionId={connectionId}
                   />
                 )}
-                {prompt && !activeSession && (
+              {prompt && !activeSession && (
                   <PromptMessage
                     prompt={prompt}
                     secondsLeft={view.secondsLeft}
+                  />
+                )}
+                {pendingQuestions[0] && (
+                  <QuestionDock
+                    question={pendingQuestions[0]}
+                    onReply={onReplyQuestion}
+                    onReject={onRejectQuestion}
                   />
                 )}
                 {!view.idle && (
@@ -198,6 +209,8 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                   onRefresh={view.refreshMcpServers}
                   onConnect={view.connectMcpServer}
                   onDisconnect={view.disconnectMcpServer}
+                  onAuthenticate={view.authenticateMcpServer}
+                  onRemoveAuth={view.removeMcpServerAuth}
                   onOpenSettings={() => view.setMcpSettingsOpen(true)}
                 />
               )}
@@ -295,9 +308,12 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
         isOpen={view.mcpSettingsOpen}
         onClose={() => view.setMcpSettingsOpen(false)}
         servers={view.mcpServers}
+        directory={view.sessionBaseDirectory ?? undefined}
         onRefresh={view.refreshMcpServers}
         onConnect={view.connectMcpServer}
         onDisconnect={view.disconnectMcpServer}
+        onAuthenticate={view.authenticateMcpServer}
+        onRemoveAuth={view.removeMcpServerAuth}
       />
     </div>
   );

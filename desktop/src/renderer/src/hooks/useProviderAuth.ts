@@ -3,6 +3,7 @@ import type {
   AuthMethod,
   AuthPrompt,
   AuthorizeResult,
+  ProviderActionResult,
 } from '../../../preload/index';
 
 // ─── State Machine Types ─────────────────────────────────────────────────────
@@ -121,6 +122,14 @@ export function areAllPromptsAnswered(
   inputs: Record<string, string>,
 ): boolean {
   return getNextPromptKey(prompts, inputs) === null;
+}
+
+function getProviderError<T>(
+  result: ProviderActionResult<T> | null | undefined,
+  fallback: string,
+): string {
+  if (!result) return fallback;
+  return result.error ?? fallback;
 }
 
 // ─── Initial State ───────────────────────────────────────────────────────────
@@ -292,11 +301,11 @@ export function useProviderAuth(): UseProviderAuthResult {
               state.providerId!,
               methodIndex,
             );
-            if (!result) {
+            if (!result.ok || !result.data) {
               setState((s) => ({
                 ...s,
                 status: 'error',
-                error: 'OAuth authorization failed',
+                error: getProviderError(result, 'OAuth authorization failed'),
               }));
               return;
             }
@@ -304,7 +313,7 @@ export function useProviderAuth(): UseProviderAuthResult {
             setState((s) => ({
               ...s,
               status: 'oauth-pending',
-              oauthResult: result,
+              oauthResult: result.data,
             }));
           } catch (err) {
             setState((s) => ({
@@ -410,11 +419,11 @@ export function useProviderAuth(): UseProviderAuthResult {
         state.promptState?.inputs,
       );
 
-      if (!result) {
+      if (!result.ok || !result.data) {
         setState((s) => ({
           ...s,
           status: 'error',
-          error: 'OAuth authorization failed',
+          error: getProviderError(result, 'OAuth authorization failed'),
         }));
         return;
       }
@@ -422,7 +431,7 @@ export function useProviderAuth(): UseProviderAuthResult {
       setState((s) => ({
         ...s,
         status: 'oauth-pending',
-        oauthResult: result,
+        oauthResult: result.data,
       }));
     } catch (err) {
       setState((s) => ({
@@ -453,19 +462,19 @@ export function useProviderAuth(): UseProviderAuthResult {
       setState((s) => ({ ...s, status: 'authorizing' }));
 
       try {
-        const success = await window.api.callbackProvider(
+        const result = await window.api.callbackProvider(
           state.providerId,
           state.selectedMethodIndex,
           code,
         );
 
-        if (success) {
+        if (result.ok) {
           setState((s) => ({ ...s, status: 'success' }));
         } else {
           setState((s) => ({
             ...s,
             status: 'error',
-            error: 'OAuth callback failed',
+            error: getProviderError(result, 'OAuth callback failed'),
           }));
         }
       } catch (err) {
@@ -493,18 +502,18 @@ export function useProviderAuth(): UseProviderAuthResult {
 
     try {
       // For auto OAuth, call callback without a code
-      const success = await window.api.callbackProvider(
+      const result = await window.api.callbackProvider(
         state.providerId,
         state.selectedMethodIndex,
       );
 
-      if (success) {
+      if (result.ok) {
         setState((s) => ({ ...s, status: 'success' }));
       } else {
         setState((s) => ({
           ...s,
           status: 'error',
-          error: 'OAuth callback failed',
+          error: getProviderError(result, 'OAuth callback failed'),
         }));
       }
     } catch (err) {

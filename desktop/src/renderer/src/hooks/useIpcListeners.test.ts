@@ -35,6 +35,7 @@ function makeNode(
     sessionStatuses: [],
     baseDirectory: null,
     pendingPermissions: [],
+    pendingQuestions: [],
     vcsInfo: null,
   };
 }

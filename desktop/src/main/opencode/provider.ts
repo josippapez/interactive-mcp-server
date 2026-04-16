@@ -56,6 +56,12 @@ export interface AuthorizeResult {
   instructions: string;
 }
 
+export interface ProviderActionResult<T> {
+  ok: boolean;
+  data?: T;
+  error?: string;
+}
+
 // ─── Provider/Model Types ────────────────────────────────────────────────────
 
 /** Model definition from OpenCode API. */
@@ -368,7 +374,7 @@ export async function authorizeProvider(
   providerId: string,
   method: number,
   inputs?: Record<string, string>,
-): Promise<AuthorizeResult | null> {
+): Promise<ProviderActionResult<AuthorizeResult>> {
   try {
     const client = getClient(openCodePort);
     const response = await client.provider.oauth.authorize(
@@ -380,11 +386,21 @@ export async function authorizeProvider(
       { signal: AbortSignal.timeout(10000) },
     );
 
-    if (response.error) return null;
+    if (response.error) {
+      return { ok: false, error: String(response.error) };
+    }
 
-    return (response.data as AuthorizeResult) ?? null;
-  } catch {
-    return null;
+    const data = (response.data as AuthorizeResult | undefined) ?? undefined;
+    if (!data) {
+      return { ok: false, error: 'Provider returned no authorization data' };
+    }
+
+    return { ok: true, data };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 
@@ -396,7 +412,7 @@ export async function callbackProvider(
   providerId: string,
   method: number,
   code?: string,
-): Promise<boolean> {
+): Promise<ProviderActionResult<true>> {
   try {
     const client = getClient(openCodePort);
     const response = await client.provider.oauth.callback(
@@ -408,11 +424,20 @@ export async function callbackProvider(
       { signal: AbortSignal.timeout(10000) },
     );
 
-    if (response.error) return false;
+    if (response.error) {
+      return { ok: false, error: String(response.error) };
+    }
 
-    return response.data === true;
-  } catch {
-    return false;
+    if (response.data !== true) {
+      return { ok: false, error: 'Provider callback did not complete' };
+    }
+
+    return { ok: true, data: true };
+  } catch (err: unknown) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    };
   }
 }
 

@@ -1,6 +1,7 @@
 import type {
   Attachment,
   ChannelMessage,
+  PendingQuestion,
   PromptData,
   SessionNode,
   SessionStatus,
@@ -14,6 +15,7 @@ export type PromptViewProps = {
   activeConnectionId: string | null;
   onSelectConnection: (connectionId: string | null) => void;
   prompt: PromptData | null;
+  pendingQuestions: PendingQuestion[];
   activeSession: { id: string; title: string } | null;
   channelMessages: ChannelMessage[];
   connectionId: string | null;
@@ -38,6 +40,12 @@ export type PromptViewProps = {
   onClearMessages: (sessionId: string) => void;
   onRemoveSession: (sessionId: string) => Promise<boolean>;
   onToggleDocContext: () => void;
+  onReplyQuestion: (
+    requestId: string,
+    answers: string[][],
+    sessionID: string,
+  ) => void;
+  onRejectQuestion: (requestId: string, sessionID: string) => void;
 };
 
 export type ParentInfo = { id: string; title: string };

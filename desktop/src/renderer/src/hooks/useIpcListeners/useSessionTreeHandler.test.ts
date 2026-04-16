@@ -33,7 +33,11 @@ function makeContext(overrides: Partial<HandlerContext> = {}): HandlerContext {
     loadChannelHistory: vi.fn(async () => {}),
     applyStartupHistoryBuffer: vi.fn(),
     applyStartupPromptBuffer: vi.fn(),
+    applyStartupPermissionBuffer: vi.fn(),
+    applyStartupQuestionBuffer: vi.fn(),
     rehydrateActivePrompts: vi.fn(async () => {}),
+    rehydratePendingPermissions: vi.fn(async () => {}),
+    rehydratePendingQuestions: vi.fn(async () => {}),
     loadedHistoryIds: { current: new Set<string>() },
     appendMessage: vi.fn(),
     ...overrides,
@@ -157,7 +161,7 @@ describe('useSessionTreeHandler', () => {
     expect(context.activateRef.current).not.toHaveBeenCalled();
   });
 
-  it('rehydrates active prompts after session tree updates', async () => {
+  it('does not rehydrate prompts, permissions, or questions after session tree updates', async () => {
     let nodes = new Map();
     const context = makeContext({
       setNodes: vi.fn(
@@ -172,7 +176,9 @@ describe('useSessionTreeHandler', () => {
 
     await Promise.resolve();
 
-    expect(context.rehydrateActivePrompts).toHaveBeenCalledTimes(1);
+    expect(context.rehydrateActivePrompts).not.toHaveBeenCalled();
+    expect(context.rehydratePendingPermissions).not.toHaveBeenCalled();
+    expect(context.rehydratePendingQuestions).not.toHaveBeenCalled();
   });
 
   it('upserts an optimistic child session before full snapshot reconciliation', () => {

@@ -62,6 +62,26 @@ export type PendingPermission = {
   metadata?: Record<string, unknown>;
 };
 
+export type PendingQuestionOption = {
+  label: string;
+  description: string;
+};
+
+export type PendingQuestionInfo = {
+  question: string;
+  header: string;
+  options: PendingQuestionOption[];
+  multiple?: boolean;
+  custom?: boolean;
+};
+
+export type PendingQuestion = {
+  requestId: string;
+  sessionID: string;
+  questions: PendingQuestionInfo[];
+  tool?: { messageID: string; callID: string };
+};
+
 /**
  * Represents one OpenCode session (or a direct MCP connection with no OpenCode
  * session) as shown in the sidebar.
@@ -162,6 +182,9 @@ export type SessionNode = {
 
   /** Pending permission requests from OpenCode awaiting the user's decision. */
   pendingPermissions: PendingPermission[];
+
+  /** Pending built-in question requests from OpenCode awaiting the user's decision. */
+  pendingQuestions: PendingQuestion[];
 
   /**
    * Per-session toggle for doc context injection.

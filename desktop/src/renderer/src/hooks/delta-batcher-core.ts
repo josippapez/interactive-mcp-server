@@ -1,7 +1,4 @@
-import type {
-  ConversationMessage,
-  ConversationMessagePart,
-} from '../../../preload/index';
+import type { ConversationMessage } from '../../../preload/index';
 import type {
   DeltaBuffer,
   PartType,
@@ -195,10 +192,40 @@ export function applyPendingParts(
       }
 
       const existingPart = newParts[partIndex];
-      const existingText = existingPart.text ?? '';
-      const newText = pending.part.text ?? '';
-      if (newText.length < existingText.length) {
-        continue;
+      // Only apply the "shorter text = stale" guard to streaming text/reasoning
+      // parts. Tool-call and other structured parts must always merge so that
+      // status transitions (e.g. running → completed) and late-arriving
+      // toolOutput/toolMetadata are not dropped.
+      const isStreamingTextPart =
+        existingPart.type === 'text' ||
+        existingPart.type === 'reasoning' ||
+        pending.part.type === 'text' ||
+        pending.part.type === 'reasoning';
+      if (isStreamingTextPart) {
+        const existingText = existingPart.text ?? '';
+        const newText = pending.part.text ?? '';
+        if (newText.length < existingText.length) {
+          continue;
+        }
+      }
+
+      // Tool-call status is monotonic: once a tool reaches a terminal state
+      // (completed or error), a later stale update with status=running or
+      // status=pending must not regress it. This guards against out-of-order
+      // SSE events after OpenCode finishes a tool.
+      if (
+        existingPart.type === 'tool-call' &&
+        pending.part.type === 'tool-call'
+      ) {
+        const existingStatus = existingPart.toolStatus;
+        const incomingStatus = pending.part.toolStatus;
+        const isTerminal =
+          existingStatus === 'completed' || existingStatus === 'error';
+        const isRegression =
+          incomingStatus === 'running' || incomingStatus === 'pending';
+        if (isTerminal && isRegression) {
+          continue;
+        }
       }
 
       if (!partsChanged) {

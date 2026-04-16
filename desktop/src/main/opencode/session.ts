@@ -9,7 +9,13 @@
  * 4. Return { id, parentId } for the best match, or null on failure.
  */
 
-import { getClient } from './sdk-client';
+import {
+  sessionList,
+  sessionGet,
+  sessionChildren,
+  sessionCreate,
+  sessionPromptAsync,
+} from './session-api';
 
 export interface DetectedSession {
   id: string;
@@ -22,6 +28,8 @@ export interface OpenCodeSession {
   title?: string;
   directory?: string;
   time?: { created?: number; updated?: number };
+  version?: string;
+  summary?: { additions?: number; deletions?: number; files?: number };
 }
 
 /**
@@ -30,10 +38,56 @@ export interface OpenCodeSession {
 async function fetchSessions(
   openCodePort: number,
   directory?: string,
+  options?: { roots?: boolean },
 ): Promise<OpenCodeSession[] | null> {
   try {
-    const client = getClient(openCodePort, directory);
-    const response = await client.session.list({
+    const response = await sessionList(
+      openCodePort,
+      { roots: options?.roots },
+      { directory, signal: AbortSignal.timeout(2000) },
+    );
+
+    if (response.error) return null;
+
+    const data = response.data;
+    if (!Array.isArray(data)) return null;
+
+    return data as OpenCodeSession[];
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchOpenCodeSession(
+  openCodePort: number,
+  sessionID: string,
+  directory?: string,
+): Promise<OpenCodeSession | null> {
+  try {
+    const response = await sessionGet(openCodePort, sessionID, {
+      directory,
+      signal: AbortSignal.timeout(2000),
+    });
+
+    if (response.error) return null;
+
+    const data = response.data;
+    if (!data || typeof data !== 'object') return null;
+
+    return data as OpenCodeSession;
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchOpenCodeSessionChildren(
+  openCodePort: number,
+  sessionID: string,
+  directory?: string,
+): Promise<OpenCodeSession[] | null> {
+  try {
+    const response = await sessionChildren(openCodePort, sessionID, {
+      directory,
       signal: AbortSignal.timeout(2000),
     });
 
@@ -93,6 +147,51 @@ export async function fetchAllOpenCodeSessions(
   );
 }
 
+export async function fetchRootOpenCodeSessions(
+  openCodePort: number,
+  fallbackDirectories: string[] = [],
+): Promise<OpenCodeSession[] | null> {
+  const unscoped = await fetchSessions(openCodePort, undefined, {
+    roots: true,
+  });
+  if (!unscoped) return null;
+
+  const scopedDirectories = Array.from(
+    new Set(
+      fallbackDirectories
+        .map((dir) => dir.trim())
+        .filter((dir) => dir.length > 0),
+    ),
+  );
+
+  if (scopedDirectories.length === 0) {
+    return [...unscoped].sort(
+      (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
+    );
+  }
+
+  const scopedResults = await Promise.all(
+    scopedDirectories.map((dir) =>
+      fetchSessions(openCodePort, dir, { roots: true }),
+    ),
+  );
+
+  const mergedById = new Map<string, OpenCodeSession>();
+  for (const session of unscoped) {
+    mergedById.set(session.id, session);
+  }
+  for (const scoped of scopedResults) {
+    if (!scoped) continue;
+    for (const session of scoped) {
+      mergedById.set(session.id, session);
+    }
+  }
+
+  return Array.from(mergedById.values()).sort(
+    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
+  );
+}
+
 /**
  * Walk the session tree and return all sessions that are descendants of
  * `rootSessionId` (i.e. sessions whose parentID chain leads back to it).
@@ -115,6 +214,40 @@ export function collectDescendants(
   return descendants;
 }
 
+export async function expandOpenCodeSessionTree(
+  openCodePort: number,
+  roots: OpenCodeSession[],
+): Promise<OpenCodeSession[]> {
+  const byId = new Map<string, OpenCodeSession>();
+  const queue = [...roots];
+
+  for (const root of roots) {
+    byId.set(root.id, root);
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+
+    const children = await fetchOpenCodeSessionChildren(
+      openCodePort,
+      current.id,
+      current.directory,
+    );
+    if (!children || children.length === 0) continue;
+
+    for (const child of children) {
+      if (byId.has(child.id)) continue;
+      byId.set(child.id, child);
+      queue.push(child);
+    }
+  }
+
+  return Array.from(byId.values()).sort(
+    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
+  );
+}
+
 /**
  * Detect the best OpenCode session for the given directory.
  *
@@ -131,8 +264,9 @@ export async function autoDetectOpenCodeSession(
   openCodePort: number,
   baseDirectory?: string,
 ): Promise<DetectedSession | null> {
-  const dir = baseDirectory ?? process.cwd();
-  let sessions = await fetchSessions(openCodePort, dir);
+  let sessions = baseDirectory
+    ? await fetchSessions(openCodePort, baseDirectory)
+    : null;
 
   // If directory-scoped query returned nothing, fall back to all sessions
   if (!sessions || sessions.length === 0) {
@@ -192,7 +326,7 @@ const SESSION_MESSAGE_TIMEOUT_MS = 120_000;
 /**
  * Create a new OpenCode session via SDK.
  *
- * Uses client.session.create() with optional title and parentID.
+ * Uses sessionCreate() with optional title and parentID.
  * When a directory is provided, the session is created in that directory context,
  * which loads the project's `.opencode/opencode.jsonc` config and project-specific MCPs.
  * After creating the session, optionally sends an initial message via promptAsync.
@@ -210,23 +344,24 @@ export async function createOpenCodeSession(
   } = {},
 ): Promise<CreateSessionResult> {
   try {
-    const client = getClient(openCodePort, options.directory);
-
     // Match OpenCode app behavior: create a directory-scoped client first,
     // then call session.create() on that client.
-    const createResponse = await client.session.create({
-      body: {
+    const createResponse = await sessionCreate(
+      openCodePort,
+      {
         title: options.title,
         parentID: options.parentID,
       },
-      signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
-    });
+      {
+        directory: options.directory,
+        signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
+      },
+    );
 
     if (createResponse.error) {
+      const rawError: unknown = createResponse.error;
       const errorMessage =
-        typeof createResponse.error === 'string'
-          ? createResponse.error
-          : 'OpenCode API returned error';
+        typeof rawError === 'string' ? rawError : 'OpenCode API returned error';
       return { ok: false, error: errorMessage };
     }
 
@@ -237,14 +372,16 @@ export async function createOpenCodeSession(
     // because it requires access to the attachment store and MCP server port
     if (options.initialMessage && session.id) {
       try {
-        const messageResponse = await client.session.promptAsync(
+        const messageResponse = await sessionPromptAsync(
+          openCodePort,
+          session.id,
           {
-            path: { id: session.id },
-            body: {
-              parts: [{ type: 'text', text: options.initialMessage }],
-            },
+            parts: [{ type: 'text', text: options.initialMessage }],
           },
-          { signal: AbortSignal.timeout(SESSION_MESSAGE_TIMEOUT_MS) },
+          {
+            directory: options.directory,
+            signal: AbortSignal.timeout(SESSION_MESSAGE_TIMEOUT_MS),
+          },
         );
 
         if (messageResponse.error) {

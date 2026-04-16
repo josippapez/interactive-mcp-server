@@ -70,10 +70,19 @@ export function useConnections(onActivatePromptTab: () => void) {
     setNodes,
   });
   const { applyStartupHistoryBuffer } = useStartupHistory({ setNodes });
-  const { applyStartupPromptBuffer, bufferPrompt, rehydrateActivePrompts } =
-    useStartupPrompts({
-      setNodes,
-    });
+  const {
+    applyStartupPromptBuffer,
+    applyStartupPermissionBuffer,
+    applyStartupQuestionBuffer,
+    bufferPrompt,
+    bufferPermission,
+    bufferQuestion,
+    rehydrateActivePrompts,
+    rehydratePendingPermissions,
+    rehydratePendingQuestions,
+  } = useStartupPrompts({
+    setNodes,
+  });
 
   const clearAllNodes = useCallback(() => {
     setNodes(new Map());
@@ -88,11 +97,17 @@ export function useConnections(onActivatePromptTab: () => void) {
     withNode,
     clearAllNodes,
     loadChannelHistory,
-    applyStartupHistoryBuffer,
-    applyStartupPromptBuffer,
-    bufferPrompt,
-    rehydrateActivePrompts,
-  });
+      applyStartupHistoryBuffer,
+      applyStartupPromptBuffer,
+      applyStartupPermissionBuffer,
+      applyStartupQuestionBuffer,
+      bufferPrompt,
+      bufferPermission,
+      bufferQuestion,
+      rehydrateActivePrompts,
+      rehydratePendingPermissions,
+      rehydratePendingQuestions,
+    });
 
   const { inject } = useProviderInjection(nodesRef, withNode);
 
@@ -138,11 +153,16 @@ export function useConnections(onActivatePromptTab: () => void) {
     selectChannel,
   });
 
-  const { handleDismissSession, handleRemoveSession, handleReplyPermission } =
-    useSessionHandlers({
-      nodesRef,
-      setNodes,
-    });
+  const {
+    handleDismissSession,
+    handleRemoveSession,
+    handleReplyPermission,
+    handleReplyQuestion,
+    handleRejectQuestion,
+  } = useSessionHandlers({
+    nodesRef,
+    setNodes,
+  });
 
   const {
     handleQueueSessionMessage,
@@ -199,6 +219,8 @@ export function useConnections(onActivatePromptTab: () => void) {
     handleRemoveSession,
     handleToggleDocContext,
     handleReplyPermission,
+    handleReplyQuestion,
+    handleRejectQuestion,
     jumpToFirstPendingPrompt,
   };
 }

@@ -38,11 +38,14 @@ function stopServer(): Promise<void> {
 function createMockClient(port: number) {
   return {
     session: {
-      todo: async (opts: { path: { id: string }; signal?: AbortSignal }) => {
+      todo: async (
+        params: { sessionID: string },
+        options?: { signal?: AbortSignal },
+      ) => {
         try {
           const res = await fetch(
-            `http://127.0.0.1:${port}/session/${opts.path.id}/todo`,
-            { signal: opts.signal },
+            `http://127.0.0.1:${port}/session/${params.sessionID}/todo`,
+            { signal: options?.signal },
           );
           const data = await res.json();
           return {

@@ -51,7 +51,10 @@ describe('opencode-server', () => {
     // Ensure clean state
     stopOpenCodeServer();
     vi.clearAllMocks();
-    vi.mocked(app).isPackaged = false;
+    Object.defineProperty(app, 'isPackaged', {
+      configurable: true,
+      value: false,
+    });
   });
 
   afterEach(() => {
@@ -124,15 +127,19 @@ describe('opencode-server', () => {
     const { spawn } = await import('child_process');
     const { existsSync } = await import('fs');
 
-    vi.mocked(app).isPackaged = true;
+    Object.defineProperty(app, 'isPackaged', {
+      configurable: true,
+      value: true,
+    });
     const originalResourcesPath = process.resourcesPath;
     Object.defineProperty(process, 'resourcesPath', {
       configurable: true,
       value: '/Applications/Interactive MCP.app/Contents/Resources',
     });
 
-    vi.mocked(existsSync).mockImplementation((path: Parameters<typeof existsSync>[0]) =>
-      String(path).includes('/Contents/Resources/resources/bin/opencode'),
+    vi.mocked(existsSync).mockImplementation(
+      (path: Parameters<typeof existsSync>[0]) =>
+        String(path).includes('/Contents/Resources/resources/bin/opencode'),
     );
 
     startOpenCodeServer(4096);

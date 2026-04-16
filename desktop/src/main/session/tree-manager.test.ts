@@ -3,12 +3,16 @@ import type { BrowserWindow } from 'electron';
 
 vi.mock('../database', () => ({
   getAllRegisteredConnections: vi.fn(),
+  getRegisteredConnectionBySessionId: vi.fn(),
   updateConnectionOpenCodeSession: vi.fn(),
   upsertRegisteredConnection: vi.fn(),
   isProviderSessionClaimed: vi.fn(),
 }));
 
 vi.mock('../opencode/session', () => ({
+  fetchRootOpenCodeSessions: vi.fn(),
+  expandOpenCodeSessionTree: vi.fn(),
+  fetchOpenCodeSession: vi.fn(),
   fetchAllOpenCodeSessions: vi.fn(),
 }));
 
@@ -37,18 +41,29 @@ import {
 } from './tree-manager';
 import {
   getAllRegisteredConnections,
+  getRegisteredConnectionBySessionId,
   upsertRegisteredConnection,
   isProviderSessionClaimed,
 } from '../database';
-import { fetchAllOpenCodeSessions } from '../opencode/session';
+import {
+  fetchRootOpenCodeSessions,
+  expandOpenCodeSessionTree,
+  fetchOpenCodeSession,
+  fetchAllOpenCodeSessions,
+} from '../opencode/session';
 import { injectOpenCodeMessage } from '../opencode/injector';
 import { updateSessionTokens } from '../opencode/context-tracking';
 
 const mockInjectOpenCodeMessage = injectOpenCodeMessage as Mock;
 const mockUpdateSessionTokens = updateSessionTokens as Mock;
 const mockGetAllRegisteredConnections = getAllRegisteredConnections as Mock;
+const mockGetRegisteredConnectionBySessionId =
+  getRegisteredConnectionBySessionId as Mock;
 const mockUpsertRegisteredConnection = upsertRegisteredConnection as Mock;
 const mockIsProviderSessionClaimed = isProviderSessionClaimed as Mock;
+const mockFetchRootOpenCodeSessions = fetchRootOpenCodeSessions as Mock;
+const mockExpandOpenCodeSessionTree = expandOpenCodeSessionTree as Mock;
+const mockFetchOpenCodeSession = fetchOpenCodeSession as Mock;
 const mockFetchAllOpenCodeSessions = fetchAllOpenCodeSessions as Mock;
 
 // Helper to fire a fake SSE session.created.1 event via the internal handler.
@@ -73,8 +88,16 @@ function makeSseResponse(events: object[]): Response {
 describe('session-tree-manager', () => {
   beforeEach(() => {
     mockGetAllRegisteredConnections.mockReset();
+    mockGetRegisteredConnectionBySessionId.mockReset();
+    mockGetRegisteredConnectionBySessionId.mockReturnValue(null);
     mockUpsertRegisteredConnection.mockReset();
     mockIsProviderSessionClaimed.mockReset();
+    mockFetchRootOpenCodeSessions.mockReset();
+    mockFetchRootOpenCodeSessions.mockResolvedValue([]);
+    mockExpandOpenCodeSessionTree.mockReset();
+    mockExpandOpenCodeSessionTree.mockResolvedValue([]);
+    mockFetchOpenCodeSession.mockReset();
+    mockFetchOpenCodeSession.mockResolvedValue(null);
     mockFetchAllOpenCodeSessions.mockReset();
     mockFetchAllOpenCodeSessions.mockResolvedValue([]);
     mockInjectOpenCodeMessage.mockReset();
@@ -527,6 +550,67 @@ describe('session-tree-manager', () => {
       global.fetch = undefined as unknown as typeof fetch;
     });
 
+    it('inherits parent baseDirectory when child session has fallback directory', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+      // Mock parent registration lookup
+      mockGetRegisteredConnectionBySessionId.mockImplementation(
+        (sessionId: string) => {
+          if (sessionId === 'root-ses-parent') {
+            return {
+              connectionId: 'root-ses-parent',
+              providerSessionId: 'root-ses-parent',
+              providerType: 'opencode',
+              channelName: 'Parent Session',
+              projectName: 'OpenCode',
+              baseDirectory: '/home/user/actual-project',
+              parentSessionId: null,
+            };
+          }
+          return null;
+        },
+      );
+
+      // Child session with home directory as fallback
+      const childEvent = {
+        payload: {
+          type: 'session.created.1',
+          aggregate: 'session',
+          data: {
+            sessionID: 'child-ses-inherit',
+            info: {
+              id: 'child-ses-inherit',
+              parentID: 'root-ses-parent',
+              title: 'Child Agent',
+              // This is a fallback directory that should be overridden
+              directory: process.env['HOME'] ?? '/Users',
+              time: { created: 9000, updated: 9000 },
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([childEvent]));
+      const win = makeWindow();
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Should use parent's baseDirectory instead of fallback
+      expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          connectionId: 'child-ses-inherit',
+          providerSessionId: 'child-ses-inherit',
+          baseDirectory: '/home/user/actual-project',
+          parentSessionId: 'root-ses-parent',
+        }),
+      );
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
     it('re-seeds from REST on manual refresh even after startup seed completed', async () => {
       mockIsProviderSessionClaimed.mockReturnValue(false);
       mockFetchAllOpenCodeSessions.mockResolvedValue([]);
@@ -551,7 +635,7 @@ describe('session-tree-manager', () => {
     it('does not prune existing cached sessions when force refresh returns a partial list', async () => {
       mockIsProviderSessionClaimed.mockReturnValue(false);
 
-      // Initial startup seed returns two sessions
+      // Initial startup seed returns two sessions (root + sibling)
       mockFetchAllOpenCodeSessions.mockResolvedValueOnce([
         {
           id: 'seed-a',
@@ -911,6 +995,79 @@ describe('session-tree-manager', () => {
         'claude-3-opus',
         'anthropic',
         true,
+      );
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('hydrates Task-tool-spawned subagent via message.part.updated.1', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+
+      // fetchOpenCodeSession returns the child's full session info.
+      mockFetchOpenCodeSession.mockResolvedValue({
+        id: 'child-ses-task',
+        parentID: 'root-ses-task-parent',
+        title: 'Task Subagent',
+        directory: '/home/user/project',
+        time: { created: 12000, updated: 12000 },
+      });
+
+      const partUpdatedEvent = {
+        payload: {
+          type: 'message.part.updated.1',
+          aggregate: 'root-ses-task-parent',
+          data: {
+            sessionID: 'root-ses-task-parent',
+            part: {
+              id: 'prt_task_1',
+              messageID: 'msg_task_1',
+              type: 'tool',
+              tool: 'task',
+              callID: 'call_task_1',
+              state: {
+                status: 'running',
+                metadata: {
+                  sessionId: 'child-ses-task',
+                },
+              },
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([partUpdatedEvent]));
+      const send = vi.fn();
+      const win = {
+        isDestroyed: () => false,
+        webContents: { send },
+      } as unknown as BrowserWindow;
+
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 120));
+
+      // fetchOpenCodeSession should have been called for the child.
+      expect(mockFetchOpenCodeSession).toHaveBeenCalledWith(
+        expect.any(Number),
+        'child-ses-task',
+      );
+
+      // Should emit a session-tree-updated snapshot that includes the child.
+      const snapshotCalls = send.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'session-tree-updated',
+      );
+      expect(snapshotCalls.length).toBeGreaterThan(0);
+
+      // upsertRegisteredConnection should have been called for the child.
+      expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
+        expect.objectContaining({
+          providerSessionId: 'child-ses-task',
+          connectionId: 'child-ses-task',
+          parentSessionId: 'root-ses-task-parent',
+        }),
       );
 
       stopSessionTreeManager();

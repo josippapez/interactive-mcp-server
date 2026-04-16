@@ -11,7 +11,6 @@ export type AppSettings = {
   docContextDebug: boolean;
   agentBackend: 'standalone' | 'opencode' | 'claude_sdk';
   autoRegisterSubagents: boolean;
-  extraMcpServers: string;
   compactMode: boolean;
   toolAutoExpandExclusions: string[];
   discoveredTools: string[];

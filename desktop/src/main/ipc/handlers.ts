@@ -1,6 +1,6 @@
 import { app, ipcMain, dialog, BrowserWindow } from 'electron';
 import { readFileSync, writeFileSync } from 'fs';
-import { basename } from 'path';
+import { basename, join as joinPath } from 'path';
 import JSZip from 'jszip';
 import { AppSettings, saveSettings } from '../settings';
 import {
@@ -16,8 +16,17 @@ import {
   connectMcp,
   disconnectMcp,
   registerMcp,
+  startMcpAuth,
+  callbackMcpAuth,
+  authenticateMcp,
+  removeMcpAuth,
 } from '../opencode/mcp-status';
 import { replyToOpenCodePermission } from '../opencode/permission-reply';
+import {
+  saveAttachment as saveAttachmentToDisk,
+  getAttachmentsDir,
+  attachmentUrl,
+} from '../attachment-store';
 import { resolveSession, reResolveStaleSession } from '../session/resolver';
 import {
   getConversationHistory,
@@ -77,6 +86,12 @@ import { abortOpenCodeSession } from '../opencode/abort';
 import { checkOpenCodeHealth } from '../opencode/health';
 import { fetchVcsInfo } from '../opencode/vcs';
 import { fetchSessionStatus } from '../opencode/session-status';
+import { fetchPendingPermissions } from '../opencode/permission-list';
+import {
+  fetchPendingQuestions,
+  replyToOpenCodeQuestion,
+  rejectOpenCodeQuestion,
+} from '../opencode/question-list';
 import { injectClaudeMessageForConnection } from '../claude-sdk-runtime';
 import {
   matchSkillsForMessage,
@@ -185,7 +200,6 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     const syncResult = syncRemoteConfig(
       settings.port,
       settings.promptTimeoutSeconds,
-      settings.extraMcpServers,
     );
     return `register=${regResult.status}, config=${syncResult}`;
   });
@@ -292,14 +306,8 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       const timeoutChanged =
         settings.promptTimeoutSeconds !== prev.promptTimeoutSeconds;
       const justEnabled = !prev.autoSyncOpencode;
-      const extraServersChanged =
-        settings.extraMcpServers !== prev.extraMcpServers;
-      if (timeoutChanged || justEnabled || portChanged || extraServersChanged) {
-        syncRemoteConfig(
-          settings.port,
-          settings.promptTimeoutSeconds,
-          settings.extraMcpServers,
-        );
+      if (timeoutChanged || justEnabled || portChanged) {
+        syncRemoteConfig(settings.port, settings.promptTimeoutSeconds);
       }
     }
     return true;
@@ -390,6 +398,29 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
     }
   });
 
+  // Save a base64 image (e.g. from clipboard) to the attachments directory
+  // and return its absolute path on disk plus a public URL served by the MCP
+  // HTTP server. Returns null on failure. `url` falls back to null when the
+  // MCP server port is unavailable.
+  ipcMain.handle(
+    'save-clipboard-attachment',
+    (_event, payload: { data: string; mimeType: string }) => {
+      if (!payload || typeof payload.data !== 'string') return null;
+      const filename = saveAttachmentToDisk(
+        payload.data,
+        payload.mimeType || 'image/png',
+      );
+      if (!filename) return null;
+      const absolutePath = joinPath(getAttachmentsDir(), filename);
+      const { port: mcpServerPort } = deps.getSettings();
+      const url =
+        typeof mcpServerPort === 'number' && mcpServerPort > 0
+          ? attachmentUrl(filename, mcpServerPort)
+          : null;
+      return { filename, absolutePath, url };
+    },
+  );
+
   // Force-terminate a chat connection from the UI
   ipcMain.handle('force-terminate-chat', (_event, connectionId: string) => {
     forceTerminateChat(connectionId);
@@ -411,6 +442,24 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
 
   // Return all currently-active prompts so the renderer can recover them on restart.
   ipcMain.handle('get-active-prompts', () => getActivePromptData());
+
+  ipcMain.handle('get-pending-permissions', async () => {
+    const { openCodePort, agentBackend } = deps.getSettings();
+    if (agentBackend !== 'opencode') {
+      return [];
+    }
+
+    return fetchPendingPermissions(openCodePort);
+  });
+
+  ipcMain.handle('get-pending-questions', async () => {
+    const { openCodePort, agentBackend } = deps.getSettings();
+    if (agentBackend !== 'opencode') {
+      return [];
+    }
+
+    return fetchPendingQuestions(openCodePort);
+  });
 
   // Dismiss a session tab: cancel any pending prompt with "No reply" and remove the connection from the UI
   ipcMain.handle('dismiss-session', (_event, connectionId: string) => {
@@ -809,6 +858,47 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         data.reply,
         data.directory,
       );
+    },
+  );
+
+  ipcMain.handle(
+    'reply-question',
+    async (
+      _event,
+      data: { requestID: string; answers: string[][]; sessionID: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const { openCodePort } = deps.getSettings();
+      ipcLog.info(
+        `reply-question: requestID=${data.requestID} sessionID=${data.sessionID} answers=${JSON.stringify(data.answers)}`,
+      );
+      const result = await replyToOpenCodeQuestion(
+        openCodePort,
+        data.requestID,
+        data.answers,
+        data.sessionID,
+      );
+      ipcLog.info(`reply-question result: ${JSON.stringify(result)}`);
+      return result;
+    },
+  );
+
+  ipcMain.handle(
+    'reject-question',
+    async (
+      _event,
+      data: { requestID: string; sessionID: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const { openCodePort } = deps.getSettings();
+      ipcLog.info(
+        `reject-question: requestID=${data.requestID} sessionID=${data.sessionID}`,
+      );
+      const result = await rejectOpenCodeQuestion(
+        openCodePort,
+        data.requestID,
+        data.sessionID,
+      );
+      ipcLog.info(`reject-question result: ${JSON.stringify(result)}`);
+      return result;
     },
   );
 
@@ -1407,7 +1497,13 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       servers?: Array<{
         name: string;
         type: 'local' | 'remote';
-        status: 'connected' | 'disconnected' | 'connecting' | 'error';
+        status:
+          | 'connected'
+          | 'disconnected'
+          | 'connecting'
+          | 'error'
+          | 'needs_auth'
+          | 'needs_client_registration';
         error?: string;
         url?: string;
         command?: string[];
@@ -1493,6 +1589,98 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
       return registerMcp(settings.openCodePort, name, config, directory);
+    },
+  );
+
+  ipcMain.handle(
+    'start-mcp-auth',
+    async (
+      _event,
+      { name, directory }: { name: string; directory?: string },
+    ): Promise<{ ok: boolean; authorizationUrl?: string; error?: string }> => {
+      ipcLog.info(
+        `start-mcp-auth: name=${name} directory=${directory ?? '(none)'}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return startMcpAuth(settings.openCodePort, name, directory);
+    },
+  );
+
+  ipcMain.handle(
+    'callback-mcp-auth',
+    async (
+      _event,
+      {
+        name,
+        code,
+        directory,
+      }: { name: string; code: string; directory?: string },
+    ): Promise<{
+      ok: boolean;
+      status?:
+        | 'connected'
+        | 'disconnected'
+        | 'connecting'
+        | 'error'
+        | 'needs_auth'
+        | 'needs_client_registration';
+      error?: string;
+    }> => {
+      ipcLog.info(
+        `callback-mcp-auth: name=${name} directory=${directory ?? '(none)'}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return callbackMcpAuth(settings.openCodePort, name, code, directory);
+    },
+  );
+
+  ipcMain.handle(
+    'authenticate-mcp',
+    async (
+      _event,
+      { name, directory }: { name: string; directory?: string },
+    ): Promise<{
+      ok: boolean;
+      status?:
+        | 'connected'
+        | 'disconnected'
+        | 'connecting'
+        | 'error'
+        | 'needs_auth'
+        | 'needs_client_registration';
+      error?: string;
+    }> => {
+      ipcLog.info(
+        `authenticate-mcp: name=${name} directory=${directory ?? '(none)'}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return authenticateMcp(settings.openCodePort, name, directory);
+    },
+  );
+
+  ipcMain.handle(
+    'remove-mcp-auth',
+    async (
+      _event,
+      { name, directory }: { name: string; directory?: string },
+    ): Promise<{ ok: boolean; error?: string }> => {
+      ipcLog.info(
+        `remove-mcp-auth: name=${name} directory=${directory ?? '(none)'}`,
+      );
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') {
+        return { ok: false, error: 'Not in OpenCode mode' };
+      }
+      return removeMcpAuth(settings.openCodePort, name, directory);
     },
   );
 }

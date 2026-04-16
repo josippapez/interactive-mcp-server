@@ -35,7 +35,8 @@ export function useSessionTreeHandler({
   loadedHistoryIds,
   applyStartupHistoryBuffer,
   applyStartupPromptBuffer,
-  rehydrateActivePrompts,
+  applyStartupPermissionBuffer,
+  applyStartupQuestionBuffer,
 }: HandlerContext): void {
   window.api.onOptimisticSessionNodeCreated?.((node) => {
     setNodes((prev) => upsertOptimisticSessionNode(prev, node));
@@ -58,6 +59,8 @@ export function useSessionTreeHandler({
       for (const snap of snapshotNodes) {
         // Apply buffered prompts for this session (uses openCodeSessionId)
         applyStartupPromptBuffer(snap.openCodeSessionId, snap.connectionId);
+        applyStartupPermissionBuffer(snap.openCodeSessionId, snap.connectionId);
+        applyStartupQuestionBuffer(snap.openCodeSessionId, snap.connectionId);
 
         if (snap.connectionId) {
           // Drain startup buffer first (no-op if nothing buffered)
@@ -83,6 +86,5 @@ export function useSessionTreeHandler({
       return next;
     });
 
-    void rehydrateActivePrompts();
   });
 }

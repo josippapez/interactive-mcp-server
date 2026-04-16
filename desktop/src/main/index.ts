@@ -111,6 +111,12 @@ app.whenReady().then(async () => {
       console.log(`[config-sync] ${syncResult}`);
     }
 
+    // Auto-start OpenCode serve before session probing/reconcile so cold-start
+    // startup does not waste time probing a dead instance first.
+    if (currentSettings.autoStartOpenCode) {
+      startOpenCodeServer(currentSettings.openCodePort);
+    }
+
     // Start session-tree sync (replaces old poller)
     startSessionTreeManager(
       () => mainWindow,
@@ -132,11 +138,6 @@ app.whenReady().then(async () => {
     console.log(
       `[session-reconnect] matched=${reconResult.matched} cleaned=${reconResult.cleaned} total=${reconResult.total}`,
     );
-
-    // Auto-start OpenCode serve if enabled
-    if (currentSettings.autoStartOpenCode) {
-      startOpenCodeServer(currentSettings.openCodePort);
-    }
 
     // Re-register with OpenCode on every startup so its MCP client performs a
     // fresh initialize handshake instead of hanging on a stale reconnect backoff.

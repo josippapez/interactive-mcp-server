@@ -5,7 +5,13 @@
  * This replaces manual fetch calls with the official SDK methods.
  */
 
-import { createOpencodeClient, type OpencodeClient } from '@opencode-ai/sdk';
+import {
+  createOpencodeClient,
+  type OpencodeClient,
+} from '@opencode-ai/sdk/v2/client';
+import { createLogger } from '../utils/logger';
+
+const sdkLog = createLogger('sdk');
 
 // Singleton client for consistent port usage
 let _client: OpencodeClient | null = null;
@@ -15,11 +21,16 @@ let _port = 4096;
 let _clientFactory: (port: number, directory?: string) => OpencodeClient = (
   port: number,
   directory?: string,
-) =>
-  createOpencodeClient({
-    baseUrl: `http://localhost:${port}`,
+) => {
+  const baseUrl = `http://localhost:${port}`;
+  sdkLog.info(
+    `createOpencodeClient baseUrl=${baseUrl} port=${port} directory=${directory ?? '(none)'}`,
+  );
+  return createOpencodeClient({
+    baseUrl,
     directory,
   });
+};
 
 /**
  * Set a custom client factory for testing purposes.
@@ -37,11 +48,16 @@ export function _setClientFactory(
  * @internal
  */
 export function _resetClientFactory(): void {
-  _clientFactory = (port: number, directory?: string) =>
-    createOpencodeClient({
-      baseUrl: `http://localhost:${port}`,
+  _clientFactory = (port: number, directory?: string) => {
+    const baseUrl = `http://localhost:${port}`;
+    sdkLog.info(
+      `createOpencodeClient baseUrl=${baseUrl} port=${port} directory=${directory ?? '(none)'}`,
+    );
+    return createOpencodeClient({
+      baseUrl,
       directory,
     });
+  };
   _client = null;
 }
 

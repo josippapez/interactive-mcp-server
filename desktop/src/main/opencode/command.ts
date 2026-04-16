@@ -6,6 +6,7 @@
  */
 
 import { getClient } from './sdk-client';
+import { sessionCommand } from './session-api';
 
 /** Command argument definition. */
 export interface CommandArg {
@@ -90,10 +91,10 @@ export async function executeCommand(
       : undefined;
 
   try {
-    const client = getClient(openCodePort);
-    const response = await client.session.command(
+    const response = await sessionCommand(
+      openCodePort,
+      sessionId,
       {
-        sessionID: sessionId,
         command: commandName,
         arguments: argsString,
       },

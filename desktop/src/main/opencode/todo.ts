@@ -4,7 +4,7 @@
  * Uses the OpenCode SDK to retrieve the current task list for the agent session.
  */
 
-import { getClient } from './sdk-client';
+import { sessionTodo } from './session-api';
 
 export interface Todo {
   content: string;
@@ -24,9 +24,7 @@ export async function fetchTodosForSession(
   sessionId: string,
 ): Promise<Todo[] | null> {
   try {
-    const client = getClient(openCodePort);
-    const response = await client.session.todo({
-      path: { id: sessionId },
+    const response = await sessionTodo(openCodePort, sessionId, {
       signal: AbortSignal.timeout(3000),
     });
 

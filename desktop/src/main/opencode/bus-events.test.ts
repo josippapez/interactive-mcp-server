@@ -16,6 +16,7 @@ import type { RegisteredConnection } from '../database';
 const mocks = vi.hoisted(() => ({
   webContentsSend: vi.fn(),
   getAllRegisteredConnections: vi.fn((): RegisteredConnection[] => []),
+  replyToOpenCodePermission: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -24,6 +25,10 @@ vi.mock('electron', () => ({
 
 vi.mock('../database', () => ({
   getAllRegisteredConnections: mocks.getAllRegisteredConnections,
+}));
+
+vi.mock('./permission-reply', () => ({
+  replyToOpenCodePermission: mocks.replyToOpenCodePermission,
 }));
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -69,6 +74,7 @@ let handleBusEvent: typeof HandleBusEventFn;
 beforeEach(async () => {
   vi.resetModules();
   vi.clearAllMocks();
+  mocks.replyToOpenCodePermission.mockResolvedValue({ ok: true });
 
   const mod = await import('./bus-events');
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -102,6 +108,7 @@ describe('opencode-bus-events — permission.asked', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
       connectionId: 'conn-abc',
+      openCodeSessionId: 'ses-123',
       requestId: 'req-001',
       sessionID: 'ses-123',
       directory: undefined,
@@ -134,6 +141,7 @@ describe('opencode-bus-events — permission.asked', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
       connectionId: 'ses-123',
+      openCodeSessionId: 'ses-123',
       requestId: 'req-002',
       sessionID: 'ses-123',
       permission: 'bash',
@@ -187,6 +195,7 @@ describe('opencode-bus-events — permission.asked', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
       connectionId: 'conn-abc',
+      openCodeSessionId: 'ses-123',
       requestId: 'req-004',
       sessionID: 'ses-123',
       permission: 'file_write',
@@ -195,6 +204,45 @@ describe('opencode-bus-events — permission.asked', () => {
       tool: undefined,
       metadata: { path: '/etc/hosts' },
     });
+  });
+
+  it('auto-approves non-read permissions from allowed settings', async () => {
+    const win = makeWindow();
+
+    const mod = await import('./bus-event-handler');
+    mod.handleBusEvent(
+      {
+        directory: '/tmp/project',
+        payload: {
+          type: 'permission.asked',
+          properties: {
+            id: 'req-005',
+            sessionID: 'ses-123',
+            permission: 'glob',
+            patterns: ['**/*.ts'],
+          },
+        },
+      },
+      win as never,
+      {
+        getOpenCodePort: () => 4096,
+        getSettings: () => ({
+          allowedReadFolders: [],
+          allowedPermissions: ['glob'],
+        }),
+      },
+    );
+
+    await Promise.resolve();
+
+    expect(mocks.replyToOpenCodePermission).toHaveBeenCalledWith(
+      4096,
+      'ses-123',
+      'req-005',
+      'always',
+      '/tmp/project',
+    );
+    expect(mocks.webContentsSend).not.toHaveBeenCalled();
   });
 });
 
@@ -239,6 +287,116 @@ describe('opencode-bus-events — permission.replied', () => {
     handleBusEvent(envelope, null);
 
     expect(mocks.webContentsSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('opencode-bus-events — question events', () => {
+  it('emits question-asked for a session question', () => {
+    const win = makeWindow();
+    mocks.getAllRegisteredConnections.mockReturnValue([
+      makeRegisteredConnection('conn-abc', 'ses-123'),
+    ]);
+
+    handleBusEvent(
+      {
+        payload: {
+          type: 'question.asked',
+          properties: {
+            id: 'q-1',
+            sessionID: 'ses-123',
+            question: 'Pick one',
+            options: [{ label: 'A', description: 'Option A' }],
+          },
+        },
+      },
+      win,
+    );
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('question-asked', {
+      connectionId: 'conn-abc',
+      openCodeSessionId: 'ses-123',
+      requestId: 'q-1',
+      sessionID: 'ses-123',
+      questions: [
+        {
+          question: 'Pick one',
+          header: 'Question',
+          options: [{ label: 'A', description: '' }],
+          multiple: false,
+          custom: true,
+        },
+      ],
+      tool: undefined,
+    });
+  });
+
+  it('emits question-cleared for replied/rejected question events', () => {
+    const win = makeWindow();
+
+    handleBusEvent(
+      {
+        payload: {
+          type: 'question.replied',
+          properties: {
+            requestID: 'q-1',
+            sessionID: 'ses-123',
+            answer: 'A',
+          },
+        },
+      },
+      win,
+    );
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('question-cleared', {
+      requestId: 'q-1',
+      sessionID: 'ses-123',
+      answer: 'A',
+      rejected: false,
+    });
+  });
+
+  it('emits question-asked when the bus event only contains structured questions', () => {
+    const win = makeWindow();
+    mocks.getAllRegisteredConnections.mockReturnValue([
+      makeRegisteredConnection('conn-abc', 'ses-123'),
+    ]);
+
+    handleBusEvent(
+      {
+        payload: {
+          type: 'question.asked',
+          properties: {
+            id: 'q-2',
+            sessionID: 'ses-123',
+            questions: [
+              {
+                header: 'Choice',
+                question: 'Pick one',
+                options: [{ label: 'A', description: 'Option A' }],
+              },
+            ],
+          },
+        },
+      },
+      win,
+    );
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('question-asked', {
+      connectionId: 'conn-abc',
+      openCodeSessionId: 'ses-123',
+      requestId: 'q-2',
+      sessionID: 'ses-123',
+      questions: [
+        {
+          header: 'Choice',
+          question: 'Pick one',
+          options: [{ label: 'A', description: 'Option A' }],
+          multiple: false,
+          custom: true,
+        },
+      ],
+      tool: undefined,
+    });
   });
 });
 

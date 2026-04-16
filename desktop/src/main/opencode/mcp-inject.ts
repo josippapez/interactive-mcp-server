@@ -77,6 +77,7 @@ export interface McpInjectionOptions {
 
 const CONFIG_PATH = '.opencode/opencode.jsonc';
 const DEFAULT_TIMEOUT_MS = 5000;
+const MCP_INJECTION_CONCURRENCY = 3;
 
 // ─── JSONC Parser ─────────────────────────────────────────────────────────────
 
@@ -186,6 +187,7 @@ async function registerSingleMcp(
   name: string,
   config: McpServerConfig,
   openCodePort: number,
+  baseDirectory: string,
   timeoutMs: number,
   logger: Logger,
 ): Promise<McpInjectionResult> {
@@ -195,29 +197,36 @@ async function registerSingleMcp(
     return { name, status: 'skipped', error: 'disabled' };
   }
 
-  // Build the config payload matching OpenCode's expected format
-  const mcpConfig = {
-    type: config.type,
-    ...(config.type === 'remote' && config.url ? { url: config.url } : {}),
-    ...(config.type === 'local' && config.command
-      ? { command: config.command }
-      : {}),
-    ...(config.args ? { args: config.args } : {}),
-    ...(config.environment ? { environment: config.environment } : {}),
-    ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
-  };
+  // Build the config payload matching OpenCode's expected format.
+  // Use a discriminated union so the SDK types narrow correctly.
+  const mcpConfig =
+    config.type === 'remote'
+      ? {
+          type: 'remote' as const,
+          url: config.url ?? '',
+          ...(config.args ? { args: config.args } : {}),
+          ...(config.environment ? { environment: config.environment } : {}),
+          ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
+        }
+      : {
+          type: 'local' as const,
+          command: config.command ?? [],
+          ...(config.args ? { args: config.args } : {}),
+          ...(config.environment ? { environment: config.environment } : {}),
+          ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
+        };
 
   logger.info(`Registering MCP: ${name} (type: ${config.type})`);
 
   try {
-    const client = getClient(openCodePort);
-    const response = await client.mcp.add({
-      body: {
+    const client = getClient(openCodePort, baseDirectory);
+    const response = await client.mcp.add(
+      {
         name,
         config: mcpConfig,
       },
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+      { signal: AbortSignal.timeout(timeoutMs) },
+    );
 
     if (response.error) {
       const error = `OpenCode returned error: ${JSON.stringify(response.error)}`;
@@ -232,6 +241,33 @@ async function registerSingleMcp(
     logger.error(`Failed to register MCP ${name}: ${error}`);
     return { name, status: 'error', error };
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return [];
+
+  const results = new Array<R>(items.length);
+  let index = 0;
+
+  const worker = async () => {
+    while (true) {
+      const currentIndex = index;
+      index += 1;
+      if (currentIndex >= items.length) {
+        return;
+      }
+
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  };
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => worker()));
+  return results;
 }
 
 /**
@@ -285,7 +321,7 @@ export async function injectProjectMcps(
   }
 
   const config = parseResult.data;
-  const mcpConfig = config.mcp;
+  const mcpConfig = config?.mcp;
 
   if (!mcpConfig || typeof mcpConfig !== 'object') {
     logger.info(`No MCP section found in ${configPath}`);
@@ -309,24 +345,23 @@ export async function injectProjectMcps(
 
   logger.info(`Found ${mcpEntries.length} MCP(s) to inject from ${configPath}`);
 
-  // Register each MCP server
-  const results: McpInjectionResult[] = [];
-  const injectedMcps: string[] = [];
+  const results = await mapWithConcurrency(
+    mcpEntries,
+    MCP_INJECTION_CONCURRENCY,
+    async ([name, mcpServerConfig]) =>
+      registerSingleMcp(
+        name,
+        mcpServerConfig,
+        openCodePort,
+        baseDirectory,
+        timeoutMs,
+        logger,
+      ),
+  );
 
-  for (const [name, mcpServerConfig] of mcpEntries) {
-    const result = await registerSingleMcp(
-      name,
-      mcpServerConfig,
-      openCodePort,
-      timeoutMs,
-      logger,
-    );
-    results.push(result);
-
-    if (result.status === 'injected') {
-      injectedMcps.push(name);
-    }
-  }
+  const injectedMcps = results
+    .filter((result) => result.status === 'injected')
+    .map((result) => result.name);
 
   logger.info(
     `MCP injection complete: ${injectedMcps.length}/${mcpEntries.length} injected`,

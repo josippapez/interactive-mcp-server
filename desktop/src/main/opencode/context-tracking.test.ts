@@ -217,7 +217,7 @@ describe('context-tracking', () => {
                 return { data: {} };
               },
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await triggerCompaction('ses_test', 4096);
@@ -235,7 +235,7 @@ describe('context-tracking', () => {
                 error: 'Internal error',
               }),
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await triggerCompaction('ses_test', 4096);
@@ -253,7 +253,7 @@ describe('context-tracking', () => {
                 throw new Error('Network error');
               },
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await triggerCompaction('ses_test', 4096);
@@ -282,7 +282,7 @@ describe('context-tracking', () => {
                 },
               }),
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await fetchSessionTokens('ses_test', 4096);
@@ -301,7 +301,7 @@ describe('context-tracking', () => {
                 error: 'Not found',
               }),
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await fetchSessionTokens('ses_test', 4096);
@@ -336,7 +336,7 @@ describe('context-tracking', () => {
                 ],
               }),
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await fetchSessionTokens('ses_test', 4096);

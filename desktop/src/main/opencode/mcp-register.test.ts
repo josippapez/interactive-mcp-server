@@ -47,8 +47,8 @@ describe('opencode-mcp-register', () => {
     expect(result.status).toBe('registered');
 
     // Verify the correct body was sent
-    expect(mockMcpAdd).toHaveBeenCalledWith({
-      body: {
+    expect(mockMcpAdd).toHaveBeenCalledWith(
+      {
         name: 'interactive-desktop',
         config: {
           type: 'remote',
@@ -56,7 +56,10 @@ describe('opencode-mcp-register', () => {
           timeout: 1260000,
         },
       },
-    });
+      expect.objectContaining({
+        signal: expect.any(AbortSignal),
+      }),
+    );
   });
 
   it('derives the remote MCP timeout from the prompt timeout setting', async () => {
@@ -69,7 +72,7 @@ describe('opencode-mcp-register', () => {
     });
 
     const call = mockMcpAdd.mock.calls[0][0];
-    expect(call.body.config.timeout).toBe(1261000);
+    expect(call.config.timeout).toBe(1261000);
   });
 
   it('returns unreachable when OpenCode is not running', async () => {
@@ -108,7 +111,7 @@ describe('opencode-mcp-register', () => {
     });
 
     const call = mockMcpAdd.mock.calls[0][0];
-    expect(call.body.name).toBe('my-custom-mcp');
+    expect(call.name).toBe('my-custom-mcp');
   });
 
   it('registerMcpAcrossReachablePorts delegates to registerMcpWithOpenCode', async () => {

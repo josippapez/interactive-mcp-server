@@ -46,6 +46,7 @@ import {
 import { injectOpenCodeMessage } from '../opencode/injector';
 import {
   fetchAllOpenCodeSessions,
+  fetchOpenCodeSession,
   type OpenCodeSession,
 } from '../opencode/session';
 import {
@@ -161,6 +162,11 @@ let _sseAbortController: AbortController | null = null;
 let _reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let _snapshotTimer: ReturnType<typeof setTimeout> | null = null;
 let _restSeedCompleted = false;
+// Instrumentation for SSE reconnect thrash — does not fix the thrash itself.
+
+let _sseReconnectCount = 0;
+let _sseLastConnectedAt: number | null = null;
+
 /**
  * Flag indicating that a snapshot was requested but could not be emitted
  * (e.g., window unavailable). When true, the next scheduleSnapshot call
@@ -490,8 +496,36 @@ function autoRegisterSession(
     return;
   }
 
+  // Parent baseDirectory inheritance:
+  // Task-tool-spawned subagents often report a fallback directory (the user's
+  // HOME dir, or `/Users`) instead of the real project directory. If this
+  // session has a parent AND the reported directory looks like a fallback,
+  // inherit the parent's registered baseDirectory so repo-scoped features
+  // (doc search, file autocomplete) work correctly.
+  let effectiveBaseDirectory = info.directory;
+  if (info.parentID) {
+    const home = process.env['HOME'];
+    const looksLikeFallback =
+      !info.directory ||
+      info.directory === home ||
+      info.directory === '/Users' ||
+      info.directory === '/home';
+    if (looksLikeFallback) {
+      const parentConn = getRegisteredConnectionBySessionId(
+        info.parentID,
+        'opencode',
+      );
+      if (parentConn?.baseDirectory) {
+        log.info(
+          `inheriting parent baseDirectory for session ${info.id}: parent=${info.parentID}, parentBaseDirectory=${parentConn.baseDirectory} (child reported=${info.directory ?? '(none)'})`,
+        );
+        effectiveBaseDirectory = parentConn.baseDirectory;
+      }
+    }
+  }
+
   log.info(
-    `upserting registered connection for session ${info.id} with baseDirectory=${info.directory ?? '(none)'}`,
+    `upserting registered connection for session ${info.id} with baseDirectory=${effectiveBaseDirectory ?? '(none)'}`,
   );
   upsertRegisteredConnection({
     providerSessionId: info.id,
@@ -499,7 +533,7 @@ function autoRegisterSession(
     connectionId: info.id,
     channelName: info.title ?? `Session ${info.id.slice(0, 8)}`,
     projectName: 'OpenCode',
-    baseDirectory: info.directory,
+    baseDirectory: effectiveBaseDirectory,
     parentSessionId: info.parentID ?? undefined,
   });
   log.info(`registered connection upserted for session ${info.id}`);
@@ -527,6 +561,66 @@ function autoRegisterSession(
 }
 
 // ─── SSE event handling ───────────────────────────────────────────────────────
+
+/**
+ * Hydrate a Task-tool-spawned subagent session into the cache.
+ *
+ * OpenCode's `/global/sync-event` stream does not emit `session.created.1`
+ * for child sessions spawned by the Task tool. We detect them via the
+ * `message.part.updated.1` event whose `part.state.metadata.sessionId`
+ * carries the child ID, then fetch the full session info via REST and
+ * merge it through the same cache path used by `session.created.1`.
+ */
+async function hydrateTaskSubagentSession(
+  childSessionId: string,
+  parentSessionId: string,
+): Promise<void> {
+  // Guard: another part update could race us.
+  if (_sessionCache.has(childSessionId)) return;
+  if (_tombstonedSessionIds.has(childSessionId)) return;
+
+  const port = _getOpenCodePort?.() ?? DEFAULT_OPENCODE_PORT;
+  log.info(
+    `hydrateTaskSubagentSession: fetching child ${childSessionId} (parent=${parentSessionId})`,
+  );
+  const session = await fetchOpenCodeSession(port, childSessionId);
+
+  // Re-check cache after async fetch (SSE may have caught up).
+  if (_sessionCache.has(childSessionId)) return;
+  if (_tombstonedSessionIds.has(childSessionId)) return;
+
+  const info: SessionInfo = session
+    ? {
+        id: childSessionId,
+        parentID: (session as SessionInfo).parentID ?? parentSessionId,
+        title: (session as SessionInfo & { title?: string }).title,
+        directory: (session as SessionInfo & { directory?: string }).directory,
+        time: (session as SessionInfo & { time?: SessionInfo['time'] }).time,
+        version: (session as SessionInfo & { version?: string }).version,
+        summary: (session as SessionInfo & { summary?: SessionInfo['summary'] })
+          .summary,
+      }
+    : {
+        id: childSessionId,
+        parentID: parentSessionId,
+        title: `Subagent ${childSessionId.slice(0, 8)}`,
+      };
+
+  _sessionCache.set(childSessionId, info);
+  log.info(
+    `hydrateTaskSubagentSession: added ${childSessionId} to cache (size=${_sessionCache.size})`,
+  );
+
+  tryAutoBindSession(info);
+
+  const autoRegisterEnabled = _getAutoRegisterSubagents?.() ?? true;
+  if (autoRegisterEnabled) {
+    autoRegisterSession(info, { scheduleSnapshot: false });
+  }
+
+  emitOptimisticChildSession(info);
+  scheduleSnapshot();
+}
 
 function handleSyncEvent(envelope: SyncEventEnvelope): void {
   const { type, data } = envelope.payload;
@@ -646,6 +740,28 @@ function handleSyncEvent(envelope: SyncEventEnvelope): void {
     const part = data['part'] as Record<string, unknown> | undefined;
     const sessionID = data['sessionID'] as string | undefined;
     if (!part || !sessionID) return;
+
+    // ─── Task-tool subagent hydration ──────────────────────────────────────
+    // When the OpenCode Task tool spawns a subagent, the child session is
+    // created server-side but the `/global/sync-event` stream does NOT emit
+    // a `session.created.1` event for it. The only signal we receive is this
+    // `message.part.updated.1` event whose `part.state.metadata.sessionId`
+    // carries the child's session ID. Hydrate the child into the cache so
+    // it appears in the sidebar without requiring a manual refresh.
+    if (part['tool'] === 'task') {
+      const state = part['state'] as Record<string, unknown> | undefined;
+      const metadata = state?.['metadata'] as
+        | Record<string, unknown>
+        | undefined;
+      const childSessionId = metadata?.['sessionId'] as string | undefined;
+      if (
+        childSessionId &&
+        !_sessionCache.has(childSessionId) &&
+        !_tombstonedSessionIds.has(childSessionId)
+      ) {
+        void hydrateTaskSubagentSession(childSessionId, sessionID);
+      }
+    }
 
     const win = _getWindow?.();
     if (!win || win.isDestroyed()) return;
@@ -814,7 +930,14 @@ async function subscribeToSyncEvents(openCodePort: number): Promise<void> {
   await seedCacheFromRest(openCodePort);
 
   const url = `http://localhost:${openCodePort}/global/sync-event`;
-  log.info(`subscribing to SSE at ${url}`);
+  const attemptStartedAt = Date.now();
+  const sincePreviousConnectMs =
+    _sseLastConnectedAt !== null
+      ? attemptStartedAt - _sseLastConnectedAt
+      : null;
+  log.info(
+    `subscribing to SSE at ${url} reconnectCount=${_sseReconnectCount} sincePreviousConnectMs=${sincePreviousConnectMs ?? '(first)'} timestamp=${new Date(attemptStartedAt).toISOString()}`,
+  );
 
   try {
     const res = await fetch(url, {
@@ -824,13 +947,16 @@ async function subscribeToSyncEvents(openCodePort: number): Promise<void> {
 
     if (!res.ok || !res.body) {
       log.warn(
-        `SSE connect failed on port ${openCodePort}: ${res.status} — will retry in ${SSE_RECONNECT_DELAY_MS}ms`,
+        `SSE connect failed on port ${openCodePort}: ${res.status} — will retry in ${SSE_RECONNECT_DELAY_MS}ms (reconnectCount=${_sseReconnectCount})`,
       );
       scheduleReconnect();
       return;
     }
 
-    log.info(`SSE connected to ${url}`);
+    _sseLastConnectedAt = Date.now();
+    log.info(
+      `SSE connected to ${url} reconnectCount=${_sseReconnectCount} timestamp=${new Date(_sseLastConnectedAt).toISOString()}`,
+    );
 
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
@@ -882,6 +1008,10 @@ async function subscribeToSyncEvents(openCodePort: number): Promise<void> {
 
 function scheduleReconnect(): void {
   if (_reconnectTimer !== null || _sseAbortController === null) return;
+  _sseReconnectCount += 1;
+  log.info(
+    `scheduling SSE reconnect #${_sseReconnectCount} in ${SSE_RECONNECT_DELAY_MS}ms timestamp=${new Date().toISOString()}`,
+  );
   _reconnectTimer = setTimeout(() => {
     _reconnectTimer = null;
     const port = _getOpenCodePort?.() ?? 4096;

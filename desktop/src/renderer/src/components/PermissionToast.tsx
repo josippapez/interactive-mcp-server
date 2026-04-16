@@ -101,19 +101,21 @@ export default function PermissionToast({
   );
 
   const handleFolderSelected = useCallback(
-    async (folderPath: string) => {
+    (folderPath: string) => {
       if (!folderModalData) return;
 
-      // Save the folder to settings
-      await window.api.addAllowedReadFolder(folderPath);
-
-      // Reply to the permission request
+      // Reply immediately so the current permission is resolved before any
+      // settings-driven refreshes can perturb the pending-permissions UI.
       onReplyPermission(
         folderModalData.sessionID,
         folderModalData.requestId,
         'always',
         folderModalData.directory,
       );
+
+      // Persist the folder allow-list in parallel; this should not gate the
+      // permission reply path.
+      void window.api.addAllowedReadFolder(folderPath);
 
       // Close the modal
       setFolderModalData(null);

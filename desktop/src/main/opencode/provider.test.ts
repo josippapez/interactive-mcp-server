@@ -814,7 +814,7 @@ describe('provider', () => {
         workspace: 'ws-123',
       });
 
-      expect(result).toEqual(mockAuthResult);
+      expect(result).toEqual({ ok: true, data: mockAuthResult });
     });
   });
 
@@ -836,7 +836,7 @@ describe('provider', () => {
 
       const result = await callbackProvider(3000, 'anthropic', 0);
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ ok: true, data: true });
     });
 
     it('returns true when callback succeeds with code', async () => {
@@ -861,7 +861,7 @@ describe('provider', () => {
         'auth_code_123',
       );
 
-      expect(result).toBe(true);
+      expect(result).toEqual({ ok: true, data: true });
     });
   });
 

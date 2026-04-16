@@ -3,6 +3,7 @@ import type { BrowserWindow } from 'electron';
 
 vi.mock('../database', () => ({
   getAllRegisteredConnections: vi.fn(),
+  getRegisteredConnectionBySessionId: vi.fn(),
   updateConnectionOpenCodeSession: vi.fn(),
   upsertRegisteredConnection: vi.fn(),
   isOpenCodeSessionClaimed: vi.fn(),
@@ -10,6 +11,9 @@ vi.mock('../database', () => ({
 }));
 
 vi.mock('../opencode/session', () => ({
+  fetchRootOpenCodeSessions: vi.fn(),
+  expandOpenCodeSessionTree: vi.fn(),
+  fetchOpenCodeSession: vi.fn(),
   fetchAllOpenCodeSessions: vi.fn(),
 }));
 
@@ -21,9 +25,15 @@ import {
   startSessionTreeManager,
   stopSessionTreeManager,
 } from './tree-manager';
-import { fetchAllOpenCodeSessions } from '../opencode/session';
+import {
+  fetchRootOpenCodeSessions,
+  expandOpenCodeSessionTree,
+  fetchAllOpenCodeSessions,
+} from '../opencode/session';
 import { getAllRegisteredConnections } from '../database';
 
+const mockFetchRootOpenCodeSessions = fetchRootOpenCodeSessions as Mock;
+const mockExpandOpenCodeSessionTree = expandOpenCodeSessionTree as Mock;
 const mockFetchAllOpenCodeSessions = fetchAllOpenCodeSessions as Mock;
 const mockGetAllRegisteredConnections = getAllRegisteredConnections as Mock;
 
@@ -44,6 +54,10 @@ function makeSseResponse(events: object[]): Response {
 
 describe('session-tree-manager reasoning event mapping', () => {
   beforeEach(() => {
+    mockFetchRootOpenCodeSessions.mockReset();
+    mockFetchRootOpenCodeSessions.mockResolvedValue([]);
+    mockExpandOpenCodeSessionTree.mockReset();
+    mockExpandOpenCodeSessionTree.mockResolvedValue([]);
     mockFetchAllOpenCodeSessions.mockReset();
     mockFetchAllOpenCodeSessions.mockResolvedValue([]);
     mockGetAllRegisteredConnections.mockReset();

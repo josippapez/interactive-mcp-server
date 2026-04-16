@@ -43,6 +43,8 @@ export default function App(): React.ReactElement {
     handleRemoveSession,
     handleToggleDocContext,
     handleReplyPermission,
+    handleReplyQuestion,
+    handleRejectQuestion,
     jumpToFirstPendingPrompt,
   } = useConnections(switchToPrompt);
 
@@ -166,6 +168,7 @@ export default function App(): React.ReactElement {
               activeConnectionId={activeConnectionId}
               onSelectConnection={setActiveConnectionId}
               prompt={activeConn?.prompt ?? null}
+              pendingQuestions={activeConn?.pendingQuestions ?? []}
               activeSession={activeConn?.activeSession ?? null}
               channelMessages={activeConn?.channelMessages ?? []}
               connectionId={activeConn?.connectionId ?? null}
@@ -183,6 +186,8 @@ export default function App(): React.ReactElement {
               onToggleDocContext={() =>
                 activeConnectionId && handleToggleDocContext(activeConnectionId)
               }
+              onReplyQuestion={handleReplyQuestion}
+              onRejectQuestion={handleRejectQuestion}
             />
           </div>
           {activeTab === 'skills' && <SkillsView />}

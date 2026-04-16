@@ -11,12 +11,13 @@ import {
 } from '../database';
 import { initDocContext } from '../docs/context-injector';
 import { sendSessionStatus } from '../ipc/channel';
-import { getClient } from '../opencode/sdk-client';
-import { autoDetectOpenCodeSession } from '../opencode/session';
+import {
+  autoDetectOpenCodeSession,
+  fetchOpenCodeSession,
+} from '../opencode/session';
 import { recordPendingConnection } from '../session/tree-manager';
 import type { AgentBackend } from '../settings';
 import {
-  startProjectMcpInjection,
   startStartupContextInjection,
   updateSessionTreeAfterRegistration,
 } from './register-connection-background';
@@ -117,20 +118,19 @@ export function registerConnectionTool(
           parentSessionId = detected.parentId;
         }
       } else if (backend.supportsProviderInjection && openCodeSessionId) {
-        // When session ID is explicit, try to fetch its parentID from the API.
+        // When session ID is explicit, fetch that session directly instead of
+        // listing all sessions and scanning client-side.
         try {
-          const client = getClient(getOpenCodePort());
-          const result = await withRegisterConnectionDeadline(
-            client.session.list(),
+          const session = await withRegisterConnectionDeadline(
+            fetchOpenCodeSession(
+              getOpenCodePort(),
+              openCodeSessionId,
+              baseDirectory,
+            ),
             startedAt,
           );
-          if (result.data) {
-            const sessions = result.data as Array<{
-              id: string;
-              parentID?: string | null;
-            }>;
-            const match = sessions.find((s) => s.id === openCodeSessionId);
-            parentSessionId = match?.parentID ?? null;
+          if (session) {
+            parentSessionId = session.parentID ?? null;
           }
         } catch (error) {
           if (isRegisterConnectionTimeoutError(error)) {
@@ -195,13 +195,13 @@ export function registerConnectionTool(
       }
 
       if (backend.supportsProviderInjection && baseDirectory) {
-        startProjectMcpInjection({
-          getWindow,
+        sendSessionStatus(
+          getWindow(),
           connectionId,
           openCodeSessionId,
-          baseDirectory,
-          getOpenCodePort,
-        });
+          'Using OpenCode workspace MCP config for this session',
+          'info',
+        );
       }
 
       const startupContextMessage = buildStartupContextMessage({

@@ -60,6 +60,8 @@ export function usePromptConnectionData({
     refresh: refreshMcpServers,
     connect: connectMcpServer,
     disconnect: disconnectMcpServer,
+    authenticate: authenticateMcpServer,
+    removeAuth: removeMcpServerAuth,
   } = useMcpServers(
     isOpenCodeSession ? (sessionBaseDirectory ?? undefined) : undefined,
     isOpenCodeSession,
@@ -98,6 +100,8 @@ export function usePromptConnectionData({
     refreshMcpServers,
     connectMcpServer,
     disconnectMcpServer,
+    authenticateMcpServer,
+    removeMcpServerAuth,
     latestStatus,
   };
 }

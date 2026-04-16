@@ -6,14 +6,17 @@
  */
 
 import type {
+  Config as OpenCodeConfig,
   McpLocalConfig,
   McpRemoteConfig,
   McpStatus,
-} from '@opencode-ai/sdk';
+} from '@opencode-ai/sdk/v2';
 import { createLogger } from '../utils/logger';
 import { getClient } from './sdk-client';
 
 const log = createLogger('mcp-status');
+const MCP_STATUS_REQUEST_TIMEOUT_MS = 10_000;
+const MCP_OPERATION_TIMEOUT_MS = 10_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -26,7 +29,13 @@ export interface McpServerStatus {
   /** Server type: local (subprocess) or remote (HTTP) */
   type: 'local' | 'remote';
   /** Connection status */
-  status: 'connected' | 'disconnected' | 'connecting' | 'error';
+  status:
+    | 'connected'
+    | 'disconnected'
+    | 'connecting'
+    | 'error'
+    | 'needs_auth'
+    | 'needs_client_registration';
   /** Error message if status is 'error' */
   error?: string;
   /** URL for remote servers */
@@ -77,17 +86,49 @@ export interface McpOperationResult {
   error?: string;
 }
 
+export interface McpAuthStartResult {
+  ok: boolean;
+  authorizationUrl?: string;
+  error?: string;
+}
+
+export interface McpAuthStatusResult {
+  ok: boolean;
+  status?: McpServerStatus['status'];
+  error?: string;
+}
+
+type NormalizedSdkMcpStatus =
+  | McpStatus
+  | {
+      status:
+        | 'connected'
+        | 'connecting'
+        | 'disconnected'
+        | 'error'
+        | 'needs_client_registration';
+      error?: string;
+    };
+
+type ConfiguredMcp = McpLocalConfig | McpRemoteConfig;
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
  * Map SDK McpStatus to our internal status string.
  */
 function mapSdkStatus(
-  sdkStatus: McpStatus,
-): McpServerStatus['status'] | 'disabled' | 'needs_auth' {
+  sdkStatus: NormalizedSdkMcpStatus,
+): McpServerStatus['status'] | 'disabled' {
   switch (sdkStatus.status) {
     case 'connected':
       return 'connected';
+    case 'connecting':
+      return 'connecting';
+    case 'disconnected':
+      return 'disconnected';
+    case 'error':
+      return 'error';
     case 'disabled':
       return 'disconnected';
     case 'failed':
@@ -95,7 +136,7 @@ function mapSdkStatus(
     case 'needs_auth':
       return 'needs_auth';
     case 'needs_client_registration':
-      return 'error';
+      return 'needs_client_registration';
     default:
       return 'disconnected';
   }
@@ -104,7 +145,10 @@ function mapSdkStatus(
 /**
  * Extract error message from SDK McpStatus if present.
  */
-function extractError(sdkStatus: McpStatus): string | undefined {
+function extractError(sdkStatus: NormalizedSdkMcpStatus): string | undefined {
+  if (sdkStatus.status === 'error') {
+    return sdkStatus.error;
+  }
   if (sdkStatus.status === 'failed') {
     return sdkStatus.error;
   }
@@ -112,6 +156,40 @@ function extractError(sdkStatus: McpStatus): string | undefined {
     return sdkStatus.error;
   }
   return undefined;
+}
+
+function getConfiguredMcp(
+  config: OpenCodeConfig | undefined,
+  name: string,
+): ConfiguredMcp | undefined {
+  const value = config?.mcp?.[name];
+  if (!value || typeof value !== 'object' || !('type' in value)) {
+    return undefined;
+  }
+  return value;
+}
+
+function getServerType(
+  config: ConfiguredMcp | undefined,
+  status: McpServerStatus['status'],
+): McpServerStatus['type'] {
+  if (config?.type === 'remote' || config?.type === 'local') {
+    return config.type;
+  }
+  if (status === 'needs_auth' || status === 'needs_client_registration') {
+    return 'remote';
+  }
+  return 'local';
+}
+
+function getEnvironmentKeys(
+  config: ConfiguredMcp | undefined,
+): string[] | undefined {
+  if (!config || config.type !== 'local' || !config.environment) {
+    return undefined;
+  }
+  const keys = Object.keys(config.environment);
+  return keys.length > 0 ? keys : undefined;
 }
 
 // ─── API Functions ────────────────────────────────────────────────────────────
@@ -130,36 +208,51 @@ export async function fetchMcpStatus(
 
   try {
     const client = getClient(openCodePort, directory);
-    const response = await client.mcp.status({});
+    const [statusResponse, configResponse] = await Promise.all([
+      client.mcp.status(
+        {},
+        { signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS) },
+      ),
+      client.config?.get?.(
+        {},
+        { signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS) },
+      ) ?? Promise.resolve({ data: undefined, error: undefined }),
+    ]);
 
-    if (response.error) {
+    if (statusResponse.error) {
       const error =
-        typeof response.error === 'string'
-          ? response.error
+        typeof statusResponse.error === 'string'
+          ? statusResponse.error
           : 'Failed to fetch MCP status';
       log.error(`Failed to fetch MCP status: ${error}`);
       return { ok: false, error };
     }
 
-    const data = response.data ?? {};
+    if (configResponse.error) {
+      log.warn(
+        `Failed to fetch MCP config metadata: ${String(configResponse.error)}`,
+      );
+    }
+
+    const data = statusResponse.data ?? {};
+    const config = configResponse.error ? undefined : configResponse.data;
 
     // Transform SDK response to our internal format
     const servers: McpServerStatus[] = Object.entries(data).map(
       ([name, serverStatus]) => {
         const status = mapSdkStatus(serverStatus);
+        const mcpConfig = getConfiguredMcp(config, name);
         return {
           name,
-          // SDK doesn't expose type directly in status, default to 'local'
-          type: 'local' as const,
-          status:
-            status === 'disabled' || status === 'needs_auth'
-              ? 'disconnected'
-              : status,
+          type: getServerType(
+            mcpConfig,
+            status === 'disabled' ? 'disconnected' : status,
+          ),
+          status: status === 'disabled' ? 'disconnected' : status,
           error: extractError(serverStatus),
-          // These fields aren't in SDK status response, leave undefined
-          url: undefined,
-          command: undefined,
-          environmentKeys: undefined,
+          url: mcpConfig?.type === 'remote' ? mcpConfig.url : undefined,
+          command: mcpConfig?.type === 'local' ? mcpConfig.command : undefined,
+          environmentKeys: getEnvironmentKeys(mcpConfig),
           tools: undefined,
           resources: undefined,
           prompts: undefined,
@@ -192,9 +285,10 @@ export async function connectMcp(
 
   try {
     const client = getClient(openCodePort, directory);
-    const response = await client.mcp.connect({
-      path: { name: mcpName },
-    });
+    const response = await client.mcp.connect(
+      { name: mcpName },
+      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    );
 
     if (response.error) {
       const error =
@@ -230,9 +324,10 @@ export async function disconnectMcp(
 
   try {
     const client = getClient(openCodePort, directory);
-    const response = await client.mcp.disconnect({
-      path: { name: mcpName },
-    });
+    const response = await client.mcp.disconnect(
+      { name: mcpName },
+      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    );
 
     if (response.error) {
       const error =
@@ -292,14 +387,16 @@ export async function registerMcp(
             timeout: config.timeout,
           };
 
-    const response = await client.mcp.add({
-      body: { name, config: sdkConfig },
-    });
+    const response = await client.mcp.add(
+      { name, config: sdkConfig },
+      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    );
 
     if (response.error) {
+      const rawError: unknown = response.error;
       const error =
-        typeof response.error === 'string'
-          ? response.error
+        typeof rawError === 'string'
+          ? rawError
           : `Failed to register MCP: ${name}`;
       log.error(`Failed to register MCP ${name}: ${error}`);
       return { ok: false, error };
@@ -310,6 +407,173 @@ export async function registerMcp(
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
     log.error(`Failed to register MCP ${name}: ${error}`);
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Start MCP OAuth flow and return the authorization URL.
+ */
+export async function startMcpAuth(
+  openCodePort: number,
+  mcpName: string,
+  directory?: string,
+): Promise<McpAuthStartResult> {
+  log.info(`Starting MCP auth: ${mcpName}`);
+
+  try {
+    const client = getClient(openCodePort, directory);
+    const response = await client.mcp.auth.start(
+      { name: mcpName },
+      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    );
+
+    if (response.error) {
+      const rawError: unknown = response.error;
+      const error =
+        typeof rawError === 'string'
+          ? rawError
+          : `Failed to start MCP auth: ${mcpName}`;
+      log.error(`Failed to start MCP auth ${mcpName}: ${error}`);
+      return { ok: false, error };
+    }
+
+    if (!response.data?.authorizationUrl) {
+      const error = `Missing authorization URL for MCP auth: ${mcpName}`;
+      log.error(error);
+      return { ok: false, error };
+    }
+
+    return { ok: true, authorizationUrl: response.data.authorizationUrl };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log.error(`Failed to start MCP auth ${mcpName}: ${error}`);
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Complete MCP OAuth callback with an authorization code.
+ */
+export async function callbackMcpAuth(
+  openCodePort: number,
+  mcpName: string,
+  code: string,
+  directory?: string,
+): Promise<McpAuthStatusResult> {
+  log.info(`Completing MCP auth callback: ${mcpName}`);
+
+  try {
+    const client = getClient(openCodePort, directory);
+    const response = await client.mcp.auth.callback(
+      { name: mcpName, code },
+      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    );
+
+    if (response.error) {
+      const rawError: unknown = response.error;
+      const error =
+        typeof rawError === 'string'
+          ? rawError
+          : `Failed to complete MCP auth callback: ${mcpName}`;
+      log.error(`Failed to complete MCP auth callback ${mcpName}: ${error}`);
+      return { ok: false, error };
+    }
+
+    if (!response.data) {
+      const error = `Missing status from MCP auth callback: ${mcpName}`;
+      log.error(error);
+      return { ok: false, error };
+    }
+
+    const mapped = mapSdkStatus(response.data);
+    return {
+      ok: true,
+      status: mapped === 'disabled' ? 'disconnected' : mapped,
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log.error(`Failed to complete MCP auth callback ${mcpName}: ${error}`);
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Let OpenCode run the full MCP OAuth flow, including browser open/callback.
+ */
+export async function authenticateMcp(
+  openCodePort: number,
+  mcpName: string,
+  directory?: string,
+): Promise<McpAuthStatusResult> {
+  log.info(`Authenticating MCP: ${mcpName}`);
+
+  try {
+    const client = getClient(openCodePort, directory);
+    const response = await client.mcp.auth.authenticate(
+      { name: mcpName },
+      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    );
+
+    if (response.error) {
+      const rawError: unknown = response.error;
+      const error =
+        typeof rawError === 'string'
+          ? rawError
+          : `Failed to authenticate MCP: ${mcpName}`;
+      log.error(`Failed to authenticate MCP ${mcpName}: ${error}`);
+      return { ok: false, error };
+    }
+
+    if (!response.data) {
+      const error = `Missing status from MCP authenticate: ${mcpName}`;
+      log.error(error);
+      return { ok: false, error };
+    }
+
+    const mapped = mapSdkStatus(response.data);
+    return {
+      ok: true,
+      status: mapped === 'disabled' ? 'disconnected' : mapped,
+    };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log.error(`Failed to authenticate MCP ${mcpName}: ${error}`);
+    return { ok: false, error };
+  }
+}
+
+/**
+ * Remove stored MCP OAuth credentials.
+ */
+export async function removeMcpAuth(
+  openCodePort: number,
+  mcpName: string,
+  directory?: string,
+): Promise<McpOperationResult> {
+  log.info(`Removing MCP auth: ${mcpName}`);
+
+  try {
+    const client = getClient(openCodePort, directory);
+    const response = await client.mcp.auth.remove(
+      { name: mcpName },
+      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    );
+
+    if (response.error) {
+      const rawError: unknown = response.error;
+      const error =
+        typeof rawError === 'string'
+          ? rawError
+          : `Failed to remove MCP auth: ${mcpName}`;
+      log.error(`Failed to remove MCP auth ${mcpName}: ${error}`);
+      return { ok: false, error };
+    }
+
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log.error(`Failed to remove MCP auth ${mcpName}: ${error}`);
     return { ok: false, error };
   }
 }

@@ -65,7 +65,6 @@ export type AppSettings = {
   docContextDebug: boolean;
   agentBackend: 'standalone' | 'opencode' | 'claude_sdk';
   autoRegisterSubagents: boolean;
-  extraMcpServers: string;
   compactMode: boolean;
   toolAutoExpandExclusions: string[];
   discoveredTools: string[];
@@ -73,6 +72,36 @@ export type AppSettings = {
   defaultExpandAllTools: boolean;
   defaultShowThinking: boolean;
   allowedReadFolders: string[];
+  allowedPermissions: string[];
+};
+
+export type PendingPermissionRequest = {
+  requestId: string;
+  sessionID: string;
+  permission: string;
+  patterns?: string[];
+  always?: string[];
+  tool?: { messageID: string; callID: string };
+  metadata?: Record<string, unknown>;
+};
+
+export type PendingQuestionRequest = {
+  requestId: string;
+  sessionID: string;
+  questions: Array<{
+    question: string;
+    header: string;
+    options: Array<{ label: string; description: string }>;
+    multiple?: boolean;
+    custom?: boolean;
+  }>;
+  tool?: { messageID: string; callID: string };
+};
+
+export type ProviderActionResult<T> = {
+  ok: boolean;
+  data?: T;
+  error?: string;
 };
 
 export type ProviderStatus = {
@@ -137,6 +166,19 @@ export type AuthorizeResult = {
   url: string;
   method: 'auto' | 'code';
   instructions: string;
+};
+
+export type McpAuthResult = {
+  ok: boolean;
+  authorizationUrl?: string;
+  status?:
+    | 'connected'
+    | 'disconnected'
+    | 'connecting'
+    | 'error'
+    | 'needs_auth'
+    | 'needs_client_registration';
+  error?: string;
 };
 
 // ─── Conversation Mirroring Types ─────────────────────────────────────────────
@@ -433,6 +475,15 @@ const api = {
     name: string;
     size: number;
   } | null> => ipcRenderer.invoke('read-file-for-attachment', filePath),
+  saveClipboardAttachment: (
+    data: string,
+    mimeType: string,
+  ): Promise<{
+    filename: string;
+    absolutePath: string;
+    url: string | null;
+  } | null> =>
+    ipcRenderer.invoke('save-clipboard-attachment', { data, mimeType }),
   forceTerminateChat: (connectionId: string): Promise<void> =>
     ipcRenderer.invoke('force-terminate-chat', connectionId),
 
@@ -448,6 +499,10 @@ const api = {
   // Return all currently-active prompts so the renderer can recover them on startup.
   getActivePrompts: (): Promise<PromptRequest[]> =>
     ipcRenderer.invoke('get-active-prompts'),
+  getPendingPermissions: (): Promise<PendingPermissionRequest[]> =>
+    ipcRenderer.invoke('get-pending-permissions'),
+  getPendingQuestions: (): Promise<PendingQuestionRequest[]> =>
+    ipcRenderer.invoke('get-pending-questions'),
   dismissSession: (connectionId: string): Promise<void> =>
     ipcRenderer.invoke('dismiss-session', connectionId),
   restartMcpServer: (): Promise<boolean> =>
@@ -624,6 +679,30 @@ const api = {
     ipcRenderer.on('permission-replied', (_event, data) => callback(data));
   },
 
+  onQuestionAsked: (
+    callback: (
+      data: PendingQuestionRequest & {
+        connectionId: string;
+        openCodeSessionId?: string | null;
+      },
+    ) => void,
+  ): void => {
+    ipcRenderer.removeAllListeners('question-asked');
+    ipcRenderer.on('question-asked', (_event, data) => callback(data));
+  },
+
+  onQuestionCleared: (
+    callback: (data: {
+      requestId: string;
+      sessionID: string;
+      answer?: string;
+      rejected?: boolean;
+    }) => void,
+  ): void => {
+    ipcRenderer.removeAllListeners('question-cleared');
+    ipcRenderer.on('question-cleared', (_event, data) => callback(data));
+  },
+
   replyPermission: (
     sessionID: string,
     requestID: string,
@@ -636,6 +715,17 @@ const api = {
       reply,
       directory,
     }),
+  replyQuestion: (
+    requestID: string,
+    answers: string[][],
+    sessionID: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('reply-question', { requestID, answers, sessionID }),
+  rejectQuestion: (
+    requestID: string,
+    sessionID: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('reject-question', { requestID, sessionID }),
 
   // Skills & Instructions CRUD
   upsertSkillOrInstruction: (data: {
@@ -1177,7 +1267,7 @@ const api = {
     providerId: string,
     method: number,
     inputs?: Record<string, string>,
-  ): Promise<AuthorizeResult | null> =>
+  ): Promise<ProviderActionResult<AuthorizeResult>> =>
     ipcRenderer.invoke('authorize-provider', { providerId, method, inputs }),
 
   /**
@@ -1192,7 +1282,7 @@ const api = {
     providerId: string,
     method: number,
     code?: string,
-  ): Promise<boolean> =>
+  ): Promise<ProviderActionResult<true>> =>
     ipcRenderer.invoke('callback-provider', { providerId, method, code }),
 
   /**
@@ -1245,7 +1335,13 @@ const api = {
     servers?: Array<{
       name: string;
       type: 'local' | 'remote';
-      status: 'connected' | 'disconnected' | 'connecting' | 'error';
+      status:
+        | 'connected'
+        | 'disconnected'
+        | 'connecting'
+        | 'error'
+        | 'needs_auth'
+        | 'needs_client_registration';
       error?: string;
       url?: string;
       command?: string[];
@@ -1305,6 +1401,37 @@ const api = {
     directory?: string,
   ): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('register-mcp', { name, config, directory }),
+
+  /**
+   * Start an MCP OAuth flow and return the authorization URL.
+   */
+  startMcpAuth: (name: string, directory?: string): Promise<McpAuthResult> =>
+    ipcRenderer.invoke('start-mcp-auth', { name, directory }),
+
+  /**
+   * Complete an MCP OAuth callback with an authorization code.
+   */
+  callbackMcpAuth: (
+    name: string,
+    code: string,
+    directory?: string,
+  ): Promise<McpAuthResult> =>
+    ipcRenderer.invoke('callback-mcp-auth', { name, code, directory }),
+
+  /**
+   * Let OpenCode run the full MCP OAuth flow, including browser open/callback.
+   */
+  authenticateMcp: (name: string, directory?: string): Promise<McpAuthResult> =>
+    ipcRenderer.invoke('authenticate-mcp', { name, directory }),
+
+  /**
+   * Remove stored MCP OAuth credentials.
+   */
+  removeMcpAuth: (
+    name: string,
+    directory?: string,
+  ): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('remove-mcp-auth', { name, directory }),
 
   // ─── Renderer Logging ─────────────────────────────────────────────────────
   /**

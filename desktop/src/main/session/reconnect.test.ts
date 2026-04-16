@@ -8,6 +8,7 @@ vi.mock('../database', () => ({
 
 vi.mock('../opencode/session', () => ({
   fetchAllOpenCodeSessions: vi.fn(),
+  fetchOpenCodeSession: vi.fn(),
 }));
 
 import { reconcileSessionConnections } from './reconnect';

@@ -22,7 +22,13 @@ export interface McpPrompt {
 export interface McpServer {
   name: string;
   type: 'local' | 'remote';
-  status: 'connected' | 'disconnected' | 'connecting' | 'error';
+  status:
+    | 'connected'
+    | 'disconnected'
+    | 'connecting'
+    | 'error'
+    | 'needs_auth'
+    | 'needs_client_registration';
   error?: string;
   url?: string;
   command?: string[];
@@ -37,14 +43,12 @@ export interface McpServer {
 /**
  * Hook to fetch and manage MCP server status for a session.
  *
- * @param directory - The directory context for project-specific MCPs
- * @param enabled - Whether to enable polling (disabled when not viewing a session)
- * @param pollInterval - How often to poll for updates (default 10000ms)
+ * Reads MCP state from the active OpenCode workspace instance on demand rather
+ * than polling continuously from the desktop UI.
  */
 export function useMcpServers(
   directory?: string,
   enabled = true,
-  pollInterval = 10000,
 ): {
   servers: McpServer[];
   isLoading: boolean;
@@ -52,6 +56,8 @@ export function useMcpServers(
   refresh: () => Promise<void>;
   connect: (name: string) => Promise<boolean>;
   disconnect: (name: string) => Promise<boolean>;
+  authenticate: (name: string) => Promise<boolean>;
+  removeAuth: (name: string) => Promise<boolean>;
 } {
   const [servers, setServers] = useState<McpServer[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -74,7 +80,7 @@ export function useMcpServers(
     }
   }, [directory, enabled]);
 
-  // Initial fetch and polling
+  // Initial fetch
   useEffect(() => {
     if (!enabled) {
       setServers([]);
@@ -92,16 +98,10 @@ export function useMcpServers(
 
     void doFetch();
 
-    // Poll for updates
-    const interval = setInterval(() => {
-      void fetchStatus();
-    }, pollInterval);
-
     return () => {
       mounted = false;
-      clearInterval(interval);
     };
-  }, [enabled, fetchStatus, pollInterval]);
+  }, [enabled, fetchStatus]);
 
   // Manual refresh
   const refresh = useCallback(async () => {
@@ -150,6 +150,44 @@ export function useMcpServers(
     [directory, fetchStatus],
   );
 
+  const authenticate = useCallback(
+    async (name: string): Promise<boolean> => {
+      try {
+        const result = await window.api.authenticateMcp(name, directory);
+        if (result.ok) {
+          await fetchStatus();
+          setError(null);
+          return true;
+        }
+        setError(result.error ?? 'Failed to authenticate MCP');
+        return false;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+        return false;
+      }
+    },
+    [directory, fetchStatus],
+  );
+
+  const removeAuth = useCallback(
+    async (name: string): Promise<boolean> => {
+      try {
+        const result = await window.api.removeMcpAuth(name, directory);
+        if (result.ok) {
+          await fetchStatus();
+          setError(null);
+          return true;
+        }
+        setError(result.error ?? 'Failed to remove MCP auth');
+        return false;
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Unknown error');
+        return false;
+      }
+    },
+    [directory, fetchStatus],
+  );
+
   return {
     servers,
     isLoading,
@@ -157,5 +195,7 @@ export function useMcpServers(
     refresh,
     connect,
     disconnect,
+    authenticate,
+    removeAuth,
   };
 }

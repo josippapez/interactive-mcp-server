@@ -40,7 +40,7 @@ function setupMockClient(
         mcp: {
           add: mockMcpAdd,
         },
-      }) as ReturnType<typeof import('./sdk-client').getClient>,
+      }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
   );
 }
 
@@ -199,13 +199,14 @@ describe('mcp-inject', () => {
 
       expect(mockMcpAdd).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: {
-            name: 'figma',
-            config: {
-              type: 'remote',
-              url: 'http://127.0.0.1:3845/mcp',
-            },
+          name: 'figma',
+          config: {
+            type: 'remote',
+            url: 'http://127.0.0.1:3845/mcp',
           },
+        }),
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
         }),
       );
       expect(result.injectedMcps).toEqual(['figma']);
@@ -230,17 +231,18 @@ describe('mcp-inject', () => {
 
       expect(mockMcpAdd).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: {
-            name: 'ado',
-            config: {
-              type: 'local',
-              command: ['npx', '-y', '@azure-devops/mcp'],
-              environment: {
-                ADO_ORG: 'my-org',
-                ADO_PAT: 'secret-token',
-              },
+          name: 'ado',
+          config: {
+            type: 'local',
+            command: ['npx', '-y', '@azure-devops/mcp'],
+            environment: {
+              ADO_ORG: 'my-org',
+              ADO_PAT: 'secret-token',
             },
           },
+        }),
+        expect.objectContaining({
+          signal: expect.any(AbortSignal),
         }),
       );
       expect(result.injectedMcps).toEqual(['ado']);
@@ -296,12 +298,11 @@ describe('mcp-inject', () => {
 
       expect(mockMcpAdd).toHaveBeenCalledWith(
         expect.objectContaining({
-          body: expect.objectContaining({
-            config: expect.objectContaining({
-              timeout: 120000,
-            }),
+          config: expect.objectContaining({
+            timeout: 120000,
           }),
         }),
+        expect.anything(),
       );
     });
   });
@@ -345,7 +346,7 @@ describe('mcp-inject', () => {
             mcp: {
               add: mockMcpAdd,
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await injectProjectMcps(baseOptions);
@@ -375,7 +376,7 @@ describe('mcp-inject', () => {
             mcp: {
               add: mockMcpAdd,
             },
-          }) as ReturnType<typeof import('./sdk-client').getClient>,
+          }) as unknown as ReturnType<typeof import('./sdk-client').getClient>,
       );
 
       const result = await injectProjectMcps(baseOptions);

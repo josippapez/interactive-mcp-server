@@ -11,6 +11,9 @@ import { getClient } from './sdk-client';
 /** Default name for the MCP server entry in OpenCode. */
 const DEFAULT_MCP_NAME = 'interactive-desktop';
 
+/** Request timeout for MCP registration calls to OpenCode. */
+const MCP_REGISTER_REQUEST_TIMEOUT_MS = 10_000;
+
 /** Extra timeout buffer to outlast the user prompt window. */
 const MCP_TIMEOUT_BUFFER_MS = 60_000;
 
@@ -105,8 +108,8 @@ export async function registerMcpWithOpenCode(
 
   try {
     const client = getClient(openCodePort);
-    const response = await client.mcp.add({
-      body: {
+    const response = await client.mcp.add(
+      {
         name: mcpName,
         config: {
           type: 'remote',
@@ -114,16 +117,18 @@ export async function registerMcpWithOpenCode(
           timeout: computeRemoteMcpTimeout(promptTimeoutSeconds),
         },
       },
-    });
+      { signal: AbortSignal.timeout(MCP_REGISTER_REQUEST_TIMEOUT_MS) },
+    );
 
     if (response.error) {
+      const errorValue = response.error as unknown;
       const errorMessage =
-        typeof response.error === 'string'
-          ? response.error
-          : response.error &&
-              typeof response.error === 'object' &&
-              'message' in response.error
-            ? String((response.error as { message: unknown }).message)
+        typeof errorValue === 'string'
+          ? errorValue
+          : errorValue &&
+              typeof errorValue === 'object' &&
+              'message' in errorValue
+            ? String((errorValue as { message: unknown }).message)
             : `OpenCode returned error`;
       return {
         status: 'error',

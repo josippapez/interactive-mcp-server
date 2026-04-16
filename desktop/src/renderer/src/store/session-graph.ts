@@ -65,7 +65,7 @@ function createState(
   const { openCodeTree, directConnections } = partitionNodes(nodes);
   const quickSwitcherActions = buildSessionActions(nodes);
   const hasPendingPrompt = Array.from(nodes.values()).some(
-    (node) => node.hasPendingPrompt,
+    (node) => node.hasPendingPrompt || node.pendingQuestions.length > 0,
   );
   const nextOpenCodeTree =
     previous && sameNodeList(previous.openCodeTree, openCodeTree)

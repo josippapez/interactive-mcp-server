@@ -289,7 +289,7 @@ export function handleCompaction(
 
 // ─── Compaction API ──────────────────────────────────────────────────────────
 
-import { getClient } from './sdk-client';
+import { sessionGet, sessionMessages, sessionSummarize } from './session-api';
 
 export interface CompactionResult {
   ok: boolean;
@@ -317,16 +317,16 @@ export async function triggerCompaction(
   } = {},
 ): Promise<CompactionResult> {
   try {
-    const client = getClient(openCodePort);
-    const response = await client.session.summarize({
-      path: { id: sessionId },
-      body: {
+    const response = await sessionSummarize(
+      openCodePort,
+      sessionId,
+      {
         providerID: options.providerId,
         modelID: options.modelId,
         auto: options.auto ?? false,
       },
-      signal: AbortSignal.timeout(60000), // Compaction can take a while
-    });
+      { signal: AbortSignal.timeout(60000) }, // Compaction can take a while
+    );
 
     if (response.error) {
       return {
@@ -372,13 +372,11 @@ async function fetchLatestAssistantMessageTokens(
   openCodePort: number,
 ): Promise<{ tokens?: number; modelId?: string; providerId?: string }> {
   try {
-    const client = getClient(openCodePort);
-    // SDK expects { path: { id }, query: { limit } } structure
-    const response = await client.session.messages(
-      {
-        path: { id: sessionId },
-        query: { limit: 20 },
-      },
+    // SDK v2 flattens path+query params onto the first argument.
+    const response = await sessionMessages(
+      openCodePort,
+      sessionId,
+      { limit: 20 },
       { signal: AbortSignal.timeout(5000) },
     );
 
@@ -424,9 +422,7 @@ export async function fetchSessionTokens(
   openCodePort: number,
 ): Promise<SessionInfo | null> {
   try {
-    const client = getClient(openCodePort);
-    const response = await client.session.get({
-      path: { id: sessionId },
+    const response = await sessionGet(openCodePort, sessionId, {
       signal: AbortSignal.timeout(5000),
     });
 

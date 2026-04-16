@@ -6,7 +6,9 @@ import {
 } from './permission-reply';
 
 const mocks = vi.hoisted(() => ({
-  getRegisteredConnectionBySessionId: vi.fn(() => null),
+  getRegisteredConnectionBySessionId: vi.fn<
+    (...args: unknown[]) => { baseDirectory?: string } | null
+  >(() => null),
 }));
 
 vi.mock('../database', () => ({

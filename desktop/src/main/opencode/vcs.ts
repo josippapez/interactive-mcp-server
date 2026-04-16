@@ -26,9 +26,10 @@ export async function fetchVcsInfo(
 ): Promise<VcsInfo | null> {
   try {
     const client = getClient(openCodePort);
-    const response = await client.vcs.get({
-      signal: AbortSignal.timeout(3000),
-    });
+    const response = await client.vcs.get(
+      {},
+      { signal: AbortSignal.timeout(3000) },
+    );
 
     if (response.error) return null;
 

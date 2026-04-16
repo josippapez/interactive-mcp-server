@@ -182,6 +182,44 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(node.title).toBe('Test Session');
   });
 
+  it('preserves multiple pending permissions when absorbing a direct connection', () => {
+    const prev = new Map<string, SessionNode>([
+      [
+        'conn-123',
+        makeDirectConnectionNode('conn-123', 'Agent 7', {
+          pendingPermissions: [
+            {
+              requestId: 'perm-1',
+              sessionID: 'ses_main',
+              permission: 'glob',
+            },
+            {
+              requestId: 'perm-2',
+              sessionID: 'ses_main',
+              permission: 'read',
+            },
+          ],
+        }),
+      ],
+    ]);
+
+    const snapshot = [
+      makeSnapshot({
+        openCodeSessionId: 'ses_main',
+        connectionId: 'conn-123',
+        channelName: 'Claude Code',
+        hasMcpChannel: true,
+      }),
+    ];
+
+    const result = mergeSessionTreeSnapshot(prev, snapshot);
+
+    expect(result.get('ses_main')?.pendingPermissions.map((item) => item.requestId)).toEqual([
+      'perm-1',
+      'perm-2',
+    ]);
+  });
+
   it('preserves direct-connection nodes NOT claimed by any snapshot node', () => {
     const prev = new Map<string, SessionNode>([
       ['unrelated-conn', makeDirectConnectionNode('unrelated-conn', 'VS Code')],

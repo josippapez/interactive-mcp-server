@@ -1,8 +1,9 @@
 import { saveAttachment, attachmentUrl } from '../attachment-store';
+import { getRegisteredConnectionBySessionId } from '../database';
 import { createLogger } from '../utils/logger';
 import { toProviderReasoningVariant } from '../../shared/reasoning-variant';
 import { reconcileDeliveryAfterTimeout } from './injector-reconcile';
-import { getClient } from './sdk-client';
+import { sessionPromptAsync } from './session-api';
 
 const log = createLogger('injector');
 
@@ -192,7 +193,10 @@ export async function injectOpenCodeMessage(
     );
 
     try {
-      const client = getClient(openCodePort);
+      const registered = getRegisteredConnectionBySessionId(
+        openCodeSessionId,
+        'opencode',
+      );
 
       // Build the request body for SDK
       const requestBody: {
@@ -217,15 +221,19 @@ export async function injectOpenCodeMessage(
       }
 
       log.info(
-        `[injectOpenCodeMessage] SDK request body: ${JSON.stringify(requestBody)}`,
+        `[injectOpenCodeMessage] SDK request body: ${JSON.stringify(requestBody)} directory=${registered?.baseDirectory ?? '(none)'}`,
       );
 
       // Use SDK's promptAsync method with timeout via AbortSignal
-      const response = await client.session.promptAsync({
-        path: { id: openCodeSessionId },
-        body: requestBody,
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+      const response = await sessionPromptAsync(
+        openCodePort,
+        openCodeSessionId,
+        requestBody,
+        {
+          directory: registered?.baseDirectory ?? undefined,
+          signal: AbortSignal.timeout(timeoutMs),
+        },
+      );
 
       const elapsedMs = Date.now() - startTime;
 
