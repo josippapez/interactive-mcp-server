@@ -1,7 +1,7 @@
 /**
  * Session-tree manager.
  *
- * Subscribes to the OpenCode `/global/sync-event` SSE stream and maintains
+ * Subscribes to the OpenCode `/global/event` SSE stream and maintains
  * an in-memory cache of all known sessions. When the cache changes the
  * manager emits a `session-tree-updated` IPC event with a full snapshot of
  * `SessionNodeData[]` to the renderer.
@@ -565,7 +565,7 @@ function autoRegisterSession(
 /**
  * Hydrate a Task-tool-spawned subagent session into the cache.
  *
- * OpenCode's `/global/sync-event` stream does not emit `session.created.1`
+ * OpenCode's `/global/event` stream does not emit `session.created.1`
  * for child sessions spawned by the Task tool. We detect them via the
  * `message.part.updated.1` event whose `part.state.metadata.sessionId`
  * carries the child ID, then fetch the full session info via REST and
@@ -743,7 +743,7 @@ function handleSyncEvent(envelope: SyncEventEnvelope): void {
 
     // ─── Task-tool subagent hydration ──────────────────────────────────────
     // When the OpenCode Task tool spawns a subagent, the child session is
-    // created server-side but the `/global/sync-event` stream does NOT emit
+    // created server-side but the `/global/event` stream does NOT emit
     // a `session.created.1` event for it. The only signal we receive is this
     // `message.part.updated.1` event whose `part.state.metadata.sessionId`
     // carries the child's session ID. Hydrate the child into the cache so
@@ -929,7 +929,7 @@ async function subscribeToSyncEvents(openCodePort: number): Promise<void> {
   // Seed cache from REST before streaming starts.
   await seedCacheFromRest(openCodePort);
 
-  const url = `http://localhost:${openCodePort}/global/sync-event`;
+  const url = `http://localhost:${openCodePort}/global/event`;
   const attemptStartedAt = Date.now();
   const sincePreviousConnectMs =
     _sseLastConnectedAt !== null

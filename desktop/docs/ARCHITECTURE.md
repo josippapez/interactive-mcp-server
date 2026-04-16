@@ -72,7 +72,7 @@ Interactive MCP Desktop is an Electron application that acts as a desktop UI for
 │                                                                │  │
 │  ┌─────────────────────────────────────────────────────────┐  │  │
 │  │  session-tree-manager.ts (SSE subscription)             │  │  │
-│  │   Subscribes to OpenCode /global/sync-event             │  │  │
+│  │   Subscribes to OpenCode /global/event                  │  │  │
 │  │   Maintains in-memory session cache                     │  │  │
 │  │   Emits session-tree-updated snapshots to renderer      │  │  │
 │  └─────────────────────────────────────────────────────────┘  │  │
@@ -160,7 +160,7 @@ Owns the Express app and all HTTP routes. REST API routes have been extracted to
 
 #### `session-tree-manager.ts`
 
-Subscribes to the OpenCode `/global/sync-event` SSE stream and maintains an in-memory cache of all known sessions. Key features:
+Subscribes to the OpenCode `/global/event` SSE stream (which carries both in-process `Bus` events and versioned sync events) and maintains an in-memory cache of all known sessions. Key features:
 
 - **SSE events consumed**: `session.created.1`, `session.updated.1`, `session.deleted.1`
 - **Auto-registration**: For any session with no existing DB claim, creates a synthetic `registered_connections` record using the sessionId as the connectionId.
@@ -621,7 +621,7 @@ The database uses `PRAGMA user_version` to track schema version. On startup, if 
 
 ### SSE-based session tree synchronization
 
-Instead of polling, the app subscribes to OpenCode's `/global/sync-event` SSE stream for real-time session updates. This provides:
+Instead of polling, the app subscribes to OpenCode's `/global/event` SSE stream for real-time session updates. This provides:
 
 - Immediate visibility of new sessions (including subagents)
 - Automatic session injection: child sessions receive `<system-reminder>` with their session ID before first tool call

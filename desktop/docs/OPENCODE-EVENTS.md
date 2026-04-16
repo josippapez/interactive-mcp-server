@@ -10,7 +10,8 @@ Sources of truth in the OpenCode repo:
 - `packages/opencode/src/sync/sync-event.ts` — versioned, persisted sync events that are
   also re-published on the in-process `Bus` as their un-versioned type.
 - `packages/opencode/src/server/instance/global.ts` — HTTP/SSE endpoint
-  `GET /global/sync-event` the desktop app subscribes to.
+  `GET /global/event` the desktop app subscribes to. The stream carries **both**
+  in-process `Bus` events and versioned sync events in a single unified schema.
 
 Versioned sync events (the ones with `.1`, `.2`, …) are the authoritative replayable
 log. They are emitted on `GlobalBus` with the versioned type (e.g. `session.created.1`)
@@ -45,8 +46,9 @@ Bus.subscribeAll((ev) => {
 ### From outside (SDK / desktop app)
 
 ```ts
-// Long-lived SSE stream of everything flowing through GlobalBus
-GET http://<host>:<port>/global/sync-event
+// Long-lived SSE stream of everything flowing through GlobalBus (both
+// non-sync Bus events and versioned sync events share this one endpoint).
+GET http://<host>:<port>/global/event
 ```
 
 Payloads on the SSE stream are either:

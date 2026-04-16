@@ -19,7 +19,7 @@ This document defines a staged migration path toward that model.
 
 ### Main process
 
-- Subscribes to OpenCode `/global/sync-event` for session lifecycle updates.
+- Subscribes to OpenCode `/global/event` (a unified SSE stream carrying both in-process `Bus` events and versioned sync events) for session lifecycle updates.
 - Maintains an in-memory session tree cache.
 - Emits `session-tree-updated` snapshots to the renderer.
 - Still relies on session-scoped IPC and REST fetches for message history and live conversation content.

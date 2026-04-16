@@ -309,7 +309,7 @@ The `session-tree-updated` IPC event delivers a flat array of `SessionTreeNode` 
 
 **Source:** `desktop/src/main/session-tree-manager.ts`
 
-The session-tree manager subscribes to the OpenCode SSE stream (`GET /global/sync-event`) and maintains an in-memory session cache. On first connection it seeds the cache via the OpenCode REST API (`GET /session`). It fires `session-tree-updated` with a full snapshot whenever the cache changes (or immediately after a `register_connection` / session removal). If the SSE stream drops, it reconnects automatically after 2 s.
+The session-tree manager subscribes to the OpenCode SSE stream (`GET /global/event`, which carries both in-process `Bus` events and versioned sync events) and maintains an in-memory session cache. On first connection it seeds the cache via the OpenCode REST API (`GET /session`). It fires `session-tree-updated` with a full snapshot whenever the cache changes (or immediately after a `register_connection` / session removal). If the SSE stream drops, it reconnects automatically after 2 s.
 
 #### Invoke Methods
 

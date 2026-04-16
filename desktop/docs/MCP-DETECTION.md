@@ -35,6 +35,7 @@ OpenCode runs a **single Hono HTTP server** (default port 4096) but uses **Async
 ```
 
 **Key files:**
+
 - `packages/opencode/src/server/server.ts:18-109` - Hono HTTP server
 - `packages/opencode/src/effect/instance-state.ts:39-60` - Per-directory cached state
 - `packages/opencode/src/server/instance/middleware.ts:49-50` - Directory detection from query param/header/cwd
@@ -43,10 +44,10 @@ OpenCode runs a **single Hono HTTP server** (default port 4096) but uses **Async
 
 MCP servers are **per-instance/per-directory** — not global.
 
-| Type | Transport | Code Reference |
-|------|-----------|----------------|
-| Local MCP | `StdioClientTransport` (subprocess) | `packages/opencode/src/mcp/index.ts:392-422` |
-| Remote MCP | `StreamableHTTPClientTransport` | `packages/opencode/src/mcp/index.ts:282-390` |
+| Type       | Transport                           | Code Reference                               |
+| ---------- | ----------------------------------- | -------------------------------------------- |
+| Local MCP  | `StdioClientTransport` (subprocess) | `packages/opencode/src/mcp/index.ts:392-422` |
+| Remote MCP | `StreamableHTTPClientTransport`     | `packages/opencode/src/mcp/index.ts:282-390` |
 
 **Cleanup:** Effect finalizers automatically terminate MCP processes when the instance is disposed (`mcp/index.ts:531-551`).
 
@@ -54,15 +55,15 @@ MCP servers are **per-instance/per-directory** — not global.
 
 OpenCode exposes REST endpoints for runtime MCP management:
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/mcp` | GET | Get status of all MCP servers |
-| `/mcp` | POST | Add MCP server dynamically |
-| `/mcp/:name/connect` | POST | Connect/reconnect |
-| `/mcp/:name/disconnect` | POST | Disconnect |
-| `/mcp/:name/auth` | POST | Start OAuth flow |
-| `/mcp/:name/auth/callback` | POST | Complete OAuth |
-| `/mcp/:name/auth` | DELETE | Remove OAuth credentials |
+| Endpoint                   | Method | Purpose                       |
+| -------------------------- | ------ | ----------------------------- |
+| `/mcp`                     | GET    | Get status of all MCP servers |
+| `/mcp`                     | POST   | Add MCP server dynamically    |
+| `/mcp/:name/connect`       | POST   | Connect/reconnect             |
+| `/mcp/:name/disconnect`    | POST   | Disconnect                    |
+| `/mcp/:name/auth`          | POST   | Start OAuth flow              |
+| `/mcp/:name/auth/callback` | POST   | Complete OAuth                |
+| `/mcp/:name/auth`          | DELETE | Remove OAuth credentials      |
 
 **Code reference:** `packages/opencode/src/server/instance/mcp.ts:9-225`
 
@@ -88,6 +89,7 @@ pub fn serve(app: &AppHandle, hostname: &str, port: u32, password: &str) {
 ```
 
 **Key characteristics:**
+
 1. **Single sidecar instance** — spawned on app launch via `spawn_local_server()`
 2. **Random port** — finds an available port via `TcpListener::bind("127.0.0.1:0")`
 3. **Password-protected** — uses basic auth with a UUID password
@@ -96,6 +98,7 @@ pub fn serve(app: &AppHandle, hostname: &str, port: u32, password: &str) {
 ### Config Loading
 
 The sidecar loads configs hierarchically:
+
 1. Global: `~/.config/opencode/opencode.json`
 2. Project: `.opencode/opencode.jsonc` in the working directory
 
@@ -132,11 +135,12 @@ InstanceState.make<T>({
   make: Effect.fn(function* () {
     // Per-directory initialization
     // Cached by ScopedCache keyed by directory path
-  })
-})
+  }),
+});
 ```
 
 Services using InstanceState:
+
 - MCP connections
 - Config
 - Sessions
@@ -150,13 +154,14 @@ Services using InstanceState:
 
 ### How It Connects to OpenCode
 
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| SSE | `/global/sync-event`, `/global/event` | Real-time session events |
-| REST | `GET /session?directory=<dir>` | Find sessions for a project |
-| Config | `~/.config/opencode/opencode.json` | Register as MCP server |
+| Method | Endpoint                           | Purpose                                                                                                     |
+| ------ | ---------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| SSE    | `/global/event`                    | Real-time session events (both in-process `Bus` events and versioned sync events share this unified stream) |
+| REST   | `GET /session?directory=<dir>`     | Find sessions for a project                                                                                 |
+| Config | `~/.config/opencode/opencode.json` | Register as MCP server                                                                                      |
 
 **Code references:**
+
 - `desktop/src/main/session/tree-manager.ts:716-797` — SSE subscription
 - `desktop/src/main/opencode/session.ts:115-146` — REST API queries
 - `desktop/src/main/opencode/config-sync.ts:52-172` — Config file sync
@@ -192,6 +197,7 @@ CREATE TABLE registered_connections (
 When starting OpenCode from directory A, MCPs from directory B's `.opencode/opencode.jsonc` are not available.
 
 **Example scenario:**
+
 - User launches OpenCode from `/Users/josippapez` (home directory)
 - Global config only has `interactive-desktop`, `context7`, `interactive-mcp` MCPs
 - Sciensus project at `/Volumes/encrypted/Sciensus.Digital.Core.NX` has ADO, Figma, mobile-mcp, chrome-devtools MCPs
@@ -206,17 +212,20 @@ When starting OpenCode from directory A, MCPs from directory B's `.opencode/open
 Add a feature to detect `.opencode/` configs in different directories and provide a UI to activate/deactivate project-specific MCPs.
 
 **Implementation:**
+
 1. Scan known project directories for `.opencode/opencode.jsonc`
 2. Show a project picker in the desktop app sidebar
 3. When activated, call OpenCode's `POST /mcp` API to add each MCP
 4. When deactivated, call `POST /mcp/:name/disconnect`
 
 **Pros:**
+
 - User-controlled
 - Clear visibility of which MCPs are active
 - No background scanning
 
 **Cons:**
+
 - Manual activation required
 - Need to maintain project list
 
@@ -246,17 +255,20 @@ async function activateProjectMcps(project: ProjectConfig): Promise<void> {
 When a session registers with a `baseDirectory`, automatically read that directory's `.opencode/opencode.jsonc` and inject those MCPs.
 
 **Implementation:**
+
 1. On `register_connection`, check if `baseDirectory` contains `.opencode/opencode.jsonc`
 2. Parse the config and extract MCP definitions
 3. Call `POST /mcp` for each MCP that isn't already registered
 4. Track which MCPs were auto-injected for cleanup
 
 **Pros:**
+
 - Automatic — no user action needed
 - Works with existing `register_connection` flow
 - Session-aware
 
 **Cons:**
+
 - MCPs may conflict between sessions
 - Cleanup complexity
 - Potential for duplicate spawning
@@ -269,10 +281,10 @@ async function autoInjectProjectMcps(
 ): Promise<string[]> {
   const configPath = path.join(baseDirectory, '.opencode', 'opencode.jsonc');
   if (!fs.existsSync(configPath)) return [];
-  
+
   const config = JSON5.parse(fs.readFileSync(configPath, 'utf8'));
   const injectedMcps: string[] = [];
-  
+
   for (const [name, mcpConfig] of Object.entries(config.mcp ?? {})) {
     await fetch(`http://localhost:${openCodePort}/mcp`, {
       method: 'POST',
@@ -280,7 +292,7 @@ async function autoInjectProjectMcps(
     });
     injectedMcps.push(name);
   }
-  
+
   return injectedMcps;
 }
 ```
@@ -292,16 +304,19 @@ async function autoInjectProjectMcps(
 The desktop app could manage multiple OpenCode server instances (one per project directory).
 
 **Implementation:**
+
 1. Track multiple sidecar processes with different working directories
 2. Each sidecar loads its own `.opencode/` config
 3. Route MCP tool calls to the correct instance based on `baseDirectory`
 
 **Pros:**
+
 - Complete isolation between projects
 - Each project gets its native MCP configuration
 - Mirrors OpenCode CLI behavior exactly
 
 **Cons:**
+
 - Higher resource usage (multiple Node.js processes)
 - Complex routing logic
 - Session management complexity
@@ -317,22 +332,24 @@ interface OpenCodeInstance {
 
 const instances = new Map<string, OpenCodeInstance>();
 
-async function getOrSpawnInstance(baseDirectory: string): Promise<OpenCodeInstance> {
+async function getOrSpawnInstance(
+  baseDirectory: string,
+): Promise<OpenCodeInstance> {
   const existing = instances.get(baseDirectory);
   if (existing) return existing;
-  
+
   const port = await findFreePort();
   const child = spawn('opencode', ['serve', '--port', String(port)], {
     cwd: baseDirectory,
   });
-  
+
   const instance: OpenCodeInstance = {
     pid: child.pid!,
     port,
     baseDirectory,
     sessions: new Set(),
   };
-  
+
   instances.set(baseDirectory, instance);
   return instance;
 }
@@ -371,12 +388,12 @@ For full project isolation, implement multi-instance support:
 
 ## References
 
-| File | Description |
-|------|-------------|
-| `packages/opencode/src/server/instance/mcp.ts` | Dynamic MCP management API |
-| `packages/opencode/src/config/config.ts` | Config loading and merge |
-| `packages/opencode/src/mcp/index.ts` | MCP client implementation |
-| `packages/opencode/src/effect/instance-state.ts` | Per-directory state isolation |
-| `packages/desktop/src-tauri/src/cli.rs` | Sidecar spawning (official desktop) |
-| `desktop/src/main/tools/register-connection.ts` | Connection registration |
-| `desktop/src/main/opencode/config-sync.ts` | OpenCode config sync |
+| File                                             | Description                         |
+| ------------------------------------------------ | ----------------------------------- |
+| `packages/opencode/src/server/instance/mcp.ts`   | Dynamic MCP management API          |
+| `packages/opencode/src/config/config.ts`         | Config loading and merge            |
+| `packages/opencode/src/mcp/index.ts`             | MCP client implementation           |
+| `packages/opencode/src/effect/instance-state.ts` | Per-directory state isolation       |
+| `packages/desktop/src-tauri/src/cli.rs`          | Sidecar spawning (official desktop) |
+| `desktop/src/main/tools/register-connection.ts`  | Connection registration             |
+| `desktop/src/main/opencode/config-sync.ts`       | OpenCode config sync                |
