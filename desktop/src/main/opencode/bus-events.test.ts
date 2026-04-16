@@ -92,7 +92,7 @@ describe('opencode-bus-events — permission.asked', () => {
           sessionID: 'ses-123',
           permission: 'bash',
           patterns: ['rm -rf *'],
-          always: false,
+          always: ['rm -rf *'],
           tool: { messageID: 'msg-1', callID: 'call-1' },
         },
       },
@@ -104,14 +104,16 @@ describe('opencode-bus-events — permission.asked', () => {
       connectionId: 'conn-abc',
       requestId: 'req-001',
       sessionID: 'ses-123',
+      directory: undefined,
       permission: 'bash',
       patterns: ['rm -rf *'],
-      always: false,
+      always: ['rm -rf *'],
       tool: { messageID: 'msg-1', callID: 'call-1' },
+      metadata: undefined,
     });
   });
 
-  it('does not emit if no registered connection matches the sessionID', () => {
+  it('falls back to sessionID when no registered connection matches the sessionID', () => {
     const win = makeWindow();
     mocks.getAllRegisteredConnections.mockReturnValue([
       makeRegisteredConnection('conn-abc', 'ses-999'),
@@ -130,7 +132,16 @@ describe('opencode-bus-events — permission.asked', () => {
 
     handleBusEvent(envelope, win);
 
-    expect(mocks.webContentsSend).not.toHaveBeenCalled();
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
+      connectionId: 'ses-123',
+      requestId: 'req-002',
+      sessionID: 'ses-123',
+      permission: 'bash',
+      patterns: undefined,
+      always: undefined,
+      tool: undefined,
+      metadata: undefined,
+    });
   });
 
   it('does not emit if window is null', () => {

@@ -129,10 +129,8 @@ export async function fetchMcpStatus(
   log.info(`Fetching MCP status from port ${openCodePort}`);
 
   try {
-    const client = getClient(openCodePort);
-    const response = await client.mcp.status({
-      query: directory ? { directory } : undefined,
-    });
+    const client = getClient(openCodePort, directory);
+    const response = await client.mcp.status({});
 
     if (response.error) {
       const error =
@@ -193,10 +191,9 @@ export async function connectMcp(
   log.info(`Connecting MCP: ${mcpName}`);
 
   try {
-    const client = getClient(openCodePort);
+    const client = getClient(openCodePort, directory);
     const response = await client.mcp.connect({
       path: { name: mcpName },
-      query: directory ? { directory } : undefined,
     });
 
     if (response.error) {
@@ -232,10 +229,9 @@ export async function disconnectMcp(
   log.info(`Disconnecting MCP: ${mcpName}`);
 
   try {
-    const client = getClient(openCodePort);
+    const client = getClient(openCodePort, directory);
     const response = await client.mcp.disconnect({
       path: { name: mcpName },
-      query: directory ? { directory } : undefined,
     });
 
     if (response.error) {
@@ -279,7 +275,7 @@ export async function registerMcp(
   log.info(`Registering MCP: ${name} (type: ${config.type})`);
 
   try {
-    const client = getClient(openCodePort);
+    const client = getClient(openCodePort, directory);
 
     // Build SDK-compatible config
     const sdkConfig: McpLocalConfig | McpRemoteConfig =
@@ -298,7 +294,6 @@ export async function registerMcp(
 
     const response = await client.mcp.add({
       body: { name, config: sdkConfig },
-      query: directory ? { directory } : undefined,
     });
 
     if (response.error) {

@@ -7,6 +7,7 @@ type Props = {
     sessionID: string,
     requestId: string,
     reply: 'once' | 'always' | 'reject',
+    directory?: string,
   ) => void;
 };
 
@@ -57,7 +58,12 @@ export default function PermissionPrompt({
             <Button
               size="sm"
               onClick={() =>
-                onReplyPermission(perm.sessionID, perm.requestId, 'once')
+                onReplyPermission(
+                  perm.sessionID,
+                  perm.requestId,
+                  'once',
+                  perm.directory,
+                )
               }
             >
               Allow Once
@@ -67,7 +73,12 @@ export default function PermissionPrompt({
                 variant="outline"
                 size="sm"
                 onClick={() =>
-                  onReplyPermission(perm.sessionID, perm.requestId, 'always')
+                  onReplyPermission(
+                    perm.sessionID,
+                    perm.requestId,
+                    'always',
+                    perm.directory,
+                  )
                 }
               >
                 Always Allow
@@ -77,7 +88,12 @@ export default function PermissionPrompt({
               variant="outline"
               size="sm"
               onClick={() =>
-                onReplyPermission(perm.sessionID, perm.requestId, 'reject')
+                onReplyPermission(
+                  perm.sessionID,
+                  perm.requestId,
+                  'reject',
+                  perm.directory,
+                )
               }
               className="hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
             >

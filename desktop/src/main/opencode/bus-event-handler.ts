@@ -9,6 +9,7 @@ import type { BusEventHandlerDependencies } from './bus-event-utils';
 import { createLogger } from '../utils/logger';
 
 interface BusEventEnvelope {
+  directory?: string;
   payload: {
     type: string;
     properties: Record<string, unknown>;
@@ -40,7 +41,7 @@ export function handleBusEvent(
   const { type, properties } = payload;
   sseLog.debug(`Event received: ${type}`);
 
-  if (forwardPermissionEvent(type, properties, win, dependencies)) {
+  if (forwardPermissionEvent(type, properties, env.directory, win, dependencies)) {
     return;
   }
 

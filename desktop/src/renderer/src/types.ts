@@ -54,9 +54,10 @@ export type SessionStatus = {
 export type PendingPermission = {
   requestId: string;
   sessionID: string;
+  directory?: string;
   permission: string;
   patterns?: string[];
-  always?: boolean;
+  always?: string[];
   tool?: { messageID: string; callID: string };
   metadata?: Record<string, unknown>;
 };

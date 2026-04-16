@@ -131,12 +131,18 @@ function getBundledOpenCodePath(): string | null {
   // In packaged app: resources are in the extraResources directory
   // app.isPackaged is true when running from a built app
   if (app.isPackaged) {
-    // On macOS: AppName.app/Contents/Resources/bin/opencode
-    // On Windows/Linux: resources/bin/opencode
     const resourcesPath = process.resourcesPath;
-    const bundledPath = join(resourcesPath, 'bin', binaryName);
-    if (existsSync(bundledPath)) {
-      return bundledPath;
+    const packagedCandidates = [
+      // Current electron-builder output for extraResources: Resources/resources/bin/opencode
+      join(resourcesPath, 'resources', 'bin', binaryName),
+      // Legacy/direct expectation: Resources/bin/opencode
+      join(resourcesPath, 'bin', binaryName),
+    ];
+
+    for (const bundledPath of packagedCandidates) {
+      if (existsSync(bundledPath)) {
+        return bundledPath;
+      }
     }
   } else {
     // In development: check the project's resources/bin directory

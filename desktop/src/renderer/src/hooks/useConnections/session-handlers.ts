@@ -31,30 +31,17 @@ export function useSessionHandlers({
       sessionID: string,
       requestId: string,
       reply: 'once' | 'always' | 'reject',
+      directory?: string,
     ) => {
-      // Optimistically remove from state immediately so the UI clears at once
-      setNodes((prev) => {
-        let nodeId: string | null = null;
-        for (const [id, node] of prev) {
-          if (node.pendingPermissions?.some((p) => p.requestId === requestId)) {
-            nodeId = id;
-            break;
-          }
-        }
-        if (!nodeId) return prev;
-        const node = prev.get(nodeId)!;
-        const next = new Map(prev);
-        next.set(nodeId, {
-          ...node,
-          pendingPermissions: node.pendingPermissions.filter(
-            (p) => p.requestId !== requestId,
-          ),
-        });
-        return next;
+      console.info('[permission-toast] dispatch replyPermission', {
+        sessionID,
+        requestId,
+        reply,
+        directory,
       });
-      void window.api.replyPermission(sessionID, requestId, reply);
+      void window.api.replyPermission(sessionID, requestId, reply, directory);
     },
-    [setNodes],
+    [],
   );
 
   return {

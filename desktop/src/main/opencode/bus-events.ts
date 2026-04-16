@@ -73,7 +73,13 @@ async function subscribeToPortWithSdk(
 
       const envelope = event as GlobalEvent;
       const win = _getWindow?.() ?? null;
-      _handleBusEventForTest({ payload: envelope.payload }, win);
+      _handleBusEventForTest(
+        {
+          directory: envelope.directory,
+          payload: envelope.payload,
+        },
+        win,
+      );
     }
   } catch (err: unknown) {
     if ((err as { name?: string }).name === 'AbortError') return;

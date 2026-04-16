@@ -196,6 +196,8 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                   isLoading={view.mcpLoading}
                   error={view.mcpError}
                   onRefresh={view.refreshMcpServers}
+                  onConnect={view.connectMcpServer}
+                  onDisconnect={view.disconnectMcpServer}
                   onOpenSettings={() => view.setMcpSettingsOpen(true)}
                 />
               )}
@@ -294,6 +296,8 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
         onClose={() => view.setMcpSettingsOpen(false)}
         servers={view.mcpServers}
         onRefresh={view.refreshMcpServers}
+        onConnect={view.connectMcpServer}
+        onDisconnect={view.disconnectMcpServer}
       />
     </div>
   );

@@ -4,6 +4,7 @@ import {
   stopOpenCodeServer,
   isOpenCodeServerRunning,
 } from './server';
+import { app } from 'electron';
 
 // Mock child_process.spawn so we don't actually launch opencode
 vi.mock('child_process', () => {
@@ -25,6 +26,12 @@ vi.mock('child_process', () => {
   };
 });
 
+vi.mock('electron', () => ({
+  app: {
+    isPackaged: false,
+  },
+}));
+
 // Mock fs.existsSync for resolveOpenCodeBin
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -44,6 +51,7 @@ describe('opencode-server', () => {
     // Ensure clean state
     stopOpenCodeServer();
     vi.clearAllMocks();
+    vi.mocked(app).isPackaged = false;
   });
 
   afterEach(() => {
@@ -110,5 +118,33 @@ describe('opencode-server', () => {
     expect(spawn).toHaveBeenCalledTimes(2);
     const secondCall = vi.mocked(spawn).mock.calls[1];
     expect(secondCall[1]).toContain('5000');
+  });
+
+  it('prefers the packaged resources/resources/bin path when app is packaged', async () => {
+    const { spawn } = await import('child_process');
+    const { existsSync } = await import('fs');
+
+    vi.mocked(app).isPackaged = true;
+    const originalResourcesPath = process.resourcesPath;
+    Object.defineProperty(process, 'resourcesPath', {
+      configurable: true,
+      value: '/Applications/Interactive MCP.app/Contents/Resources',
+    });
+
+    vi.mocked(existsSync).mockImplementation((path: Parameters<typeof existsSync>[0]) =>
+      String(path).includes('/Contents/Resources/resources/bin/opencode'),
+    );
+
+    startOpenCodeServer(4096);
+
+    expect(spawn).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(spawn).mock.calls[0][0]).toContain(
+      '/Contents/Resources/resources/bin/opencode',
+    );
+
+    Object.defineProperty(process, 'resourcesPath', {
+      configurable: true,
+      value: originalResourcesPath,
+    });
   });
 });

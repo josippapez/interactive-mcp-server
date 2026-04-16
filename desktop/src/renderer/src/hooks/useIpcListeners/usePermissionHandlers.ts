@@ -22,6 +22,7 @@ export function usePermissionHandlers({ setNodes }: HandlerContext): void {
       const permission: PendingPermission = {
         requestId: data.requestId,
         sessionID: data.sessionID,
+        directory: data.directory,
         permission: data.permission,
         patterns: data.patterns,
         always: data.always,

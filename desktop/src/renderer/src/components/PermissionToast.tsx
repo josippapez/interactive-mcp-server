@@ -9,6 +9,7 @@ type Props = {
     sessionID: string,
     requestId: string,
     reply: 'once' | 'always' | 'reject',
+    directory?: string,
   ) => void;
   onSelectSession: (sessionId: string) => void;
 };
@@ -47,6 +48,7 @@ export default function PermissionToast({
   const [folderModalData, setFolderModalData] = useState<{
     sessionID: string;
     requestId: string;
+    directory?: string;
     filePath: string;
   } | null>(null);
 
@@ -82,11 +84,17 @@ export default function PermissionToast({
         setFolderModalData({
           sessionID: perm.sessionID,
           requestId: perm.requestId,
+          directory: perm.directory,
           filePath: filePaths[0], // Use first file path for folder detection
         });
       } else {
         // Not a file read permission, just reply with 'always'
-        onReplyPermission(perm.sessionID, perm.requestId, 'always');
+        onReplyPermission(
+          perm.sessionID,
+          perm.requestId,
+          'always',
+          perm.directory,
+        );
       }
     },
     [onReplyPermission],
@@ -104,6 +112,7 @@ export default function PermissionToast({
         folderModalData.sessionID,
         folderModalData.requestId,
         'always',
+        folderModalData.directory,
       );
 
       // Close the modal
@@ -179,9 +188,20 @@ export default function PermissionToast({
             <div className="flex items-center gap-2 px-3 py-2 bg-[var(--color-surface-alt)] border-t border-[var(--color-border)]">
               <Button
                 size="sm"
-                onClick={() =>
-                  onReplyPermission(perm.sessionID, perm.requestId, 'once')
-                }
+                onClick={() => {
+                  console.info('[permission-toast] clicked allow once', {
+                    sessionID: perm.sessionID,
+                    requestId: perm.requestId,
+                    directory: perm.directory,
+                    permission: perm.permission,
+                  });
+                  onReplyPermission(
+                    perm.sessionID,
+                    perm.requestId,
+                    'once',
+                    perm.directory,
+                  );
+                }}
               >
                 Allow Once
               </Button>
@@ -194,15 +214,26 @@ export default function PermissionToast({
                   Always
                 </Button>
               )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  onReplyPermission(perm.sessionID, perm.requestId, 'reject')
-                }
-                className="hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
-              >
-                Reject
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    console.info('[permission-toast] clicked reject', {
+                      sessionID: perm.sessionID,
+                      requestId: perm.requestId,
+                      directory: perm.directory,
+                      permission: perm.permission,
+                    });
+                    onReplyPermission(
+                      perm.sessionID,
+                      perm.requestId,
+                      'reject',
+                      perm.directory,
+                    );
+                  }}
+                  className="hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
+                >
+                  Reject
               </Button>
             </div>
           </div>

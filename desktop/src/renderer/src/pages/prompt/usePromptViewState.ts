@@ -108,6 +108,8 @@ export function usePromptViewState(props: PromptViewProps) {
     mcpLoading,
     mcpError,
     refreshMcpServers,
+    connectMcpServer,
+    disconnectMcpServer,
     latestStatus,
   } = usePromptConnectionData({
     openCodeSessionId,
@@ -290,6 +292,8 @@ export function usePromptViewState(props: PromptViewProps) {
     mcpLoading,
     mcpError,
     refreshMcpServers,
+    connectMcpServer,
+    disconnectMcpServer,
     mcpSettingsOpen,
     setMcpSettingsOpen,
     removeError,

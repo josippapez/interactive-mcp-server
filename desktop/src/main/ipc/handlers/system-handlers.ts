@@ -14,7 +14,7 @@ import { rankFileSuggestions, indexFiles } from '../../docs/file-indexer';
 import { getBackendAdapter } from '../../backend-adapter';
 import { forceTerminateChat, getActivePromptData } from '../prompt';
 import { SUPPORTED_FILE_EXTENSIONS } from '../../opencode/injector';
-import { getClient } from '../../opencode/sdk-client';
+import { replyToOpenCodePermission } from '../../opencode/permission-reply';
 import { IpcHandlerDeps } from './types';
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
@@ -158,20 +158,12 @@ export function registerSystemHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle('reply-permission', async (_event, data) => {
     const { openCodePort } = deps.getSettings();
-    try {
-      const client = getClient(openCodePort);
-      const result = await client.permission.reply({
-        requestID: data.requestID,
-        reply: data.reply,
-      });
-      if (result.error) {
-        return { ok: false, error: String(result.error) };
-      }
-      return { ok: true };
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: message };
-    }
+    return replyToOpenCodePermission(
+      openCodePort,
+      data.sessionID,
+      data.requestID,
+      data.reply,
+    );
   });
 
   ipcMain.handle('add-allowed-read-folder', (_event, folderPath: string) => {

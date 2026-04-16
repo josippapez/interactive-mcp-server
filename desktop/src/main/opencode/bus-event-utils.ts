@@ -3,8 +3,8 @@ import {
   type RegisteredConnection,
 } from '../database';
 import type { AppSettings } from '../settings';
-import { getClient } from './sdk-client';
 import { createLogger } from '../utils/logger';
+import { replyToOpenCodePermission } from './permission-reply';
 
 const sseLog = createLogger('sse');
 
@@ -114,6 +114,7 @@ export function shouldAutoApproveReadPermission(
  * Auto-reply to a permission request using SDK.
  */
 export async function autoReplyPermission(
+  sessionID: string,
   requestId: string,
   reply: PromptReply,
   getOpenCodePort?: (() => number) | null,
@@ -121,13 +122,14 @@ export async function autoReplyPermission(
   const port = getOpenCodePort?.() ?? 4096;
 
   try {
-    const client = getClient(port);
-    const response = await client.permission.reply({
-      requestID: requestId,
+    const result = await replyToOpenCodePermission(
+      port,
+      sessionID,
+      requestId,
       reply,
-    });
+    );
 
-    if (!response.error) {
+    if (result.ok) {
       sseLog.info(
         `Auto-approved read permission ${requestId} with reply: ${reply}`,
       );

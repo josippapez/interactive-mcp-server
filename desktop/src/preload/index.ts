@@ -600,9 +600,10 @@ const api = {
       connectionId: string;
       requestId: string;
       sessionID: string;
+      directory?: string;
       permission: string;
       patterns?: string[];
-      always?: boolean;
+      always?: string[];
       tool?: { messageID: string; callID: string };
       metadata?: Record<string, unknown>;
       openCodeSessionId?: string | null;
@@ -627,8 +628,14 @@ const api = {
     sessionID: string,
     requestID: string,
     reply: 'once' | 'always' | 'reject',
+    directory?: string,
   ): Promise<{ ok: boolean; error?: string }> =>
-    ipcRenderer.invoke('reply-permission', { sessionID, requestID, reply }),
+    ipcRenderer.invoke('reply-permission', {
+      sessionID,
+      requestID,
+      reply,
+      directory,
+    }),
 
   // Skills & Instructions CRUD
   upsertSkillOrInstruction: (data: {
@@ -975,6 +982,15 @@ const api = {
 
   getAllowedReadFolders: (): Promise<string[]> =>
     ipcRenderer.invoke('get-allowed-read-folders'),
+
+  addAllowedPermission: (permission: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('add-allowed-permission', permission),
+
+  removeAllowedPermission: (permission: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('remove-allowed-permission', permission),
+
+  getAllowedPermissions: (): Promise<string[]> =>
+    ipcRenderer.invoke('get-allowed-permissions'),
 
   selectFolderDialog: (): Promise<{ canceled: boolean; folderPath?: string }> =>
     ipcRenderer.invoke('select-folder-dialog'),

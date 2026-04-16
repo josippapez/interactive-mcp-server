@@ -25,6 +25,7 @@ export function sendToWindow(
 export function forwardPermissionEvent(
   type: string,
   properties: Record<string, unknown>,
+  directory: string | undefined,
   win: BrowserWindow,
   dependencies: BusEventHandlerDependencies,
 ): boolean {
@@ -33,13 +34,16 @@ export function forwardPermissionEvent(
     if (!sessionID) return true;
 
     const registeredConnection = getRegisteredConnectionForSession(sessionID);
-    const connectionId = registeredConnection?.connectionId;
-    if (!connectionId) return true;
+    const connectionId = registeredConnection?.connectionId ?? sessionID;
 
     const permission = getStringProperty(properties, ['permission']);
     const requestId = getStringProperty(properties, ['id']);
     const patterns = getStringArrayProperty(properties, 'patterns');
     if (!permission || !requestId) return true;
+
+    sseLog.info(
+      `permission.asked session=${sessionID} request=${requestId} permission=${permission} connection=${connectionId} patterns=${patterns?.join(',') ?? '(none)'}`,
+    );
 
     if (isFileReadPermission(permission)) {
       const settings = dependencies.getSettings?.();
@@ -54,7 +58,11 @@ export function forwardPermissionEvent(
         });
 
         if (shouldApprove) {
+          sseLog.info(
+            `auto-approving permission request=${requestId} session=${sessionID} from allowed folders`,
+          );
           void autoReplyPermission(
+            sessionID,
             requestId,
             'always',
             dependencies.getOpenCodePort,
@@ -70,16 +78,20 @@ export function forwardPermissionEvent(
       sessionID,
       permission,
       patterns,
-      always: properties['always'] as boolean | undefined,
+      always: getStringArrayProperty(properties, 'always'),
       tool: properties['tool'] as
         | { messageID: string; callID: string }
         | undefined,
       metadata: properties['metadata'] as Record<string, unknown> | undefined,
+      directory,
     });
     return true;
   }
 
-  if (type === 'permission.replied') {
+    if (type === 'permission.replied') {
+    sseLog.info(
+      `permission.replied session=${getStringProperty(properties, ['sessionID']) ?? ''} request=${getStringProperty(properties, ['requestID']) ?? ''} reply=${String(properties['reply'] ?? '')}`,
+    );
     sendToWindow(win, 'permission-replied', {
       sessionID: getStringProperty(properties, ['sessionID']) ?? '',
       requestID: getStringProperty(properties, ['requestID']) ?? '',

@@ -152,6 +152,25 @@ vi.mock('../opencode/sdk-client', () => ({
   })),
 }));
 
+vi.mock('../opencode/permission-reply', () => ({
+  replyToOpenCodePermission: vi.fn(
+    async (_openCodePort, _sessionID, requestID, reply) => {
+      try {
+        const result = await mocks.sdkPermissionReply({ requestID, reply });
+        if (result?.error) {
+          return { ok: false, error: String(result.error) };
+        }
+        return { ok: true };
+      } catch (err: unknown) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+    },
+  ),
+}));
+
 vi.mock('../session/resolver', () => ({
   resolveSession: vi.fn().mockResolvedValue({
     providerSessionId: null,
@@ -235,6 +254,9 @@ describe('registerIpcHandlers reply-permission', () => {
 
   it('calls SDK permission.reply with correct parameters', async () => {
     mocks.sdkPermissionReply.mockResolvedValue({ data: {}, error: null });
+    mocks.getRegisteredConnectionBySessionId.mockReturnValue({
+      baseDirectory: '/repo',
+    });
     registerHandlers();
 
     const handler = getRegisteredHandle('reply-permission');

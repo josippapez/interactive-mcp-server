@@ -58,6 +58,8 @@ export function usePromptConnectionData({
     isLoading: mcpLoading,
     error: mcpError,
     refresh: refreshMcpServers,
+    connect: connectMcpServer,
+    disconnect: disconnectMcpServer,
   } = useMcpServers(
     isOpenCodeSession ? (sessionBaseDirectory ?? undefined) : undefined,
     isOpenCodeSession,
@@ -94,6 +96,8 @@ export function usePromptConnectionData({
     mcpLoading,
     mcpError,
     refreshMcpServers,
+    connectMcpServer,
+    disconnectMcpServer,
     latestStatus,
   };
 }
