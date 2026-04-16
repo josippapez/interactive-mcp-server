@@ -16,7 +16,7 @@ let dbPath = '';
  * dropped and recreated from scratch. This eliminates all incremental
  * migration code.
  */
-const SCHEMA_VERSION = 10;
+const SCHEMA_VERSION = 11;
 
 // ─── Public interfaces ─────────────────────────────────────────────────────
 
@@ -64,12 +64,6 @@ export interface RegisteredConnection {
    * Combined with `providerType`, this forms the composite primary key.
    */
   providerSessionId: string;
-  /**
-   * @deprecated Use `providerSessionId` instead. Kept for backwards compatibility
-   * during migration. For OpenCode connections, this equals `providerSessionId`.
-   * For other providers, this is also set to `providerSessionId` for compatibility.
-   */
-  openCodeSessionId: string;
   connectionId: string | null;
   channelName: string;
   projectName: string;
@@ -184,21 +178,24 @@ function createTables(): void {
   // noReply context injections — for Copilot CLI / standalone mode.
   // Injections are claimed atomically and delivered via the poll_context_injections
   // MCP tool or auto-prepended to request_user_input responses.
+  // Keyed on (provider_type, provider_session_id) — the canonical session identity —
+  // so injections survive transport reconnects (which mint a new connectionId).
   db.run(`
     CREATE TABLE IF NOT EXISTS pending_context_injections (
-      id            INTEGER  PRIMARY KEY AUTOINCREMENT,
-      connection_id TEXT     NOT NULL,
-      source        TEXT     NOT NULL DEFAULT 'manual',
-      replace_key   TEXT,
-      payload       TEXT     NOT NULL,
-      claimed       INTEGER  DEFAULT 0,
-      delivered     INTEGER  DEFAULT 0,
-      created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+      id                  INTEGER  PRIMARY KEY AUTOINCREMENT,
+      provider_type       TEXT     NOT NULL DEFAULT 'standalone',
+      provider_session_id TEXT     NOT NULL,
+      source              TEXT     NOT NULL DEFAULT 'manual',
+      replace_key         TEXT,
+      payload             TEXT     NOT NULL,
+      claimed             INTEGER  DEFAULT 0,
+      delivered           INTEGER  DEFAULT 0,
+      created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
   db.run(`
-    CREATE INDEX IF NOT EXISTS idx_pci_connection_delivered
-      ON pending_context_injections (connection_id, delivered)
+    CREATE INDEX IF NOT EXISTS idx_pci_session_delivered
+      ON pending_context_injections (provider_type, provider_session_id, delivered)
   `);
 
   // Pinned projects — manually added project folders that appear in sidebar
@@ -227,8 +224,6 @@ function mapRowToRegisteredConnection(row: SqlValue[]): RegisteredConnection {
   return {
     providerType,
     providerSessionId,
-    // For backwards compatibility, openCodeSessionId mirrors providerSessionId
-    openCodeSessionId: providerSessionId,
     connectionId: row[2] as string | null,
     channelName: row[3] as string,
     projectName: row[4] as string,
@@ -540,7 +535,7 @@ export function getActiveSessionChannels(): {
   sessionId: string;
   label: string | null;
   createdAt: string;
-  openCodeSessionId: string | null;
+  providerSessionId: string | null;
   parentSessionId: string | null;
 }[] {
   if (!db) return [];
@@ -556,7 +551,7 @@ export function getActiveSessionChannels(): {
     sessionId: row[0] as string,
     label: row[1] as string | null,
     createdAt: row[2] as string,
-    openCodeSessionId: (row[3] as string | null) ?? null,
+    providerSessionId: (row[3] as string | null) ?? null,
     parentSessionId: (row[4] as string | null) ?? null,
   }));
 }
@@ -583,31 +578,18 @@ export function agentIdFilePath(
  * the record to the database.
  *
  * Uses composite primary key (provider_type, provider_session_id).
- * This ensures connections from different providers cannot overwrite each other.
  *
- * `providerSessionId` is the provider-specific session ID:
+ * `providerSessionId` is the canonical session identity:
  * - For OpenCode: the OpenCode session ID (ses_xxx)
- * - For other providers: the MCP connectionId (UUID)
+ * - For other providers: the MCP connectionId captured at registration
  *
  * `connectionId` is the MCP transport handle, bound at MCP initialize time.
  *
  * ON CONFLICT on `(provider_type, provider_session_id)`: updates channelName,
  * projectName, baseDirectory, connectionId, parentSessionId, and updated_at.
- *
- * For backwards compatibility, if `providerSessionId` is not provided but
- * `openCodeSessionId` is, the latter will be used.
  */
 export function upsertRegisteredConnection(data: {
-  /**
-   * Provider-specific session ID. For OpenCode, this is the session ID.
-   * For other providers, use the connectionId.
-   */
-  providerSessionId?: string;
-  /**
-   * @deprecated Use `providerSessionId` instead. If provided and providerSessionId
-   * is not provided, this will be used as providerSessionId for backwards compatibility.
-   */
-  openCodeSessionId?: string;
+  providerSessionId: string;
   channelName: string;
   projectName: string;
   connectionId?: string | null;
@@ -616,13 +598,7 @@ export function upsertRegisteredConnection(data: {
   providerType?: RegisteredConnection['providerType'];
 }): string {
   const providerType = data.providerType ?? 'standalone';
-  // Use providerSessionId if provided, fall back to openCodeSessionId for backwards compat
-  const providerSessionId = data.providerSessionId ?? data.openCodeSessionId;
-  if (!providerSessionId) {
-    throw new Error(
-      'Either providerSessionId or openCodeSessionId must be provided',
-    );
-  }
+  const providerSessionId = data.providerSessionId;
 
   const idFilePath = agentIdFilePath(
     data.channelName,
@@ -640,8 +616,6 @@ export function upsertRegisteredConnection(data: {
         projectName: data.projectName,
         baseDirectory: data.baseDirectory ?? null,
         providerSessionId,
-        // Keep openCodeSessionId for backwards compatibility
-        openCodeSessionId: providerSessionId,
         parentSessionId: data.parentSessionId ?? null,
         providerType,
       }),
@@ -713,9 +687,6 @@ export function getRegisteredConnection(
 /**
  * Primary lookup: find a registered connection by its composite key
  * (providerType, providerSessionId).
- *
- * For backwards compatibility with code that only passes openCodeSessionId,
- * if providerType is omitted it defaults to 'opencode'.
  */
 export function getRegisteredConnectionBySessionId(
   providerSessionId: string,
@@ -732,40 +703,8 @@ export function getRegisteredConnectionBySessionId(
 }
 
 /**
- * Legacy lookup: find a registered connection by openCodeSessionId only.
- * This searches across all provider types but only returns the first match.
- * Prefer `getRegisteredConnectionBySessionId` with explicit providerType.
- *
- * @deprecated Use getRegisteredConnectionBySessionId with providerType instead.
- */
-export function getRegisteredConnectionByOpenCodeSessionId(
-  openCodeSessionId: string,
-): RegisteredConnection | null {
-  // For backwards compatibility, try 'opencode' provider first
-  const result = getRegisteredConnectionBySessionId(
-    openCodeSessionId,
-    'opencode',
-  );
-  if (result) return result;
-
-  // Fall back to searching any provider with this session ID
-  if (!db) return null;
-  const results = db.exec(
-    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections WHERE provider_session_id = ? LIMIT 1`,
-    [openCodeSessionId],
-  );
-  if (results.length === 0 || results[0].values.length === 0) return null;
-  return mapRowToRegisteredConnection(results[0].values[0]);
-}
-
-/**
  * Bind a transport connectionId to an existing registered connection row.
  * Called at MCP initialize time when the SSE row already exists.
- *
- * @param providerSessionId The provider-specific session ID (composite key part)
- * @param connectionId The MCP transport connectionId to bind
- * @param providerType The provider type (composite key part), defaults to 'opencode'
  */
 export function updateConnectionId(
   providerSessionId: string,
@@ -800,9 +739,6 @@ export function getRegisteredConnectionByName(
 /**
  * Returns true if the given provider session already has a registered
  * connection row (i.e. the session is claimed/owned).
- *
- * @param providerSessionId The provider-specific session ID
- * @param providerType The provider type, defaults to 'opencode' for backwards compat
  */
 export function isProviderSessionClaimed(
   providerSessionId: string,
@@ -816,14 +752,6 @@ export function isProviderSessionClaimed(
     [providerType, providerSessionId],
   );
   return results.length > 0 && results[0].values.length > 0;
-}
-
-/**
- * @deprecated Use isProviderSessionClaimed with providerType instead.
- * Kept for backwards compatibility.
- */
-export function isOpenCodeSessionClaimed(openCodeSessionId: string): boolean {
-  return isProviderSessionClaimed(openCodeSessionId, 'opencode');
 }
 
 /**
@@ -850,10 +778,6 @@ export function getRegisteredConnectionsByProvider(
  *
  * With the composite PK, this creates a new row with the OpenCode session ID
  * and deletes the old standalone row (if it was a temporary connectionId-based row).
- *
- * @param connectionId The MCP transport connectionId to find the existing row
- * @param newProviderSessionId The new provider session ID (e.g., OpenCode ses_xxx)
- * @param newProviderType The provider type for the new row, defaults to 'opencode'
  */
 export function updateConnectionProviderSession(
   connectionId: string,
@@ -898,17 +822,6 @@ export function updateConnectionProviderSession(
     );
     persist();
   }
-}
-
-/**
- * @deprecated Use updateConnectionProviderSession instead.
- * Kept for backwards compatibility.
- */
-export function updateConnectionOpenCodeSession(
-  connectionId: string,
-  openCodeSessionId: string,
-): void {
-  updateConnectionProviderSession(connectionId, openCodeSessionId, 'opencode');
 }
 
 /**
@@ -1278,13 +1191,15 @@ export interface ContextInjection {
 }
 
 /**
- * Queue a noReply context injection for delivery to a standalone (Copilot CLI)
- * agent. When `replaceKey` is provided, any existing undelivered injection with
- * the same (connectionId, replaceKey) is replaced — useful for doc context
- * (latest wins). Without `replaceKey`, a new row is always appended.
+ * Queue a noReply context injection for delivery to a provider session.
+ * When `replaceKey` is provided, any existing undelivered injection with
+ * the same (providerType, providerSessionId, replaceKey) is replaced —
+ * useful for doc context (latest wins). Without `replaceKey`, a new row is
+ * always appended.
  */
 export function upsertContextInjection(
-  connectionId: string,
+  providerSessionId: string,
+  providerType: RegisteredConnection['providerType'],
   payload: string,
   source = 'manual',
   replaceKey?: string,
@@ -1293,32 +1208,33 @@ export function upsertContextInjection(
   if (replaceKey) {
     db.run(
       `DELETE FROM pending_context_injections
-       WHERE connection_id = ? AND replace_key = ? AND delivered = 0`,
-      [connectionId, replaceKey],
+       WHERE provider_type = ? AND provider_session_id = ? AND replace_key = ? AND delivered = 0`,
+      [providerType, providerSessionId, replaceKey],
     );
   }
   db.run(
-    `INSERT INTO pending_context_injections (connection_id, source, replace_key, payload)
-     VALUES (?, ?, ?, ?)`,
-    [connectionId, source, replaceKey ?? null, payload],
+    `INSERT INTO pending_context_injections (provider_type, provider_session_id, source, replace_key, payload)
+     VALUES (?, ?, ?, ?, ?)`,
+    [providerType, providerSessionId, source, replaceKey ?? null, payload],
   );
   persist();
 }
 
 /**
- * Atomically claim and return all undelivered injections for a connection.
+ * Atomically claim and return all undelivered injections for a provider session.
  * Marks them as delivered immediately. Safe in single-threaded Node.js/sql.js.
  */
 export function claimContextInjections(
-  connectionId: string,
+  providerSessionId: string,
+  providerType: RegisteredConnection['providerType'],
 ): ContextInjection[] {
   if (!db) return [];
   const results = db.exec(
     `SELECT id, source, payload, created_at
      FROM pending_context_injections
-     WHERE connection_id = ? AND delivered = 0
+     WHERE provider_type = ? AND provider_session_id = ? AND delivered = 0
      ORDER BY id ASC`,
-    [connectionId],
+    [providerType, providerSessionId],
   );
   if (results.length === 0 || results[0].values.length === 0) return [];
 
@@ -1339,14 +1255,16 @@ export function claimContextInjections(
   return items;
 }
 
-/** Remove all context injections (delivered or not) for a connection. */
-export function deleteContextInjectionsForConnection(
-  connectionId: string,
+/** Remove all context injections (delivered or not) for a provider session. */
+export function deleteContextInjectionsForSession(
+  providerSessionId: string,
+  providerType: RegisteredConnection['providerType'],
 ): void {
   if (!db) return;
-  db.run(`DELETE FROM pending_context_injections WHERE connection_id = ?`, [
-    connectionId,
-  ]);
+  db.run(
+    `DELETE FROM pending_context_injections WHERE provider_type = ? AND provider_session_id = ?`,
+    [providerType, providerSessionId],
+  );
   persist();
 }
 
