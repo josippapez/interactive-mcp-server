@@ -1,11 +1,6 @@
 import type { BrowserWindow } from 'electron';
 import { ipcMain, shell } from 'electron';
-import {
-  saveConversation,
-  appendSessionChannelMessage,
-  getRegisteredConnection,
-} from '../database';
-import { resolveOpenCodeSessionId } from '../session/resolver';
+import { saveConversation, appendSessionChannelMessage } from '../database';
 
 let _getSoundEnabled: () => boolean = () => true;
 let _getPromptTimeoutMs: () => number = () => 1_200_000;
@@ -28,6 +23,11 @@ export interface PromptData {
   projectName: string;
   predefinedOptions?: string[];
   sessionId?: string;
+  /**
+   * MCP transport handle. Still needed to track which transport a prompt
+   * originated on so cancelActivePrompt/forceTerminateChat can sweep prompts
+   * when that transport drops. NEVER used as the in-memory map key.
+   */
   connectionId: string;
   connectionName: string;
   timeoutSeconds: number;
@@ -35,8 +35,17 @@ export interface PromptData {
   expiresAt: number;
   baseDirectory?: string;
   clientInfo?: { model?: string; mode?: string };
-  /** OpenCode session ID resolved from the DB for this connectionId. */
-  openCodeSessionId?: string | null;
+  /**
+   * Canonical provider-session identity. For OpenCode this equals the
+   * `ses_xxx` session ID; for other providers it is the stable identity
+   * captured at first registration. Callers MUST resolve this before invoking
+   * `promptUser` — it is the key used for the activePrompts map and all
+   * downstream routing.
+   *
+   * Marked optional on the type for incremental migration; Phase 3 will make
+   * this required at the type level once all callers pass it.
+   */
+  providerSessionId?: string | null;
 }
 
 export interface PromptResponse {
@@ -70,17 +79,17 @@ export type PromptUserFn = (
 // reply is forwarded to the agent regardless of how many times the HTTP
 // connection dropped while the user was thinking.
 //
-// Map key strategy: prefer openCodeSessionId over connectionId.
+// Map key strategy: providerSessionId keying.
 // When an agent reconnects after a transport drop, it gets a new connectionId
-// (new MCP transport UUID) but retains the same openCodeSessionId. Keying on
-// openCodeSessionId ensures the reconnecting agent automatically re-attaches
+// (new MCP transport UUID) but retains the same providerSessionId. Keying on
+// providerSessionId ensures the reconnecting agent automatically re-attaches
 // to the existing durable prompt state.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type DurablePromptState = {
   promptId: string;
   data: PromptData;
-  /** The stable map key used to store this state (openCodeSessionId ?? connectionId). */
+  /** The stable map key used to store this state (always a providerSessionId once Phase 3 lands). */
   promptKey: string;
   /** Resolves when the user replies, timeout fires, or the prompt is cancelled. */
   promise: Promise<PromptResponse>;
@@ -95,7 +104,7 @@ type DurablePromptState = {
   sendPromptClear: () => void;
 };
 
-/** One active durable prompt per connection (FIFO queue handles overflow). */
+/** One active durable prompt per providerSessionId (FIFO queue handles overflow). */
 const activePrompts = new Map<string, DurablePromptState>();
 
 /** Index active prompts by prompt ID for O(1) prompt-response dispatch. */
@@ -103,7 +112,7 @@ const activePromptStatesById = new Map<string, Set<DurablePromptState>>();
 
 let promptResponseListenerRegistered = false;
 
-/** FIFO queue per connection for prompts that arrive while one is active. */
+/** FIFO queue per providerSessionId for prompts that arrive while one is active. */
 const queuedPrompts = new Map<
   string,
   {
@@ -197,20 +206,11 @@ function ensurePromptResponseListener(): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Internal: resolve the stable map key for a connectionId
-// ─────────────────────────────────────────────────────────────────────────────
-
-function resolvePromptKey(connectionId: string): string {
-  const rc = getRegisteredConnection(connectionId);
-  return rc?.openCodeSessionId ?? connectionId;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Public helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Return the PromptData for every currently-active prompt (one per connection).
+ * Return the PromptData for every currently-active prompt (one per providerSessionId).
  * Used by the renderer on startup to recover prompts that arrived while the
  * renderer was restarting (main-process memory survives renderer restarts).
  */
@@ -249,15 +249,16 @@ export function __resetPromptStateForTests(): void {
 }
 
 /**
- * Cancel and clean up any active prompt for a connection.
+ * Cancel and clean up any active prompt originating from a given MCP transport.
  * Call when a connection drops to avoid leaked listeners.
+ *
+ * We scan the activePrompts map (keyed on providerSessionId) for any prompt
+ * whose PromptData.connectionId matches the dropped transport. This is why
+ * `connectionId` remains a field on PromptData — it is the only link between
+ * a transport and the providerSessionId-keyed prompts that originated on it.
  */
 export function cancelActivePrompt(connectionId: string): void {
-  // Primary key via DB resolver (openCodeSessionId when known).
-  // Fallback: scan all active prompts for matching MCP connectionId. This is
-  // required when subagent prompts are keyed by openCodeSessionId but the DB
-  // lookup is stale/missing during teardown.
-  const keysToCancel = new Set<string>([resolvePromptKey(connectionId)]);
+  const keysToCancel = new Set<string>();
   for (const [key, state] of activePrompts.entries()) {
     if (state.data.connectionId === connectionId) {
       keysToCancel.add(key);
@@ -300,15 +301,15 @@ export function cancelActivePrompt(connectionId: string): void {
 }
 
 /**
- * Force-terminate a chat for a connection. Resolves any pending prompt
- * with a termination message so the agent knows the user closed the chat.
+ * Force-terminate a chat originating from a given MCP transport. Resolves any
+ * pending prompt with a termination message so the agent knows the user
+ * closed the chat.
  */
 export function forceTerminateChat(connectionId: string): void {
   const terminationMessage =
     'USER_FORCE_TERMINATED: The user has force-terminated this conversation. Stop all current work and acknowledge the termination.';
 
-  // Same resilient lookup strategy as cancelActivePrompt.
-  const keysToTerminate = new Set<string>([resolvePromptKey(connectionId)]);
+  const keysToTerminate = new Set<string>();
   for (const [key, state] of activePrompts.entries()) {
     if (state.data.connectionId === connectionId) {
       keysToTerminate.add(key);
@@ -365,40 +366,36 @@ export function forceTerminateChat(connectionId: string): void {
  * This breaks the coupling between "HTTP connection alive" and "prompt active"
  * that caused the -32000 Connection closed errors.
  *
- * ## openCodeSessionId keying
+ * ## providerSessionId keying
  *
- * The active-prompt map is keyed on openCodeSessionId (when available) rather
- * than connectionId. This means a reconnecting agent with a new MCP transport
- * UUID (new connectionId) but the same OpenCode session automatically
- * re-attaches to its in-flight durable prompt.
+ * The active-prompt map is keyed on providerSessionId rather than connectionId.
+ * This means a reconnecting agent with a new MCP transport UUID (new
+ * connectionId) but the same provider session automatically re-attaches to
+ * its in-flight durable prompt.
+ *
+ * CALLER CONTRACT: `data.providerSessionId` MUST be resolved before calling
+ * this function. The resolver at the tool-call boundary is responsible for
+ * converting the wire parameter `openCodeSessionId` (+ connectionId DB lookup)
+ * into a canonical providerSessionId and storing it on PromptData.
  */
 export function promptUser(
   win: BrowserWindow | null,
   data: PromptData,
   signal?: AbortSignal,
 ): Promise<PromptResponse> {
-  // Resolve the stable key before enqueuing so the queue is also keyed
-  // on openCodeSessionId when available.
+  // The caller is now responsible for resolving providerSessionId before
+  // invoking promptUser. This function no longer performs its own resolution.
   //
-  // PRIORITY ORDER for promptKey:
-  // 1. data.openCodeSessionId (explicitly passed by the agent on every tool call)
-  // 2. DB lookup by connectionId (fallback for legacy/standalone clients)
-  // 3. data.connectionId (final fallback)
-  //
-  // This ensures subagents route to their own channel, not the main agent's,
-  // even though they share the same MCP connectionId (OpenCode uses a shared client).
-  const resolvedSessionId = resolveOpenCodeSessionId(
-    data.connectionId,
-    data.openCodeSessionId,
-  );
-  const promptKey = resolvedSessionId ?? data.connectionId;
+  // TODO(Phase 3): make data.providerSessionId required at the type level
+  // and delete the connectionId fallback below. For Phase 2 we keep a
+  // defensive fallback so callers that haven't been migrated yet still work.
+  const promptKey = data.providerSessionId ?? data.connectionId;
 
   // DEBUG: Log prompt routing resolution
   console.log(
     `[prompt-routing] promptUser called:\n` +
       `  data.connectionId=${data.connectionId}\n` +
-      `  data.openCodeSessionId=${data.openCodeSessionId ?? 'undefined'}\n` +
-      `  resolvedSessionId=${resolvedSessionId ?? 'null'}\n` +
+      `  data.providerSessionId=${data.providerSessionId ?? 'undefined'}\n` +
       `  resolved promptKey=${promptKey}`,
   );
 
@@ -454,8 +451,7 @@ export function promptUser(
         const promptWithExpiry: PromptData = {
           ...data,
           expiresAt: timeoutMs > 0 ? now + timeoutMs : 0,
-          // Use the centralized resolver for consistent priority ordering
-          openCodeSessionId: resolvedSessionId,
+          providerSessionId: data.providerSessionId ?? null,
         };
 
         // Create the durable state object. We need a two-step construction
@@ -467,10 +463,13 @@ export function promptUser(
 
         const sendPromptClear = (): void => {
           if (win && !win.isDestroyed()) {
+            // Dual-emit for Phase 5 migration; drop legacy fields
+            // (connectionId, openCodeSessionId) when Phase 5 lands.
             win.webContents.send('prompt-clear', {
               id: data.id,
               connectionId: data.connectionId,
-              openCodeSessionId: promptWithExpiry.openCodeSessionId ?? null,
+              openCodeSessionId: promptWithExpiry.providerSessionId ?? null,
+              providerSessionId: promptWithExpiry.providerSessionId ?? null,
             });
           }
         };
@@ -495,7 +494,12 @@ export function promptUser(
         void durablePromise.then(resolveOuter);
 
         // ── Send prompt to renderer ───────────────────────────────────────────
-        win.webContents.send('prompt-request', promptWithExpiry);
+        // Dual-emit for Phase 5 migration; drop the legacy openCodeSessionId
+        // field from the payload when the renderer consumes providerSessionId.
+        win.webContents.send('prompt-request', {
+          ...promptWithExpiry,
+          openCodeSessionId: promptWithExpiry.providerSessionId ?? null,
+        });
         appendSessionChannelMessage({
           sessionId: promptKey,
           messageType: 'question',
@@ -571,10 +575,8 @@ function _settlePrompt(
     state.diagInterval = null;
   }
 
-  // Use the stored promptKey (openCodeSessionId ?? connectionId) to find and
-  // remove the correct map entry. This handles the case where the prompt was
-  // keyed on openCodeSessionId and _settlePrompt is called without knowing
-  // which connectionId was used originally.
+  // Use the stored promptKey (providerSessionId) to find and remove the
+  // correct map entry.
   const current = activePrompts.get(state.promptKey);
   if (current && current.promptId === state.promptId) {
     activePrompts.delete(state.promptKey);

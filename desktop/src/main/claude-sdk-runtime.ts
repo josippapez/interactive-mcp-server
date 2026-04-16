@@ -23,7 +23,7 @@ export interface ClaudeSdkInjectResult {
   error?: string;
 }
 
-const claudeSessionByConnectionId = new Map<string, string>();
+const claudeSessionByProviderSessionId = new Map<string, string>();
 
 function isModuleNotInstalledError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
@@ -109,7 +109,7 @@ function extractSessionId(chunk: unknown): string | null {
 }
 
 export async function injectClaudeMessageForConnection(params: {
-  connectionId: string;
+  providerSessionId: string;
   message: string;
   baseDirectory?: string;
   attachments?: ClaudeSdkAttachment[];
@@ -121,8 +121,8 @@ export async function injectClaudeMessageForConnection(params: {
 
   try {
     const sdk = await import('@anthropic-ai/claude-agent-sdk');
-    const previousSessionId = claudeSessionByConnectionId.get(
-      params.connectionId,
+    const previousSessionId = claudeSessionByProviderSessionId.get(
+      params.providerSessionId,
     );
     const fullPrompt = buildClaudePromptWithAttachments(
       params.message,
@@ -160,7 +160,7 @@ export async function injectClaudeMessageForConnection(params: {
     }
 
     if (sessionId) {
-      claudeSessionByConnectionId.set(params.connectionId, sessionId);
+      claudeSessionByProviderSessionId.set(params.providerSessionId, sessionId);
     }
 
     return {
