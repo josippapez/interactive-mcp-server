@@ -58,7 +58,10 @@ export function usePromptConnectionData({
     isLoading: mcpLoading,
     error: mcpError,
     refresh: refreshMcpServers,
-  } = useMcpServers(isOpenCodeSession ? sessionBaseDirectory : null);
+  } = useMcpServers(
+    isOpenCodeSession ? (sessionBaseDirectory ?? undefined) : undefined,
+    isOpenCodeSession,
+  );
 
   const latestStatus = useMemo(() => {
     const latest = sessionStatuses.at(-1) ?? null;

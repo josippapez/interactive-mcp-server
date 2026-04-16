@@ -1,4 +1,11 @@
-import React, { memo, useEffect, useMemo } from 'react';
+import React, {
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useVirtualizer, type VirtualItem } from '@tanstack/react-virtual';
 import type { UnifiedMessage } from '../../../types/unified-message';
 import MessageItem from '../MessageItem';
@@ -7,6 +14,34 @@ import {
   getStreamingMessageId,
   useSeenMessageIds,
 } from './virtualized-message-list-helpers';
+
+/**
+ * Compute a lightweight signature covering all messages' dynamic content.
+ * This ensures we detect changes in tool outputs, statuses, and text
+ * regardless of which message position they occur at.
+ */
+function computeMessagesContentSignature(messages: UnifiedMessage[]): string {
+  let hash = 0;
+  for (const msg of messages) {
+    // Include message id and text length (not full text to keep it fast)
+    hash = (hash * 31 + msg.id.length) | 0;
+    hash = (hash * 31 + msg.text.length) | 0;
+    hash = (hash * 31 + (msg.reasoning?.length ?? 0)) | 0;
+
+    // Include tool call statuses and output lengths
+    if (msg.toolCalls) {
+      for (const tc of msg.toolCalls) {
+        hash = (hash * 31 + tc.id.length) | 0;
+        hash = (hash * 31 + (tc.status?.length ?? 0)) | 0;
+        hash = (hash * 31 + (tc.output?.length ?? 0)) | 0;
+      }
+    }
+  }
+  return `${messages.length}:${hash}`;
+}
+
+/** Threshold in pixels - if user is within this distance from bottom, consider them "at bottom" */
+const BOTTOM_THRESHOLD_PX = 100;
 
 interface VirtualizedMessageListProps {
   /** Messages to render */
@@ -41,6 +76,9 @@ interface VirtualizedMessageListProps {
   estimateSize?: number;
   /** Number of items to render outside the visible area */
   overscan?: number;
+  matchedMessageIds?: string[];
+  activeSearchMatchId?: string | null;
+  pauseVersion?: number;
 }
 
 const VirtualizedMessageList = memo(function VirtualizedMessageList({
@@ -59,12 +97,22 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
   followOutput = true,
   estimateSize = 100,
   overscan = 5,
+  matchedMessageIds = [],
+  activeSearchMatchId = null,
+  pauseVersion = 0,
 }: VirtualizedMessageListProps): React.ReactElement {
   const newMessageIds = useSeenMessageIds(messages);
   const streamingMessageId = useMemo(
     () => getStreamingMessageId(messages),
     [messages],
   );
+
+  // Track whether user is at the bottom (for auto-scroll behavior)
+  // Start true so initial load scrolls to bottom
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  const isAtBottomRef = useRef(true);
+  // Flag to ignore scroll events triggered by our own programmatic scrolling
+  const isProgrammaticScrollRef = useRef(false);
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -80,30 +128,156 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
     },
   });
 
-  const latestMessageSignature = useMemo(() => {
-    const latestMessage = messages[messages.length - 1];
-    if (!latestMessage) return '';
+  // Track content signature across ALL messages (not just the last one)
+  // This ensures we detect changes in tool outputs, thinking sections, etc.
+  // regardless of which message they occur in
+  const contentSignature = useMemo(
+    () => computeMessagesContentSignature(messages),
+    [messages],
+  );
 
-    return [
-      latestMessage.id,
-      latestMessage.text,
-      latestMessage.reasoning ?? '',
-      latestMessage.toolCalls
-        ?.map((toolCall) => `${toolCall.id}:${toolCall.status ?? ''}`)
-        .join('|') ?? '',
-    ].join('::');
-  }, [messages]);
+  // Ref to track the content container for MutationObserver
+  const contentElRef = useRef<HTMLDivElement | null>(null);
+  const followOutputRef = useRef(followOutput);
+  followOutputRef.current = followOutput;
 
   useEffect(() => {
+    if (pauseVersion === 0) return;
+    isAtBottomRef.current = false;
+    setIsAtBottom(false);
+  }, [pauseVersion]);
+
+  // Check if user is at bottom of scroll container
+  const checkIfAtBottom = useCallback(() => {
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return true;
+    const { scrollTop, scrollHeight, clientHeight } = scrollEl;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    return distanceFromBottom <= BOTTOM_THRESHOLD_PX;
+  }, [scrollContainerRef]);
+
+  // Track scroll position to detect when user scrolls away from bottom
+  // We ignore scroll events triggered by our own programmatic scrolling
+  useEffect(() => {
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
+
+    const handleScroll = () => {
+      // Ignore scroll events caused by our programmatic scrolling
+      if (isProgrammaticScrollRef.current) {
+        return;
+      }
+      const atBottom = checkIfAtBottom();
+      isAtBottomRef.current = atBottom;
+      setIsAtBottom(atBottom);
+    };
+
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    return () => {
+      scrollEl.removeEventListener('scroll', handleScroll);
+    };
+  }, [scrollContainerRef, checkIfAtBottom]);
+
+  // Scroll to bottom when content signature changes (new messages or content updates)
+  // BUT only if user is currently at the bottom (hasn't scrolled away)
+  useEffect(() => {
     if (!followOutput || messages.length === 0) return;
+    if (!isAtBottomRef.current) return; // User scrolled away, don't auto-scroll
+    // Reference contentSignature to satisfy exhaustive-deps and document intent
+    void contentSignature;
+    // Mark as programmatic scroll so we don't reset isAtBottomRef
+    isProgrammaticScrollRef.current = true;
     virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
-  }, [followOutput, latestMessageSignature, messages.length, virtualizer]);
+    // Clear the flag after a short delay to allow scroll event to fire
+    requestAnimationFrame(() => {
+      isProgrammaticScrollRef.current = false;
+    });
+  }, [followOutput, contentSignature, messages.length, virtualizer]);
+
+  // Stable scroll-to-bottom function (only scrolls if user is at bottom)
+  const scrollToBottomIfPinned = useCallback(() => {
+    if (!followOutputRef.current) return;
+    if (!isAtBottomRef.current) return; // User scrolled away, don't auto-scroll
+    const scrollEl = scrollContainerRef.current;
+    if (!scrollEl) return;
+    // Mark as programmatic scroll so we don't reset isAtBottomRef
+    isProgrammaticScrollRef.current = true;
+    // Use direct scrollTo for immediate response to height changes
+    scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'auto' });
+    // Clear the flag after a short delay to allow scroll event to fire
+    requestAnimationFrame(() => {
+      isProgrammaticScrollRef.current = false;
+    });
+  }, [scrollContainerRef]);
+
+  // MutationObserver to catch DOM-level height changes (expand/collapse, lazy content)
+  // This handles cases where tool cards expand, thinking sections toggle, etc.
+  // ResizeObserver on individual items doesn't trigger parent re-renders, so we
+  // use MutationObserver on the content wrapper to detect structural changes.
+  useEffect(() => {
+    const contentEl = contentElRef.current;
+    if (!contentEl) return;
+
+    // Debounce scroll calls to avoid excessive scrolling during rapid mutations
+    let rafId: number | null = null;
+
+    const mutationObserver = new MutationObserver(() => {
+      if (!followOutputRef.current) return;
+
+      // Cancel any pending scroll to coalesce rapid mutations
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+
+      // Defer to after layout/paint to get accurate scrollHeight
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        scrollToBottomIfPinned();
+      });
+    });
+
+    // Only watch for structural changes (childList) and subtree changes
+    // Attribute changes are too noisy and usually don't affect height
+    mutationObserver.observe(contentEl, {
+      childList: true,
+      subtree: true,
+    });
+
+    return () => {
+      mutationObserver.disconnect();
+      if (rafId !== null) {
+        cancelAnimationFrame(rafId);
+      }
+    };
+  }, [scrollToBottomIfPinned]);
+
+  // Combined ref callback to capture content element for ResizeObserver
+  const combinedContentRef = useCallback(
+    (node: HTMLDivElement | null) => {
+      contentElRef.current = node;
+      // Call the original contentRef if it's a callback
+      if (typeof contentRef === 'function') {
+        contentRef(node);
+      } else if (contentRef && 'current' in contentRef) {
+        (contentRef as React.MutableRefObject<HTMLDivElement | null>).current =
+          node;
+      }
+    },
+    [contentRef],
+  );
 
   const virtualItems = virtualizer.getVirtualItems();
 
+  useEffect(() => {
+    if (!activeSearchMatchId) return;
+    const matchIndex = messages.findIndex((msg) => msg.id === activeSearchMatchId);
+    if (matchIndex < 0) return;
+    virtualizer.scrollToIndex(matchIndex, { align: 'center' });
+  }, [activeSearchMatchId, messages, virtualizer]);
+
   return (
     <div
-      ref={contentRef}
+      ref={combinedContentRef}
       style={{
         height: virtualizer.getTotalSize(),
         width: '100%',
@@ -158,6 +332,8 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
                 showThinking={showThinking}
                 isNew={isNewMessage}
                 isStreaming={isStreamingMessage}
+                isSearchMatch={matchedMessageIds.includes(msg.id)}
+                isActiveSearchMatch={activeSearchMatchId === msg.id}
               />
             </div>
           );

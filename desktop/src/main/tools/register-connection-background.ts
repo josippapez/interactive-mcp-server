@@ -191,11 +191,17 @@ export function startStartupContextInjection(
     );
 
     void (async () => {
+      // Inject startup context (instructions/skills) as a system message
+      // so it appears in the model's system prompt rather than as a user message.
       const injectionResult = await injectOpenCodeMessage(
         options.openCodeSessionId!,
-        options.startupContextMessage,
+        '', // Empty user message - content goes in system field
         undefined,
         options.getOpenCodePort(),
+        undefined, // mcpServerPort
+        true, // noReply
+        undefined, // modelOverride
+        options.startupContextMessage, // systemMessage - injected into model's system prompt
       );
 
       if (injectionResult.ok) {

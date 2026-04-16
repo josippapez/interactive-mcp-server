@@ -549,7 +549,7 @@ Shows live status from OpenCode API:
 
 **File:** `components/prompt/ChannelHeader.tsx`
 
-Displays the active channel label and action buttons at the top of the content area.
+Displays the active channel label and action buttons at the top of the content area. It also owns the session-local inline find UI.
 
 #### Props
 
@@ -560,6 +560,13 @@ Displays the active channel label and action buttons at the top of the content a
 | `onClearMessages`  | `() => void` | Clears Q/A history and queued messages.                  |
 | `onRemoveSession`  | `() => void` | Removes session channel and terminates it if active.     |
 | `onDismissSession` | `() => void` | Closes the tab from the UI without removing the session. |
+
+#### Session-local find
+
+- The header exposes an inline find bar for the active session/channel.
+- `Cmd+F` / `Ctrl+F` opens the find UI when a session is active.
+- `Enter` navigates to the next match, `Shift+Enter` to the previous match, and `Escape` closes and clears the find UI.
+- Search ordering is newest-first so the first active result is the latest matching message in the transcript.
 
 #### Buttons
 
@@ -635,7 +642,7 @@ The text input and file attachment area at the bottom of the content pane. Handl
 
 **File:** `components/prompt/ChatHistoryView.tsx`
 
-Scrollable list of all `ChannelMessage` entries for the current connection.
+Scrollable list of the unified transcript for the current connection. It merges local channel messages with provider conversation messages when available.
 
 #### Props
 
@@ -663,6 +670,18 @@ Each message shows:
 - Message text rendered through `MarkdownContent`.
 - Attachment name badges (📎 prefix) if `msg.attachments` is non-empty.
 - Inline predefined option buttons (below the message body) when `msg.id === activePromptId` and `predefinedOptions` is non-empty.
+
+#### Unified transcript notes
+
+- OpenCode-backed sessions render a merged timeline of local channel events and provider conversation messages.
+- Local outbound echoes are hidden once the matching provider user message arrives, preventing duplicate user entries in the transcript.
+- Search highlighting and search navigation both use the same merged message ordering so the highlighted results and scroll target stay aligned.
+
+#### Auto-scroll behavior
+
+- The transcript follows output while the view is pinned to the bottom.
+- Scrolling away pauses follow mode immediately and avoids re-snapping while the user is escaping the bottom lock.
+- Switching sessions resets follow mode and scroll position cleanly for the newly selected channel.
 
 ---
 

@@ -93,6 +93,8 @@ Calling `register_connection` is **optional but recommended** for:
 - **Recovering after deletion** — if a user deletes the channel from the sidebar, call `register_connection` to re-create it
 - **Non-OpenCode providers** — Copilot CLI, Claude SDK, and standalone agents MUST call `register_connection` since there's no SSE auto-detection
 
+`baseDirectory` on `register_connection` is primarily for repo-aware features such as file autocomplete, repository-doc indexing, and `find_repo_docs`. It should not be treated as the source of truth for sidebar grouping. OpenCode-backed sessions are grouped by the session's own creation/directory metadata from OpenCode.
+
 ### Why `openCodeSessionId` is required on tool calls
 
 OpenCode uses a **shared MCP client** across all agent sessions. Without an explicit session ID on each tool call:

@@ -27,6 +27,16 @@ export { syncRemoteConfig } from './config-sync';
 // health.ts
 export { checkOpenCodeHealth, type OpenCodeHealthStatus } from './health';
 
+// sdk-client.ts
+export {
+  initSdkClient,
+  getSdkClient,
+  getSdkPort,
+  getClient,
+  _setClientFactory,
+  _resetClientFactory,
+} from './sdk-client';
+
 // injector.ts
 export {
   injectOpenCodeMessage,

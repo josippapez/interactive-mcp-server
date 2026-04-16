@@ -90,16 +90,19 @@ export function ProviderSection({
         <select
           id="settings-agent-backend"
           value={settings.agentBackend}
-          onChange={(e) =>
+          onChange={(e) => {
+            const nextBackend = e.target.value as AppSettings['agentBackend'];
             setSettings((s) =>
               s
                 ? {
                     ...s,
-                    agentBackend: e.target.value as AppSettings['agentBackend'],
+                    agentBackend: nextBackend,
+                    autoStartOpenCode:
+                      nextBackend === 'opencode' ? true : s.autoStartOpenCode,
                   }
                 : s,
-            )
-          }
+            );
+          }}
           className="w-56 bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
         >
           <option value="standalone">Standalone (no provider)</option>

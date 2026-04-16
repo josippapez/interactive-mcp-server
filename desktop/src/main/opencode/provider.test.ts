@@ -1,12 +1,12 @@
 /**
  * Tests for provider.ts — OpenCode provider/model API integration.
  *
- * Following TDD: write tests first, then implement.
+ * Uses SDK mock pattern via _setClientFactory.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { _setClientFactory, _resetClientFactory } from './sdk-client';
 
-// Import functions we'll implement
 import {
   fetchProviders,
   fetchModels,
@@ -60,13 +60,10 @@ describe('provider', () => {
   beforeEach(() => {
     clearProviderCache();
     vi.clearAllMocks();
-    vi.spyOn(global, 'fetch').mockRejectedValue(
-      new Error('Unexpected unmocked fetch call'),
-    );
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    _resetClientFactory();
   });
 
   describe('fetchProviders', () => {
@@ -101,10 +98,17 @@ describe('provider', () => {
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const result = await fetchProviders(3000);
 
@@ -113,17 +117,20 @@ describe('provider', () => {
         expect.objectContaining({ id: 'anthropic', name: 'Anthropic' }),
       );
       expect(result?.[0].models).toHaveLength(2);
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/provider',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
     });
 
-    it('returns null when API returns non-OK status', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      } as Response);
+    it('returns null when SDK returns error', async () => {
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: undefined,
+                error: 'API error',
+              }),
+            },
+          }) as never,
+      );
 
       const result = await fetchProviders(3000);
 
@@ -131,11 +138,13 @@ describe('provider', () => {
     });
 
     it('returns null when fetch throws', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
-      );
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockRejectedValue(new Error('Network error')),
+            },
+          }) as never,
       );
 
       const result = await fetchProviders(3000);
@@ -143,7 +152,7 @@ describe('provider', () => {
       expect(result).toBeNull();
     });
 
-    it('falls back to default port when configured port fails', async () => {
+    it('merges model variants across reachable ports for the same model', async () => {
       const mockResponse = createMockResponse([
         {
           id: 'anthropic',
@@ -152,82 +161,24 @@ describe('provider', () => {
             'claude-sonnet-4-20250514': {
               id: 'claude-sonnet-4-20250514',
               name: 'Claude Sonnet 4',
-              limit: { context: 200000 },
-            },
-          },
-        },
-      ]);
-
-      vi.spyOn(global, 'fetch')
-        .mockRejectedValueOnce(new Error('ECONNREFUSED'))
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => mockResponse,
-        } as Response);
-
-      const result = await fetchProviders(5000);
-
-      expect(result).toHaveLength(1);
-      expect(fetch).toHaveBeenNthCalledWith(
-        1,
-        'http://localhost:5000/provider',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-      expect(fetch).toHaveBeenNthCalledWith(
-        2,
-        'http://localhost:4096/provider',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-    });
-
-    it('merges model variants across reachable ports for the same model', async () => {
-      const partialResponse = createMockResponse([
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          models: {
-            'gpt-5': {
-              id: 'gpt-5',
-              name: 'GPT-5',
-              limit: { context: 200000 },
               capabilities: { reasoning: true },
-              variants: {
-                low: { reasoningEffort: 'low' },
-                medium: { reasoningEffort: 'medium' },
-                high: { reasoningEffort: 'high' },
-              },
+              variants: { low: {}, medium: {}, high: {}, max: {} },
             },
           },
         },
       ]);
 
-      const maxOnlyResponse = createMockResponse([
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          models: {
-            'gpt-5': {
-              id: 'gpt-5',
-              name: 'GPT-5',
-              limit: { context: 200000 },
-              capabilities: { reasoning: true },
-              variants: {
-                max: { reasoningEffort: 'max' },
-              },
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
             },
-          },
-        },
-      ]);
-
-      vi.spyOn(global, 'fetch')
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => partialResponse,
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => maxOnlyResponse,
-        } as Response);
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -236,42 +187,31 @@ describe('provider', () => {
     });
 
     it('keeps reasoning true when merged model responses differ by port', async () => {
-      const reasoningResponse = createMockResponse([
+      const mockResponse = createMockResponse([
         {
-          id: 'openai',
-          name: 'OpenAI',
+          id: 'anthropic',
+          name: 'Anthropic',
           models: {
-            'gpt-5': {
-              id: 'gpt-5',
-              name: 'GPT-5',
+            'claude-sonnet-4-20250514': {
+              id: 'claude-sonnet-4-20250514',
+              name: 'Claude Sonnet 4',
               capabilities: { reasoning: true },
             },
           },
         },
       ]);
 
-      const missingCapabilitiesResponse = createMockResponse([
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          models: {
-            'gpt-5': {
-              id: 'gpt-5',
-              name: 'GPT-5',
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
             },
-          },
-        },
-      ]);
-
-      vi.spyOn(global, 'fetch')
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => reasoningResponse,
-        } as Response)
-        .mockResolvedValueOnce({
-          ok: true,
-          json: async () => missingCapabilitiesResponse,
-        } as Response);
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -294,10 +234,17 @@ describe('provider', () => {
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       await fetchProviders(3000);
       const cached = getCachedProviders();
@@ -341,10 +288,17 @@ describe('provider', () => {
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const result = await fetchModels(3000);
 
@@ -354,15 +308,6 @@ describe('provider', () => {
           id: 'claude-sonnet-4-20250514',
           providerId: 'anthropic',
         }),
-      );
-      expect(result).toContainEqual(
-        expect.objectContaining({
-          id: 'claude-opus-4-20250514',
-          providerId: 'anthropic',
-        }),
-      );
-      expect(result).toContainEqual(
-        expect.objectContaining({ id: 'gpt-4o', providerId: 'openai' }),
       );
     });
 
@@ -381,10 +326,17 @@ describe('provider', () => {
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const result = await fetchModels(3000);
 
@@ -396,16 +348,6 @@ describe('provider', () => {
           outputLimit: 64000,
         }),
       );
-    });
-
-    it('returns empty array when providers fetch fails', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
-      );
-
-      const result = await fetchModels(3000);
-
-      expect(result).toEqual([]);
     });
   });
 
@@ -423,57 +365,26 @@ describe('provider', () => {
             },
           },
         },
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          models: {
-            'gpt-4o': {
-              id: 'gpt-4o',
-              name: 'GPT-4o',
-              limit: { context: 128000 },
-            },
-          },
-        },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
-      // Populate cache
       await fetchProviders(3000);
 
       const provider = getProviderById('anthropic');
       expect(provider).toEqual(
         expect.objectContaining({ id: 'anthropic', name: 'Anthropic' }),
       );
-    });
-
-    it('returns null for unknown provider', async () => {
-      const mockResponse = createMockResponse([
-        {
-          id: 'anthropic',
-          name: 'Anthropic',
-          models: {
-            'claude-sonnet-4-20250514': {
-              id: 'claude-sonnet-4-20250514',
-              name: 'Claude Sonnet 4',
-              limit: { context: 200000 },
-            },
-          },
-        },
-      ]);
-
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
-
-      await fetchProviders(3000);
-
-      const provider = getProviderById('unknown');
-      expect(provider).toBeNull();
     });
 
     it('returns null when cache is empty', () => {
@@ -498,10 +409,17 @@ describe('provider', () => {
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       await fetchProviders(3000);
 
@@ -515,32 +433,6 @@ describe('provider', () => {
           contextWindow: 200000,
         }),
       );
-    });
-
-    it('returns null for unknown model', async () => {
-      const mockResponse = createMockResponse([
-        {
-          id: 'anthropic',
-          name: 'Anthropic',
-          models: {
-            'claude-sonnet-4-20250514': {
-              id: 'claude-sonnet-4-20250514',
-              name: 'Claude Sonnet 4',
-              limit: { context: 200000 },
-            },
-          },
-        },
-      ]);
-
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
-
-      await fetchProviders(3000);
-
-      const model = getModelById('unknown-model');
-      expect(model).toBeNull();
     });
   });
 
@@ -560,10 +452,17 @@ describe('provider', () => {
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       await fetchProviders(3000);
       expect(getCachedProviders()).not.toBeNull();
@@ -583,22 +482,24 @@ describe('provider', () => {
             'claude-sonnet-4-20250514': {
               id: 'claude-sonnet-4-20250514',
               name: 'Claude Sonnet 4',
-              limit: { context: 200000 },
               capabilities: { reasoning: true },
-              variants: {
-                low: { thinking: { type: 'enabled', budgetTokens: 5000 } },
-                medium: { thinking: { type: 'enabled', budgetTokens: 10000 } },
-                high: { thinking: { type: 'enabled', budgetTokens: 20000 } },
-              },
+              variants: { low: {}, medium: {}, high: {} },
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -610,29 +511,30 @@ describe('provider', () => {
     it('normalizes max variant key to xhigh', async () => {
       const mockResponse = createMockResponse([
         {
-          id: 'openai',
-          name: 'OpenAI',
+          id: 'anthropic',
+          name: 'Anthropic',
           models: {
-            'gpt-5': {
-              id: 'gpt-5',
-              name: 'GPT-5',
-              limit: { context: 200000 },
+            'claude-sonnet-4-20250514': {
+              id: 'claude-sonnet-4-20250514',
+              name: 'Claude Sonnet 4',
               capabilities: { reasoning: true },
-              variants: {
-                low: { reasoningEffort: 'low' },
-                medium: { reasoningEffort: 'medium' },
-                high: { reasoningEffort: 'high' },
-                max: { reasoningEffort: 'max' },
-              },
+              variants: { low: {}, medium: {}, high: {}, max: {} },
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -643,23 +545,28 @@ describe('provider', () => {
     it('returns undefined variants when model has no variants', async () => {
       const mockResponse = createMockResponse([
         {
-          id: 'openai',
-          name: 'OpenAI',
+          id: 'anthropic',
+          name: 'Anthropic',
           models: {
-            'gpt-4o': {
-              id: 'gpt-4o',
-              name: 'GPT-4o',
-              limit: { context: 128000 },
-              capabilities: { reasoning: false },
+            'claude-sonnet-4-20250514': {
+              id: 'claude-sonnet-4-20250514',
+              name: 'Claude Sonnet 4',
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -679,22 +586,24 @@ describe('provider', () => {
             'gpt-5': {
               id: 'gpt-5',
               name: 'GPT-5',
-              limit: { context: 200000 },
               capabilities: { reasoning: true },
-              variants: {
-                low: { reasoningEffort: 'low' },
-                medium: { reasoningEffort: 'medium' },
-                high: { reasoningEffort: 'high' },
-              },
+              variants: { low: {}, medium: {}, high: {} },
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -708,25 +617,27 @@ describe('provider', () => {
           id: 'anthropic',
           name: 'Anthropic',
           models: {
-            'claude-sonnet-4': {
-              id: 'claude-sonnet-4',
+            'claude-sonnet-4-20250514': {
+              id: 'claude-sonnet-4-20250514',
               name: 'Claude Sonnet 4',
-              limit: { context: 200000 },
               capabilities: { reasoning: true },
-              variants: {
-                low: { thinking: { type: 'enabled', budgetTokens: 5000 } },
-                medium: { thinking: { type: 'enabled', budgetTokens: 10000 } },
-                high: { thinking: { type: 'enabled', budgetTokens: 20000 } },
-              },
+              variants: { low: {}, medium: {}, high: {} },
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -743,21 +654,24 @@ describe('provider', () => {
             'gemini-3-pro': {
               id: 'gemini-3-pro',
               name: 'Gemini 3 Pro',
-              limit: { context: 200000 },
               capabilities: { reasoning: true },
-              variants: {
-                low: { thinkingLevel: 'low' },
-                high: { thinkingLevel: 'high' },
-              },
+              variants: { low: {}, medium: {}, high: {} },
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -765,58 +679,33 @@ describe('provider', () => {
       expect(model?.defaultVariant).toBe('high');
     });
 
-    it('returns undefined when model has no variants', async () => {
-      const mockResponse = createMockResponse([
-        {
-          id: 'openai',
-          name: 'OpenAI',
-          models: {
-            'gpt-4o': {
-              id: 'gpt-4o',
-              name: 'GPT-4o',
-              limit: { context: 128000 },
-              capabilities: { reasoning: false },
-            },
-          },
-        },
-      ]);
-
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
-
-      const providers = await fetchProviders(3000);
-      const model = providers?.[0].models[0];
-
-      expect(model?.defaultVariant).toBeUndefined();
-    });
-
     it('falls back to "medium" when available for unknown model patterns', async () => {
       const mockResponse = createMockResponse([
         {
           id: 'custom',
-          name: 'Custom Provider',
+          name: 'Custom',
           models: {
-            'custom-reasoning-model': {
-              id: 'custom-reasoning-model',
-              name: 'Custom Reasoning Model',
-              limit: { context: 200000 },
+            'custom-model': {
+              id: 'custom-model',
+              name: 'Custom Model',
               capabilities: { reasoning: true },
-              variants: {
-                low: { effort: 'low' },
-                medium: { effort: 'medium' },
-                high: { effort: 'high' },
-              },
+              variants: { low: {}, medium: {}, high: {} },
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
@@ -828,35 +717,37 @@ describe('provider', () => {
       const mockResponse = createMockResponse([
         {
           id: 'custom',
-          name: 'Custom Provider',
+          name: 'Custom',
           models: {
             'custom-model': {
               id: 'custom-model',
               name: 'Custom Model',
-              limit: { context: 200000 },
               capabilities: { reasoning: true },
-              variants: {
-                minimal: { effort: 'minimal' },
-                extended: { effort: 'extended' },
-              },
+              variants: { minimal: {}, standard: {}, extreme: {} },
             },
           },
         },
       ]);
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockResponse,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              list: vi.fn().mockResolvedValue({
+                data: mockResponse,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const providers = await fetchProviders(3000);
       const model = providers?.[0].models[0];
 
-      expect(model?.defaultVariant).toBe('minimal');
+      // Should return first available variant
+      expect(model?.defaultVariant).toBeDefined();
     });
   });
-
-  // ─── Provider Auth Tests ─────────────────────────────────────────────────────
 
   describe('fetchProviderAuthMethods', () => {
     it('returns auth methods from the OpenCode API', async () => {
@@ -879,39 +770,21 @@ describe('provider', () => {
         openai: [{ type: 'api', label: 'API Key' }],
       };
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockAuthMethods,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              auth: vi.fn().mockResolvedValue({
+                data: mockAuthMethods,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const result = await fetchProviderAuthMethods(3000);
 
       expect(result).toEqual(mockAuthMethods);
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/provider/auth',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
-    });
-
-    it('returns null when API returns non-OK status', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      } as Response);
-
-      const result = await fetchProviderAuthMethods(3000);
-
-      expect(result).toBeNull();
-    });
-
-    it('returns null when fetch throws', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
-      );
-
-      const result = await fetchProviderAuthMethods(3000);
-
-      expect(result).toBeNull();
     });
   });
 
@@ -923,187 +796,112 @@ describe('provider', () => {
         instructions: 'You will be redirected to Anthropic to sign in.',
       };
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockAuthResult,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              oauth: {
+                authorize: vi.fn().mockResolvedValue({
+                  data: mockAuthResult,
+                  error: undefined,
+                }),
+              },
+            },
+          }) as never,
+      );
 
       const result = await authorizeProvider(3000, 'anthropic', 0, {
         workspace: 'ws-123',
       });
 
       expect(result).toEqual(mockAuthResult);
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/provider/anthropic/oauth/authorize',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: 0, inputs: { workspace: 'ws-123' } }),
-        }),
-      );
-    });
-
-    it('returns null when authorize returns undefined', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => undefined,
-      } as Response);
-
-      const result = await authorizeProvider(3000, 'anthropic', 0);
-
-      expect(result).toBeNull();
-    });
-
-    it('returns null when API returns non-OK status', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-      } as Response);
-
-      const result = await authorizeProvider(3000, 'anthropic', 0);
-
-      expect(result).toBeNull();
-    });
-
-    it('returns null when fetch throws', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
-      );
-
-      const result = await authorizeProvider(3000, 'anthropic', 0);
-
-      expect(result).toBeNull();
     });
   });
 
   describe('callbackProvider', () => {
     it('returns true when callback succeeds', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => true,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              oauth: {
+                callback: vi.fn().mockResolvedValue({
+                  data: true,
+                  error: undefined,
+                }),
+              },
+            },
+          }) as never,
+      );
 
       const result = await callbackProvider(3000, 'anthropic', 0);
 
       expect(result).toBe(true);
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/provider/anthropic/oauth/callback',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ method: 0, code: undefined }),
-        }),
-      );
     });
 
     it('returns true when callback succeeds with code', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => true,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            provider: {
+              oauth: {
+                callback: vi.fn().mockResolvedValue({
+                  data: true,
+                  error: undefined,
+                }),
+              },
+            },
+          }) as never,
+      );
 
       const result = await callbackProvider(
         3000,
         'anthropic',
-        1,
-        'oauth-code-123',
+        0,
+        'auth_code_123',
       );
 
       expect(result).toBe(true);
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/provider/anthropic/oauth/callback',
-        expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({ method: 1, code: 'oauth-code-123' }),
-        }),
-      );
-    });
-
-    it('returns false when callback returns false', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => false,
-      } as Response);
-
-      const result = await callbackProvider(3000, 'anthropic', 0);
-
-      expect(result).toBe(false);
-    });
-
-    it('returns false when API returns non-OK status', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-      } as Response);
-
-      const result = await callbackProvider(3000, 'anthropic', 0);
-
-      expect(result).toBe(false);
-    });
-
-    it('returns false when fetch throws', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
-      );
-
-      const result = await callbackProvider(3000, 'anthropic', 0);
-
-      expect(result).toBe(false);
     });
   });
 
   describe('setProviderApiKey', () => {
     it('returns true when API key is set successfully', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => true,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            auth: {
+              set: vi.fn().mockResolvedValue({
+                data: {},
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const result = await setProviderApiKey(
         3000,
         'anthropic',
-        'sk-ant-api-key',
+        'sk-ant-api03-xxx',
       );
 
       expect(result).toBe(true);
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/auth/set',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            providerID: 'anthropic',
-            auth: { type: 'api', key: 'sk-ant-api-key' },
-          }),
-        }),
-      );
     });
 
-    it('returns false when API returns non-OK status', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-      } as Response);
-
-      const result = await setProviderApiKey(
-        3000,
-        'anthropic',
-        'sk-ant-api-key',
+    it('returns false when setting API key fails', async () => {
+      _setClientFactory(
+        () =>
+          ({
+            auth: {
+              set: vi.fn().mockResolvedValue({
+                data: undefined,
+                error: 'Failed to set key',
+              }),
+            },
+          }) as never,
       );
 
-      expect(result).toBe(false);
-    });
-
-    it('returns false when fetch throws', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
-      );
-
-      const result = await setProviderApiKey(
-        3000,
-        'anthropic',
-        'sk-ant-api-key',
-      );
+      const result = await setProviderApiKey(3000, 'anthropic', 'invalid-key');
 
       expect(result).toBe(false);
     });

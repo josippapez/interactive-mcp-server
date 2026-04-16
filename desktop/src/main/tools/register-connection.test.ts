@@ -203,10 +203,14 @@ describe('register_connection tool', () => {
     // Only one upsert — no pre-register step in Phase 2
     expect(mockUpsert).toHaveBeenCalledTimes(1);
 
-    // Allow fire-and-forget tree refresh/update task to run
-    await Promise.resolve();
-    expect(mockRefreshSessionTreeCache).toHaveBeenCalledTimes(1);
-    expect(mockTriggerSessionTreeUpdate).toHaveBeenCalledTimes(1);
+    // Allow fire-and-forget tree refresh/update tasks to complete.
+    // updateSessionTreeAfterRegistration calls triggerSessionTreeUpdate twice:
+    // 1) optimistically after emitting the node
+    // 2) correctively after refreshSessionTreeCache when supportsProviderInjection=true
+    await vi.waitFor(() => {
+      expect(mockRefreshSessionTreeCache).toHaveBeenCalledTimes(1);
+      expect(mockTriggerSessionTreeUpdate).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('uses connectionId as synthetic session ID when detection returns null (non-OpenCode client)', async () => {
@@ -236,10 +240,14 @@ describe('register_connection tool', () => {
       }),
     );
 
-    // Allow fire-and-forget tree refresh/update task to run.
-    await Promise.resolve();
-    expect(mockRefreshSessionTreeCache).toHaveBeenCalledTimes(1);
-    expect(mockTriggerSessionTreeUpdate).toHaveBeenCalledTimes(1);
+    // Allow fire-and-forget tree refresh/update tasks to complete.
+    // updateSessionTreeAfterRegistration calls triggerSessionTreeUpdate twice:
+    // 1) optimistically after emitting the node
+    // 2) correctively after refreshSessionTreeCache when supportsProviderInjection=true
+    await vi.waitFor(() => {
+      expect(mockRefreshSessionTreeCache).toHaveBeenCalledTimes(1);
+      expect(mockTriggerSessionTreeUpdate).toHaveBeenCalledTimes(2);
+    });
   });
 
   it('does not return SESSION_ALREADY_CLAIMED error in Phase 2 (no claiming)', async () => {

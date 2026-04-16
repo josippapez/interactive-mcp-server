@@ -2,17 +2,10 @@
  * OpenCode slash command API integration.
  *
  * Provides functions to fetch available commands and execute them
- * in OpenCode sessions.
- *
- * API:
- * - GET /command — List available commands
- * - POST /session/:id/command — Execute a command
+ * in OpenCode sessions using the SDK.
  */
 
-import {
-  buildOpenCodePortCandidates,
-  fetchFirstSuccessfulJson,
-} from './endpoints';
+import { getClient } from './sdk-client';
 
 /** Command argument definition. */
 export interface CommandArg {
@@ -46,7 +39,7 @@ let _cachedCommands: Command[] | null = null;
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
- * Fetch all available commands from the OpenCode API.
+ * Fetch all available commands from the OpenCode API using SDK.
  * Results are cached for subsequent lookups.
  *
  * @param openCodePort - The port OpenCode is running on
@@ -55,16 +48,17 @@ let _cachedCommands: Command[] | null = null;
 export async function fetchCommands(
   openCodePort: number,
 ): Promise<Command[] | null> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-
   try {
-    const response = await fetchFirstSuccessfulJson<CommandsResponse>(
-      ports,
-      '/command',
-      5000,
-    );
-    if (!response) return null;
-    const data = response.data;
+    const client = getClient(openCodePort);
+    const response = await client.command.list(undefined, {
+      signal: AbortSignal.timeout(5000),
+    });
+
+    if (response.error) return null;
+
+    const data = response.data as CommandsResponse | undefined;
+    if (!data?.commands) return null;
+
     _cachedCommands = data.commands;
     return data.commands;
   } catch {
@@ -73,7 +67,7 @@ export async function fetchCommands(
 }
 
 /**
- * Execute a slash command in an OpenCode session.
+ * Execute a slash command in an OpenCode session using SDK.
  *
  * @param openCodePort - The port OpenCode is running on
  * @param sessionId - The session ID to execute the command in
@@ -87,41 +81,36 @@ export async function executeCommand(
   commandName: string,
   args?: Record<string, string>,
 ): Promise<ExecuteCommandResult> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
+  // Format arguments as a string if provided (command expects "arguments" as string)
+  const argsString =
+    args && Object.keys(args).length > 0
+      ? Object.entries(args)
+          .map(([k, v]) => `${k}=${v}`)
+          .join(' ')
+      : undefined;
 
-  const body: { name: string; args?: Record<string, string> } = {
-    name: commandName,
-  };
-  if (args && Object.keys(args).length > 0) {
-    body.args = args;
-  }
+  try {
+    const client = getClient(openCodePort);
+    const response = await client.session.command(
+      {
+        sessionID: sessionId,
+        command: commandName,
+        arguments: argsString,
+      },
+      { signal: AbortSignal.timeout(30000) },
+    );
 
-  for (const port of ports) {
-    try {
-      const res = await fetch(
-        `http://localhost:${port}/session/${encodeURIComponent(sessionId)}/command`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(30000),
-        },
-      );
-
-      if (!res.ok) {
-        continue;
-      }
-
-      return { ok: true };
-    } catch {
-      // failure isolation: try next endpoint
+    if (response.error) {
+      return { ok: false, error: 'Command execution failed' };
     }
-  }
 
-  return {
-    ok: false,
-    error: 'Command failed on all reachable OpenCode endpoints',
-  };
+    return { ok: true };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : 'Command failed',
+    };
+  }
 }
 
 /**

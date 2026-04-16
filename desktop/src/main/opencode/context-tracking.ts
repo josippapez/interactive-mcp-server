@@ -289,6 +289,8 @@ export function handleCompaction(
 
 // ─── Compaction API ──────────────────────────────────────────────────────────
 
+import { getClient } from './sdk-client';
+
 export interface CompactionResult {
   ok: boolean;
   error?: string;
@@ -297,7 +299,7 @@ export interface CompactionResult {
 /**
  * Trigger context compaction for a session.
  *
- * Calls POST /session/:id/summarize which asks the model to summarize
+ * Calls the SDK's session.summarize() method which asks the model to summarize
  * the conversation context, reducing token usage.
  *
  * @param sessionId - OpenCode session ID
@@ -314,26 +316,22 @@ export async function triggerCompaction(
     auto?: boolean;
   } = {},
 ): Promise<CompactionResult> {
-  const url = `http://localhost:${openCodePort}/session/${encodeURIComponent(sessionId)}/summarize`;
-  const body = {
-    providerID: options.providerId,
-    modelID: options.modelId,
-    auto: options.auto ?? false,
-  };
-
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+    const client = getClient(openCodePort);
+    const response = await client.session.summarize({
+      path: { id: sessionId },
+      body: {
+        providerID: options.providerId,
+        modelID: options.modelId,
+        auto: options.auto ?? false,
+      },
       signal: AbortSignal.timeout(60000), // Compaction can take a while
     });
 
-    if (!res.ok) {
-      const responseBody = await res.text().catch(() => '');
+    if (response.error) {
       return {
         ok: false,
-        error: `Compaction failed: ${res.status} - ${responseBody}`,
+        error: `Compaction failed: ${JSON.stringify(response.error)}`,
       };
     }
 
@@ -374,14 +372,24 @@ async function fetchLatestAssistantMessageTokens(
   openCodePort: number,
 ): Promise<{ tokens?: number; modelId?: string; providerId?: string }> {
   try {
-    const url = `http://localhost:${openCodePort}/session/${encodeURIComponent(sessionId)}/message?limit=20`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const client = getClient(openCodePort);
+    // SDK expects { path: { id }, query: { limit } } structure
+    const response = await client.session.messages(
+      {
+        path: { id: sessionId },
+        query: { limit: 20 },
+      },
+      { signal: AbortSignal.timeout(5000) },
+    );
 
-    if (!res.ok) {
+    if (response.error) {
       return {};
     }
 
-    const messages = (await res.json()) as SessionMessageResponse[];
+    const messages = response.data as SessionMessageResponse[] | undefined;
+    if (!messages) {
+      return {};
+    }
 
     for (let index = messages.length - 1; index >= 0; index -= 1) {
       const info = messages[index]?.info;
@@ -416,17 +424,24 @@ export async function fetchSessionTokens(
   openCodePort: number,
 ): Promise<SessionInfo | null> {
   try {
-    const url = `http://localhost:${openCodePort}/session/${encodeURIComponent(sessionId)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    const client = getClient(openCodePort);
+    const response = await client.session.get({
+      path: { id: sessionId },
+      signal: AbortSignal.timeout(5000),
+    });
 
-    if (!res.ok) return null;
+    if (response.error) return null;
 
-    const data = (await res.json()) as {
-      id: string;
-      tokens?: number;
-      model?: { id?: string };
-      provider?: { id?: string };
-    };
+    const data = response.data as
+      | {
+          id: string;
+          tokens?: number;
+          model?: { id?: string };
+          provider?: { id?: string };
+        }
+      | undefined;
+
+    if (!data) return null;
 
     const fallback =
       data.tokens === undefined

@@ -1,4 +1,4 @@
-import { buildOpenCodePortCandidates } from './endpoints';
+import { getClient } from './sdk-client';
 
 type LoggerLike = {
   warn: (message: string) => void;
@@ -34,29 +34,30 @@ const matchesUserPayload = (
   return normalizedCandidate.includes(normalizedUserMessage);
 };
 
-async function isSessionBusyOnPort(
+async function isSessionBusy(
   port: number,
   openCodeSessionId: string,
   reconcileTimeoutMs: number,
 ): Promise<boolean> {
   try {
-    const statusRes = await fetch(`http://localhost:${port}/session/status`, {
-      method: 'GET',
+    const client = getClient(port);
+    const response = await client.session.status({
       signal: AbortSignal.timeout(reconcileTimeoutMs),
     });
 
-    if (!statusRes.ok) return false;
-    const status = (await statusRes.json()) as Record<
-      string,
-      { type?: string } | undefined
-    >;
-    return status[openCodeSessionId]?.type === 'busy';
+    if (response.error) return false;
+
+    const status = response.data as
+      | Record<string, { type?: string } | undefined>
+      | undefined;
+
+    return status?.[openCodeSessionId]?.type === 'busy';
   } catch {
     return false;
   }
 }
 
-async function hasDeliveredMessageOnPort(
+async function hasDeliveredMessage(
   port: number,
   openCodeSessionId: string,
   reconcileTimeoutMs: number,
@@ -64,30 +65,41 @@ async function hasDeliveredMessageOnPort(
   fullText: string,
   message: string,
 ): Promise<boolean> {
-  const reconcileUrl = `http://localhost:${port}/session/${encodeURIComponent(openCodeSessionId)}/message?limit=${reconcileMessageLimit}`;
+  try {
+    const client = getClient(port);
+    // SDK expects { path: { id }, query: { limit } } structure
+    const response = await client.session.messages(
+      {
+        path: { id: openCodeSessionId },
+        query: { limit: reconcileMessageLimit },
+      },
+      { signal: AbortSignal.timeout(reconcileTimeoutMs) },
+    );
 
-  const res = await fetch(reconcileUrl, {
-    method: 'GET',
-    signal: AbortSignal.timeout(reconcileTimeoutMs),
-  });
+    if (response.error) return false;
 
-  if (!res.ok) return false;
+    const messages = response.data as
+      | Array<{
+          info?: { role?: string };
+          parts?: Array<{ type?: string; text?: string }>;
+        }>
+      | undefined;
 
-  const messages = (await res.json()) as Array<{
-    info?: { role?: string };
-    parts?: Array<{ type?: string; text?: string }>;
-  }>;
+    if (!messages) return false;
 
-  return messages.some((msg) => {
-    if (msg.info?.role !== 'user') return false;
+    return messages.some((msg) => {
+      if (msg.info?.role !== 'user') return false;
 
-    const userText = (msg.parts ?? [])
-      .filter((part) => part.type === 'text' && typeof part.text === 'string')
-      .map((part) => part.text)
-      .join('');
+      const userText = (msg.parts ?? [])
+        .filter((part) => part.type === 'text' && typeof part.text === 'string')
+        .map((part) => part.text)
+        .join('');
 
-    return matchesUserPayload(userText, fullText, message);
-  });
+      return matchesUserPayload(userText, fullText, message);
+    });
+  } catch {
+    return false;
+  }
 }
 
 export async function reconcileDeliveryAfterTimeout(
@@ -107,44 +119,40 @@ export async function reconcileDeliveryAfterTimeout(
 
   if (noReply) return false;
 
-  const candidatePorts = buildOpenCodePortCandidates(openCodePort);
-
   for (let attempt = 0; attempt < reconcileAttempts; attempt++) {
-    for (const port of candidatePorts) {
-      try {
-        const delivered = await hasDeliveredMessageOnPort(
-          port,
-          openCodeSessionId,
-          reconcileTimeoutMs,
-          reconcileMessageLimit,
-          fullText,
-          message,
-        );
-
-        if (delivered) {
-          log.warn(
-            `[injectOpenCodeMessage] POST timed out, but user message was confirmed in session ${openCodeSessionId} on port ${port}. Returning success to avoid duplicate resend.`,
-          );
-          return true;
-        }
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        log.warn(
-          `[injectOpenCodeMessage] Delivery reconciliation error for session ${openCodeSessionId} on port ${port}: ${msg}`,
-        );
-      }
-
-      const busy = await isSessionBusyOnPort(
-        port,
+    try {
+      const delivered = await hasDeliveredMessage(
+        openCodePort,
         openCodeSessionId,
         reconcileTimeoutMs,
+        reconcileMessageLimit,
+        fullText,
+        message,
       );
-      if (busy) {
+
+      if (delivered) {
         log.warn(
-          `[injectOpenCodeMessage] POST timed out and session ${openCodeSessionId} is busy on port ${port}. Treating as accepted to avoid duplicate resend.`,
+          `[injectOpenCodeMessage] POST timed out, but user message was confirmed in session ${openCodeSessionId}. Returning success to avoid duplicate resend.`,
         );
         return true;
       }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      log.warn(
+        `[injectOpenCodeMessage] Delivery reconciliation error for session ${openCodeSessionId}: ${msg}`,
+      );
+    }
+
+    const busy = await isSessionBusy(
+      openCodePort,
+      openCodeSessionId,
+      reconcileTimeoutMs,
+    );
+    if (busy) {
+      log.warn(
+        `[injectOpenCodeMessage] POST timed out and session ${openCodeSessionId} is busy. Treating as accepted to avoid duplicate resend.`,
+      );
+      return true;
     }
 
     if (attempt < reconcileAttempts - 1) {

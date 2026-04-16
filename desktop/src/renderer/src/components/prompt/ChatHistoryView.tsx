@@ -16,6 +16,11 @@ import { useAutoScroll } from '../../hooks/useAutoScroll';
 import ImageModal from './chat/ImageModal';
 import ScrollToBottomButton from './chat/ScrollToBottomButton';
 import VirtualizedMessageList from './chat/VirtualizedMessageList';
+import { useSettings } from '../../store';
+
+function normalizeSearchText(value: string): string {
+  return value.trim().toLowerCase();
+}
 
 const AUTO_SCROLL_THRESHOLD_PX = 50;
 const AUTO_SCROLL_JUMP_THRESHOLD_PX = 180;
@@ -46,6 +51,9 @@ type Props = {
   isBusy?: boolean;
   /** Channel/connection ID - triggers auto-scroll reset on change */
   channelId?: string | null;
+  searchQuery?: string;
+  activeSearchMatchIndex?: number;
+  onSearchMatchesChange?: (matchCount: number) => void;
 };
 
 /**
@@ -84,7 +92,11 @@ export default function ChatHistoryView({
   showThinking = false,
   isBusy = false,
   channelId,
+  searchQuery = '',
+  activeSearchMatchIndex = -1,
+  onSearchMatchesChange,
 }: Props): React.ReactElement {
+  const settings = useSettings();
   const [expandedImage, setExpandedImage] = useState<{
     src: string;
     name: string;
@@ -103,6 +115,7 @@ export default function ChatHistoryView({
     userScrolled,
     isAtBottom,
     showJump,
+    pauseVersion,
     scrollToBottom,
     handleScroll: handleAutoScroll,
     handleWheel: handleAutoScrollWheel,
@@ -142,12 +155,58 @@ export default function ChatHistoryView({
 
   // Merge channel and conversation messages if showConversation is enabled
   const unifiedMessages = useMemo(() => {
+    const hiddenFilterOptions = {
+      hideSystemReminders: settings.hideSystemReminders ?? false,
+      hideDocInjections: settings.hideDocInjections ?? false,
+    };
+
     if (showConversation && conversationMessages.length > 0) {
-      return mergeMessages(messages, conversationMessages, activePromptId);
+      return mergeMessages(
+        messages,
+        conversationMessages,
+        activePromptId,
+        hiddenFilterOptions,
+      );
     }
     // Just convert channel messages without merging
-    return mergeMessages(messages, [], activePromptId);
-  }, [messages, conversationMessages, showConversation, activePromptId]);
+    return mergeMessages(messages, [], activePromptId, hiddenFilterOptions);
+  }, [
+    messages,
+    conversationMessages,
+    showConversation,
+    activePromptId,
+    settings.hideSystemReminders,
+    settings.hideDocInjections,
+  ]);
+
+  const normalizedSearchQuery = normalizeSearchText(searchQuery);
+
+  const matchedMessageIds = useMemo(() => {
+    if (!normalizedSearchQuery) return [];
+    return unifiedMessages
+      .filter((msg) => {
+        const haystacks = [
+          msg.text,
+          msg.reasoning,
+          msg.modelId,
+          msg.agent,
+          msg.toolCalls?.map((tool) => tool.name).join(' '),
+          msg.toolCalls?.map((tool) => tool.output ?? '').join(' '),
+          msg.attachments?.map((attachment) => attachment.name).join(' '),
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+
+        return haystacks.includes(normalizedSearchQuery);
+      })
+      .map((msg) => msg.id)
+      .reverse();
+  }, [normalizedSearchQuery, unifiedMessages]);
+
+  useEffect(() => {
+    onSearchMatchesChange?.(matchedMessageIds.length);
+  }, [matchedMessageIds.length, onSearchMatchesChange]);
 
   // Turn-based windowing: only render the last N turns for fast initial paint.
   // Older messages are loaded on scroll-up (backfill).
@@ -196,7 +255,7 @@ export default function ChatHistoryView({
 
   useEffect(() => {
     setLastSeenMessageId(lastReadMessageId ?? null);
-  }, [channelId, lastReadMessageId]);
+  }, [lastReadMessageId]);
 
   const latestStagedMessageId = stagedMessages.at(-1)?.id ?? null;
 
@@ -340,6 +399,13 @@ export default function ChatHistoryView({
           onNavigateToSession={onNavigateToSession}
           showThinking={showThinking}
           followOutput={pinnedToBottom}
+          pauseVersion={pauseVersion}
+          matchedMessageIds={matchedMessageIds}
+          activeSearchMatchId={
+            activeSearchMatchIndex >= 0
+              ? matchedMessageIds[activeSearchMatchIndex] ?? null
+              : null
+          }
         />
 
         <div ref={chatEndRef} />

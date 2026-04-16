@@ -2,6 +2,7 @@ import { saveAttachment, attachmentUrl } from '../attachment-store';
 import { createLogger } from '../utils/logger';
 import { toProviderReasoningVariant } from '../../shared/reasoning-variant';
 import { reconcileDeliveryAfterTimeout } from './injector-reconcile';
+import { getClient } from './sdk-client';
 
 const log = createLogger('injector');
 
@@ -65,13 +66,12 @@ export async function injectOpenCodeMessage(
   mcpServerPort?: number,
   noReply = true,
   modelOverride?: ModelOverride,
+  /** Optional system-level message (injected into model's system prompt). */
+  systemMessage?: string,
 ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> {
-  const url = `http://localhost:${openCodePort}/session/${encodeURIComponent(openCodeSessionId)}/message`;
-
   log.info(
     `[injectOpenCodeMessage] Starting injection to session ${openCodeSessionId}`,
   );
-  log.info(`[injectOpenCodeMessage] URL: ${url}`);
   log.info(
     `[injectOpenCodeMessage] Message: "${message.slice(0, 100)}${message.length > 100 ? '...' : ''}"`,
   );
@@ -79,6 +79,9 @@ export async function injectOpenCodeMessage(
   log.info(`[injectOpenCodeMessage] attachments: ${attachments?.length ?? 0}`);
   log.info(
     `[injectOpenCodeMessage] modelOverride: ${JSON.stringify(modelOverride)}`,
+  );
+  log.info(
+    `[injectOpenCodeMessage] systemMessage: ${systemMessage ? `${systemMessage.length} chars` : 'none'}`,
   );
   // Capture raw model override values to detect malformed/empty selections.
   if (modelOverride) {
@@ -112,15 +115,10 @@ export async function injectOpenCodeMessage(
     { type: 'text', text: fullText },
   ];
 
-  // Build the request body
-  const body: {
-    noReply: boolean;
-    parts: { type: 'text'; text: string }[];
-    model?: { providerID: string; modelID: string };
-    variant?: string;
-  } = { noReply, parts };
+  // Build model configuration if provided
+  let model: { providerID: string; modelID: string } | undefined;
+  let variant: string | undefined;
 
-  // Add model override if provided
   if (modelOverride) {
     const providerId = modelOverride.providerId?.trim();
     const modelId = modelOverride.modelId?.trim();
@@ -130,13 +128,13 @@ export async function injectOpenCodeMessage(
         '[injectOpenCodeMessage] Skipping model override because providerId or modelId is empty',
       );
     } else {
-      body.model = {
+      model = {
         providerID: providerId,
         modelID: modelId,
       };
       const providerVariant = toProviderReasoningVariant(modelOverride.variant);
       if (providerVariant) {
-        body.variant = providerVariant;
+        variant = providerVariant;
       }
     }
   }
@@ -184,31 +182,56 @@ export async function injectOpenCodeMessage(
     });
   };
 
-  /** Attempt a single injection request */
+  /** Attempt a single injection request using the SDK */
   const attemptInject = async (
     attempt: number,
   ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> => {
     const startTime = Date.now();
     log.info(
-      `[injectOpenCodeMessage] Attempt ${attempt + 1}/${maxRetries + 1} - Sending POST request`,
+      `[injectOpenCodeMessage] Attempt ${attempt + 1}/${maxRetries + 1} - Sending promptAsync request via SDK`,
     );
 
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
+      const client = getClient(openCodePort);
+
+      // Build the request body for SDK
+      const requestBody: {
+        noReply: boolean;
+        parts: { type: 'text'; text: string }[];
+        model?: { providerID: string; modelID: string };
+        variant?: string;
+        system?: string;
+      } = {
+        noReply,
+        parts,
+      };
+
+      if (model) {
+        requestBody.model = model;
+      }
+      if (variant) {
+        requestBody.variant = variant;
+      }
+      if (systemMessage) {
+        requestBody.system = systemMessage;
+      }
+
+      log.info(
+        `[injectOpenCodeMessage] SDK request body: ${JSON.stringify(requestBody)}`,
+      );
+
+      // Use SDK's promptAsync method with timeout via AbortSignal
+      const response = await client.session.promptAsync({
+        path: { id: openCodeSessionId },
+        body: requestBody,
         signal: AbortSignal.timeout(timeoutMs),
       });
 
       const elapsedMs = Date.now() - startTime;
-      log.info(
-        `[injectOpenCodeMessage] Response status: ${res.status} ${res.statusText} (took ${elapsedMs}ms)`,
-      );
 
-      if (!res.ok) {
-        const respBody = await res.text().catch(() => '');
-        const errorMsg = `OpenCode API returned ${res.status}: ${respBody}`;
+      // Check if the response indicates an error
+      if (response.error) {
+        const errorMsg = `OpenCode SDK error: ${JSON.stringify(response.error)}`;
         log.error(
           `inject failed for session ${openCodeSessionId}: ${errorMsg}`,
         );
@@ -219,7 +242,7 @@ export async function injectOpenCodeMessage(
       }
 
       log.info(
-        `[injectOpenCodeMessage] Injection successful for session ${openCodeSessionId}`,
+        `[injectOpenCodeMessage] SDK injection successful for session ${openCodeSessionId} (took ${elapsedMs}ms)`,
       );
       return { ok: true, noReply };
     } catch (err) {
@@ -235,7 +258,6 @@ export async function injectOpenCodeMessage(
 
       const errorContext = {
         session: openCodeSessionId,
-        url,
         timeout: `${timeoutMs}ms`,
         attempt: attempt + 1,
         maxAttempts: maxRetries + 1,
@@ -264,9 +286,7 @@ export async function injectOpenCodeMessage(
     }
   };
 
-  log.info(
-    `[injectOpenCodeMessage] Sending POST request with body: ${JSON.stringify(body)}`,
-  );
+  log.info(`[injectOpenCodeMessage] Starting injection with SDK promptAsync`);
 
   // First attempt
   let result = await attemptInject(0);

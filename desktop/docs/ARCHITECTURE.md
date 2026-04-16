@@ -169,6 +169,8 @@ Subscribes to the OpenCode `/global/sync-event` SSE stream and maintains an in-m
 - **Snapshot emission**: Emits `session-tree-updated` IPC events with full `SessionNodeData[]` snapshots to the renderer. Debounced to avoid flooding.
 - **Tombstoning**: Sessions deleted via the Desktop app are tombstoned and excluded from all future snapshots.
 
+For OpenCode-backed sessions, the session tree treats the OpenCode session's own directory/creation metadata as the primary grouping source. `registered_connections.base_directory` remains important for repo-aware features such as indexing and file completion, but it is not the canonical sidebar grouping signal.
+
 #### `ipc-prompt.ts`
 
 Implements the `promptUser()` function using a **durable prompt** design that survives HTTP transport drops.

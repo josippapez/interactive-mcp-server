@@ -15,6 +15,7 @@ import {
   DEFAULT_CONTEXT_WINDOW,
   OUTPUT_TOKEN_MAX,
 } from './context-tracking';
+import { _setClientFactory, _resetClientFactory } from './sdk-client';
 
 describe('context-tracking', () => {
   beforeEach(() => {
@@ -202,44 +203,58 @@ describe('context-tracking', () => {
   describe('compaction API', () => {
     afterEach(() => {
       vi.restoreAllMocks();
+      _resetClientFactory();
     });
 
     it('triggers compaction via API', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        text: () => Promise.resolve(''),
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      let summarizeCalled = false;
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              summarize: async () => {
+                summarizeCalled = true;
+                return { data: {} };
+              },
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await triggerCompaction('ses_test', 4096);
 
       expect(result.ok).toBe(true);
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:4096/session/ses_test/summarize',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+      expect(summarizeCalled).toBe(true);
     });
 
     it('handles compaction API errors', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-        status: 500,
-        text: () => Promise.resolve('Internal error'),
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              summarize: async () => ({
+                error: 'Internal error',
+              }),
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await triggerCompaction('ses_test', 4096);
 
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('500');
+      expect(result.error).toContain('Internal error');
     });
 
     it('handles network errors', async () => {
-      const mockFetch = vi.fn().mockRejectedValue(new Error('Network error'));
-      vi.stubGlobal('fetch', mockFetch);
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              summarize: async () => {
+                throw new Error('Network error');
+              },
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await triggerCompaction('ses_test', 4096);
 
@@ -251,19 +266,24 @@ describe('context-tracking', () => {
   describe('fetch session tokens', () => {
     afterEach(() => {
       vi.restoreAllMocks();
+      _resetClientFactory();
     });
 
     it('fetches session token count from API', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        json: () =>
-          Promise.resolve({
-            id: 'ses_test',
-            tokens: 50000,
-            model: { id: 'claude-3-opus' },
-          }),
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              get: async () => ({
+                data: {
+                  id: 'ses_test',
+                  tokens: 50000,
+                  model: { id: 'claude-3-opus' },
+                },
+              }),
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await fetchSessionTokens('ses_test', 4096);
 
@@ -273,45 +293,51 @@ describe('context-tracking', () => {
     });
 
     it('returns null on API error', async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: false,
-      });
-      vi.stubGlobal('fetch', mockFetch);
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              get: async () => ({
+                error: 'Not found',
+              }),
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await fetchSessionTokens('ses_test', 4096);
       expect(result).toBeNull();
     });
 
     it('falls back to latest assistant message tokens when session tokens are missing', async () => {
-      const mockFetch = vi
-        .fn()
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve({
-              id: 'ses_test',
-              model: { id: 'gpt-5.4' },
-            }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () =>
-            Promise.resolve([
-              {
-                info: {
-                  role: 'user',
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              get: async () => ({
+                data: {
+                  id: 'ses_test',
+                  model: { id: 'gpt-5.4' },
                 },
-              },
-              {
-                info: {
-                  role: 'assistant',
-                  modelID: 'gpt-5.4',
-                  tokens: { total: 12345 },
-                },
-              },
-            ]),
-        });
-      vi.stubGlobal('fetch', mockFetch);
+              }),
+              messages: async () => ({
+                data: [
+                  {
+                    info: {
+                      role: 'user',
+                    },
+                  },
+                  {
+                    info: {
+                      role: 'assistant',
+                      modelID: 'gpt-5.4',
+                      tokens: { total: 12345 },
+                    },
+                  },
+                ],
+              }),
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await fetchSessionTokens('ses_test', 4096);
 
@@ -320,11 +346,6 @@ describe('context-tracking', () => {
         tokens: 12345,
         modelId: 'gpt-5.4',
       });
-      expect(mockFetch).toHaveBeenNthCalledWith(
-        2,
-        'http://localhost:4096/session/ses_test/message?limit=20',
-        expect.any(Object),
-      );
     });
   });
 

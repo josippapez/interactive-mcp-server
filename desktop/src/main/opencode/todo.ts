@@ -1,14 +1,10 @@
 /**
  * Fetch todos for a specific OpenCode session.
  *
- * Uses the OpenCode HTTP API at GET /session/:id/todo to retrieve the
- * current task list for the agent session.
+ * Uses the OpenCode SDK to retrieve the current task list for the agent session.
  */
 
-import {
-  buildOpenCodePortCandidates,
-  fetchFirstSuccessfulJson,
-} from './endpoints';
+import { getClient } from './sdk-client';
 
 export interface Todo {
   content: string;
@@ -27,15 +23,29 @@ export async function fetchTodosForSession(
   openCodePort: number,
   sessionId: string,
 ): Promise<Todo[] | null> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-
   try {
-    const response = await fetchFirstSuccessfulJson<unknown>(
-      ports,
-      `/session/${sessionId}/todo`,
-      3000,
-    );
-    if (!response) return null;
+    const client = getClient(openCodePort);
+    const response = await client.session.todo({
+      path: { id: sessionId },
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (response.error) {
+      console.warn(
+        `[opencode-todo] SDK error for session ${sessionId}:`,
+        response.error,
+      );
+      return null;
+    }
+
+    const httpResponse = response.response;
+    if (httpResponse && !httpResponse.ok) {
+      console.warn(
+        `[opencode-todo] HTTP error ${httpResponse.status} for session ${sessionId}`,
+      );
+      return null;
+    }
+
     const data = response.data;
     if (!Array.isArray(data)) {
       console.warn(
@@ -45,16 +55,12 @@ export async function fetchTodosForSession(
     }
 
     // Validate and normalize the todo items
-    return data.map((item: unknown) => {
-      const raw = item as Record<string, unknown>;
-      return {
-        content: typeof raw.content === 'string' ? raw.content : '',
-        status: isValidStatus(raw.status) ? raw.status : 'pending',
-        priority: isValidPriority(raw.priority) ? raw.priority : 'medium',
-      };
-    });
+    return data.map((item) => ({
+      content: typeof item.content === 'string' ? item.content : '',
+      status: isValidStatus(item.status) ? item.status : 'pending',
+      priority: isValidPriority(item.priority) ? item.priority : 'medium',
+    }));
   } catch (err) {
-    // Don't log AbortError (timeout) as it's expected when server is unavailable
     if ((err as { name?: string }).name !== 'AbortError') {
       console.warn(`[opencode-todo] Error fetching todos:`, err);
     }

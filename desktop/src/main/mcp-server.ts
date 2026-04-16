@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
   isInitializeRequest,
   LATEST_PROTOCOL_VERSION,
+  ListToolsRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
@@ -54,6 +55,63 @@ import { createLogger } from './utils/logger';
 const mcpLog = createLogger('mcp');
 
 const DEFAULT_MAIN_CHANNEL_NAME = 'OpenCode - Main Channel';
+const HIDDEN_TOOL_NAMES = new Set([
+  'register_connection',
+  'poll_context_injections',
+]);
+
+function applyHiddenToolListFilter(server: McpServer): void {
+  const rawServer = (
+    server as unknown as {
+      server?: {
+        setRequestHandler?: (
+          schema: unknown,
+          handler: () => Promise<{ tools: unknown[] }> | { tools: unknown[] },
+        ) => void;
+      };
+    }
+  ).server;
+
+  if (!rawServer?.setRequestHandler) {
+    return;
+  }
+
+  server.server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const internalServer = server as unknown as {
+      _registeredTools?: Record<
+        string,
+        {
+          enabled?: boolean;
+          title?: string;
+          description?: string;
+          inputSchema?: unknown;
+          outputSchema?: unknown;
+          annotations?: unknown;
+          execution?: unknown;
+          _meta?: Record<string, unknown>;
+        }
+      >;
+    };
+
+    const registeredTools = internalServer._registeredTools ?? {};
+    const tools = Object.entries(registeredTools)
+      .filter(
+        ([name, tool]) =>
+          tool.enabled !== false && !HIDDEN_TOOL_NAMES.has(name),
+      )
+      .map(([name, tool]) => ({
+        name,
+        title: tool.title,
+        description: tool.description,
+        inputSchema: { type: 'object' },
+        annotations: tool.annotations,
+        execution: tool.execution,
+        _meta: tool._meta,
+      }));
+
+    return { tools };
+  });
+}
 
 /**
  * Parse a provider string into a ProviderType.
@@ -256,6 +314,7 @@ function createMcpServerWithTools(
   registerFindRepoDocsTool(server, connectionId, requireSessionId);
   registerManageSkillsAndInstructionsTool(server, getWindow, connectionId);
   registerPollContextInjectionsTool(server, connectionId, requireSessionId);
+  applyHiddenToolListFilter(server);
   return server;
 }
 
@@ -971,12 +1030,12 @@ export async function startMcpServer(
   // becomes the limiting factor regardless of what the user configures.
   // The prompt's own setTimeout in ipc-prompt.ts handles actual expiry.
   //
-  // Node.js docs recommend headersTimeout > keepAliveTimeout, but when both
-  // are at MAX_INT32, adding even 1ms would overflow to a negative value and
-  // trigger a TimeoutOverflowWarning. At 24.8 days, the practical difference
-  // is negligible — both effectively mean "no timeout".
+  // Node.js internally validates that headersTimeout > keepAliveTimeout by
+  // adding 1000ms when checking. To avoid a TimeoutOverflowWarning at MAX_INT32,
+  // we set keepAliveTimeout to MAX - 1000, allowing the internal +1000 check
+  // to stay within 32-bit bounds. At ~24.8 days, both effectively mean "no timeout".
   const MAX_SAFE_TIMEOUT_MS = 2_147_483_647; // 2^31 - 1 ms ≈ 24.8 days
-  httpServer.keepAliveTimeout = MAX_SAFE_TIMEOUT_MS;
+  httpServer.keepAliveTimeout = MAX_SAFE_TIMEOUT_MS - 1000;
   httpServer.headersTimeout = MAX_SAFE_TIMEOUT_MS;
 
   // Periodically clean up old attachment files (every 6 hours)

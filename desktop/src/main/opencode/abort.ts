@@ -1,9 +1,10 @@
 /**
  * Abort a running OpenCode session.
  *
- * Uses the OpenCode HTTP API at POST /session/:id/abort to stop
- * a running agent session.
+ * Uses the OpenCode SDK to stop a running agent session.
  */
+
+import { getClient } from './sdk-client';
 
 /**
  * Abort an OpenCode session by ID.
@@ -16,24 +17,22 @@ export async function abortOpenCodeSession(
   openCodePort: number,
   sessionId: string,
 ): Promise<boolean> {
-  const url = `http://localhost:${openCodePort}/session/${sessionId}/abort`;
-
   try {
-    const res = await fetch(url, {
-      method: 'POST',
+    const client = getClient(openCodePort);
+    const response = await client.session.abort({
+      path: { id: sessionId },
       signal: AbortSignal.timeout(5000),
-      headers: { Accept: 'application/json' },
     });
 
-    if (!res.ok) {
+    if (response.error) {
       console.warn(
-        `[opencode-abort] Failed to abort session ${sessionId}: ${res.status}`,
+        `[opencode-abort] Failed to abort session ${sessionId}: ${JSON.stringify(response.error)}`,
       );
       return false;
     }
 
-    const data = (await res.json()) as unknown;
-    // The API returns boolean
+    // The SDK returns the boolean directly in response.data
+    const data = response.data;
     if (typeof data === 'boolean') {
       return data;
     }

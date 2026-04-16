@@ -35,17 +35,17 @@ export const ProjectSection = memo(function ProjectSection({
   const hasActive = project.sessions.some((s) => s.id === activeConnectionId);
 
   return (
-    <div className="mb-1 group">
+    <div className="group mb-1 min-w-0">
       {/* Project header */}
       <div
-        className={`flex items-center transition-colors hover:bg-[var(--color-border)] ${
+        className={`flex min-w-0 items-center rounded-md transition-colors hover:bg-[var(--color-border)]/70 ${
           hasActive ? 'bg-[var(--color-agent)]/5' : ''
         }`}
       >
         <button
           type="button"
           onClick={onToggle}
-          className="flex-1 flex items-center gap-2 px-3 py-1.5 text-left"
+          className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left"
         >
           {/* Chevron icon */}
           <svg
@@ -91,7 +91,7 @@ export const ProjectSection = memo(function ProjectSection({
 
           {/* Project name */}
           <span
-            className={`flex-1 truncate text-sm ${
+            className={`min-w-0 flex-1 truncate text-sm ${
               project.isRunning
                 ? 'text-[var(--color-text)] font-medium'
                 : project.isPinned && sessionCount === 0
@@ -182,7 +182,7 @@ export const ProjectSection = memo(function ProjectSection({
 
       {/* Sessions list (when expanded) */}
       {!isCollapsed && sessionCount > 0 && (
-        <div className="px-2 pb-1 space-y-0.5">
+        <div className="space-y-0.5 px-2 pb-1">
           {project.sessions
             .filter((node) => {
               // Hide children of collapsed parent sessions

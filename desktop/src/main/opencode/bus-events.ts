@@ -10,17 +10,14 @@
  *   todo.updated         → 'opencode-todo-updated' (real-time todo changes)
  *   vcs.branch.updated   → 'opencode-vcs-updated' (real-time VCS branch changes)
  *
- * The subscription is shared — this module manages its own AbortController so
- * it can be stopped independently of the session-tree-manager.
+ * Uses the OpenCode SDK for SSE streaming.
  */
 
 import type { BrowserWindow } from 'electron';
+import type { GlobalEvent } from '@opencode-ai/sdk';
 import type { AppSettings } from '../settings';
 import { createLogger } from '../utils/logger';
-import {
-  buildOpenCodePortCandidates,
-  resolveReachableOpenCodePorts,
-} from './endpoints';
+import { getClient } from './sdk-client';
 import { handleBusEvent } from './bus-event-handler';
 
 const sseLog = createLogger('sse');
@@ -53,84 +50,44 @@ export function _handleBusEventForTest(envelope: unknown, win: unknown): void {
   });
 }
 
-// ─── SSE subscription ─────────────────────────────────────────────────────────
+// ─── SSE subscription using SDK ───────────────────────────────────────────────
+
+async function subscribeToPortWithSdk(
+  port: number,
+  controller: AbortController,
+): Promise<void> {
+  const client = getClient(port);
+
+  try {
+    sseLog.info(`SSE connecting to port ${port} via SDK`);
+
+    const result = await client.global.event({
+      signal: controller.signal,
+    });
+
+    sseLog.info(`SSE connected to port ${port}`);
+
+    // Iterate over the SSE stream
+    for await (const event of result.stream) {
+      if (controller.signal.aborted) break;
+
+      const envelope = event as GlobalEvent;
+      const win = _getWindow?.() ?? null;
+      _handleBusEventForTest({ payload: envelope.payload }, win);
+    }
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === 'AbortError') return;
+    sseLog.error(
+      `SSE error on port ${port}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 async function subscribeToBusEvents(openCodePort: number): Promise<void> {
-  const reachable = await resolveReachableOpenCodePorts(openCodePort);
-  const ports =
-    reachable.length > 0
-      ? reachable
-      : buildOpenCodePortCandidates(openCodePort);
+  const controller = new AbortController();
+  _sseAbortController = controller;
 
-  const controllers: AbortController[] = [];
-  _sseAbortController = {
-    abort: () => {
-      for (const controller of controllers) {
-        controller.abort();
-      }
-    },
-  } as AbortController;
-
-  await Promise.all(
-    ports.map(async (port) => {
-      const url = `http://localhost:${port}/global/event`;
-      const controller = new AbortController();
-      controllers.push(controller);
-
-      try {
-        const res = await fetch(url, {
-          signal: controller.signal,
-          headers: { Accept: 'text/event-stream', 'Cache-Control': 'no-cache' },
-        });
-
-        if (!res.ok || !res.body) {
-          sseLog.warn(
-            `SSE connect failed on port ${port}: ${res.status} — will retry in ${SSE_RECONNECT_DELAY_MS}ms`,
-          );
-          return;
-        }
-
-        sseLog.info(`SSE connected to ${url}`);
-
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += decoder.decode(value, { stream: true });
-
-          const frames = buffer.split(/\n\n/);
-          buffer = frames.pop() ?? '';
-
-          for (const frame of frames) {
-            const dataLine = frame
-              .split('\n')
-              .find((l) => l.startsWith('data:'));
-            if (!dataLine) continue;
-
-            const raw = dataLine.slice('data:'.length).trim();
-            if (!raw) continue;
-
-            try {
-              const envelope = JSON.parse(raw) as unknown;
-              const win = _getWindow?.() ?? null;
-              _handleBusEventForTest(envelope, win);
-            } catch {
-              // malformed JSON — ignore
-            }
-          }
-        }
-      } catch (err: unknown) {
-        if ((err as { name?: string }).name === 'AbortError') return;
-        sseLog.error(
-          `SSE error on port ${port}: ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-    }),
-  );
+  await subscribeToPortWithSdk(openCodePort, controller);
 
   scheduleReconnect();
 }

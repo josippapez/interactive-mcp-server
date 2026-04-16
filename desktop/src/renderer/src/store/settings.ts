@@ -26,8 +26,11 @@ export type SyncedSettings = {
   compactMode: boolean;
   defaultNoReply: boolean;
   defaultExpandAllTools: boolean;
+  defaultShowThinking: boolean;
   toolAutoExpandExclusions: string[];
   agentBackend: string;
+  hideSystemReminders: boolean;
+  hideDocInjections: boolean;
   /** Default model ID for new sessions. */
   defaultModelId: string;
   /** Default provider ID for the default model. */
@@ -44,8 +47,11 @@ const DEFAULT_SETTINGS: SyncedSettings = {
   compactMode: false,
   defaultNoReply: true,
   defaultExpandAllTools: false,
+  defaultShowThinking: false,
   toolAutoExpandExclusions: [],
   agentBackend: '',
+  hideSystemReminders: false,
+  hideDocInjections: false,
   defaultModelId: '',
   defaultProviderId: '',
   defaultReasoningVariant: '',
@@ -102,8 +108,11 @@ export const fetchSettingsAtom = atom(null, async (_get, set) => {
       compactMode: s.compactMode ?? false,
       defaultNoReply: s.defaultNoReply ?? true,
       defaultExpandAllTools: s.defaultExpandAllTools ?? false,
+      defaultShowThinking: s.defaultShowThinking ?? false,
       toolAutoExpandExclusions: s.toolAutoExpandExclusions ?? [],
       agentBackend: s.agentBackend ?? '',
+      hideSystemReminders: s.hideSystemReminders ?? false,
+      hideDocInjections: s.hideDocInjections ?? false,
       defaultModelId: s.defaultModelId ?? '',
       defaultProviderId: s.defaultProviderId ?? '',
       defaultReasoningVariant: s.defaultReasoningVariant ?? '',

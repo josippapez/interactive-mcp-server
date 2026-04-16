@@ -37,6 +37,7 @@
 import type { BrowserWindow } from 'electron';
 import {
   getAllRegisteredConnections,
+  getRegisteredConnectionBySessionId,
   updateConnectionProviderSession,
   upsertRegisteredConnection,
   isProviderSessionClaimed,
@@ -52,10 +53,7 @@ import {
   type MessageTokens,
 } from '../opencode/context-tracking';
 import { createLogger } from '../utils/logger';
-import {
-  buildOpenCodePortCandidates,
-  resolveReachableOpenCodePorts,
-} from '../opencode/endpoints';
+import { DEFAULT_OPENCODE_PORT } from '../opencode/endpoints';
 
 const log = createLogger('session-tree');
 
@@ -480,8 +478,11 @@ function autoRegisterSession(
 ): void {
   // Only auto-register OpenCode sessions (providerType = 'opencode')
   const alreadyClaimed = isProviderSessionClaimed(info.id, 'opencode');
+  const existing = alreadyClaimed
+    ? getRegisteredConnectionBySessionId(info.id, 'opencode')
+    : null;
   log.info(
-    `autoRegisterSession: sessionId=${info.id}, parentID=${info.parentID ?? 'null'}, alreadyClaimed=${alreadyClaimed}`,
+    `autoRegisterSession: sessionId=${info.id}, parentID=${info.parentID ?? 'null'}, alreadyClaimed=${alreadyClaimed}, openCodeDirectory=${info.directory ?? '(none)'}, existingBaseDirectory=${existing?.baseDirectory ?? '(none)'}`,
   );
 
   if (alreadyClaimed) {
@@ -489,7 +490,9 @@ function autoRegisterSession(
     return;
   }
 
-  log.info(`upserting registered connection for session ${info.id}`);
+  log.info(
+    `upserting registered connection for session ${info.id} with baseDirectory=${info.directory ?? '(none)'}`,
+  );
   upsertRegisteredConnection({
     providerSessionId: info.id,
     providerType: 'opencode',
@@ -804,94 +807,75 @@ function getAllKnownBaseDirectories(): string[] {
 // ─── SSE subscription ─────────────────────────────────────────────────────────
 
 async function subscribeToSyncEvents(openCodePort: number): Promise<void> {
-  const reachable = await resolveReachableOpenCodePorts(openCodePort);
-  const ports =
-    reachable.length > 0
-      ? reachable
-      : buildOpenCodePortCandidates(openCodePort);
+  const controller = new AbortController();
+  _sseAbortController = controller;
 
-  const controllers: AbortController[] = [];
-  _sseAbortController = {
-    abort: () => {
-      for (const controller of controllers) {
-        controller.abort();
-      }
-    },
-  } as AbortController;
-
-  // Seed across all reachable endpoints before streaming starts.
+  // Seed cache from REST before streaming starts.
   await seedCacheFromRest(openCodePort);
 
-  await Promise.all(
-    ports.map(async (port) => {
-      const url = `http://localhost:${port}/global/sync-event`;
-      const controller = new AbortController();
-      controllers.push(controller);
-      log.info(`subscribing to SSE at ${url}`);
+  const url = `http://localhost:${openCodePort}/global/sync-event`;
+  log.info(`subscribing to SSE at ${url}`);
 
-      try {
-        const res = await fetch(url, {
-          signal: controller.signal,
-          headers: { Accept: 'text/event-stream', 'Cache-Control': 'no-cache' },
-        });
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: { Accept: 'text/event-stream', 'Cache-Control': 'no-cache' },
+    });
 
-        if (!res.ok || !res.body) {
-          log.warn(
-            `SSE connect failed on port ${port}: ${res.status} — will retry in ${SSE_RECONNECT_DELAY_MS}ms`,
-          );
-          return;
-        }
+    if (!res.ok || !res.body) {
+      log.warn(
+        `SSE connect failed on port ${openCodePort}: ${res.status} — will retry in ${SSE_RECONNECT_DELAY_MS}ms`,
+      );
+      scheduleReconnect();
+      return;
+    }
 
-        log.info(`SSE connected to ${url}`);
+    log.info(`SSE connected to ${url}`);
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
 
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) {
-            log.info(`SSE stream ended on port ${port}`);
-            break;
-          }
-
-          buffer += decoder.decode(value, { stream: true });
-
-          // SSE frames are terminated by a double newline.
-          const frames = buffer.split(/\n\n/);
-          buffer = frames.pop() ?? '';
-
-          for (const frame of frames) {
-            const dataLine = frame
-              .split('\n')
-              .find((l) => l.startsWith('data:'));
-            if (!dataLine) continue;
-
-            const raw = dataLine.slice('data:'.length).trim();
-            if (!raw) continue;
-
-            try {
-              const envelope = JSON.parse(raw) as SyncEventEnvelope;
-              if (envelope?.payload?.type) {
-                const eventType = envelope.payload.type;
-                if (eventType.startsWith('session.')) {
-                  log.debug(`SSE event received: ${eventType}`);
-                }
-                handleSyncEvent(envelope);
-              }
-            } catch {
-              // malformed JSON — ignore
-            }
-          }
-        }
-      } catch (err: unknown) {
-        if ((err as { name?: string }).name === 'AbortError') return;
-        log.warn(
-          `SSE error on port ${port}: ${err instanceof Error ? err.message : String(err)}`,
-        );
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) {
+        log.info(`SSE stream ended on port ${openCodePort}`);
+        break;
       }
-    }),
-  );
+
+      buffer += decoder.decode(value, { stream: true });
+
+      // SSE frames are terminated by a double newline.
+      const frames = buffer.split(/\n\n/);
+      buffer = frames.pop() ?? '';
+
+      for (const frame of frames) {
+        const dataLine = frame.split('\n').find((l) => l.startsWith('data:'));
+        if (!dataLine) continue;
+
+        const raw = dataLine.slice('data:'.length).trim();
+        if (!raw) continue;
+
+        try {
+          const envelope = JSON.parse(raw) as SyncEventEnvelope;
+          if (envelope?.payload?.type) {
+            const eventType = envelope.payload.type;
+            if (eventType.startsWith('session.')) {
+              log.debug(`SSE event received: ${eventType}`);
+            }
+            handleSyncEvent(envelope);
+          }
+        } catch {
+          // malformed JSON — ignore
+        }
+      }
+    }
+  } catch (err: unknown) {
+    if ((err as { name?: string }).name === 'AbortError') return;
+    log.warn(
+      `SSE error on port ${openCodePort}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   scheduleReconnect();
 }

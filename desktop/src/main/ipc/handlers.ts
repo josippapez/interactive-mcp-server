@@ -42,7 +42,7 @@ import {
   getPinnedProjects,
   addPinnedProject,
   removePinnedProject,
-  updateConnectionBaseDirectory,
+  upsertRegisteredConnection,
 } from '../database';
 import {
   BUILTIN_TEMPLATES,
@@ -98,6 +98,7 @@ import {
   setProviderApiKey,
 } from '../opencode/provider';
 import { fetchCommands, executeCommand } from '../opencode/command';
+import { getClient } from '../opencode/sdk-client';
 import { createLogger } from '../utils/logger';
 
 const ipcLog = createLogger('ipc');
@@ -778,14 +779,9 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   // ─── Refresh session tree cache on demand ────────────────────────────────
 
   ipcMain.handle('refresh-session-tree', async () => {
-    const settings = deps.getSettings();
-    if (settings.agentBackend === 'opencode') {
-      await registerMcpAcrossReachablePorts({
-        appPort: settings.port,
-        openCodePort: settings.openCodePort,
-        promptTimeoutSeconds: settings.promptTimeoutSeconds,
-      });
-    }
+    // Only refresh the session tree cache - do NOT re-register the MCP server.
+    // Re-registering would cause OpenCode to reconnect, which creates new
+    // direct connection nodes on every refresh click.
     await refreshSessionTreeCache();
   });
 
@@ -802,16 +798,14 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       },
     ): Promise<{ ok: boolean; error?: string }> => {
       const { openCodePort } = deps.getSettings();
-      // Use the newer /permission/:requestID/reply endpoint (not the deprecated session endpoint)
-      const url = `http://localhost:${openCodePort}/permission/${data.requestID}/reply`;
       try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ reply: data.reply }),
+        const client = getClient(openCodePort);
+        const result = await client.permission.reply({
+          requestID: data.requestID,
+          reply: data.reply,
         });
-        if (!res.ok) {
-          return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
+        if (result.error) {
+          return { ok: false, error: String(result.error) };
         }
         return { ok: true };
       } catch (err: unknown) {
@@ -966,17 +960,47 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
         }
       }
 
+      // If a baseDirectory was provided, upsert the registered connection immediately.
+      // OpenCode can briefly report a fallback cwd/home directory for brand-new
+      // sessions, so we must claim the selected directory before any refresh
+      // path can auto-register the session with OpenCode's transient directory.
+      if (data.baseDirectory && result.session?.id) {
+        const existing = getRegisteredConnectionBySessionId(
+          result.session.id,
+          'opencode',
+        );
+        upsertRegisteredConnection({
+          providerType: 'opencode',
+          providerSessionId: result.session.id,
+          connectionId: existing?.connectionId ?? null,
+          channelName: existing?.channelName ?? data.title ?? 'New Session',
+          projectName: existing?.projectName ?? basename(data.baseDirectory),
+          baseDirectory: data.baseDirectory,
+          parentSessionId: existing?.parentSessionId ?? data.parentID ?? null,
+        });
+        const corrected = getRegisteredConnectionBySessionId(
+          result.session.id,
+          'opencode',
+        );
+        ipcLog.info(
+          `[create-opencode-session] pre-refresh claim sessionId=${result.session.id} selectedBaseDirectory=${data.baseDirectory} finalBaseDirectory=${corrected?.baseDirectory ?? '(none)'} finalConnectionId=${corrected?.connectionId ?? '(none)'}`,
+        );
+      }
+
       // Trigger a session tree refresh so the new session appears in the sidebar
       await refreshSessionTreeCache();
 
-      // If a baseDirectory was provided, update the registered connection
-      // This overrides the default directory from OpenCode with the user's selection
-      if (data.baseDirectory && result.session?.id) {
-        updateConnectionBaseDirectory(
+      if (result.session?.id) {
+        const refreshed = getRegisteredConnectionBySessionId(
           result.session.id,
-          data.baseDirectory,
           'opencode',
         );
+        ipcLog.info(
+          `[create-opencode-session] post-refresh sessionId=${result.session.id} selectedBaseDirectory=${data.baseDirectory ?? '(none)'} refreshedBaseDirectory=${refreshed?.baseDirectory ?? '(none)'} refreshedConnectionId=${refreshed?.connectionId ?? '(none)'}`,
+        );
+      }
+
+      if (data.baseDirectory && result.session?.id) {
         // Re-trigger tree update so the sidebar shows the correct project grouping
         await triggerSessionTreeUpdate(deps.getMainWindow);
       }
@@ -996,8 +1020,14 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
       error?: string;
     }> => {
       const { openCodePort, agentBackend } = deps.getSettings();
+      console.log(
+        `[health-check] agentBackend=${agentBackend} openCodePort=${openCodePort}`,
+      );
       // If not using OpenCode backend, return unavailable
       if (agentBackend !== 'opencode') {
+        console.log(
+          `[health-check] Backend is not opencode, returning unavailable`,
+        );
         return {
           available: false,
           healthy: false,
@@ -1005,7 +1035,11 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
           error: `OpenCode backend not enabled (current: ${agentBackend})`,
         };
       }
-      return checkOpenCodeHealth(openCodePort);
+      const result = await checkOpenCodeHealth(openCodePort);
+      console.log(
+        `[health-check] Result: available=${result.available} healthy=${result.healthy} error=${result.error ?? 'none'}`,
+      );
+      return result;
     },
   );
 

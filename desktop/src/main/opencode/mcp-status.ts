@@ -1,22 +1,24 @@
 /**
- * Fetches MCP server status from OpenCode's HTTP API.
+ * MCP server status and operations via OpenCode SDK.
  *
- * Uses GET /mcp to retrieve the status of all MCP servers,
+ * Uses the SDK client to retrieve the status of all MCP servers,
  * and provides operations to connect/disconnect individual servers.
  */
 
+import type {
+  McpLocalConfig,
+  McpRemoteConfig,
+  McpStatus,
+} from '@opencode-ai/sdk';
 import { createLogger } from '../utils/logger';
-import {
-  buildOpenCodePortCandidates,
-  fetchFirstSuccessfulJson,
-} from './endpoints';
+import { getClient } from './sdk-client';
 
 const log = createLogger('mcp-status');
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 /**
- * MCP server status as returned by OpenCode's GET /mcp endpoint.
+ * MCP server status normalized for internal use.
  */
 export interface McpServerStatus {
   /** Server name (key in the mcp config) */
@@ -75,9 +77,42 @@ export interface McpOperationResult {
   error?: string;
 }
 
-// ─── Default timeout ──────────────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const DEFAULT_TIMEOUT_MS = 5000;
+/**
+ * Map SDK McpStatus to our internal status string.
+ */
+function mapSdkStatus(
+  sdkStatus: McpStatus,
+): McpServerStatus['status'] | 'disabled' | 'needs_auth' {
+  switch (sdkStatus.status) {
+    case 'connected':
+      return 'connected';
+    case 'disabled':
+      return 'disconnected';
+    case 'failed':
+      return 'error';
+    case 'needs_auth':
+      return 'needs_auth';
+    case 'needs_client_registration':
+      return 'error';
+    default:
+      return 'disconnected';
+  }
+}
+
+/**
+ * Extract error message from SDK McpStatus if present.
+ */
+function extractError(sdkStatus: McpStatus): string | undefined {
+  if (sdkStatus.status === 'failed') {
+    return sdkStatus.error;
+  }
+  if (sdkStatus.status === 'needs_client_registration') {
+    return sdkStatus.error;
+  }
+  return undefined;
+}
 
 // ─── API Functions ────────────────────────────────────────────────────────────
 
@@ -86,54 +121,50 @@ const DEFAULT_TIMEOUT_MS = 5000;
  *
  * @param openCodePort - The port OpenCode's HTTP API is listening on
  * @param directory - Optional directory context for the request
- * @param timeoutMs - Request timeout in milliseconds (default 5000)
  */
 export async function fetchMcpStatus(
   openCodePort: number,
   directory?: string,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<McpStatusResult> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-  const path = directory
-    ? `/mcp?directory=${encodeURIComponent(directory)}`
-    : '/mcp';
-
-  log.info(
-    `Fetching MCP status from candidates: ${ports.map((port) => `http://localhost:${port}${path}`).join(', ')}`,
-  );
+  log.info(`Fetching MCP status from port ${openCodePort}`);
 
   try {
-    const response = await fetchFirstSuccessfulJson<Record<string, unknown>>(
-      ports,
-      path,
-      timeoutMs,
-    );
-    if (!response) {
-      const error = 'No reachable OpenCode MCP endpoint';
+    const client = getClient(openCodePort);
+    const response = await client.mcp.status({
+      query: directory ? { directory } : undefined,
+    });
+
+    if (response.error) {
+      const error =
+        typeof response.error === 'string'
+          ? response.error
+          : 'Failed to fetch MCP status';
       log.error(`Failed to fetch MCP status: ${error}`);
       return { ok: false, error };
     }
-    const data = response.data;
 
-    // OpenCode returns an object keyed by MCP name
-    // Transform to array with name included
+    const data = response.data ?? {};
+
+    // Transform SDK response to our internal format
     const servers: McpServerStatus[] = Object.entries(data).map(
-      ([name, serverData]) => {
-        const server = serverData as Record<string, unknown>;
+      ([name, serverStatus]) => {
+        const status = mapSdkStatus(serverStatus);
         return {
           name,
-          type: (server.type as 'local' | 'remote') ?? 'local',
+          // SDK doesn't expose type directly in status, default to 'local'
+          type: 'local' as const,
           status:
-            (server.status as McpServerStatus['status']) ?? 'disconnected',
-          error: server.error as string | undefined,
-          url: server.url as string | undefined,
-          command: server.command as string[] | undefined,
-          environmentKeys: server.environment
-            ? Object.keys(server.environment as Record<string, string>)
-            : undefined,
-          tools: server.tools as McpTool[] | undefined,
-          resources: server.resources as McpResource[] | undefined,
-          prompts: server.prompts as McpPrompt[] | undefined,
+            status === 'disabled' || status === 'needs_auth'
+              ? 'disconnected'
+              : status,
+          error: extractError(serverStatus),
+          // These fields aren't in SDK status response, leave undefined
+          url: undefined,
+          command: undefined,
+          environmentKeys: undefined,
+          tools: undefined,
+          resources: undefined,
+          prompts: undefined,
         };
       },
     );
@@ -153,41 +184,37 @@ export async function fetchMcpStatus(
  * @param openCodePort - The port OpenCode's HTTP API is listening on
  * @param mcpName - The name of the MCP server to connect
  * @param directory - Optional directory context for the request
- * @param timeoutMs - Request timeout in milliseconds (default 5000)
  */
 export async function connectMcp(
   openCodePort: number,
   mcpName: string,
   directory?: string,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<McpOperationResult> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-  const path = directory
-    ? `/mcp/${encodeURIComponent(mcpName)}/connect?directory=${encodeURIComponent(directory)}`
-    : `/mcp/${encodeURIComponent(mcpName)}/connect`;
-
   log.info(`Connecting MCP: ${mcpName}`);
 
-  for (const port of ports) {
-    try {
-      const res = await fetch(`http://localhost:${port}${path}`, {
-        method: 'POST',
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+  try {
+    const client = getClient(openCodePort);
+    const response = await client.mcp.connect({
+      path: { name: mcpName },
+      query: directory ? { directory } : undefined,
+    });
 
-      if (!res.ok) {
-        continue;
-      }
-
-      log.info(`Successfully connected MCP: ${mcpName} on port ${port}`);
-      return { ok: true };
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      log.error(`Failed to connect MCP ${mcpName} on port ${port}: ${error}`);
+    if (response.error) {
+      const error =
+        typeof response.error === 'string'
+          ? response.error
+          : `Failed to connect MCP: ${mcpName}`;
+      log.error(`Failed to connect MCP ${mcpName}: ${error}`);
+      return { ok: false, error };
     }
-  }
 
-  return { ok: false, error: 'No reachable OpenCode MCP endpoint' };
+    log.info(`Successfully connected MCP: ${mcpName}`);
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log.error(`Failed to connect MCP ${mcpName}: ${error}`);
+    return { ok: false, error };
+  }
 }
 
 /**
@@ -196,43 +223,37 @@ export async function connectMcp(
  * @param openCodePort - The port OpenCode's HTTP API is listening on
  * @param mcpName - The name of the MCP server to disconnect
  * @param directory - Optional directory context for the request
- * @param timeoutMs - Request timeout in milliseconds (default 5000)
  */
 export async function disconnectMcp(
   openCodePort: number,
   mcpName: string,
   directory?: string,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<McpOperationResult> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-  const path = directory
-    ? `/mcp/${encodeURIComponent(mcpName)}/disconnect?directory=${encodeURIComponent(directory)}`
-    : `/mcp/${encodeURIComponent(mcpName)}/disconnect`;
-
   log.info(`Disconnecting MCP: ${mcpName}`);
 
-  for (const port of ports) {
-    try {
-      const res = await fetch(`http://localhost:${port}${path}`, {
-        method: 'POST',
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+  try {
+    const client = getClient(openCodePort);
+    const response = await client.mcp.disconnect({
+      path: { name: mcpName },
+      query: directory ? { directory } : undefined,
+    });
 
-      if (!res.ok) {
-        continue;
-      }
-
-      log.info(`Successfully disconnected MCP: ${mcpName} on port ${port}`);
-      return { ok: true };
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      log.error(
-        `Failed to disconnect MCP ${mcpName} on port ${port}: ${error}`,
-      );
+    if (response.error) {
+      const error =
+        typeof response.error === 'string'
+          ? response.error
+          : `Failed to disconnect MCP: ${mcpName}`;
+      log.error(`Failed to disconnect MCP ${mcpName}: ${error}`);
+      return { ok: false, error };
     }
-  }
 
-  return { ok: false, error: 'No reachable OpenCode MCP endpoint' };
+    log.info(`Successfully disconnected MCP: ${mcpName}`);
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log.error(`Failed to disconnect MCP ${mcpName}: ${error}`);
+    return { ok: false, error };
+  }
 }
 
 /**
@@ -242,7 +263,6 @@ export async function disconnectMcp(
  * @param name - The name for the MCP server
  * @param config - The MCP server configuration
  * @param directory - Optional directory context for the request
- * @param timeoutMs - Request timeout in milliseconds (default 5000)
  */
 export async function registerMcp(
   openCodePort: number,
@@ -255,35 +275,46 @@ export async function registerMcp(
     timeout?: number;
   },
   directory?: string,
-  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<McpOperationResult> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-  const path = directory
-    ? `/mcp?directory=${encodeURIComponent(directory)}`
-    : '/mcp';
-
   log.info(`Registering MCP: ${name} (type: ${config.type})`);
 
-  for (const port of ports) {
-    try {
-      const res = await fetch(`http://localhost:${port}${path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name, config }),
-        signal: AbortSignal.timeout(timeoutMs),
-      });
+  try {
+    const client = getClient(openCodePort);
 
-      if (!res.ok) {
-        continue;
-      }
+    // Build SDK-compatible config
+    const sdkConfig: McpLocalConfig | McpRemoteConfig =
+      config.type === 'local'
+        ? {
+            type: 'local',
+            command: config.command ?? [],
+            environment: config.environment,
+            timeout: config.timeout,
+          }
+        : {
+            type: 'remote',
+            url: config.url ?? '',
+            timeout: config.timeout,
+          };
 
-      log.info(`Successfully registered MCP: ${name} on port ${port}`);
-      return { ok: true };
-    } catch (err) {
-      const error = err instanceof Error ? err.message : String(err);
-      log.error(`Failed to register MCP ${name} on port ${port}: ${error}`);
+    const response = await client.mcp.add({
+      body: { name, config: sdkConfig },
+      query: directory ? { directory } : undefined,
+    });
+
+    if (response.error) {
+      const error =
+        typeof response.error === 'string'
+          ? response.error
+          : `Failed to register MCP: ${name}`;
+      log.error(`Failed to register MCP ${name}: ${error}`);
+      return { ok: false, error };
     }
-  }
 
-  return { ok: false, error: 'No reachable OpenCode MCP endpoint' };
+    log.info(`Successfully registered MCP: ${name}`);
+    return { ok: true };
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err);
+    log.error(`Failed to register MCP ${name}: ${error}`);
+    return { ok: false, error };
+  }
 }

@@ -82,7 +82,7 @@ export const ChannelItem = memo(function ChannelItem({
   const startTimeLabel = showStartTime ? formatStartTime(node.createdAt) : '';
 
   return (
-    <div ref={containerRef} className="flex items-center group min-w-0">
+    <div ref={containerRef} className="group flex min-w-0 items-center">
       {/* Collapse/expand button for parent sessions */}
       {hasChildren ? (
         <button
@@ -127,7 +127,7 @@ export const ChannelItem = memo(function ChannelItem({
       <button
         type="button"
         onClick={() => onSelect(node.id)}
-        className={`flex-1 min-w-0 flex items-center gap-2 pr-2 py-1.5 text-left rounded-sm transition-colors ${
+        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors ${
           isChild ? 'text-xs' : 'text-sm'
         } ${
           showPendingPrompt

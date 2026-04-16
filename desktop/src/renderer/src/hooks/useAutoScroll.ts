@@ -23,6 +23,7 @@ export interface UseAutoScrollReturn {
   userScrolled: boolean;
   isAtBottom: boolean;
   showJump: boolean;
+  pauseVersion: number;
   scrollToBottom: (behavior?: ScrollBehavior) => void;
   forceScrollToBottom: () => void;
   pause: () => void;
@@ -62,6 +63,7 @@ export function useAutoScroll(
   const [userScrolled, setUserScrolled] = useState(false);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showJump, setShowJump] = useState(false);
+  const [pauseVersion, setPauseVersion] = useState(0);
 
   const scrollElRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
@@ -118,6 +120,7 @@ export function useAutoScroll(
     setPinnedToBottom(false);
     setUserScrolled(true);
     setIsAtBottom(false);
+    setPauseVersion((value) => value + 1);
   }, []);
 
   const resume = useCallback(() => {
@@ -157,6 +160,7 @@ export function useAutoScroll(
     userScrolled,
     isAtBottom,
     showJump,
+    pauseVersion,
     scrollToBottom,
     forceScrollToBottom,
     pause,

@@ -17,7 +17,11 @@ export type AppSettings = {
   discoveredTools: string[];
   defaultNoReply: boolean;
   defaultExpandAllTools: boolean;
+  defaultShowThinking: boolean;
   allowedReadFolders: string[];
+  allowedPermissions: string[];
+  hideSystemReminders: boolean;
+  hideDocInjections: boolean;
 };
 
 export type SettingsSection =
@@ -39,6 +43,7 @@ export const PREDEFINED_TOOLS = [
   'WebFetch',
   'TodoWrite',
   'Task',
+  'Gather Context',
   'question',
   'skill',
 ] as const;

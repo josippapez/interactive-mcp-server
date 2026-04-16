@@ -197,7 +197,7 @@ CREATE TABLE IF NOT EXISTS registered_connections (
 | `connection_id`       | TEXT     | Yes      | The MCP transport connectionId (UUID), bound at MCP initialize time. Used as a secondary lookup key.                                                                                                                            |
 | `agent_name`          | TEXT     | No       | Human-readable channel name supplied to `register_connection` (e.g. `"Claude Code - my-project"`). **SQLite column name is `agent_name`; the TypeScript `RegisteredConnection` interface exposes this field as `channelName`.** |
 | `project_name`        | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                                                                 |
-| `base_directory`      | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied.                                                                                                                                                      |
+| `base_directory`      | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied. Used primarily for repo-aware features such as file autocomplete, repository-doc indexing, and `find_repo_docs`; it is not the canonical sidebar grouping source for OpenCode sessions. |
 | `id_file_path`        | TEXT     | No       | Absolute path to the `/tmp/imcp-agent-<provider>-<name>-<session>.json` ID file written at registration time. Used for recovery after restarts.                                                                                 |
 | `parent_session_id`   | TEXT     | Yes      | The OpenCode session ID of the parent session that spawned this agent. Used to nest the subagent channel under its parent in the sidebar. `NULL` if not a subagent.                                                             |
 | `created_at`          | DATETIME | No       | Row creation timestamp.                                                                                                                                                                                                         |
@@ -217,6 +217,10 @@ CREATE TABLE IF NOT EXISTS registered_connections (
 - **Set** during `register_connection`: For OpenCode providers, this is the session ID passed via `openCodeSessionId`. For other providers, this is typically the MCP `connectionId`.
 - **Used** as the primary lookup key (combined with `provider_type`) for all connection operations.
 - **Backwards compatibility**: The `openCodeSessionId` field in the TypeScript interface mirrors `providerSessionId` for compatibility with existing code.
+
+#### `base_directory` preservation
+
+For OpenCode sessions, `base_directory` is preserved across partial re-registration. If a later `register_connection` call omits `baseDirectory`, the existing stored value is retained rather than cleared. This prevents repo-aware features from losing context when an agent re-registers without repeating its directory metadata.
 
 #### `parent_session_id` lifecycle
 

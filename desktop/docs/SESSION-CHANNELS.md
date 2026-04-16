@@ -218,6 +218,8 @@ The startup sequence is:
 6. The renderer merges that snapshot into its `SessionNode` map, keyed by `openCodeSessionId ?? connectionId`.
 7. For any node that claims a `connectionId`, the renderer loads `getSessionChannelHistory(connectionId)` once and preserves that runtime state across later snapshots.
 
+For OpenCode-backed sessions, sidebar grouping should follow the OpenCode session's own directory/creation metadata. The `registered_connections.base_directory` field is used for repo-aware features such as indexing, `find_repo_docs`, and file completion, but it is not the primary grouping source.
+
 Direct MCP connections that have no OpenCode session are still represented, but they remain keyed directly by `connectionId`.
 
 ---
@@ -247,6 +249,8 @@ When the user sends a message via `ChannelComposer`, the desktop app delivers it
 1. **Queue path** — `window.api.queueSessionMessage(sessionId, message)` persists the message to SQLite (`session_messages`, `sent=0`) so VS Code extension polling clients can drain it via `GET /api/sessions/:id/messages`.
 
 2. **OpenCode injection path** — `window.api.injectOpenCodeMessage(openCodeSessionId, message, attachments?)` POSTs to the OpenCode ACP HTTP API, injecting the message directly into the agent's active session without triggering a new agent response.
+
+When the provider conversation later contains the canonical user message, the renderer suppresses the duplicate local outbound echo in the unified transcript view.
 
 ### OpenCode ACP call
 

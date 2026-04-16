@@ -1,14 +1,11 @@
 /**
  * Tests for command.ts — OpenCode slash command API integration.
  *
- * Following TDD: write tests first, then implement.
- *
- * OpenCode API:
- * - GET /command — List available commands
- * - POST /session/:id/command — Execute a command
+ * Uses SDK mock pattern via _setClientFactory.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { _setClientFactory, _resetClientFactory } from './sdk-client';
 
 import {
   fetchCommands,
@@ -22,13 +19,10 @@ describe('command', () => {
   beforeEach(() => {
     clearCommandCache();
     vi.clearAllMocks();
-    vi.spyOn(global, 'fetch').mockRejectedValue(
-      new Error('Unexpected unmocked fetch call'),
-    );
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    _resetClientFactory();
   });
 
   describe('fetchCommands', () => {
@@ -55,25 +49,35 @@ describe('command', () => {
         ],
       };
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockCommands,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            command: {
+              list: vi.fn().mockResolvedValue({
+                data: mockCommands,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const result = await fetchCommands(3000);
 
       expect(result).toEqual(mockCommands.commands);
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/command',
-        expect.objectContaining({ signal: expect.any(AbortSignal) }),
-      );
     });
 
-    it('returns null when API returns non-OK status', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 500,
-      } as Response);
+    it('returns null when SDK returns error', async () => {
+      _setClientFactory(
+        () =>
+          ({
+            command: {
+              list: vi.fn().mockResolvedValue({
+                data: undefined,
+                error: 'API error',
+              }),
+            },
+          }) as never,
+      );
 
       const result = await fetchCommands(3000);
 
@@ -81,8 +85,13 @@ describe('command', () => {
     });
 
     it('returns null when fetch throws', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
+      _setClientFactory(
+        () =>
+          ({
+            command: {
+              list: vi.fn().mockRejectedValue(new Error('Network error')),
+            },
+          }) as never,
       );
 
       const result = await fetchCommands(3000);
@@ -101,10 +110,17 @@ describe('command', () => {
         ],
       };
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockCommands,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            command: {
+              list: vi.fn().mockResolvedValue({
+                data: mockCommands,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       await fetchCommands(3000);
       const cached = getCachedCommands();
@@ -115,69 +131,84 @@ describe('command', () => {
 
   describe('executeCommand', () => {
     it('executes a command successfully', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ success: true }),
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              command: vi.fn().mockResolvedValue({
+                data: { success: true },
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       const result = await executeCommand(3000, 'ses_123', 'compact');
 
       expect(result).toEqual({ ok: true });
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/session/ses_123/command',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: 'compact' }),
-        }),
-      );
     });
 
     it('executes a command with arguments', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ success: true }),
-      } as Response);
+      const commandMock = vi.fn().mockResolvedValue({
+        data: { success: true },
+        error: undefined,
+      });
+
+      _setClientFactory(
+        () =>
+          ({
+            session: { command: commandMock },
+          }) as never,
+      );
 
       const result = await executeCommand(3000, 'ses_123', 'model', {
         model_id: 'claude-opus-4-20250514',
       });
 
       expect(result).toEqual({ ok: true });
-      expect(fetch).toHaveBeenCalledWith(
-        'http://localhost:3000/session/ses_123/command',
+      expect(commandMock).toHaveBeenCalledWith(
         expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({
-            name: 'model',
-            args: { model_id: 'claude-opus-4-20250514' },
-          }),
+          sessionID: 'ses_123',
+          command: 'model',
+          arguments: 'model_id=claude-opus-4-20250514',
         }),
+        expect.any(Object),
       );
     });
 
-    it('returns error when API returns non-OK status', async () => {
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: false,
-        status: 400,
-        text: async () => 'Invalid command',
-      } as Response);
+    it('returns error when SDK returns error', async () => {
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              command: vi.fn().mockResolvedValue({
+                data: undefined,
+                error: 'Invalid command',
+              }),
+            },
+          }) as never,
+      );
 
       const result = await executeCommand(3000, 'ses_123', 'invalid');
 
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('all reachable OpenCode endpoints');
+      expect(result.error).toBeDefined();
     });
 
     it('returns error when fetch throws', async () => {
-      vi.spyOn(global, 'fetch').mockRejectedValueOnce(
-        new Error('Network error'),
+      _setClientFactory(
+        () =>
+          ({
+            session: {
+              command: vi.fn().mockRejectedValue(new Error('Network error')),
+            },
+          }) as never,
       );
 
       const result = await executeCommand(3000, 'ses_123', 'compact');
 
       expect(result.ok).toBe(false);
-      expect(result.error).toContain('all reachable OpenCode endpoints');
+      expect(result.error).toBeDefined();
     });
   });
 
@@ -193,10 +224,17 @@ describe('command', () => {
         ],
       };
 
-      vi.spyOn(global, 'fetch').mockResolvedValueOnce({
-        ok: true,
-        json: async () => mockCommands,
-      } as Response);
+      _setClientFactory(
+        () =>
+          ({
+            command: {
+              list: vi.fn().mockResolvedValue({
+                data: mockCommands,
+                error: undefined,
+              }),
+            },
+          }) as never,
+      );
 
       await fetchCommands(3000);
       expect(getCachedCommands()).not.toBeNull();

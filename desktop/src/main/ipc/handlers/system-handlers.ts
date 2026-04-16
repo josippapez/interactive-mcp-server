@@ -14,6 +14,7 @@ import { rankFileSuggestions, indexFiles } from '../../docs/file-indexer';
 import { getBackendAdapter } from '../../backend-adapter';
 import { forceTerminateChat, getActivePromptData } from '../prompt';
 import { SUPPORTED_FILE_EXTENSIONS } from '../../opencode/injector';
+import { getClient } from '../../opencode/sdk-client';
 import { IpcHandlerDeps } from './types';
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
@@ -157,15 +158,14 @@ export function registerSystemHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle('reply-permission', async (_event, data) => {
     const { openCodePort } = deps.getSettings();
-    const url = `http://localhost:${openCodePort}/permission/${data.requestID}/reply`;
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply: data.reply }),
+      const client = getClient(openCodePort);
+      const result = await client.permission.reply({
+        requestID: data.requestID,
+        reply: data.reply,
       });
-      if (!res.ok) {
-        return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
+      if (result.error) {
+        return { ok: false, error: String(result.error) };
       }
       return { ok: true };
     } catch (err: unknown) {
@@ -204,6 +204,44 @@ export function registerSystemHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('get-allowed-read-folders', () => {
     const currentSettings = deps.getSettings();
     return currentSettings.allowedReadFolders ?? [];
+  });
+
+  // ─── Allowed Permissions Management ─────────────────────────────────────────
+
+  ipcMain.handle('add-allowed-permission', (_event, permission: string) => {
+    const currentSettings = deps.getSettings();
+    const permissions = currentSettings.allowedPermissions ?? [];
+    // Normalize to lowercase and avoid duplicates
+    const normalizedPermission = permission.toLowerCase();
+    if (!permissions.some((p) => p.toLowerCase() === normalizedPermission)) {
+      const updatedSettings = {
+        ...currentSettings,
+        allowedPermissions: [...permissions, permission],
+      };
+      deps.setSettings(updatedSettings);
+      saveSettings(updatedSettings);
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('remove-allowed-permission', (_event, permission: string) => {
+    const currentSettings = deps.getSettings();
+    const permissions = currentSettings.allowedPermissions ?? [];
+    const normalizedPermission = permission.toLowerCase();
+    const updatedSettings = {
+      ...currentSettings,
+      allowedPermissions: permissions.filter(
+        (p) => p.toLowerCase() !== normalizedPermission,
+      ),
+    };
+    deps.setSettings(updatedSettings);
+    saveSettings(updatedSettings);
+    return { ok: true };
+  });
+
+  ipcMain.handle('get-allowed-permissions', () => {
+    const currentSettings = deps.getSettings();
+    return currentSettings.allowedPermissions ?? [];
   });
 
   ipcMain.handle('select-folder-dialog', async () => {

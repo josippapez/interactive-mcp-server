@@ -7,6 +7,8 @@ interface ContextUsageBarProps {
   sessionId: string | null;
   /** When provided, overrides the cached contextLimit from the hook */
   modelContextWindow?: number;
+  /** Whether the session is currently busy (agent running) */
+  isBusy?: boolean;
 }
 
 const MAX_PROGRESS_PERCENT = 100;
@@ -41,6 +43,36 @@ function getUsageColor(usage: ContextUsage | null): string {
 }
 
 /**
+ * Animated spinner icon for busy state.
+ */
+function BusySpinner(): React.ReactElement {
+  return (
+    <svg
+      className="animate-spin h-3 w-3 text-[var(--color-agent)]"
+      viewBox="0 0 16 16"
+      fill="none"
+      aria-label="Agent busy"
+    >
+      <title>Agent busy</title>
+      <circle
+        cx="8"
+        cy="8"
+        r="6"
+        stroke="currentColor"
+        strokeOpacity="0.25"
+        strokeWidth="2"
+      />
+      <path
+        d="M14 8a6 6 0 0 0-6-6"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/**
  * Context usage indicator bar component.
  *
  * Shows a progress bar of token usage with:
@@ -54,6 +86,7 @@ function getUsageColor(usage: ContextUsage | null): string {
 export function ContextUsageBar({
   sessionId,
   modelContextWindow,
+  isBusy,
 }: ContextUsageBarProps) {
   const { usage, compactionStatus, compactionError, compact } =
     useContextUsage(sessionId);
@@ -73,6 +106,9 @@ export function ContextUsageBar({
 
   return (
     <div className="flex items-center gap-2">
+      {/* Busy spinner when agent is running */}
+      {isBusy && <BusySpinner />}
+
       {/* Progress bar */}
       <div
         className="relative w-20 h-2 rounded-full bg-[var(--color-border)] overflow-hidden"

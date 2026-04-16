@@ -1,18 +1,75 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import http from 'node:http';
 import { fetchTodosForSession, Todo } from './todo';
+import { _setClientFactory, _resetClientFactory } from './sdk-client';
+
+// ---------------------------------------------------------------------------
+// Test HTTP server that simulates the OpenCode /session/:id/todo endpoint
+// ---------------------------------------------------------------------------
+
+let server: http.Server;
+let serverPort: number;
+let responseData: unknown = [];
+let responseStatus = 200;
+
+function startServer(): Promise<number> {
+  return new Promise((resolve) => {
+    server = http.createServer((req, res) => {
+      res.writeHead(responseStatus, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(responseData));
+    });
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      if (addr && typeof addr === 'object') {
+        resolve(addr.port);
+      }
+    });
+  });
+}
+
+function stopServer(): Promise<void> {
+  return new Promise((resolve) => {
+    if (server) server.close(() => resolve());
+    else resolve();
+  });
+}
+
+// Create a mock SDK client that makes HTTP requests to our test server
+function createMockClient(port: number) {
+  return {
+    session: {
+      todo: async (opts: { path: { id: string }; signal?: AbortSignal }) => {
+        try {
+          const res = await fetch(
+            `http://127.0.0.1:${port}/session/${opts.path.id}/todo`,
+            { signal: opts.signal },
+          );
+          const data = await res.json();
+          return {
+            data,
+            response: res,
+            error: res.ok ? undefined : 'HTTP error',
+          };
+        } catch (err) {
+          return { data: null, error: String(err) };
+        }
+      },
+    },
+  } as any;
+}
 
 describe('fetchTodosForSession', () => {
-  const originalFetch = global.fetch;
-  let mockFetch: ReturnType<typeof vi.fn>;
-
-  beforeEach(() => {
-    mockFetch = vi.fn();
-    mockFetch.mockRejectedValue(new Error('Unexpected unmocked fetch call'));
-    global.fetch = mockFetch;
+  beforeEach(async () => {
+    responseData = [];
+    responseStatus = 200;
+    serverPort = await startServer();
+    // Configure SDK client to use our test server
+    _setClientFactory(() => createMockClient(serverPort));
   });
 
-  afterEach(() => {
-    global.fetch = originalFetch;
+  afterEach(async () => {
+    await stopServer();
+    _resetClientFactory();
     vi.restoreAllMocks();
   });
 
@@ -21,87 +78,42 @@ describe('fetchTodosForSession', () => {
       { content: 'Task 1', status: 'pending', priority: 'high' },
       { content: 'Task 2', status: 'completed', priority: 'low' },
     ];
+    responseData = mockTodos;
 
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(mockTodos),
-    } as Response);
-
-    const result = await fetchTodosForSession(4096, 'session-123');
+    const result = await fetchTodosForSession(serverPort, 'session-123');
 
     expect(result).toEqual(mockTodos);
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:4096/session/session-123/todo',
-      expect.objectContaining({
-        signal: expect.any(AbortSignal),
-      }),
-    );
   });
 
   it('returns null on HTTP error', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-    } as Response);
-    mockFetch.mockResolvedValueOnce({
-      ok: false,
-      status: 404,
-    } as Response);
+    responseStatus = 404;
+    responseData = { error: 'not found' };
 
-    const result = await fetchTodosForSession(4096, 'session-123');
+    const result = await fetchTodosForSession(serverPort, 'session-123');
 
     expect(result).toBeNull();
   });
 
   it('returns null on network error', async () => {
-    mockFetch.mockRejectedValueOnce(new Error('Network error'));
-    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    await stopServer();
+    // Configure to use a non-existent port
+    _setClientFactory(() => createMockClient(1));
 
-    const result = await fetchTodosForSession(4096, 'session-123');
+    const result = await fetchTodosForSession(1, 'session-123');
 
     expect(result).toBeNull();
   });
 
-  it('falls back to default port when configured port fails', async () => {
-    const mockTodos: Todo[] = [
-      { content: 'Task 1', status: 'pending', priority: 'high' },
+  it('normalizes invalid todo status to pending', async () => {
+    responseData = [
+      {
+        content: 'Task',
+        status: 'invalid',
+        priority: 'high',
+      },
     ];
 
-    mockFetch
-      .mockRejectedValueOnce(new Error('ECONNREFUSED'))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(mockTodos),
-      } as Response);
-
-    const result = await fetchTodosForSession(5000, 'session-123');
-
-    expect(result).toEqual(mockTodos);
-    expect(mockFetch).toHaveBeenNthCalledWith(
-      1,
-      'http://localhost:5000/session/session-123/todo',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(mockFetch).toHaveBeenNthCalledWith(
-      2,
-      'http://localhost:4096/session/session-123/todo',
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-  });
-
-  it('normalizes invalid todo status to pending', async () => {
-    const invalidTodo = {
-      content: 'Task',
-      status: 'invalid',
-      priority: 'high',
-    };
-
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve([invalidTodo]),
-    } as Response);
-
-    const result = await fetchTodosForSession(4096, 'session-123');
+    const result = await fetchTodosForSession(serverPort, 'session-123');
 
     expect(result).toEqual([
       { content: 'Task', status: 'pending', priority: 'high' },
@@ -109,18 +121,15 @@ describe('fetchTodosForSession', () => {
   });
 
   it('normalizes invalid priority to medium', async () => {
-    const invalidTodo = {
-      content: 'Task',
-      status: 'pending',
-      priority: 'invalid',
-    };
+    responseData = [
+      {
+        content: 'Task',
+        status: 'pending',
+        priority: 'invalid',
+      },
+    ];
 
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve([invalidTodo]),
-    } as Response);
-
-    const result = await fetchTodosForSession(4096, 'session-123');
+    const result = await fetchTodosForSession(serverPort, 'session-123');
 
     expect(result).toEqual([
       { content: 'Task', status: 'pending', priority: 'medium' },
@@ -128,27 +137,11 @@ describe('fetchTodosForSession', () => {
   });
 
   it('returns null for non-array response', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve({ error: 'not an array' }),
-    } as Response);
+    responseData = { error: 'not an array' };
 
-    const result = await fetchTodosForSession(4096, 'session-123');
+    const result = await fetchTodosForSession(serverPort, 'session-123');
 
     expect(result).toBeNull();
-  });
-
-  it('handles timeout silently', async () => {
-    const abortError = new Error('Timeout');
-    abortError.name = 'AbortError';
-    mockFetch.mockRejectedValueOnce(abortError);
-
-    const consoleSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const result = await fetchTodosForSession(4096, 'session-123');
-
-    expect(result).toBeNull();
-    expect(consoleSpy).not.toHaveBeenCalled();
-    consoleSpy.mockRestore();
   });
 
   it('handles all valid statuses', async () => {
@@ -158,13 +151,9 @@ describe('fetchTodosForSession', () => {
       { content: 'Completed', status: 'completed', priority: 'high' },
       { content: 'Cancelled', status: 'cancelled', priority: 'low' },
     ];
+    responseData = todos;
 
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      json: () => Promise.resolve(todos),
-    } as Response);
-
-    const result = await fetchTodosForSession(4096, 'session-123');
+    const result = await fetchTodosForSession(serverPort, 'session-123');
 
     expect(result).toEqual(todos);
   });

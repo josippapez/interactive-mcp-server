@@ -89,6 +89,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
         <ChannelSidebar
           activeConnectionId={activeConnectionId}
           onSelect={onSelectConnection}
+          onSelectProjectSession={view.handleSelectProjectSession}
           onCreateSession={
             view.isOpenCodeBackendAvailable
               ? view.handleNavigateToNewSession
@@ -118,6 +119,18 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                 onNavigateToParent={
                   view.parentInfo ? view.handleNavigateToParent : undefined
                 }
+                searchQuery={view.channelSearchQuery}
+                searchResultText={
+                  view.channelSearchQuery
+                    ? `${view.channelSearchMatchCount === 0 ? 0 : view.activeSearchMatchIndex + 1} / ${view.channelSearchMatchCount}`
+                    : null
+                }
+                searchOpen={view.channelSearchOpen}
+                onSearchOpenChange={view.setChannelSearchOpen}
+                onSearchQueryChange={view.setChannelSearchQuery}
+                onSearchNext={view.handleChannelSearchNext}
+                onSearchPrevious={view.handleChannelSearchPrevious}
+                onSearchClear={view.handleChannelSearchClear}
               />
 
               {view.removeError && (
@@ -158,6 +171,9 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     showThinking={view.showThinking}
                     isBusy={view.sessionBusy && view.isOpenCodeSession}
                     channelId={activeConnectionId}
+                    searchQuery={view.channelSearchQuery}
+                    activeSearchMatchIndex={view.activeSearchMatchIndex}
+                    onSearchMatchesChange={view.setChannelSearchMatchCount}
                   />
                 )}
                 {view.idle && (
@@ -185,12 +201,13 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
               )}
 
               {!view.idle && contextUsageSessionId && (
-                <div className="px-3 pt-2 pb-1 border-b border-[var(--color-border)] bg-[var(--color-surface-alt)]/40">
+                <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-alt)]/40 px-2.5 py-1">
                   <ContextUsageBar
                     sessionId={contextUsageSessionId}
                     modelContextWindow={
                       view.sessionModelSelection.contextWindow
                     }
+                    isBusy={view.sessionBusy && view.isOpenCodeSession}
                   />
                 </div>
               )}

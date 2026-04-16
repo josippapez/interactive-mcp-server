@@ -26,7 +26,7 @@ export function createTray(
     },
   ]);
 
-  tray.setToolTip('Interactive MCP Server');
+  tray.setToolTip('Eden');
   tray.setContextMenu(contextMenu);
   tray.on('click', () => getMainWindow()?.show());
 

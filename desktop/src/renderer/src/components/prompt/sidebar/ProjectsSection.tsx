@@ -135,6 +135,8 @@ type ProjectsSectionProps = {
   onToggleSession: (sessionId: string) => void;
   onAddProject: () => void;
   hasDirectConnections: boolean;
+  /** Currently selected project path from the rail (null = all projects) */
+  selectedProjectPath?: string | null;
 };
 
 /**
@@ -158,19 +160,46 @@ export const ProjectsSection = memo(function ProjectsSection({
   onToggleSession,
   onAddProject,
   hasDirectConnections,
+  selectedProjectPath,
 }: ProjectsSectionProps): React.ReactElement {
   const groupedProjects = groupProjectsBySessionStart(projects);
+  const isProjectSelected =
+    selectedProjectPath !== null && selectedProjectPath !== undefined;
 
   return (
     <section>
-      <div className="px-3 py-2 flex items-center justify-between">
-        <span className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
-          Projects
-          {!showInactive && inactiveCount > 0 && (
-            <span className="ml-1 opacity-60">({runningCount} active)</span>
+      {/* Show header when no specific project is selected */}
+      {!isProjectSelected && (
+        <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+          <span className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
+            Projects
+            {!showInactive && inactiveCount > 0 && (
+              <span className="ml-1 opacity-60">({runningCount} active)</span>
+            )}
+          </span>
+          {inactiveCount > 0 && (
+            <button
+              type="button"
+              onClick={onToggleInactive}
+              title={
+                showInactive
+                  ? 'Hide inactive sessions'
+                  : `Show ${inactiveCount} inactive sessions`
+              }
+              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
+                showInactive
+                  ? 'bg-[var(--color-agent)]/15 text-[var(--color-agent)]'
+                  : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-border)]'
+              }`}
+            >
+              {showInactive ? 'Hide inactive' : `+${inactiveCount} more`}
+            </button>
           )}
-        </span>
-        {inactiveCount > 0 && (
+        </div>
+      )}
+      {/* Show compact header with inactive toggle when project is selected */}
+      {isProjectSelected && inactiveCount > 0 && (
+        <div className="flex items-center justify-end px-3 py-2">
           <button
             type="button"
             onClick={onToggleInactive}
@@ -187,8 +216,8 @@ export const ProjectsSection = memo(function ProjectsSection({
           >
             {showInactive ? 'Hide inactive' : `+${inactiveCount} more`}
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {projects.length === 0 && !hasDirectConnections && (
         <p className="px-4 py-1 text-xs text-[var(--color-text-faint)] italic">
           {filter === 'all'
@@ -198,7 +227,7 @@ export const ProjectsSection = memo(function ProjectsSection({
       )}
       {groupedProjects.map((group, index) => (
         <div key={group.key} className={index > 0 ? 'mt-3' : ''}>
-          <div className="px-3 py-1 flex items-center gap-2">
+          <div className="flex items-center gap-2 px-3 py-1">
             <span className="text-[11px] font-semibold text-[var(--color-text-faint)]/90">
               {group.label}
             </span>
@@ -225,28 +254,30 @@ export const ProjectsSection = memo(function ProjectsSection({
           ))}
         </div>
       ))}
-      {/* Add Project button */}
-      <Button
-        variant="ghost"
-        onClick={onAddProject}
-        className="w-full justify-start gap-2 px-3 py-2 h-auto text-sm text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-border)]"
-      >
-        <svg
-          xmlns="http://www.w3.org/2000/svg"
-          width="12"
-          height="12"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
+      {/* Add Project button - only show when no project is selected */}
+      {!isProjectSelected && (
+        <Button
+          variant="ghost"
+          onClick={onAddProject}
+          className="w-full justify-start gap-2 px-3 py-2 h-auto text-sm text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-border)]"
         >
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        <span>Add Project Folder</span>
-      </Button>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          <span>Add Project Folder</span>
+        </Button>
+      )}
     </section>
   );
 });

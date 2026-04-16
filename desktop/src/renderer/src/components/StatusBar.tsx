@@ -195,7 +195,7 @@ export default function StatusBar({
       <div className="flex items-center gap-3 shrink-0 flex-nowrap">
         {appVersion && (
           <span className="text-[var(--color-text-faint)]">
-            Interactive MCP v{appVersion}
+            Eden v{appVersion}
           </span>
         )}
         <span className="text-[var(--color-text-faint)]">│</span>

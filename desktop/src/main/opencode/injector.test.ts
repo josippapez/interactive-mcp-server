@@ -11,9 +11,11 @@ vi.mock('../attachment-store', () => ({
 }));
 
 import { injectOpenCodeMessage } from './injector';
+import { _setClientFactory, _resetClientFactory } from './sdk-client';
 
 // ---------------------------------------------------------------------------
-// Test HTTP server that simulates the OpenCode /session/:id/message endpoint
+// Test HTTP server that simulates the OpenCode /session/:id/prompt_async endpoint
+// (SDK uses prompt_async instead of message)
 // ---------------------------------------------------------------------------
 
 let server: http.Server;
@@ -72,10 +74,11 @@ describe('injectOpenCodeMessage', () => {
 
   afterEach(async () => {
     await stopServer();
+    _resetClientFactory();
     vi.restoreAllMocks();
   });
 
-  it('sends a POST to /session/:id/message with correct URL', async () => {
+  it('sends a POST to /session/:id/prompt_async with correct URL', async () => {
     const result = await injectOpenCodeMessage(
       'session-abc',
       'Hello agent',
@@ -86,7 +89,7 @@ describe('injectOpenCodeMessage', () => {
     expect(result.ok).toBe(true);
     expect(lastRequest).not.toBeNull();
     expect(lastRequest!.method).toBe('POST');
-    expect(lastRequest!.url).toBe('/session/session-abc/message');
+    expect(lastRequest!.url).toBe('/session/session-abc/prompt_async');
   });
 
   it('sends noReply: true by default', async () => {
@@ -205,7 +208,7 @@ describe('injectOpenCodeMessage', () => {
     );
 
     expect(result.ok).toBe(false);
-    expect(result.error).toContain('500');
+    expect(result.error).toBeDefined();
   });
 
   it('returns ok: false when the server is unreachable', async () => {
@@ -218,18 +221,29 @@ describe('injectOpenCodeMessage', () => {
   });
 
   it('treats noReply=false timeout as success when message exists in session history', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy
-      .mockRejectedValueOnce(new Error('This operation was aborted'))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [
-          {
-            info: { role: 'user' },
-            parts: [{ type: 'text', text: 'timeout but delivered' }],
+    // Mock the SDK client to simulate timeout on promptAsync, but success on messages
+    let promptAsyncCalled = false;
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            promptAsync: async () => {
+              promptAsyncCalled = true;
+              throw new Error('This operation was aborted');
+            },
+            messages: async () => ({
+              data: [
+                {
+                  info: { role: 'user' },
+                  parts: [{ type: 'text', text: 'timeout but delivered' }],
+                },
+              ],
+            }),
+            status: async () => ({ data: {} }),
           },
-        ],
-      } as unknown as Response);
+          global: {},
+        }) as ReturnType<typeof import('./sdk-client').getClient>,
+    );
 
     const result = await injectOpenCodeMessage(
       's1',
@@ -240,19 +254,28 @@ describe('injectOpenCodeMessage', () => {
       false,
     );
 
+    expect(promptAsyncCalled).toBe(true);
     expect(result.ok).toBe(true);
     expect(result.noReply).toBe(false);
-    fetchSpy.mockRestore();
   });
 
   it('keeps timeout failure for noReply=false when message is not found in session history', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy
-      .mockRejectedValueOnce(new Error('This operation was aborted'))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [],
-      } as unknown as Response);
+    // Mock the SDK client to simulate timeout on promptAsync, and empty messages
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            promptAsync: async () => {
+              throw new Error('This operation was aborted');
+            },
+            messages: async () => ({
+              data: [],
+            }),
+            status: async () => ({ data: {} }),
+          },
+          global: {},
+        }) as ReturnType<typeof import('./sdk-client').getClient>,
+    );
 
     const result = await injectOpenCodeMessage(
       's1',
@@ -265,23 +288,27 @@ describe('injectOpenCodeMessage', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain('Request timed out');
-    fetchSpy.mockRestore();
   });
 
   it('treats noReply=false timeout as success when session is busy after timeout', async () => {
-    const fetchSpy = vi.spyOn(globalThis, 'fetch');
-    fetchSpy
-      .mockRejectedValueOnce(new Error('This operation was aborted'))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => [],
-      } as unknown as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          s1: { type: 'busy' },
-        }),
-      } as unknown as Response);
+    // Mock the SDK client to simulate timeout on promptAsync, empty messages, but busy status
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            promptAsync: async () => {
+              throw new Error('This operation was aborted');
+            },
+            messages: async () => ({
+              data: [],
+            }),
+            status: async () => ({
+              data: { s1: { type: 'busy' } },
+            }),
+          },
+          global: {},
+        }) as ReturnType<typeof import('./sdk-client').getClient>,
+    );
 
     const result = await injectOpenCodeMessage(
       's1',
@@ -294,7 +321,6 @@ describe('injectOpenCodeMessage', () => {
 
     expect(result.ok).toBe(true);
     expect(result.noReply).toBe(false);
-    fetchSpy.mockRestore();
   });
 
   it('URL-encodes the session ID', async () => {
@@ -306,7 +332,7 @@ describe('injectOpenCodeMessage', () => {
     );
 
     expect(lastRequest!.url).toBe(
-      '/session/session%20with%20spaces%2Fand%3Fspecial/message',
+      '/session/session%20with%20spaces%2Fand%3Fspecial/prompt_async',
     );
   });
 

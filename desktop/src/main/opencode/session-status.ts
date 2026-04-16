@@ -1,13 +1,10 @@
 /**
  * Fetch session status from the OpenCode server.
  *
- * Uses the OpenCode HTTP API at GET /session/status to get status for all sessions.
+ * Uses the OpenCode SDK's session.status() to get status for all sessions.
  */
 
-import {
-  buildOpenCodePortCandidates,
-  fetchJsonFromAllReachable,
-} from './endpoints';
+import { getClient } from './sdk-client';
 
 export type SessionStatusType = 'busy' | 'idle' | 'error' | 'unknown';
 
@@ -26,25 +23,26 @@ export interface SessionStatusMap {
 export async function fetchSessionStatus(
   openCodePort: number,
 ): Promise<SessionStatusMap | null> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-
   try {
-    const responses = await fetchJsonFromAllReachable<
-      Record<string, { type?: string } | undefined>
-    >(ports, '/session/status', 3000);
-    if (responses.length === 0) {
-      return null;
-    }
+    const client = getClient(openCodePort);
+    const response = await client.session.status({
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (response.error) return null;
+
+    const data = response.data;
+    if (!data || typeof data !== 'object') return null;
 
     // Normalize the response to our SessionStatusMap type
     const result: SessionStatusMap = {};
-    for (const { data } of responses) {
-      for (const [sessionId, status] of Object.entries(data)) {
-        if (status && typeof status.type === 'string') {
-          result[sessionId] = {
-            type: normalizeStatusType(status.type),
-          };
-        }
+    for (const [sessionId, status] of Object.entries(
+      data as Record<string, { type?: string } | undefined>,
+    )) {
+      if (status && typeof status.type === 'string') {
+        result[sessionId] = {
+          type: normalizeStatusType(status.type),
+        };
       }
     }
 

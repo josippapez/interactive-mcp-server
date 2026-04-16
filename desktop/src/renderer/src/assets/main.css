@@ -345,7 +345,7 @@ textarea::placeholder {
 
 /* Main titlebar in compact mode - reduce padding but keep space for traffic lights */
 [data-compact='true'] [data-titlebar] {
-  padding-top: 1.5rem;
+  padding-top: 0.25rem;
   padding-bottom: 0.25rem;
 }
 

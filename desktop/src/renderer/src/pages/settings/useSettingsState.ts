@@ -94,6 +94,8 @@ export function useSettingsState() {
         initialSettings.autoRegisterSubagents ||
       settings.extraMcpServers !== initialSettings.extraMcpServers ||
       settings.compactMode !== initialSettings.compactMode ||
+      settings.hideSystemReminders !== initialSettings.hideSystemReminders ||
+      settings.hideDocInjections !== initialSettings.hideDocInjections ||
       JSON.stringify(settings.toolAutoExpandExclusions ?? []) !==
         JSON.stringify(initialSettings.toolAutoExpandExclusions ?? [])
     );

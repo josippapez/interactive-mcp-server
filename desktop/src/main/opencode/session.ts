@@ -1,18 +1,15 @@
 /**
- * Shared utility for detecting the active OpenCode session via its HTTP API.
+ * Shared utility for detecting and managing OpenCode sessions via SDK.
  *
  * Strategy:
- * 1. Query /session?directory=<dir> for directory-scoped sessions.
- * 2. If that returns nothing, fall back to /session (all sessions).
+ * 1. Query sessions with directory filter for directory-scoped sessions.
+ * 2. If that returns nothing, fall back to all sessions.
  * 3. Sort by time.created DESC (newest first) so that freshly-spawned
  *    subagent sessions are preferred over the longer-running parent session.
  * 4. Return { id, parentId } for the best match, or null on failure.
  */
 
-import {
-  buildOpenCodePortCandidates,
-  fetchJsonFromAllReachable,
-} from './endpoints';
+import { getClient } from './sdk-client';
 
 export interface DetectedSession {
   id: string;
@@ -27,28 +24,25 @@ export interface OpenCodeSession {
   time?: { created?: number; updated?: number };
 }
 
+/**
+ * Fetch sessions from OpenCode API using SDK.
+ */
 async function fetchSessions(
   openCodePort: number,
-  path: string,
+  directory?: string,
 ): Promise<OpenCodeSession[] | null> {
   try {
-    const ports = buildOpenCodePortCandidates(openCodePort);
-    const responses = await fetchJsonFromAllReachable<unknown>(
-      ports,
-      path,
-      2000,
-    );
-    if (responses.length === 0) return null;
+    const client = getClient(openCodePort, directory);
+    const response = await client.session.list({
+      signal: AbortSignal.timeout(2000),
+    });
 
-    const mergedById = new Map<string, OpenCodeSession>();
-    for (const { data } of responses) {
-      if (!Array.isArray(data)) continue;
-      for (const session of data as OpenCodeSession[]) {
-        mergedById.set(session.id, session);
-      }
-    }
+    if (response.error) return null;
 
-    return Array.from(mergedById.values());
+    const data = response.data;
+    if (!Array.isArray(data)) return null;
+
+    return data as OpenCodeSession[];
   } catch {
     return null;
   }
@@ -62,7 +56,7 @@ export async function fetchAllOpenCodeSessions(
   openCodePort: number,
   fallbackDirectories: string[] = [],
 ): Promise<OpenCodeSession[] | null> {
-  const unscoped = await fetchSessions(openCodePort, '/session');
+  const unscoped = await fetchSessions(openCodePort);
   if (!unscoped) return null;
 
   const scopedDirectories = Array.from(
@@ -80,12 +74,7 @@ export async function fetchAllOpenCodeSessions(
   }
 
   const scopedResults = await Promise.all(
-    scopedDirectories.map((dir) =>
-      fetchSessions(
-        openCodePort,
-        `/session?directory=${encodeURIComponent(dir)}`,
-      ),
-    ),
+    scopedDirectories.map((dir) => fetchSessions(openCodePort, dir)),
   );
 
   const mergedById = new Map<string, OpenCodeSession>();
@@ -130,8 +119,8 @@ export function collectDescendants(
  * Detect the best OpenCode session for the given directory.
  *
  * Strategy:
- * 1. Query /session?directory=<dir> for directory-scoped sessions.
- * 2. If that returns nothing, fall back to /session (all sessions).
+ * 1. Query sessions with directory filter for directory-scoped sessions.
+ * 2. If that returns nothing, fall back to all sessions.
  * 3. Prefer root sessions (no parentID) over subagent sessions — the caller
  *    is most likely the main agent, and we want to attach to its own session
  *    rather than a freshly-spawned child session.
@@ -143,14 +132,11 @@ export async function autoDetectOpenCodeSession(
   baseDirectory?: string,
 ): Promise<DetectedSession | null> {
   const dir = baseDirectory ?? process.cwd();
-  let sessions = await fetchSessions(
-    openCodePort,
-    `/session?directory=${encodeURIComponent(dir)}`,
-  );
+  let sessions = await fetchSessions(openCodePort, dir);
 
   // If directory-scoped query returned nothing, fall back to all sessions
   if (!sessions || sessions.length === 0) {
-    sessions = await fetchSessions(openCodePort, '/session');
+    sessions = await fetchSessions(openCodePort);
   }
 
   if (!sessions || sessions.length === 0) return null;
@@ -204,12 +190,12 @@ const CREATE_SESSION_TIMEOUT_MS = 10_000;
 const SESSION_MESSAGE_TIMEOUT_MS = 120_000;
 
 /**
- * Create a new OpenCode session via the HTTP API.
+ * Create a new OpenCode session via SDK.
  *
- * Uses POST /session with optional title and parentID.
+ * Uses client.session.create() with optional title and parentID.
  * When a directory is provided, the session is created in that directory context,
  * which loads the project's `.opencode/opencode.jsonc` config and project-specific MCPs.
- * After creating the session, optionally sends an initial message.
+ * After creating the session, optionally sends an initial message via promptAsync.
  * If attachments are provided, they will be included in the initial message.
  */
 export async function createOpenCodeSession(
@@ -223,54 +209,55 @@ export async function createOpenCodeSession(
     directory?: string;
   } = {},
 ): Promise<CreateSessionResult> {
-  // Build URL with optional directory query parameter
-  const baseUrl = `http://localhost:${openCodePort}/session`;
-  const url = options.directory
-    ? `${baseUrl}?directory=${encodeURIComponent(options.directory)}`
-    : baseUrl;
-
   try {
-    // Create the session
-    const createRes = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const client = getClient(openCodePort, options.directory);
+
+    // Match OpenCode app behavior: create a directory-scoped client first,
+    // then call session.create() on that client.
+    const createResponse = await client.session.create({
+      body: {
         title: options.title,
         parentID: options.parentID,
-      }),
+      },
       signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
     });
 
-    if (!createRes.ok) {
-      const body = await createRes.text().catch(() => '');
-      return {
-        ok: false,
-        error: `OpenCode API returned ${createRes.status}: ${body}`,
-      };
+    if (createResponse.error) {
+      const errorMessage =
+        typeof createResponse.error === 'string'
+          ? createResponse.error
+          : 'OpenCode API returned error';
+      return { ok: false, error: errorMessage };
     }
 
-    const session = (await createRes.json()) as OpenCodeSession;
+    const session = createResponse.data as OpenCodeSession;
 
     // If an initial message is provided, send it to the session
     // NOTE: Attachments are handled separately via injectOpenCodeMessage in the IPC handler
     // because it requires access to the attachment store and MCP server port
     if (options.initialMessage && session.id) {
-      const messageUrl = `http://localhost:${openCodePort}/session/${encodeURIComponent(session.id)}/message`;
-      const messageRes = await fetch(messageUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          parts: [{ type: 'text', text: options.initialMessage }],
-        }),
-        // Keep aligned with injector timeout for /session/:id/message.
-        signal: AbortSignal.timeout(SESSION_MESSAGE_TIMEOUT_MS),
-      });
+      try {
+        const messageResponse = await client.session.promptAsync(
+          {
+            path: { id: session.id },
+            body: {
+              parts: [{ type: 'text', text: options.initialMessage }],
+            },
+          },
+          { signal: AbortSignal.timeout(SESSION_MESSAGE_TIMEOUT_MS) },
+        );
 
-      if (!messageRes.ok) {
+        if (messageResponse.error) {
+          // Session was created but message failed - still return success
+          // The session exists and can be used
+          console.warn(
+            `[createOpenCodeSession] Session created but initial message failed`,
+          );
+        }
+      } catch {
         // Session was created but message failed - still return success
-        // The session exists and can be used
         console.warn(
-          `[createOpenCodeSession] Session created but initial message failed: ${messageRes.status}`,
+          `[createOpenCodeSession] Session created but initial message failed`,
         );
       }
     }

@@ -1,13 +1,10 @@
 /**
  * Fetch VCS (version control) information from the OpenCode server.
  *
- * Uses the OpenCode HTTP API at GET /vcs to get accurate git branch info.
+ * Uses the OpenCode SDK's vcs.get() to get accurate git branch info.
  */
 
-import {
-  buildOpenCodePortCandidates,
-  fetchFirstSuccessfulJson,
-} from './endpoints';
+import { getClient } from './sdk-client';
 
 export interface VcsInfo {
   branch: string | null;
@@ -19,7 +16,7 @@ export interface VcsInfo {
 }
 
 /**
- * Fetch VCS info from the OpenCode server.
+ * Fetch VCS info from the OpenCode server using SDK.
  *
  * @param openCodePort - The port OpenCode server is running on
  * @returns VCS info including branch name, or null on error
@@ -27,15 +24,22 @@ export interface VcsInfo {
 export async function fetchVcsInfo(
   openCodePort: number,
 ): Promise<VcsInfo | null> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-
   try {
-    const response = await fetchFirstSuccessfulJson<{
-      branch?: string;
-      default_branch?: string;
-    }>(ports, '/vcs', 3000);
-    if (!response) return null;
-    const data = response.data;
+    const client = getClient(openCodePort);
+    const response = await client.vcs.get({
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (response.error) return null;
+
+    const data = response.data as
+      | {
+          branch?: string;
+          default_branch?: string;
+        }
+      | undefined;
+
+    if (!data) return null;
 
     return {
       branch: typeof data.branch === 'string' ? data.branch : null,

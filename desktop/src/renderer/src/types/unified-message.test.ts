@@ -568,6 +568,31 @@ describe('mergeMessages', () => {
     expect(result[0].id).toBe('conv-user-1');
   });
 
+  it('suppresses sent outbound channel messages when the provider user message keeps only the suffix after a prefix marker', () => {
+    const channelMsgs = [
+      makeChannelMessage({
+        id: 'out-1',
+        kind: 'outbound',
+        text: 'Build: Okay, it seems to be better',
+        sent: true,
+        timestamp: new Date('2026-04-11T10:00:00.000Z'),
+      }),
+    ];
+    const convMsgs = [
+      makeConversationMessage({
+        id: 'conv-user-1',
+        role: 'user',
+        createdAt: new Date('2026-04-11T10:00:01.000Z').getTime(),
+        parts: [{ id: 'p1', type: 'text', text: 'Okay, it seems to be better' }],
+      }),
+    ];
+
+    const result = mergeMessages(channelMsgs, convMsgs);
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('conv-user-1');
+  });
+
   it('keeps unsent outbound channel messages even when the text matches conversation', () => {
     const channelMsgs = [
       makeChannelMessage({
@@ -654,5 +679,29 @@ describe('mergeMessages', () => {
 
     expect(result).toHaveLength(2);
     expect(result.some((message) => message.id === 'conv-tool-1')).toBe(true);
+  });
+
+  it('removes messages that become empty after hidden-content filtering', () => {
+    const channelMsgs = [
+      makeChannelMessage({
+        id: 'hidden-1',
+        kind: 'agent_message',
+        text: '<system-reminder>Internal only</system-reminder>',
+      }),
+      makeChannelMessage({
+        id: 'visible-1',
+        kind: 'agent_message',
+        text: 'Still visible',
+        timestamp: new Date('2026-04-11T10:00:01.000Z'),
+      }),
+    ];
+
+    const result = mergeMessages(channelMsgs, [], undefined, {
+      hideSystemReminders: true,
+      hideDocInjections: false,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('visible-1');
   });
 });

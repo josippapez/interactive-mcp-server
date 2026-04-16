@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   getPromptComposerBaseDirectory,
   getPromptPlaceholder,
@@ -125,6 +125,14 @@ export function usePromptViewState(props: PromptViewProps) {
   });
 
   const canAbort = Boolean(openCodeSessionId);
+  const [channelSearchQuery, setChannelSearchQuery] = useState('');
+  const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(-1);
+  const [channelSearchOpen, setChannelSearchOpen] = useState(false);
+  const [channelSearchMatchCount, setChannelSearchMatchCount] = useState(0);
+
+  useEffect(() => {
+    setActiveSearchMatchIndex(channelSearchMatchCount > 0 ? 0 : -1);
+  }, [channelSearchMatchCount]);
 
   useEffect(() => {
     if (!sessionActionTarget) {
@@ -168,6 +176,84 @@ export function usePromptViewState(props: PromptViewProps) {
       onDismissSession(sessionActionTarget);
     }
   }, [onDismissSession, sessionActionTarget]);
+
+  const handleChannelSearchNext = useCallback(() => {
+    if (channelSearchMatchCount === 0) return;
+    setActiveSearchMatchIndex((prev) =>
+      prev < 0 || prev >= channelSearchMatchCount - 1 ? 0 : prev + 1,
+    );
+  }, [channelSearchMatchCount]);
+
+  const handleChannelSearchPrevious = useCallback(() => {
+    if (channelSearchMatchCount === 0) return;
+    setActiveSearchMatchIndex((prev) =>
+      prev <= 0 ? channelSearchMatchCount - 1 : prev - 1,
+    );
+  }, [channelSearchMatchCount]);
+
+  const handleChannelSearchClear = useCallback(() => {
+    setChannelSearchQuery('');
+    setActiveSearchMatchIndex(-1);
+    setChannelSearchMatchCount(0);
+  }, []);
+
+  const previousConnectionIdRef = useRef<string | null>(activeConnectionId);
+
+  useEffect(() => {
+    if (previousConnectionIdRef.current === activeConnectionId) {
+      return;
+    }
+    previousConnectionIdRef.current = activeConnectionId;
+    setChannelSearchOpen(false);
+    setChannelSearchQuery('');
+    setActiveSearchMatchIndex(-1);
+    setChannelSearchMatchCount(0);
+  }, [activeConnectionId]);
+
+  useEffect(() => {
+    const handler = (event: KeyboardEvent) => {
+      const meta = event.metaKey || event.ctrlKey;
+      if (!meta || event.key.toLowerCase() !== 'f') return;
+      if (!activeConnectionId) return;
+      if (
+        event.target instanceof HTMLInputElement ||
+        event.target instanceof HTMLTextAreaElement ||
+        (event.target instanceof HTMLElement &&
+          event.target.isContentEditable)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      setChannelSearchOpen(true);
+    };
+
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [activeConnectionId]);
+
+  const handleSelectProjectSession = useCallback(
+    (projectPath: string | null) => {
+      if (!projectPath) {
+        return;
+      }
+
+      const matchingRoots = Array.from(connections.entries())
+        .filter(([, node]) => !node.isDirectConnection)
+        .filter(([, node]) => (node.baseDirectory ?? node.directory) === projectPath)
+        .sort(([, left], [, right]) => {
+          const rightUpdated = right.createdAt ?? 0;
+          const leftUpdated = left.createdAt ?? 0;
+          return rightUpdated - leftUpdated;
+        });
+
+      const next = matchingRoots[0]?.[0] ?? null;
+      if (next && next !== activeConnectionId) {
+        onSelectConnection(next);
+      }
+    },
+    [activeConnectionId, connections, onSelectConnection],
+  );
 
   const handleCreateSessionWithModel = useCallback(
     async (...args: Parameters<typeof handleCreateSession>) => {
@@ -236,6 +322,17 @@ export function usePromptViewState(props: PromptViewProps) {
     handleAbortSession,
     handleClearMessages,
     handleDismissCurrentSession,
+    channelSearchQuery,
+    channelSearchOpen,
+    channelSearchMatchCount,
+    activeSearchMatchIndex,
+    handleChannelSearchNext,
+    handleChannelSearchPrevious,
+    handleChannelSearchClear,
+    setChannelSearchQuery,
+    setChannelSearchOpen,
+    setChannelSearchMatchCount,
+    handleSelectProjectSession,
     handleToggleTasksSidebar,
     handleToggleExpandAllTools: () =>
       void handleExpandAllToolsChange(!expandAllTools),

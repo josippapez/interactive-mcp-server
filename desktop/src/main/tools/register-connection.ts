@@ -11,6 +11,7 @@ import {
 } from '../database';
 import { initDocContext } from '../docs/context-injector';
 import { sendSessionStatus } from '../ipc/channel';
+import { getClient } from '../opencode/sdk-client';
 import { autoDetectOpenCodeSession } from '../opencode/session';
 import { recordPendingConnection } from '../session/tree-manager';
 import type { AgentBackend } from '../settings';
@@ -118,18 +119,13 @@ export function registerConnectionTool(
       } else if (backend.supportsProviderInjection && openCodeSessionId) {
         // When session ID is explicit, try to fetch its parentID from the API.
         try {
-          const port = getOpenCodePort();
-          const res = await withRegisterConnectionDeadline(
-            fetch(`http://localhost:${port}/session`, {
-              signal: AbortSignal.timeout(2000),
-            }),
+          const client = getClient(getOpenCodePort());
+          const result = await withRegisterConnectionDeadline(
+            client.session.list(),
             startedAt,
           );
-          if (res.ok) {
-            const sessions = (await withRegisterConnectionDeadline(
-              res.json() as Promise<unknown>,
-              startedAt,
-            )) as Array<{
+          if (result.data) {
+            const sessions = result.data as Array<{
               id: string;
               parentID?: string | null;
             }>;

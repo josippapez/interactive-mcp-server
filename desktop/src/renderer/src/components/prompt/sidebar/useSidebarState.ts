@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useSessionStatus } from '../../../hooks/useSessionStatus';
 import { useSidebarResize } from './useSidebarResize';
 import { useCollapsedState } from './useCollapsedState';
@@ -8,6 +8,9 @@ import {
   useSessionGraphProjects,
   useSessionGraphSelector,
 } from '../../../store/session-graph';
+
+/** Local storage key for persisted selected project */
+const SELECTED_PROJECT_KEY = 'sidebar-selected-project';
 
 type UseSidebarStateProps = {
   activeConnectionId: string | null;
@@ -26,6 +29,37 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     (state) => state.directConnections,
   );
   const projects = useSessionGraphProjects(pinnedPaths);
+
+  // Selected project for filtering (null = all projects)
+  const [selectedProjectPath, setSelectedProjectPath] = useState<string | null>(
+    () => {
+      try {
+        const stored = localStorage.getItem(SELECTED_PROJECT_KEY);
+        return stored ? JSON.parse(stored) : null;
+      } catch {
+        return null;
+      }
+    },
+  );
+
+  const handleSelectProject = useCallback((path: string | null) => {
+    setSelectedProjectPath(path);
+    try {
+      localStorage.setItem(SELECTED_PROJECT_KEY, JSON.stringify(path));
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (selectedProjectPath === null) {
+      return;
+    }
+
+    if (!projects.some((project) => project.path === selectedProjectPath)) {
+      handleSelectProject(null);
+    }
+  }, [handleSelectProject, projects, selectedProjectPath]);
 
   // Refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -75,6 +109,19 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     getStatus,
   });
 
+  // Filter projects by selected project path
+  const displayProjects = useMemo(() => {
+    if (selectedProjectPath === null) {
+      return filteredProjects;
+    }
+    return filteredProjects.filter((p) => p.path === selectedProjectPath);
+  }, [filteredProjects, selectedProjectPath]);
+
+  // All projects for the rail (unfiltered by activity/selection - always show all)
+  const allProjects = useMemo(() => {
+    return projects;
+  }, [projects]);
+
   return {
     // Refs
     sidebarRef,
@@ -87,8 +134,10 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     sidebarWidth,
     isResizing,
     isRefreshing,
+    selectedProjectPath,
     // Computed
-    filteredProjects,
+    filteredProjects: displayProjects,
+    allProjects,
     filteredDirectConnections,
     providerCounts,
     providerTabs,
@@ -104,5 +153,6 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     handleAddProject,
     handleRemoveProject,
     handleMouseDown,
+    handleSelectProject,
   };
 }

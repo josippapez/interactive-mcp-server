@@ -17,6 +17,7 @@ import {
   _resetTrackingForTest,
   type McpInjectionOptions,
 } from './mcp-inject';
+import { _setClientFactory, _resetClientFactory } from './sdk-client';
 
 // ─── Mock fs ──────────────────────────────────────────────────────────────────
 
@@ -25,10 +26,23 @@ vi.mock('fs', () => ({
   readFileSync: vi.fn(),
 }));
 
-// ─── Mock fetch ───────────────────────────────────────────────────────────────
+// ─── Mock SDK client ──────────────────────────────────────────────────────────
 
-const mockFetch = vi.fn() as Mock;
-vi.stubGlobal('fetch', mockFetch);
+let mockMcpAdd: Mock;
+
+function setupMockClient(
+  addResponse: { data?: unknown; error?: unknown } = { data: {} },
+) {
+  mockMcpAdd = vi.fn().mockResolvedValue(addResponse);
+  _setClientFactory(
+    () =>
+      ({
+        mcp: {
+          add: mockMcpAdd,
+        },
+      }) as ReturnType<typeof import('./sdk-client').getClient>,
+  );
+}
 
 // ─── Mock logger ──────────────────────────────────────────────────────────────
 
@@ -45,10 +59,12 @@ describe('mcp-inject', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     _resetTrackingForTest();
+    setupMockClient();
   });
 
   afterEach(() => {
     vi.resetAllMocks();
+    _resetClientFactory();
   });
 
   // ─── Config Parsing ───────────────────────────────────────────────────────
@@ -66,7 +82,7 @@ describe('mcp-inject', () => {
       expect(result.configFound).toBe(false);
       expect(result.results).toHaveLength(0);
       expect(result.injectedMcps).toHaveLength(0);
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockMcpAdd).not.toHaveBeenCalled();
     });
 
     it('parses JSONC with single-line comments', async () => {
@@ -80,7 +96,6 @@ describe('mcp-inject', () => {
           }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       const result = await injectProjectMcps({
         baseDirectory: '/projects/my-app',
@@ -104,7 +119,6 @@ describe('mcp-inject', () => {
           }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       const result = await injectProjectMcps({
         baseDirectory: '/projects/my-app',
@@ -143,7 +157,7 @@ describe('mcp-inject', () => {
 
       expect(result.configFound).toBe(true);
       expect(result.results).toHaveLength(0);
-      expect(mockFetch).not.toHaveBeenCalled();
+      expect(mockMcpAdd).not.toHaveBeenCalled();
     });
 
     it('handles missing mcp section gracefully', async () => {
@@ -170,7 +184,7 @@ describe('mcp-inject', () => {
       logger: mockLogger,
     };
 
-    it('registers a remote MCP server via POST /mcp', async () => {
+    it('registers a remote MCP server via SDK', async () => {
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(`{
         "mcp": {
@@ -180,22 +194,18 @@ describe('mcp-inject', () => {
           }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       const result = await injectProjectMcps(baseOptions);
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:4096/mcp',
+      expect(mockMcpAdd).toHaveBeenCalledWith(
         expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
+          body: {
             name: 'figma',
             config: {
               type: 'remote',
               url: 'http://127.0.0.1:3845/mcp',
             },
-          }),
+          },
         }),
       );
       expect(result.injectedMcps).toEqual(['figma']);
@@ -215,15 +225,12 @@ describe('mcp-inject', () => {
           }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       const result = await injectProjectMcps(baseOptions);
 
-      expect(mockFetch).toHaveBeenCalledWith(
-        'http://localhost:4096/mcp',
+      expect(mockMcpAdd).toHaveBeenCalledWith(
         expect.objectContaining({
-          method: 'POST',
-          body: JSON.stringify({
+          body: {
             name: 'ado',
             config: {
               type: 'local',
@@ -233,7 +240,7 @@ describe('mcp-inject', () => {
                 ADO_PAT: 'secret-token',
               },
             },
-          }),
+          },
         }),
       );
       expect(result.injectedMcps).toEqual(['ado']);
@@ -248,11 +255,10 @@ describe('mcp-inject', () => {
           "chrome": { "type": "remote", "url": "http://localhost:9222/mcp" }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       const result = await injectProjectMcps(baseOptions);
 
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockMcpAdd).toHaveBeenCalledTimes(3);
       expect(result.injectedMcps).toEqual(['figma', 'ado', 'chrome']);
     });
 
@@ -264,11 +270,10 @@ describe('mcp-inject', () => {
           "disabled-mcp": { "type": "remote", "url": "http://localhost:3001/mcp", "enabled": false }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       const result = await injectProjectMcps(baseOptions);
 
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockMcpAdd).toHaveBeenCalledTimes(1);
       expect(result.results).toHaveLength(2);
       expect(result.results[0].status).toBe('injected');
       expect(result.results[1].status).toBe('skipped');
@@ -286,14 +291,18 @@ describe('mcp-inject', () => {
           }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       await injectProjectMcps(baseOptions);
 
-      const body = JSON.parse(
-        mockFetch.mock.calls[0][1].body as string,
-      ) as Record<string, unknown>;
-      expect((body.config as Record<string, unknown>).timeout).toBe(120000);
+      expect(mockMcpAdd).toHaveBeenCalledWith(
+        expect.objectContaining({
+          body: expect.objectContaining({
+            config: expect.objectContaining({
+              timeout: 120000,
+            }),
+          }),
+        }),
+      );
     });
   });
 
@@ -306,24 +315,19 @@ describe('mcp-inject', () => {
       logger: mockLogger,
     };
 
-    it('handles OpenCode API returning non-ok status', async () => {
+    it('handles OpenCode API returning error', async () => {
       vi.mocked(existsSync).mockReturnValue(true);
       vi.mocked(readFileSync).mockReturnValue(`{
         "mcp": {
           "test-mcp": { "type": "remote", "url": "http://localhost:3000/mcp" }
         }
       }`);
-      mockFetch.mockResolvedValue({
-        ok: false,
-        status: 500,
-        statusText: 'Internal Server Error',
-        text: () => Promise.resolve('Server error'),
-      });
+      setupMockClient({ error: 'Server error' });
 
       const result = await injectProjectMcps(baseOptions);
 
       expect(result.results[0].status).toBe('error');
-      expect(result.results[0].error).toContain('500');
+      expect(result.results[0].error).toContain('Server error');
       expect(result.injectedMcps).toHaveLength(0);
     });
 
@@ -334,7 +338,15 @@ describe('mcp-inject', () => {
           "test-mcp": { "type": "remote", "url": "http://localhost:3000/mcp" }
         }
       }`);
-      mockFetch.mockRejectedValue(new Error('ECONNREFUSED'));
+      mockMcpAdd = vi.fn().mockRejectedValue(new Error('ECONNREFUSED'));
+      _setClientFactory(
+        () =>
+          ({
+            mcp: {
+              add: mockMcpAdd,
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await injectProjectMcps(baseOptions);
 
@@ -352,15 +364,19 @@ describe('mcp-inject', () => {
           "another-good": { "type": "remote", "url": "http://localhost:3002/mcp" }
         }
       }`);
-      mockFetch
-        .mockResolvedValueOnce({ ok: true })
-        .mockResolvedValueOnce({
-          ok: false,
-          status: 400,
-          statusText: 'Bad Request',
-          text: () => Promise.resolve(''),
-        })
-        .mockResolvedValueOnce({ ok: true });
+      mockMcpAdd = vi
+        .fn()
+        .mockResolvedValueOnce({ data: {} })
+        .mockResolvedValueOnce({ error: 'Bad Request' })
+        .mockResolvedValueOnce({ data: {} });
+      _setClientFactory(
+        () =>
+          ({
+            mcp: {
+              add: mockMcpAdd,
+            },
+          }) as ReturnType<typeof import('./sdk-client').getClient>,
+      );
 
       const result = await injectProjectMcps(baseOptions);
 
@@ -457,13 +473,12 @@ describe('mcp-inject', () => {
           }
         }
       }`);
-      mockFetch.mockResolvedValue({ ok: true });
 
       const result = await injectProjectMcps(baseOptions);
 
       expect(result.configFound).toBe(true);
       expect(result.injectedMcps).toEqual(['ado', 'figma']);
-      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockMcpAdd).toHaveBeenCalledTimes(2);
     });
   });
 });

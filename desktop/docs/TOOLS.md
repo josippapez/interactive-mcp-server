@@ -72,7 +72,7 @@ Agents **MUST** pass `openCodeSessionId` on every tool call after receiving it v
 | ------------------- | -------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `channelName`       | `string` | Yes      | Human-readable name for this agent. Prefer unique names per active session (especially for parallel subagents) so channels are easy to distinguish in the sidebar.                                                                  |
 | `projectName`       | `string` | Yes      | Name of the project or workspace this agent is working in.                                                                                                                                                                          |
-| `baseDirectory`     | `string` | No       | Absolute path to the working directory / repository root. Used for file autocomplete and for OpenCode session auto-detection.                                                                                                       |
+| `baseDirectory`     | `string` | No       | Absolute path to the working directory / repository root. Used for file autocomplete, repository-doc indexing, `find_repo_docs`, and OpenCode session auto-detection. It does not determine sidebar grouping for OpenCode sessions. |
 | `openCodeSessionId` | `string` | No       | Explicit OpenCode ACP session ID for this agent. When provided, takes precedence over auto-detection entirely. Subagents spawned via the Task tool should pass their own session ID explicitly to ensure correct context injection. |
 
 Naming note:
@@ -96,7 +96,7 @@ Identity note:
 
 #### Behavior
 
-1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `channelName`, `projectName`, `baseDirectory`, the detected `openCodeSessionId` (or `null`), and `parentSessionId` (or `null`).
+1. Upserts a record in the `registered_connections` SQLite table (keyed by `connectionId`), storing `channelName`, `projectName`, `baseDirectory`, the detected `openCodeSessionId` (or `null`), and `parentSessionId` (or `null`). Existing OpenCode session `base_directory` values are preserved when a later registration omits `baseDirectory`.
 2. Writes a JSON ID file to `/tmp/imcp-agent-<safe-name>.json` so the agent can recover its `connectionId` after a restart without re-registering.
 3. Renames the active channel in the `session_channels` table to `channelName`.
 4. Sends a `connection-registered` IPC event to the renderer so the sidebar updates immediately.
@@ -104,6 +104,8 @@ Identity note:
 6. Resolves `parentSessionId`: after the `openCodeSessionId` is known (whether explicit or auto-detected), the tool fetches `GET /session` and inspects the matched session's `parentID` field to identify the parent OpenCode session, if any.
 7. Triggers an immediate `session-tree-updated` refresh so the renderer reflects the new registration without waiting for the next poll.
 8. Returns `{ ok: true, connectionId, channelName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId?, parentSessionId? }`.
+
+For OpenCode-backed sessions, sidebar grouping follows the session's own directory/creation metadata from OpenCode, not the `baseDirectory` supplied to `register_connection`.
 
 This tool has a hard 15-second deadline. If detection or parent lookup does not complete in time, the call fails so the agent can retry cleanly.
 

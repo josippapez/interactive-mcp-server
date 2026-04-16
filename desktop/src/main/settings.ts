@@ -18,6 +18,7 @@ export const PREDEFINED_TOOLS = [
   'WebFetch',
   'TodoWrite',
   'Task',
+  'Gather Context',
   'question',
   'skill',
 ] as const;
@@ -96,6 +97,14 @@ export interface AppSettings {
    */
   allowedReadFolders: string[];
   /**
+   * List of non-file-read permission names that are always auto-approved.
+   * When a permission request matches one of these names (case-insensitive),
+   * it is auto-approved without user interaction.
+   * Example: ["Bash", "Write", "Edit"]
+   * Default: [] (no permissions auto-approved).
+   */
+  allowedPermissions: string[];
+  /**
    * Default model ID to use for new sessions (e.g., 'claude-sonnet-4-20250514').
    * When set, new channels will use this model by default.
    * Default: '' (no default — uses provider's default).
@@ -113,6 +122,16 @@ export interface AppSettings {
    * Default: '' (no default — uses model's default).
    */
   defaultReasoningVariant: string;
+  /**
+   * When true, hide <system-reminder> tags and their content in the chat view.
+   * Default: false (show system reminders).
+   */
+  hideSystemReminders: boolean;
+  /**
+   * When true, hide doc context injection content in the chat view.
+   * Default: false (show doc injections).
+   */
+  hideDocInjections: boolean;
 }
 
 export const defaultSettings: AppSettings = {
@@ -136,9 +155,12 @@ export const defaultSettings: AppSettings = {
   defaultExpandAllTools: false,
   defaultShowThinking: false,
   allowedReadFolders: [],
+  allowedPermissions: [],
   defaultModelId: '',
   defaultProviderId: '',
   defaultReasoningVariant: '',
+  hideSystemReminders: false,
+  hideDocInjections: false,
 };
 
 export function getSettingsPath(): string {

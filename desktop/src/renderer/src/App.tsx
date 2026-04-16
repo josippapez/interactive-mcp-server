@@ -1,4 +1,4 @@
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import PromptView from './pages/PromptView';
 import SettingsView from './pages/SettingsView';
 import SkillsView from './pages/SkillsView';
@@ -9,6 +9,7 @@ import PermissionToast from './components/PermissionToast';
 import { TooltipProvider } from './components/ui/tooltip';
 import { useConnections } from './hooks/useConnections';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
+import { useSettingsSync } from './store';
 import { useSessionGraphSelector } from './store/session-graph';
 
 type Tab = 'prompt' | 'skills' | 'settings';
@@ -16,30 +17,13 @@ const TABS: Tab[] = ['prompt', 'skills', 'settings'];
 
 export default function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<Tab>('prompt');
-  const [compactMode, setCompactMode] = useState(false);
+  const { settings } = useSettingsSync();
+  const compactMode = settings.compactMode;
 
   // Ref for triggering skill creation from QuickSwitcher
   const skillsViewRef = useRef<{
     createNew: (type: 'skill' | 'instruction') => void;
   } | null>(null);
-
-  // Load compact mode setting on mount
-  useEffect(() => {
-    window.api.getSettings().then((s) => {
-      setCompactMode(s.compactMode);
-    });
-  }, []);
-
-  // Listen for settings changes (e.g., from SettingsView)
-  // Reduced frequency to 5000ms (from 2000ms) to lower CPU usage
-  useEffect(() => {
-    const checkSettings = async () => {
-      const s = await window.api.getSettings();
-      setCompactMode(s.compactMode);
-    };
-    const interval = setInterval(checkSettings, 5000);
-    return () => clearInterval(interval);
-  }, []);
 
   const switchToPrompt = useCallback(() => setActiveTab('prompt'), []);
 
@@ -130,15 +114,22 @@ export default function App(): React.ReactElement {
       >
         <header
           data-titlebar
-          className="titlebar-drag flex items-center justify-between px-4 pt-8 pb-2 border-b border-[var(--color-border)]"
+          className="titlebar-drag flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/92 pb-3 pl-24 pr-5 pt-4 backdrop-blur-md"
         >
-          <div className="flex items-center gap-2">
-            <span className="text-[var(--color-agent)] text-sm">&#x276F;</span>
-            <h1 className="text-sm font-medium text-[var(--color-text-muted)] tracking-wide">
-              Interactive MCP
-            </h1>
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-agent)]/10 text-[var(--color-agent)] shadow-sm">
+              <span className="text-base leading-none">&#x276F;</span>
+            </div>
+            <div className="min-w-0">
+              <h1 className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--color-text)]">
+                Eden
+              </h1>
+              <p className="truncate text-[11px] text-[var(--color-text-faint)]">
+                Interactive MCP Desktop
+              </p>
+            </div>
           </div>
-          <nav className="titlebar-no-drag flex gap-0.5">
+          <nav className="titlebar-no-drag flex items-center gap-1 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-alt)]/85 p-1 shadow-sm">
             <TabButton
               active={activeTab === 'prompt'}
               onClick={handlePromptTabClick}
@@ -241,11 +232,12 @@ function TabButton({
 }): React.ReactElement {
   return (
     <button
+      type="button"
       onClick={onClick}
-      className={`relative px-3 py-1 text-xs font-medium transition-colors border-b-2 ${
+      className={`relative rounded-xl px-3.5 py-1.5 text-xs font-medium transition-all ${
         active
-          ? 'text-[var(--color-agent)] border-[var(--color-agent)]'
-          : 'text-[var(--color-text-muted)] border-transparent hover:text-[var(--color-text)]'
+          ? 'bg-[var(--color-agent)]/12 text-[var(--color-agent)] shadow-sm ring-1 ring-[var(--color-agent)]/15'
+          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)]/70 hover:text-[var(--color-text)]'
       }`}
     >
       <span className="flex items-center gap-1">
@@ -257,7 +249,7 @@ function TabButton({
         )}
       </span>
       {badge && (
-        <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-[var(--color-user)] animate-pulse" />
+        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[var(--color-user)] animate-pulse" />
       )}
     </button>
   );

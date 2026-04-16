@@ -3,7 +3,7 @@ import {
   type RegisteredConnection,
 } from '../database';
 import type { AppSettings } from '../settings';
-import { buildOpenCodePortCandidates } from './endpoints';
+import { getClient } from './sdk-client';
 import { createLogger } from '../utils/logger';
 
 const sseLog = createLogger('sse');
@@ -110,27 +110,29 @@ export function shouldAutoApproveReadPermission(
   return false;
 }
 
+/**
+ * Auto-reply to a permission request using SDK.
+ */
 export async function autoReplyPermission(
   requestId: string,
   reply: PromptReply,
   getOpenCodePort?: (() => number) | null,
 ): Promise<void> {
-  const configuredPort = getOpenCodePort?.() ?? 4096;
-  const ports = buildOpenCodePortCandidates(configuredPort);
+  const port = getOpenCodePort?.() ?? 4096;
 
-  for (const port of ports) {
-    try {
-      await fetch(`http://localhost:${port}/permission/${requestId}/reply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reply }),
-      });
+  try {
+    const client = getClient(port);
+    const response = await client.permission.reply({
+      requestID: requestId,
+      reply,
+    });
+
+    if (!response.error) {
       sseLog.info(
-        `Auto-approved read permission ${requestId} with reply: ${reply} on port ${port}`,
+        `Auto-approved read permission ${requestId} with reply: ${reply}`,
       );
-      return;
-    } catch {
-      // failure isolation: try next endpoint
     }
+  } catch {
+    // Silently fail - permission auto-approve is best-effort
   }
 }

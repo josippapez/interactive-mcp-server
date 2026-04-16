@@ -14,11 +14,15 @@ export function PermissionsSection({
   setSettings,
 }: SharedProps): React.ReactElement {
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
+      {/* Allowed Read Folders */}
       <div>
         <h4 className="text-sm font-medium text-[var(--color-text)] mb-2">
           Allowed Read Folders
         </h4>
+        <p className="text-xs text-[var(--color-text-faint)] mb-2">
+          File read requests within these folders are auto-approved.
+        </p>
         <div className="space-y-1 mb-3">
           {(settings.allowedReadFolders ?? []).length === 0 ? (
             <p className="text-xs text-[var(--color-text-faint)] italic py-2">
@@ -80,6 +84,57 @@ export function PermissionsSection({
           Add Folder...
         </Button>
       </div>
+
+      {/* Allowed Permissions (non-file-read) */}
+      <div>
+        <h4 className="text-sm font-medium text-[var(--color-text)] mb-2">
+          Allowed Permissions
+        </h4>
+        <p className="text-xs text-[var(--color-text-faint)] mb-2">
+          These tool permissions are auto-approved (e.g., Bash, Write, Edit).
+        </p>
+        <div className="space-y-1 mb-3">
+          {(settings.allowedPermissions ?? []).length === 0 ? (
+            <p className="text-xs text-[var(--color-text-faint)] italic py-2">
+              No permissions configured. Click &quot;Always&quot; on a
+              permission request to add one.
+            </p>
+          ) : (
+            (settings.allowedPermissions ?? []).map((permission) => (
+              <div
+                key={permission}
+                className="flex items-center justify-between gap-2 px-3 py-2 rounded bg-[var(--color-surface-alt)] border border-[var(--color-border)]"
+              >
+                <span className="text-xs font-mono text-[var(--color-text-muted)] truncate flex-1">
+                  {permission}
+                </span>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await window.api.removeAllowedPermission(permission);
+                    setSettings((s) =>
+                      s
+                        ? {
+                            ...s,
+                            allowedPermissions: (
+                              s.allowedPermissions ?? []
+                            ).filter(
+                              (p) =>
+                                p.toLowerCase() !== permission.toLowerCase(),
+                            ),
+                          }
+                        : s,
+                    );
+                  }}
+                  className="text-[10px] px-2 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-border)]"
+                >
+                  Remove
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -128,6 +183,28 @@ export function PreferencesSection({
         }
         label="Compact Mode"
         description="Reduce padding and font sizes for a denser layout"
+      />
+      <Toggle
+        id="settings-hide-system-reminders"
+        checked={settings.hideSystemReminders ?? false}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, hideSystemReminders: !s.hideSystemReminders } : s,
+          )
+        }
+        label="Hide System Reminders"
+        description="Hide <system-reminder> tags in the chat view"
+      />
+      <Toggle
+        id="settings-hide-doc-injections"
+        checked={settings.hideDocInjections ?? false}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, hideDocInjections: !s.hideDocInjections } : s,
+          )
+        }
+        label="Hide Doc Injections"
+        description="Hide repository documentation context in the chat view"
       />
 
       {theme === 'light' && (

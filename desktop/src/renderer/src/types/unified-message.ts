@@ -8,6 +8,7 @@
  * @module unified-message
  */
 
+import { filterMessageText } from '../components/prompt/message-item-helpers';
 import type { ChannelMessage, Attachment } from '../types';
 import type { ConversationMessage } from '../../../preload/index';
 
@@ -291,6 +292,24 @@ function normalizeComparableText(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function buildComparablePrefixes(text: string): string[] {
+  const normalized = normalizeComparableText(text);
+  if (!normalized) return [];
+
+  const prefixes = new Set<string>([normalized]);
+  const punctuationVariants = [':', '-', '>', '>>'];
+
+  for (const marker of punctuationVariants) {
+    const index = normalized.indexOf(marker);
+    if (index > 0) {
+      const suffix = normalizeComparableText(normalized.slice(index + marker.length));
+      if (suffix) prefixes.add(suffix);
+    }
+  }
+
+  return Array.from(prefixes);
+}
+
 function isHumanReadableToolCoveredByChannel(msg: UnifiedMessage): boolean {
   if (msg.source !== 'conversation') {
     return false;
@@ -424,6 +443,30 @@ function pruneCache(
   }
 }
 
+export type HiddenMessageFilterOptions = {
+  hideSystemReminders?: boolean;
+  hideDocInjections?: boolean;
+};
+
+function shouldHideUnifiedMessage(
+  msg: UnifiedMessage,
+  options?: HiddenMessageFilterOptions,
+): boolean {
+  if (!options) return false;
+
+  const filteredText = filterMessageText(
+    msg.text,
+    options.hideSystemReminders ?? false,
+    options.hideDocInjections ?? false,
+  );
+
+  if (filteredText) {
+    return false;
+  }
+
+  return !msg.reasoning && !msg.toolCalls?.length && !msg.attachments?.length;
+}
+
 /**
  * Merge channel messages and conversation messages into a unified timeline.
  *
@@ -451,6 +494,7 @@ export function mergeMessages(
   channelMessages: ChannelMessage[],
   conversationMessages: ConversationMessage[],
   activePromptId?: string | null,
+  hiddenFilterOptions?: HiddenMessageFilterOptions,
 ): UnifiedMessage[] {
   const unified: UnifiedMessage[] = [];
   const validChannelIds = new Set<string>();
@@ -473,7 +517,9 @@ export function mergeMessages(
       continue;
     }
 
-    conversationUserSignatures.add(text);
+    for (const signature of buildComparablePrefixes(text)) {
+      conversationUserSignatures.add(signature);
+    }
   }
 
   // Convert channel messages
@@ -485,14 +531,19 @@ export function mergeMessages(
     if (
       msg.kind === 'outbound' &&
       msg.sent === true &&
-      conversationUserSignatures.has(normalizeComparableText(msg.text))
+      buildComparablePrefixes(msg.text).some((signature) =>
+        conversationUserSignatures.has(signature),
+      )
     ) {
       validChannelIds.add(msg.id);
       continue;
     }
 
     validChannelIds.add(msg.id);
-    unified.push(getCachedChannelUnified(msg, msg.id === activePromptId));
+    const unifiedMessage = getCachedChannelUnified(msg, msg.id === activePromptId);
+    if (!shouldHideUnifiedMessage(unifiedMessage, hiddenFilterOptions)) {
+      unified.push(unifiedMessage);
+    }
   }
 
   // Convert conversation messages
@@ -505,7 +556,9 @@ export function mergeMessages(
     ) {
       continue;
     }
-    unified.push(unifiedMessage);
+    if (!shouldHideUnifiedMessage(unifiedMessage, hiddenFilterOptions)) {
+      unified.push(unifiedMessage);
+    }
   }
 
   pruneCache(channelUnifiedCache, validChannelIds);

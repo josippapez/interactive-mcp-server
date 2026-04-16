@@ -17,6 +17,7 @@ import {
   getAllRegisteredConnections,
   isProviderSessionClaimed,
   getRegisteredConnection,
+  getRegisteredConnectionBySessionId,
 } from './database';
 
 const TEST_DB_PATH = join(app.getPath('userData'), 'conversations.db');
@@ -252,5 +253,68 @@ describe('getRegisteredConnection secondary lookup by connection_id', () => {
     // connectionId is null — cannot look up by it
     const result = getRegisteredConnection('ses_no_transport');
     expect(result).toBeNull();
+  });
+});
+
+describe('upsertRegisteredConnection baseDirectory preservation', () => {
+  beforeEach(async () => {
+    if (existsSync(TEST_DB_PATH)) {
+      unlinkSync(TEST_DB_PATH);
+    }
+    await initDatabase();
+  });
+
+  it('preserves existing baseDirectory when new value is null/undefined', () => {
+    // First upsert sets baseDirectory (like autoRegisterSession does)
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_preserve_dir',
+      providerType: 'opencode',
+      connectionId: 'conn-1',
+      channelName: 'Agent',
+      projectName: 'proj',
+      baseDirectory: '/original/path',
+    });
+
+    const before = getRegisteredConnectionBySessionId('ses_preserve_dir', 'opencode');
+    expect(before?.baseDirectory).toBe('/original/path');
+
+    // Second upsert without baseDirectory (like register_connection without baseDirectory)
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_preserve_dir',
+      providerType: 'opencode',
+      connectionId: 'conn-2',
+      channelName: 'Agent Updated',
+      projectName: 'proj',
+      // baseDirectory is undefined
+    });
+
+    const after = getRegisteredConnectionBySessionId('ses_preserve_dir', 'opencode');
+    expect(after?.baseDirectory).toBe('/original/path'); // Should be preserved
+    expect(after?.channelName).toBe('Agent Updated'); // Other fields should update
+    expect(after?.connectionId).toBe('conn-2');
+  });
+
+  it('updates baseDirectory when new value is provided', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_update_dir',
+      providerType: 'opencode',
+      connectionId: 'conn-1',
+      channelName: 'Agent',
+      projectName: 'proj',
+      baseDirectory: '/original/path',
+    });
+
+    // Second upsert with explicit new baseDirectory
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_update_dir',
+      providerType: 'opencode',
+      connectionId: 'conn-2',
+      channelName: 'Agent',
+      projectName: 'proj',
+      baseDirectory: '/new/path',
+    });
+
+    const result = getRegisteredConnectionBySessionId('ses_update_dir', 'opencode');
+    expect(result?.baseDirectory).toBe('/new/path');
   });
 });

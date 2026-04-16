@@ -5,7 +5,13 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [
+      externalizeDepsPlugin({
+        // Don't externalize the OpenCode SDK - let Vite bundle it
+        // to convert ESM to CJS for Electron's main process
+        exclude: ['@opencode-ai/sdk'],
+      }),
+    ],
   },
   preload: {
     plugins: [externalizeDepsPlugin()],

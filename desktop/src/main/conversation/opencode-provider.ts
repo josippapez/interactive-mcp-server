@@ -6,6 +6,7 @@
  * updates via SSE.
  */
 
+import { getClient } from '../opencode/sdk-client';
 import type {
   ConversationProvider,
   ConversationMessage,
@@ -163,10 +164,12 @@ export class OpenCodeConversationProvider implements ConversationProvider {
 
   async isAvailable(): Promise<boolean> {
     try {
-      const res = await fetch(`http://localhost:${this.port}/global/health`, {
-        signal: AbortSignal.timeout(2000),
+      const client = getClient(this.port);
+      // Use session.list() as a health check since SDK doesn't have global.health
+      const result = await client.session.list(undefined, {
+        signal: AbortSignal.timeout(3000),
       });
-      return res.ok;
+      return !result.error;
     } catch {
       return false;
     }
@@ -176,19 +179,34 @@ export class OpenCodeConversationProvider implements ConversationProvider {
     sessionId: string,
     limit = 100,
   ): Promise<ConversationMessage[]> {
+    console.log(
+      `[opencode-conversation] fetchMessages called: sessionId=${sessionId} limit=${limit}`,
+    );
     try {
-      const url = `http://localhost:${this.port}/session/${encodeURIComponent(sessionId)}/message?limit=${limit}`;
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000) });
+      const client = getClient(this.port);
+      // SDK expects { path: { id }, query: { limit } } structure
+      const result = await client.session.messages({
+        path: { id: sessionId },
+        query: { limit },
+      });
 
-      if (!res.ok) {
+      console.log(
+        `[opencode-conversation] fetchMessages result: error=${JSON.stringify(result.error) ?? 'none'} dataLength=${Array.isArray(result.data) ? result.data.length : 'N/A'}`,
+      );
+
+      if (result.error || !result.data) {
         console.warn(
-          `[opencode-conversation] Failed to fetch messages: ${res.status}`,
+          `[opencode-conversation] Failed to fetch messages: ${JSON.stringify(result.error)}`,
         );
         return [];
       }
 
-      const data = (await res.json()) as OpenCodeMessageResponse[];
-      return data.map((msg) => this.mapMessage(msg));
+      const data = result.data as OpenCodeMessageResponse[];
+      const mapped = data.map((msg) => this.mapMessage(msg));
+      console.log(
+        `[opencode-conversation] Returning ${mapped.length} mapped messages`,
+      );
+      return mapped;
     } catch (err) {
       console.warn('[opencode-conversation] Error fetching messages:', err);
       return [];
@@ -235,47 +253,25 @@ export class OpenCodeConversationProvider implements ConversationProvider {
   // ─── Private Methods ────────────────────────────────────────────────────────
 
   private async connectSse(): Promise<void> {
-    const url = `http://localhost:${this.port}/event`;
     const controller = new AbortController();
     this.sseAbortController = controller;
 
     try {
-      const res = await fetch(url, {
-        headers: { Accept: 'text/event-stream' },
-        signal: controller.signal,
-      });
+      const client = getClient(this.port);
+      const result = await client.event.subscribe(
+        {},
+        { signal: controller.signal },
+      );
 
-      if (!res.ok || !res.body) {
-        throw new Error(`SSE connection failed: ${res.status}`);
+      if (!result.stream) {
+        throw new Error('SSE connection failed: no stream');
       }
 
-      console.log('[opencode-conversation] SSE connected');
+      console.log('[opencode-conversation] SSE connected via SDK');
 
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-
-        for (const line of lines) {
-          if (line.startsWith('data:')) {
-            const jsonStr = line.slice(5).trim();
-            if (jsonStr) {
-              try {
-                const event = JSON.parse(jsonStr);
-                this.handleSseEvent(event);
-              } catch {
-                // Ignore parse errors
-              }
-            }
-          }
-        }
+      for await (const event of result.stream) {
+        if (controller.signal.aborted) break;
+        this.handleSseEvent(event);
       }
     } catch (err) {
       if ((err as Error).name === 'AbortError') {

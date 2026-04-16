@@ -22,7 +22,7 @@ export function unifiedRoleLabel(msg: UnifiedMessage): string {
     if (msg.channelKind === 'outbound') {
       if (msg.role === 'sent') return 'Sent';
       if (msg.role === 'sending') return 'Sending';
-      return 'Failed';
+      return 'Queued';
     }
     if (msg.channelKind === 'agent_message') return 'Agent';
     return 'Agent';
@@ -83,4 +83,43 @@ export function getEffortBadge(variantStr?: string) {
     EFFORT_LEVELS[variantStr.toLowerCase() as keyof typeof EFFORT_LEVELS] ??
     null
   );
+}
+
+const SYSTEM_BLOCK_REGEX =
+  /<(system-reminder|system_notification)>[\s\S]*?<\/\1>/gi;
+
+const DOC_SECTION_REGEXES = [
+  /(?:^|\n)Repository documentation index for [^\n]*:[\s\S]*?(?=\n\n[A-Z<\[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
+  /(?:^|\n)Relevant repository documentation[^\n]*:[\s\S]*?(?=\n\n[A-Z<\[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
+  /(?:^|\n)Top doc matches for "[^"]*":[\s\S]*?(?=\n\n[A-Z<\[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
+  /(?:^|\n)\*\*Context injected \(\d+ docs?\):\*\*[\s\S]*?(?=\n\n[A-Z<\[]|$)/gi,
+  /(?:^|\n)Context injected \(\d+ docs?\):[\s\S]*?(?=\n\n[A-Z<\[]|$)/gi,
+];
+
+/**
+ * Filter message text based on display settings.
+ * @param text - The original message text
+ * @param hideSystemReminders - Whether to hide <system-reminder> tags
+ * @param hideDocInjections - Whether to hide doc injection content
+ * @returns Filtered text with specified content removed
+ */
+export function filterMessageText(
+  text: string,
+  hideSystemReminders: boolean,
+  hideDocInjections: boolean,
+): string {
+  let filtered = text;
+
+  if (hideSystemReminders) {
+    filtered = filtered.replace(SYSTEM_BLOCK_REGEX, '');
+  }
+
+  if (hideDocInjections) {
+    for (const regex of DOC_SECTION_REGEXES) {
+      filtered = filtered.replace(regex, '');
+    }
+  }
+
+  // Clean up extra whitespace from removals
+  return filtered.replace(/\n{3,}/g, '\n\n').trim();
 }

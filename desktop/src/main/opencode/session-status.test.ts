@@ -1,28 +1,31 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fetchSessionStatus } from './session-status';
+import { _setClientFactory, _resetClientFactory } from './sdk-client';
 
 describe('fetchSessionStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.spyOn(global, 'fetch').mockRejectedValue(
-      new Error('Unexpected unmocked fetch call'),
-    );
   });
 
-  it('merges statuses from multiple reachable ports', async () => {
-    vi.spyOn(global, 'fetch')
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          ses_a: { type: 'busy' },
-        }),
-      } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          ses_b: { type: 'idle' },
-        }),
-      } as Response);
+  afterEach(() => {
+    _resetClientFactory();
+  });
+
+  it('returns status from the server', async () => {
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            status: vi.fn().mockResolvedValue({
+              data: {
+                ses_a: { type: 'busy' },
+                ses_b: { type: 'idle' },
+              },
+              error: undefined,
+            }),
+          },
+        }) as never,
+    );
 
     const result = await fetchSessionStatus(5000);
 
@@ -30,5 +33,20 @@ describe('fetchSessionStatus', () => {
       ses_a: { type: 'busy' },
       ses_b: { type: 'idle' },
     });
+  });
+
+  it('returns null when connection fails', async () => {
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            status: vi.fn().mockRejectedValue(new Error('ECONNREFUSED')),
+          },
+        }) as never,
+    );
+
+    const result = await fetchSessionStatus(5000);
+
+    expect(result).toBeNull();
   });
 });

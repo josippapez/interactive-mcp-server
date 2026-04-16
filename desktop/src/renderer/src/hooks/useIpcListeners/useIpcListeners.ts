@@ -97,6 +97,11 @@ export function useIpcListeners({
     usePermissionHandlers(context);
     useSessionChannelHandlers(context);
 
+    // Request the current session tree snapshot from the main process.
+    // This ensures we get the initial state even if the main process emitted
+    // the snapshot before our IPC listeners were registered.
+    void window.api.refreshSessionTree?.();
+
     // No cleanup needed — app-lifetime registrations.
     // listenersRegistered guard prevents double-registration in StrictMode.
   }, [

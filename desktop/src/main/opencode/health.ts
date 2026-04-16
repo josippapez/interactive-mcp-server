@@ -1,26 +1,24 @@
-import {
-  buildOpenCodePortCandidates,
-  fetchJsonFromAllReachable,
-} from './endpoints';
-
 /**
  * Health check for the OpenCode server.
  *
- * Uses the OpenCode HTTP API at GET /global/health to check
- * if the server is running and responsive.
+ * Uses a raw fetch call to check if the server is running and responsive.
+ * The SDK doesn't expose a health endpoint, so we use session.list as a proxy.
  */
+
+import { getClient } from './sdk-client';
 
 export interface OpenCodeHealthStatus {
   available: boolean;
   healthy: boolean;
   version: string | null;
-  activePort?: number | null;
-  reachablePorts?: number[];
   error?: string;
 }
 
 /**
  * Check the health of the OpenCode server.
+ *
+ * Uses session.list() as a health check proxy since the SDK doesn't
+ * expose a dedicated health endpoint.
  *
  * @param openCodePort - The port OpenCode server is running on
  * @returns Health status including availability, health, and version
@@ -28,48 +26,35 @@ export interface OpenCodeHealthStatus {
 export async function checkOpenCodeHealth(
   openCodePort: number,
 ): Promise<OpenCodeHealthStatus> {
-  const ports = buildOpenCodePortCandidates(openCodePort);
-
   try {
-    const results = await fetchJsonFromAllReachable<{
-      healthy?: boolean;
-      version?: string;
-    }>(ports, '/global/health', 3000);
-    if (results.length === 0) {
+    const client = getClient(openCodePort);
+    // Use session.list() as a health check - if we can list sessions,
+    // the server is healthy
+    const response = await client.session.list(undefined, {
+      signal: AbortSignal.timeout(3000),
+    });
+
+    if (response.error) {
       return {
         available: false,
         healthy: false,
         version: null,
-        activePort: null,
-        reachablePorts: [],
-        error: 'Connection failed',
+        error: 'Health check failed: ' + String(response.error),
       };
     }
 
-    const firstHealthy = results.find((result) => result.data.healthy === true);
-    const selected = firstHealthy ?? results[0];
-
+    // Server responded successfully
     return {
       available: true,
-      healthy: selected.data.healthy === true,
-      version:
-        typeof selected.data.version === 'string'
-          ? selected.data.version
-          : null,
-      activePort: selected.port,
-      reachablePorts: results.map((result) => result.port),
+      healthy: true,
+      version: null, // Version not available from session.list
     };
   } catch (err) {
-    // Server not reachable
-    const isTimeout = (err as { name?: string }).name === 'AbortError';
-    const errorMessage = err instanceof Error ? err.message : String(err);
     return {
       available: false,
       healthy: false,
       version: null,
-      error: isTimeout
-        ? 'Connection timeout'
-        : `Connection failed: ${errorMessage}`,
+      error: err instanceof Error ? err.message : 'Connection failed',
     };
   }
 }

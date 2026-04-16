@@ -660,7 +660,7 @@ export function upsertRegisteredConnection(data: {
          connection_id = excluded.connection_id,
          agent_name = excluded.agent_name,
          project_name = excluded.project_name,
-         base_directory = excluded.base_directory,
+         base_directory = COALESCE(excluded.base_directory, base_directory),
          id_file_path = excluded.id_file_path,
          parent_session_id = excluded.parent_session_id,
          updated_at = CURRENT_TIMESTAMP`,

@@ -2,7 +2,7 @@
  * Auto-injects project-specific MCP servers when a session registers with a baseDirectory.
  *
  * This module reads the `.opencode/opencode.jsonc` config from a project directory,
- * parses the MCP definitions, and calls OpenCode's `POST /mcp` API to register each
+ * parses the MCP definitions, and calls OpenCode's SDK to register each
  * project-specific MCP server dynamically.
  *
  * This implements Option B from the MCP-DETECTION.md proposal: automatic MCP injection
@@ -12,6 +12,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { createLogger, type Logger } from '../utils/logger';
+import { getClient } from './sdk-client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -179,7 +180,7 @@ function parseJsonc<T>(
 // ─── MCP Injection ────────────────────────────────────────────────────────────
 
 /**
- * Register a single MCP server with OpenCode via POST /mcp.
+ * Register a single MCP server with OpenCode via SDK.
  */
 async function registerSingleMcp(
   name: string,
@@ -194,36 +195,32 @@ async function registerSingleMcp(
     return { name, status: 'skipped', error: 'disabled' };
   }
 
-  const url = `http://localhost:${openCodePort}/mcp`;
-
   // Build the config payload matching OpenCode's expected format
-  const payload = {
-    name,
-    config: {
-      type: config.type,
-      ...(config.type === 'remote' && config.url ? { url: config.url } : {}),
-      ...(config.type === 'local' && config.command
-        ? { command: config.command }
-        : {}),
-      ...(config.args ? { args: config.args } : {}),
-      ...(config.environment ? { environment: config.environment } : {}),
-      ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
-    },
+  const mcpConfig = {
+    type: config.type,
+    ...(config.type === 'remote' && config.url ? { url: config.url } : {}),
+    ...(config.type === 'local' && config.command
+      ? { command: config.command }
+      : {}),
+    ...(config.args ? { args: config.args } : {}),
+    ...(config.environment ? { environment: config.environment } : {}),
+    ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
   };
 
   logger.info(`Registering MCP: ${name} (type: ${config.type})`);
 
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+    const client = getClient(openCodePort);
+    const response = await client.mcp.add({
+      body: {
+        name,
+        config: mcpConfig,
+      },
       signal: AbortSignal.timeout(timeoutMs),
     });
 
-    if (!res.ok) {
-      const errorText = await res.text().catch(() => '');
-      const error = `OpenCode returned ${res.status} ${res.statusText}: ${errorText}`;
+    if (response.error) {
+      const error = `OpenCode returned error: ${JSON.stringify(response.error)}`;
       logger.warn(`Failed to register MCP ${name}: ${error}`);
       return { name, status: 'error', error };
     }

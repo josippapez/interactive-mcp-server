@@ -13,6 +13,11 @@ const mocks = vi.hoisted(() => ({
   listSkillsAndInstructions: vi.fn(() => []),
   matchSkillsForMessage: vi.fn(() => []),
   buildSkillSuggestionText: vi.fn(() => ''),
+  sdkPermissionReply: vi.fn(),
+  getRegisteredConnectionBySessionId: vi.fn(() => null),
+  upsertRegisteredConnection: vi.fn(),
+  refreshSessionTreeCache: vi.fn(),
+  triggerSessionTreeUpdate: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -56,7 +61,9 @@ vi.mock('../database', () => ({
   deleteSessionChannel: vi.fn(),
   deleteRegisteredConnection: vi.fn(),
   getRegisteredConnection: vi.fn(() => null),
+  getRegisteredConnectionBySessionId: mocks.getRegisteredConnectionBySessionId,
   resetDatabase: vi.fn(),
+  upsertRegisteredConnection: mocks.upsertRegisteredConnection,
   upsertSkillOrInstruction: vi.fn(),
   listSkillsAndInstructions: mocks.listSkillsAndInstructions,
   getSkillOrInstructionByName: vi.fn(() => null),
@@ -101,9 +108,9 @@ vi.mock('../tools/connection-guard', () => ({
 }));
 
 vi.mock('../session/tree-manager', () => ({
-  triggerSessionTreeUpdate: vi.fn(),
+  triggerSessionTreeUpdate: mocks.triggerSessionTreeUpdate,
   tombstoneOpenCodeSession: vi.fn(),
-  refreshSessionTreeCache: vi.fn(),
+  refreshSessionTreeCache: mocks.refreshSessionTreeCache,
 }));
 
 vi.mock('../opencode/server', () => ({
@@ -135,6 +142,14 @@ vi.mock('../backend-adapter', () => ({
 
 vi.mock('../claude-sdk-runtime', () => ({
   injectClaudeMessageForConnection: mocks.injectClaudeMessageForConnection,
+}));
+
+vi.mock('../opencode/sdk-client', () => ({
+  getClient: vi.fn(() => ({
+    permission: {
+      reply: mocks.sdkPermissionReply,
+    },
+  })),
 }));
 
 vi.mock('../session/resolver', () => ({
@@ -208,15 +223,8 @@ function registerHandlersWithBackend(agentBackend: 'opencode' | 'claude_sdk') {
 }
 
 describe('registerIpcHandlers reply-permission', () => {
-  const mockFetch = vi.fn();
-
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.stubGlobal('fetch', mockFetch);
-  });
-
-  afterEach(() => {
-    vi.unstubAllGlobals();
   });
 
   it('registers the reply-permission channel', () => {
@@ -225,8 +233,8 @@ describe('registerIpcHandlers reply-permission', () => {
     expect(channels).toContain('reply-permission');
   });
 
-  it('POSTs to the correct OpenCode permission reply endpoint', async () => {
-    mockFetch.mockResolvedValue({ ok: true });
+  it('calls SDK permission.reply with correct parameters', async () => {
+    mocks.sdkPermissionReply.mockResolvedValue({ data: {}, error: null });
     registerHandlers();
 
     const handler = getRegisteredHandle('reply-permission');
@@ -235,24 +243,17 @@ describe('registerIpcHandlers reply-permission', () => {
       { sessionID: 'sess-abc', requestID: 'req-123', reply: 'once' },
     );
 
-    expect(mockFetch).toHaveBeenCalledWith(
-      'http://localhost:4096/permission/req-123/reply',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({
-          'Content-Type': 'application/json',
-        }),
-        body: JSON.stringify({ reply: 'once' }),
-      }),
-    );
+    expect(mocks.sdkPermissionReply).toHaveBeenCalledWith({
+      requestID: 'req-123',
+      reply: 'once',
+    });
     expect(result).toEqual({ ok: true });
   });
 
-  it('returns ok:false when the fetch response is not ok', async () => {
-    mockFetch.mockResolvedValue({
-      ok: false,
-      status: 404,
-      statusText: 'Not Found',
+  it('returns ok:false when SDK returns an error', async () => {
+    mocks.sdkPermissionReply.mockResolvedValue({
+      data: null,
+      error: 'Permission not found',
     });
     registerHandlers();
 
@@ -262,11 +263,11 @@ describe('registerIpcHandlers reply-permission', () => {
       { sessionID: 'sess-abc', requestID: 'req-123', reply: 'reject' },
     );
 
-    expect(result).toEqual({ ok: false, error: 'HTTP 404 Not Found' });
+    expect(result).toEqual({ ok: false, error: 'Permission not found' });
   });
 
-  it('returns ok:false when fetch throws', async () => {
-    mockFetch.mockRejectedValue(new Error('Network error'));
+  it('returns ok:false when SDK throws', async () => {
+    mocks.sdkPermissionReply.mockRejectedValue(new Error('Network error'));
     registerHandlers();
 
     const handler = getRegisteredHandle('reply-permission');
@@ -552,6 +553,21 @@ describe('registerIpcHandlers create-opencode-session model selection', () => {
       directory: '/repo/path',
     });
 
+    expect(mocks.upsertRegisteredConnection).toHaveBeenCalledWith({
+      providerType: 'opencode',
+      providerSessionId: 'opencode-session-1',
+      connectionId: null,
+      channelName: 'New Session',
+      projectName: 'path',
+      baseDirectory: '/repo/path',
+      parentSessionId: null,
+    });
+
+    expect(mocks.refreshSessionTreeCache).toHaveBeenCalledTimes(1);
+    expect(
+      mocks.upsertRegisteredConnection.mock.invocationCallOrder[0],
+    ).toBeLessThan(mocks.refreshSessionTreeCache.mock.invocationCallOrder[0]);
+
     expect(injectOpenCodeMessage).toHaveBeenCalledWith(
       'opencode-session-1',
       'Use this model for this task',
@@ -573,17 +589,15 @@ describe('registerIpcHandlers refresh-session-tree', () => {
     vi.clearAllMocks();
   });
 
-  it('re-registers MCP across reachable OpenCode ports before refresh', async () => {
+  it('refreshes session tree without re-registering MCP', async () => {
     registerHandlersWithBackend('opencode');
 
     const handler = getRegisteredHandle('refresh-session-tree');
     await handler({});
 
-    expect(registerMcpAcrossReachablePorts).toHaveBeenCalledWith({
-      appPort: 3100,
-      openCodePort: 4096,
-      promptTimeoutSeconds: 30,
-    });
+    // Should NOT re-register MCP on refresh - that causes duplicate direct
+    // connections because OpenCode might reconnect and trigger autoRegister.
+    expect(registerMcpAcrossReachablePorts).not.toHaveBeenCalled();
   });
 });
 

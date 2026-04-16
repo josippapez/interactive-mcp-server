@@ -2,6 +2,8 @@ import React, { memo, useState, useCallback, useMemo } from 'react';
 import type { ToolCallInfo } from '../../types/unified-message';
 import ToolCallView from './ToolCallView';
 
+export const GATHER_CONTEXT_TOOL_NAME = 'Gather Context';
+
 /**
  * Context tool names that should be grouped together.
  * These are typically read-only tools used for gathering information.
@@ -180,6 +182,7 @@ const ContextToolGroup = memo(function ContextToolGroup({
                 className="w-3.5 h-3.5 animate-spin"
                 fill="none"
                 viewBox="0 0 24 24"
+                aria-hidden="true"
               >
                 <circle
                   className="opacity-25"
@@ -202,6 +205,7 @@ const ContextToolGroup = memo(function ContextToolGroup({
                 viewBox="0 0 24 24"
                 stroke="currentColor"
                 strokeWidth="2"
+                aria-hidden="true"
               >
                 <path
                   strokeLinecap="round"
@@ -212,7 +216,7 @@ const ContextToolGroup = memo(function ContextToolGroup({
             )}
           </span>
           <span className="text-[10px] text-[var(--color-text-muted)]">
-            Gathered context
+            {GATHER_CONTEXT_TOOL_NAME}
           </span>
           <span className="text-[9px] text-[var(--color-text-faint)] truncate">
             {summary}

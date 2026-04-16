@@ -7,6 +7,25 @@ import ModelChip from './ModelChip';
 import ModelPopover from './ModelPopover';
 import VariantSelector from './VariantSelector';
 
+const SELECTED_PROJECT_KEY = 'sidebar-selected-project';
+
+function readPersistedProjectSelection(): string {
+  try {
+    const stored = localStorage.getItem(SELECTED_PROJECT_KEY);
+    return stored ? (JSON.parse(stored) as string | null) ?? '' : '';
+  } catch {
+    return '';
+  }
+}
+
+function persistProjectSelection(path: string): void {
+  try {
+    localStorage.setItem(SELECTED_PROJECT_KEY, JSON.stringify(path || null));
+  } catch {
+    // Ignore local storage failures.
+  }
+}
+
 type PinnedProject = {
   path: string;
   name: string;
@@ -54,7 +73,7 @@ function NewSessionInput({
 }: Props): React.ReactElement {
   const [message, setMessage] = useState('');
   const [selectedProject, setSelectedProject] = useState<string>(
-    preSelectedProject ?? '',
+    preSelectedProject ?? readPersistedProjectSelection(),
   );
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [expandedImage, setExpandedImage] = useState<{
@@ -89,19 +108,50 @@ function NewSessionInput({
     removeAttachment,
   } = useAttachments(!isCreating);
 
-  // Auto-select first project if available and none selected
+  // Keep the selected project aligned with the current rail selection.
   useEffect(() => {
-    if (!selectedProject && pinnedProjects.length > 0) {
-      setSelectedProject(pinnedProjects[0].path);
+    if (pinnedProjects.length === 0) {
+      if (selectedProject) {
+        setSelectedProject('');
+      }
+      return;
     }
-  }, [pinnedProjects, selectedProject]);
+
+    const availablePaths = new Set(pinnedProjects.map((project) => project.path));
+    if (selectedProject && availablePaths.has(selectedProject)) {
+      return;
+    }
+
+    const persistedProject = readPersistedProjectSelection();
+    const nextProject =
+      (preSelectedProject && availablePaths.has(preSelectedProject)
+        ? preSelectedProject
+        : null) ||
+      (persistedProject && availablePaths.has(persistedProject)
+        ? persistedProject
+        : null) ||
+      pinnedProjects[0]?.path ||
+      '';
+
+    if (nextProject !== selectedProject) {
+      setSelectedProject(nextProject);
+    }
+  }, [pinnedProjects, preSelectedProject, selectedProject]);
 
   // Sync selectedProject when preSelectedProject changes (e.g., from sidebar "New Session" button)
   useEffect(() => {
     if (preSelectedProject) {
       setSelectedProject(preSelectedProject);
+      persistProjectSelection(preSelectedProject);
     }
   }, [preSelectedProject]);
+
+  useEffect(() => {
+    if (!selectedProject) {
+      return;
+    }
+    persistProjectSelection(selectedProject);
+  }, [selectedProject]);
 
   // Auto-resize textarea when message changes
   const resizeTextarea = useCallback(() => {
@@ -190,6 +240,7 @@ function NewSessionInput({
       const newPath = await onAddProject();
       if (newPath) {
         setSelectedProject(newPath);
+        persistProjectSelection(newPath);
       }
     } finally {
       setIsAddingProject(false);
@@ -203,6 +254,7 @@ function NewSessionInput({
         handleAddNewProject();
       } else {
         setSelectedProject(value);
+        persistProjectSelection(value);
       }
     },
     [handleAddNewProject],

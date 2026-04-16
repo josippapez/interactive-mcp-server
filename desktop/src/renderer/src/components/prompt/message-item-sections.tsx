@@ -2,7 +2,10 @@ import React, { memo, useMemo } from 'react';
 import type { ToolCallInfo } from '../../types/unified-message';
 import MarkdownContent from '../MarkdownContent';
 import ToolCallView from './ToolCallView';
-import ContextToolGroup, { groupContextTools } from './ContextToolGroup';
+import ContextToolGroup, {
+  GATHER_CONTEXT_TOOL_NAME,
+  groupContextTools,
+} from './ContextToolGroup';
 
 export const ReasoningSection = memo(function ReasoningSection({
   reasoning,
@@ -63,13 +66,17 @@ export const ToolCallsSection = memo(function ToolCallsSection({
 
   return (
     <div className="mt-1.5 space-y-0.5">
-      {toolGroups.map((group, idx) => {
+      {toolGroups.map((group) => {
         if (group.type === 'context' && group.tools) {
+          const isExcluded = toolAutoExpandExclusions.some(
+            (entry) =>
+              entry.toLowerCase() === GATHER_CONTEXT_TOOL_NAME.toLowerCase(),
+          );
           return (
             <ContextToolGroup
-              key={`context-group-${idx}`}
+              key={`context-group-${group.tools.map((tool) => tool.id).join('-')}`}
               tools={group.tools}
-              forceExpanded={expandAllTools}
+              forceExpanded={Boolean(expandAllTools && !isExcluded)}
               onNavigateToSession={onNavigateToSession}
             />
           );
