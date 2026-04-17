@@ -372,6 +372,11 @@ export default function ChatHistoryView({
         data-scrollable="true"
         onScroll={handleScroll}
         onWheel={handleWheel}
+        role="log"
+        aria-label="Conversation history"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-atomic="false"
       >
         {/* "Load older messages" indicator at top of scroll area */}
         {hasOlderMessages && (

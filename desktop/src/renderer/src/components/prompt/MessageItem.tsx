@@ -86,7 +86,11 @@ const MessageItem = memo(function MessageItem({
   }
 
   return (
-    <div className="flex items-start gap-2">
+    <article
+      className="flex items-start gap-2"
+      aria-label={`${roleLabel} message`}
+      aria-current={isActive ? 'true' : undefined}
+    >
       <div className="sticky top-2 basis-20 min-w-0 max-w-[6.5rem] shrink self-start text-right">
         {agentBadgeLabel && (
           <span className="mb-1 inline-flex max-w-full items-center gap-1 rounded border border-purple-500/30 bg-purple-500/20 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
@@ -281,7 +285,7 @@ const MessageItem = memo(function MessageItem({
           <MessageTimestamp timestamp={new Date(msg.timestamp)} />
         </span>
       </div>
-    </div>
+    </article>
   );
 });
 
