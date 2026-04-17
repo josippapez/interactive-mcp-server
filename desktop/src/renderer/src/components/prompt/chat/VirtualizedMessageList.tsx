@@ -8,31 +8,6 @@ import {
   useSeenMessageIds,
 } from './virtualized-message-list-helpers';
 
-/**
- * Compute a lightweight signature covering all messages' dynamic content.
- * This ensures we detect changes in tool outputs, statuses, and text
- * regardless of which message position they occur at.
- */
-function computeMessagesContentSignature(messages: UnifiedMessage[]): string {
-  let hash = 0;
-  for (const msg of messages) {
-    // Include message id and text length (not full text to keep it fast)
-    hash = (hash * 31 + msg.id.length) | 0;
-    hash = (hash * 31 + msg.text.length) | 0;
-    hash = (hash * 31 + (msg.reasoning?.length ?? 0)) | 0;
-
-    // Include tool call statuses and output lengths
-    if (msg.toolCalls) {
-      for (const tc of msg.toolCalls) {
-        hash = (hash * 31 + tc.id.length) | 0;
-        hash = (hash * 31 + (tc.status?.length ?? 0)) | 0;
-        hash = (hash * 31 + (tc.output?.length ?? 0)) | 0;
-      }
-    }
-  }
-  return `${messages.length}:${hash}`;
-}
-
 interface VirtualizedMessageListProps {
   /** Messages to render */
   messages: UnifiedMessage[];
@@ -76,7 +51,16 @@ interface VirtualizedMessageListProps {
    * source of truth with a raw `scrollEl.scrollTo`).
    */
   onAutoFollowContent?: () => void;
-  /** Estimated size of each message row in pixels */
+  /**
+   * Estimated size of each message row in pixels.
+   *
+   * Defaults to 240 — empirically the median message row in this app is
+   * 300–1000px (text + reasoning + tool cards). The previous default of 100
+   * caused TanStack Virtual to under-allocate the total size, triggering
+   * aggressive resize / re-measure passes on initial render and on scroll
+   * (visible as layout thrash + jank). 240 overshoots short messages slightly
+   * but dramatically reduces re-measure churn for typical chat history.
+   */
   estimateSize?: number;
   /** Number of items to render outside the visible area */
   overscan?: number;
@@ -99,7 +83,7 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
   showThinking = false,
   followOutput = true,
   onAutoFollowContent,
-  estimateSize = 100,
+  estimateSize = 240,
   overscan = 5,
   matchedMessageIds = [],
   activeSearchMatchId = null,
@@ -123,14 +107,6 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
       return `${msg.id}-${compactionFlag}${reasoningFlag}`;
     },
   });
-
-  // Track content signature across ALL messages (not just the last one)
-  // This ensures we detect changes in tool outputs, thinking sections, etc.
-  // regardless of which message they occur in
-  const contentSignature = useMemo(
-    () => computeMessagesContentSignature(messages),
-    [messages],
-  );
 
   // Ref to track the content container for MutationObserver
   const contentElRef = useRef<HTMLDivElement | null>(null);
@@ -161,19 +137,18 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
     scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'auto' });
   }, [scrollContainerRef]);
 
-  // Scroll to bottom when content signature changes (new messages or updates)
-  // but only if parent says we're still following output.
-  useEffect(() => {
-    if (!followOutput || messages.length === 0) return;
-    // Reference contentSignature to satisfy exhaustive-deps and document intent
-    void contentSignature;
-    followToBottom();
-  }, [followOutput, contentSignature, messages.length, followToBottom]);
-
-  // MutationObserver to catch DOM-level height changes (expand/collapse, lazy
-  // content). Tool cards expanding, thinking sections toggling, etc. don't
-  // trigger `contentSignature` changes, but they DO change scrollHeight.
-  // Only scrolls when parent says `followOutput` is still true.
+  // Auto-scroll driver: MutationObserver on the content container is the
+  // single source of truth for "content changed, maybe scroll". It fires on:
+  //   - new messages being mounted (childList)
+  //   - text streaming into existing messages (characterData via subtree)
+  //   - tool cards / thinking sections expanding (subtree childList)
+  //   - virtualized rows coming into view and growing (subtree)
+  //
+  // We intentionally do NOT also compute a content hash over `messages` and
+  // drive a second effect off it — that was the previous design, and the
+  // two drivers raced (signature-effect scrolled before the DOM had
+  // actually grown, causing sporadic "stuck 1 row above bottom" bugs) and
+  // doubled the work per streaming tick.
   useEffect(() => {
     const contentEl = contentElRef.current;
     if (!contentEl) return;
@@ -190,11 +165,12 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
       });
     });
 
-    // Only watch for structural changes (childList + subtree).
-    // Attribute changes are too noisy and usually don't affect height.
+    // Watch structural changes + text streaming. Attribute changes are too
+    // noisy (class toggles, aria updates) and usually don't affect height.
     mutationObserver.observe(contentEl, {
       childList: true,
       subtree: true,
+      characterData: true,
     });
 
     return () => {
