@@ -38,7 +38,7 @@ import type { BrowserWindow } from 'electron';
 import {
   getAllRegisteredConnections,
   getRegisteredConnectionBySessionId,
-  updateConnectionProviderSession,
+  updateConnectionId,
   upsertRegisteredConnection,
   isProviderSessionClaimed,
   type RegisteredConnection,
@@ -444,8 +444,11 @@ function tryAutoBindSession(info: SessionInfo): void {
     `[session-tree] auto-bind: connection=${bestConnId} → session=${info.id} (parentID=${info.parentID})`,
   );
 
-  // Use updateConnectionProviderSession to properly handle the composite key migration
-  updateConnectionProviderSession(bestConnId, info.id, 'opencode');
+  // Phase 4: the SSE auto-register path has already created the row with
+  // connection_id = NULL. Bind the waiting transport by setting connection_id
+  // on the existing row (never by recreating it, and never by setting
+  // connection_id = provider_session_id).
+  updateConnectionId(info.id, bestConnId, 'opencode');
   _pendingConnections.delete(bestConnId);
 }
 
@@ -534,10 +537,16 @@ function autoRegisterSession(
   log.info(
     `upserting registered connection for session ${info.id} with baseDirectory=${effectiveBaseDirectory ?? '(none)'}`,
   );
+  // Phase 4 invariant: SSE is the sole creator of OpenCode rows. Insert with
+  // connection_id = NULL — the MCP transport id is bound later (either by
+  // `autoRegisterDefaultConnection` in mcp-server.ts on MCP initialize, or by
+  // `tryAutoBindSession` below when a pending transport was registered within
+  // AUTO_BIND_WINDOW_MS). A non-null value here would violate the invariant
+  // `connection_id != provider_session_id` for OpenCode rows.
   upsertRegisteredConnection({
     providerSessionId: info.id,
     providerType: 'opencode',
-    connectionId: info.id,
+    connectionId: null,
     channelName: info.title ?? `Session ${info.id.slice(0, 8)}`,
     projectName: 'OpenCode',
     baseDirectory: effectiveBaseDirectory,
@@ -618,12 +627,14 @@ async function hydrateTaskSubagentSession(
     `hydrateTaskSubagentSession: added ${childSessionId} to cache (size=${_sessionCache.size})`,
   );
 
-  tryAutoBindSession(info);
-
+  // Phase 4: auto-register first so the row exists, then auto-bind the pending
+  // transport (if any) onto the now-existing row via updateConnectionId.
   const autoRegisterEnabled = _getAutoRegisterSubagents?.() ?? true;
   if (autoRegisterEnabled) {
     autoRegisterSession(info, { scheduleSnapshot: false });
   }
+
+  tryAutoBindSession(info);
 
   emitOptimisticChildSession(info);
   scheduleSnapshot();
@@ -654,14 +665,16 @@ function handleSyncEvent(envelope: SyncEventEnvelope): void {
       `session ${sessionId} added to cache, cache size=${_sessionCache.size}`,
     );
 
-    tryAutoBindSession(merged);
-
     const autoRegisterEnabled = _getAutoRegisterSubagents?.() ?? true;
     log.info(`autoRegisterSubagents enabled: ${autoRegisterEnabled}`);
 
+    // Phase 4: auto-register first so the row exists with connection_id=NULL,
+    // then auto-bind the pending transport (if any) onto it.
     if (autoRegisterEnabled) {
       autoRegisterSession(merged, { scheduleSnapshot: false });
     }
+
+    tryAutoBindSession(merged);
 
     emitOptimisticChildSession(merged);
     scheduleSnapshot();

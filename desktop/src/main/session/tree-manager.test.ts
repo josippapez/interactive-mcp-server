@@ -250,8 +250,10 @@ describe('session-tree-manager', () => {
 
       expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
         expect.objectContaining({
-          // Phase 1: sessionId used directly as connectionId (no auto- prefix)
-          connectionId: 'child-ses-001',
+          // Phase 4: SSE creates the row with connection_id = NULL; the MCP
+          // transport id is bound later (invariant: connection_id must never
+          // equal provider_session_id for OpenCode rows).
+          connectionId: null,
           providerSessionId: 'child-ses-001',
         }),
       );
@@ -330,8 +332,10 @@ describe('session-tree-manager', () => {
 
       expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
         expect.objectContaining({
-          // Phase 1: sessionId used directly as connectionId (no auto- prefix)
-          connectionId: 'root-ses-100',
+          // Phase 4: SSE creates the row with connection_id = NULL; the MCP
+          // transport id is bound later (invariant: connection_id must never
+          // equal provider_session_id for OpenCode rows).
+          connectionId: null,
           providerSessionId: 'root-ses-100',
         }),
       );
@@ -437,14 +441,14 @@ describe('session-tree-manager', () => {
 
       expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
         expect.objectContaining({
-          // Phase 1: sessionId used directly as connectionId (no auto- prefix)
-          connectionId: 'rest-ses-001',
+          // Phase 4: SSE/REST seeding inserts NULL connection_id; MCP initialize binds later
+          connectionId: null,
           providerSessionId: 'rest-ses-001',
         }),
       );
       expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
         expect.objectContaining({
-          connectionId: 'rest-ses-002',
+          connectionId: null,
           providerSessionId: 'rest-ses-002',
         }),
       );
@@ -600,7 +604,7 @@ describe('session-tree-manager', () => {
       // Should use parent's baseDirectory instead of fallback
       expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
         expect.objectContaining({
-          connectionId: 'child-ses-inherit',
+          connectionId: null,
           providerSessionId: 'child-ses-inherit',
           baseDirectory: '/home/user/actual-project',
           parentSessionId: 'root-ses-parent',
@@ -1065,7 +1069,7 @@ describe('session-tree-manager', () => {
       expect(mockUpsertRegisteredConnection).toHaveBeenCalledWith(
         expect.objectContaining({
           providerSessionId: 'child-ses-task',
-          connectionId: 'child-ses-task',
+          connectionId: null,
           parentSessionId: 'root-ses-task-parent',
         }),
       );
