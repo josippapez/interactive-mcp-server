@@ -10,6 +10,8 @@ import {
   ServerSection,
   SessionSection,
 } from './settings/SettingsSectionBasics';
+import { AgentsSection } from './settings/SettingsSectionAgents';
+import { OpenCodeConfigSection } from './settings/SettingsSectionOpenCode';
 import { SECTIONS } from './settings/settings-types';
 import { useSettingsState } from './settings/useSettingsState';
 
@@ -77,6 +79,10 @@ export default function SettingsView(): React.ReactElement {
             setSettings={state.setSettings}
           />
         );
+      case 'agents':
+        return <AgentsSection />;
+      case 'opencode-config':
+        return <OpenCodeConfigSection />;
       case 'advanced':
         return (
           <AdvancedSection

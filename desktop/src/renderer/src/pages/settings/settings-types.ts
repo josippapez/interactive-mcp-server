@@ -30,6 +30,8 @@ export type SettingsSection =
   | 'documentation'
   | 'permissions'
   | 'preferences'
+  | 'agents'
+  | 'opencode-config'
   | 'advanced';
 
 export const PREDEFINED_TOOLS = [
@@ -55,5 +57,7 @@ export const SECTIONS: { id: SettingsSection; label: string; icon: string }[] =
     { id: 'documentation', label: 'Documentation', icon: '📄' },
     { id: 'permissions', label: 'Permissions', icon: '🔒' },
     { id: 'preferences', label: 'Preferences', icon: '🔔' },
+    { id: 'agents', label: 'Agents', icon: '🤖' },
+    { id: 'opencode-config', label: 'OpenCode Config', icon: '📝' },
     { id: 'advanced', label: 'Advanced', icon: '⚡' },
   ];

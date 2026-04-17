@@ -2,6 +2,8 @@ import { memo, useState, useCallback, useRef, useEffect } from 'react';
 import type { Attachment } from '../../types';
 import { useAttachments } from '../../hooks/useAttachments';
 import { useProviders, type Model } from '../../hooks/useProviders';
+import AgentChip from './AgentChip';
+import AgentPopover from './AgentPopover';
 import AttachmentPreview from './AttachmentPreview';
 import ModelChip from './ModelChip';
 import ModelPopover from './ModelPopover';
@@ -89,6 +91,10 @@ function NewSessionInput({
   const [selectedVariant, setSelectedVariant] = useState<string | undefined>(
     undefined,
   );
+
+  // Agent selector state
+  const [agentPopoverOpen, setAgentPopoverOpen] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const {
     providers,
     models,
@@ -200,6 +206,7 @@ function NewSessionInput({
       selectedProject,
       attachments.length > 0 ? attachments : undefined,
       modelSelection,
+      selectedAgent ?? undefined,
     );
     setMessage('');
     setAttachments([]);
@@ -210,6 +217,7 @@ function NewSessionInput({
     selectedProject,
     selectedModel,
     selectedVariant,
+    selectedAgent,
     onCreateSession,
     setAttachments,
   ]);
@@ -353,6 +361,15 @@ function NewSessionInput({
             onSelectModel={handleModelSelect}
           />
 
+          {/* Agent popover - positioned above the agent chip */}
+          <AgentPopover
+            open={agentPopoverOpen}
+            onOpenChange={setAgentPopoverOpen}
+            selectedAgent={selectedAgent}
+            onSelect={(agent) => setSelectedAgent(agent)}
+            baseDirectory={selectedProject || undefined}
+          />
+
           {/* Footer with model selector, hint, and submit button */}
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-t border-[var(--color-border)]">
             <div className="flex items-center gap-2 min-w-0 flex-1 pr-2">
@@ -375,6 +392,12 @@ function NewSessionInput({
                       disabled={isCreating}
                     />
                   )}
+                <AgentChip
+                  selectedAgent={selectedAgent}
+                  isOpen={agentPopoverOpen}
+                  onClick={() => setAgentPopoverOpen((prev) => !prev)}
+                  disabled={isCreating}
+                />
               </div>
 
               {/* Separator */}
