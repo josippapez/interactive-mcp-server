@@ -89,15 +89,28 @@ const SYSTEM_BLOCK_REGEX =
   /<(system-reminder|system_notification)>[\s\S]*?<\/\1>/gi;
 
 const DOC_SECTION_REGEXES = [
-  /(?:^|\n)Repository documentation index for [^\n]*:[\s\S]*?(?=\n\n[A-Z<\[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
-  /(?:^|\n)Relevant repository documentation[^\n]*:[\s\S]*?(?=\n\n[A-Z<\[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
-  /(?:^|\n)Top doc matches for "[^"]*":[\s\S]*?(?=\n\n[A-Z<\[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
-  /(?:^|\n)\*\*Context injected \(\d+ docs?\):\*\*[\s\S]*?(?=\n\n[A-Z<\[]|$)/gi,
-  /(?:^|\n)Context injected \(\d+ docs?\):[\s\S]*?(?=\n\n[A-Z<\[]|$)/gi,
+  /(?:^|\n)Repository documentation index for [^\n]*:[\s\S]*?(?=\n\n[A-Z<[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
+  /(?:^|\n)Relevant repository documentation[^\n]*:[\s\S]*?(?=\n\n[A-Z<[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
+  /(?:^|\n)Top doc matches for "[^"]*":[\s\S]*?(?=\n\n[A-Z<[]|\n\nUse the Read tool|\n\nUse the find_repo_docs tool|$)/gi,
+  /(?:^|\n)\*\*Context injected \(\d+ docs?\):\*\*[\s\S]*?(?=\n\n[A-Z<[]|$)/gi,
+  /(?:^|\n)Context injected \(\d+ docs?\):[\s\S]*?(?=\n\n[A-Z<[]|$)/gi,
 ];
 
 /**
  * Filter message text based on display settings.
+ *
+ * Hot path: this runs on every streamed token batch for every visible
+ * assistant message, so we fast-path the (extremely common) cases where
+ * no filtering is needed:
+ *   - no flags enabled
+ *   - empty/whitespace-only text
+ *   - text too short to possibly contain any of the filtered patterns
+ *
+ * Only fall through to the (N × regex) scan when at least one flag is
+ * on AND the text is long enough for a match to be possible. The
+ * shortest filterable marker is `<system-reminder></system-reminder>`
+ * (~35 chars) so we use 32 as a conservative lower bound.
+ *
  * @param text - The original message text
  * @param hideSystemReminders - Whether to hide <system-reminder> tags
  * @param hideDocInjections - Whether to hide doc injection content
@@ -108,13 +121,28 @@ export function filterMessageText(
   hideSystemReminders: boolean,
   hideDocInjections: boolean,
 ): string {
+  if (!text) return '';
+  if (!hideSystemReminders && !hideDocInjections) return text;
+  if (text.length < 32) return text;
+
+  // Cheap content probe before running the expensive regex sweep:
+  // if neither marker substring is present we can return the text as-is.
+  const maybeSystem = hideSystemReminders && text.includes('<system');
+  const maybeDoc =
+    hideDocInjections &&
+    (text.includes('Repository documentation') ||
+      text.includes('Relevant repository documentation') ||
+      text.includes('Top doc matches') ||
+      text.includes('Context injected'));
+  if (!maybeSystem && !maybeDoc) return text;
+
   let filtered = text;
 
-  if (hideSystemReminders) {
+  if (maybeSystem) {
     filtered = filtered.replace(SYSTEM_BLOCK_REGEX, '');
   }
 
-  if (hideDocInjections) {
+  if (maybeDoc) {
     for (const regex of DOC_SECTION_REGEXES) {
       filtered = filtered.replace(regex, '');
     }
