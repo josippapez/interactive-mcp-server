@@ -345,5 +345,53 @@ export function forwardSessionEvent(
     return true;
   }
 
+  if (type === 'session.idle') {
+    const sessionID = getStringProperty(properties, ['sessionID']);
+    if (!sessionID) return true;
+
+    sseLog.debug(`session.idle sessionID=${sessionID}`);
+    sendToWindow(win, 'opencode-session-idle', { sessionID });
+    return true;
+  }
+
+  if (type === 'session.error') {
+    const sessionID = getStringProperty(properties, ['sessionID']);
+    // `error` is a discriminated union in the v2 SDK; pass through opaquely so
+    // the renderer can decide how to render each error subtype.
+    const error = properties['error'] as
+      | { name?: string; data?: Record<string, unknown> }
+      | undefined;
+
+    sseLog.info(
+      `session.error sessionID=${sessionID ?? '(none)'} error=${error?.name ?? '(unknown)'}`,
+    );
+    sendToWindow(win, 'opencode-session-error', {
+      sessionID: sessionID ?? null,
+      error: error ?? null,
+    });
+    return true;
+  }
+
+  return false;
+}
+
+export function forwardFileEvent(
+  type: string,
+  properties: Record<string, unknown>,
+  directory: string | undefined,
+  win: BrowserWindow,
+): boolean {
+  if (type === 'file.edited') {
+    const file = getStringProperty(properties, ['file']);
+    if (!file) return true;
+
+    sseLog.debug(`file.edited directory=${directory ?? '(none)'} file=${file}`);
+    sendToWindow(win, 'opencode-file-edited', {
+      directory: directory ?? null,
+      file,
+    });
+    return true;
+  }
+
   return false;
 }

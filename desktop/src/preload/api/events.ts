@@ -442,5 +442,80 @@ export function createEventsApi() {
         ipcRenderer.removeListener('session-compacted', handler);
       };
     },
+
+    /**
+     * Listen for `session.idle` events from the OpenCode SSE bus.
+     *
+     * Signals that a session has finished processing its current turn.
+     * Complements `onOpenCodeSessionStatus` (which also reports idle/busy)
+     * but fires once per transition rather than on every status change.
+     *
+     * Returns a cleanup function; call it in the effect's cleanup phase.
+     */
+    onOpenCodeSessionIdle: (
+      callback: (data: { sessionID: string }) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionID: string },
+      ) => callback(data);
+      ipcRenderer.on('opencode-session-idle', handler);
+      return () => {
+        ipcRenderer.removeListener('opencode-session-idle', handler);
+      };
+    },
+
+    /**
+     * Listen for `session.error` events from the OpenCode SSE bus.
+     *
+     * The `error` payload is a discriminated union in the v2 SDK
+     * (ProviderAuthError, ContextOverflowError, ApiError, etc.). It is
+     * forwarded opaquely so the renderer can branch on `error.name` and
+     * read subtype-specific fields from `error.data` without this layer
+     * needing to know every variant.
+     *
+     * Returns a cleanup function; call it in the effect's cleanup phase.
+     */
+    onOpenCodeSessionError: (
+      callback: (data: {
+        sessionID: string | null;
+        error: { name?: string; data?: Record<string, unknown> } | null;
+      }) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionID: string | null;
+          error: { name?: string; data?: Record<string, unknown> } | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('opencode-session-error', handler);
+      return () => {
+        ipcRenderer.removeListener('opencode-session-error', handler);
+      };
+    },
+
+    /**
+     * Listen for `file.edited` events from the OpenCode SSE bus.
+     *
+     * Fires when OpenCode (or a tool acting through it) edits a file on
+     * disk. `directory` is the project directory the event was emitted
+     * under (per the v2 `GlobalEvent` envelope) and may be null for
+     * global events.
+     *
+     * Returns a cleanup function; call it in the effect's cleanup phase.
+     */
+    onOpenCodeFileEdited: (
+      callback: (data: { directory: string | null; file: string }) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { directory: string | null; file: string },
+      ) => callback(data);
+      ipcRenderer.on('opencode-file-edited', handler);
+      return () => {
+        ipcRenderer.removeListener('opencode-file-edited', handler);
+      };
+    },
   };
 }

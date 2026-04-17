@@ -7,6 +7,9 @@
  *   permission.asked     → 'permission-asked'  (look up connectionId from sessionID)
  *   permission.replied   → 'permission-replied'
  *   session.status       → 'opencode-session-status' (real-time session status)
+ *   session.idle         → 'opencode-session-idle' (turn finished, no UI consumer yet)
+ *   session.error        → 'opencode-session-error' (ProviderAuth/ContextOverflow/etc.)
+ *   file.edited          → 'opencode-file-edited' (file changed on disk in directory)
  *   todo.updated         → 'opencode-todo-updated' (real-time todo changes)
  *   vcs.branch.updated   → 'opencode-vcs-updated' (real-time VCS branch changes)
  *

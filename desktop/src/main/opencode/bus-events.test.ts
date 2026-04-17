@@ -5,6 +5,7 @@
  *  - permission.asked event → emits permission-asked IPC with connectionId
  *  - permission.replied event → emits permission-replied IPC
  *  - session.status event → emits session-status-update IPC (passthrough)
+ *  - session.idle / session.error / file.edited → new foundation passthroughs
  *  - Unknown event type → no IPC emitted
  */
 
@@ -465,6 +466,120 @@ describe('opencode-bus-events — unknown event', () => {
     handleBusEvent({}, win);
     handleBusEvent({ payload: {} }, win);
     handleBusEvent(null, win);
+
+    expect(mocks.webContentsSend).not.toHaveBeenCalled();
+  });
+});
+
+// ─── session.idle / session.error / file.edited ───────────────────────────────
+
+describe('opencode-bus-events — session.idle', () => {
+  it('emits opencode-session-idle with sessionID', () => {
+    const win = makeWindow();
+
+    handleBusEvent(
+      {
+        payload: {
+          type: 'session.idle',
+          properties: { sessionID: 'ses_abc' },
+        },
+      },
+      win,
+    );
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith(
+      'opencode-session-idle',
+      { sessionID: 'ses_abc' },
+    );
+  });
+
+  it('ignores session.idle without sessionID', () => {
+    const win = makeWindow();
+
+    handleBusEvent({ payload: { type: 'session.idle', properties: {} } }, win);
+
+    expect(mocks.webContentsSend).not.toHaveBeenCalled();
+  });
+});
+
+describe('opencode-bus-events — session.error', () => {
+  it('emits opencode-session-error with sessionID and error passthrough', () => {
+    const win = makeWindow();
+
+    const error = {
+      name: 'ProviderAuthError',
+      data: { providerID: 'anthropic', message: 'bad key' },
+    };
+
+    handleBusEvent(
+      {
+        payload: {
+          type: 'session.error',
+          properties: { sessionID: 'ses_err', error },
+        },
+      },
+      win,
+    );
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith(
+      'opencode-session-error',
+      { sessionID: 'ses_err', error },
+    );
+  });
+
+  it('emits with nulls when sessionID and error are missing', () => {
+    const win = makeWindow();
+
+    handleBusEvent({ payload: { type: 'session.error', properties: {} } }, win);
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith(
+      'opencode-session-error',
+      { sessionID: null, error: null },
+    );
+  });
+});
+
+describe('opencode-bus-events — file.edited', () => {
+  it('emits opencode-file-edited with directory from envelope', () => {
+    const win = makeWindow();
+
+    handleBusEvent(
+      {
+        directory: '/Users/me/project',
+        payload: {
+          type: 'file.edited',
+          properties: { file: 'src/index.ts' },
+        },
+      },
+      win,
+    );
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('opencode-file-edited', {
+      directory: '/Users/me/project',
+      file: 'src/index.ts',
+    });
+  });
+
+  it('emits with directory=null when envelope has no directory', () => {
+    const win = makeWindow();
+
+    handleBusEvent(
+      {
+        payload: { type: 'file.edited', properties: { file: 'a.txt' } },
+      },
+      win,
+    );
+
+    expect(mocks.webContentsSend).toHaveBeenCalledWith('opencode-file-edited', {
+      directory: null,
+      file: 'a.txt',
+    });
+  });
+
+  it('ignores file.edited without a file property', () => {
+    const win = makeWindow();
+
+    handleBusEvent({ payload: { type: 'file.edited', properties: {} } }, win);
 
     expect(mocks.webContentsSend).not.toHaveBeenCalled();
   });

@@ -1,6 +1,7 @@
 import type { BrowserWindow } from 'electron';
 import {
   forwardConversationEvent,
+  forwardFileEvent,
   forwardPermissionEvent,
   forwardQuestionEvent,
   forwardSessionEvent,
@@ -41,7 +42,9 @@ export function handleBusEvent(
   const { type, properties } = payload;
   sseLog.debug(`Event received: ${type}`);
 
-  if (forwardPermissionEvent(type, properties, env.directory, win, dependencies)) {
+  if (
+    forwardPermissionEvent(type, properties, env.directory, win, dependencies)
+  ) {
     return;
   }
 
@@ -54,6 +57,10 @@ export function handleBusEvent(
   }
 
   if (forwardConversationEvent(type, properties, win)) {
+    return;
+  }
+
+  if (forwardFileEvent(type, properties, env.directory, win)) {
     return;
   }
 }
