@@ -11,6 +11,7 @@ import {
 } from './connection-guard';
 import { resolveProviderSessionId } from '../session/resolver';
 import { claimContextInjections } from '../database';
+import { saveAttachment, resolveAttachmentPath } from '../attachment-store';
 
 export function registerRequestUserInput(
   server: McpServer,
@@ -226,11 +227,25 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
       if (attachments?.length) {
         for (const att of attachments) {
           if (att.mimeType.startsWith('image/')) {
-            content.push({
-              type: 'image' as const,
-              data: att.data,
-              mimeType: att.mimeType,
-            });
+            // Mirror the CLI package: persist the image to disk and emit a
+            // path reference instead of inlining base64. Keeps MCP responses
+            // small and lets agents decide whether to read the file.
+            const filename = saveAttachment(att.data, att.mimeType);
+            const absPath = filename ? resolveAttachmentPath(filename) : null;
+            if (absPath) {
+              content.push({
+                type: 'text' as const,
+                text: `[Image file: ${absPath}]`,
+              });
+            } else {
+              // Fallback: if disk write failed, preserve the image inline so
+              // the agent still receives the attachment.
+              content.push({
+                type: 'image' as const,
+                data: att.data,
+                mimeType: att.mimeType,
+              });
+            }
           } else {
             content.push({
               type: 'text' as const,

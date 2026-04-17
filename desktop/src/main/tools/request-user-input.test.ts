@@ -169,4 +169,84 @@ describe('request_user_input tool', () => {
     expect(result.isError).toBeFalsy();
     expect(mockRequireProviderSessionId).toHaveBeenCalled();
   });
+
+  describe('image attachment handling', () => {
+    it('emits image attachments as text "[Image file: <abs-path>]" instead of inline base64', async () => {
+      mockRequireProviderSessionId.mockReturnValue(null);
+
+      // 1×1 transparent PNG
+      const tinyPngBase64 =
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+
+      const promptFn = vi.fn().mockResolvedValue({
+        answer: 'See image',
+        attachments: [
+          {
+            data: tinyPngBase64,
+            mimeType: 'image/png',
+            name: 'screenshot.png',
+            size: 70,
+          },
+        ],
+      });
+
+      const handler = getToolHandler('conn-img', promptFn, false);
+      const result = await handler(
+        {
+          projectName: 'proj',
+          message: 'Screenshot?',
+          baseDirectory: '/repo',
+        },
+        { signal: mockSignal },
+      );
+
+      // No base64 image content part should be emitted.
+      const imageParts = result.content.filter((p) => p.type === 'image');
+      expect(imageParts).toHaveLength(0);
+
+      // Exactly one "[Image file: …]" text part, pointing at an absolute path
+      // inside the attachments directory, with a .png extension.
+      const imageTextParts = result.content.filter(
+        (p) =>
+          p.type === 'text' &&
+          typeof p.text === 'string' &&
+          p.text.startsWith('[Image file: '),
+      );
+      expect(imageTextParts).toHaveLength(1);
+      const text = imageTextParts[0].text as string;
+      expect(text).toMatch(/^\[Image file: \/.+\.png\]$/);
+    });
+
+    it('still inlines non-image text attachments as "--- File: … ---"', async () => {
+      mockRequireProviderSessionId.mockReturnValue(null);
+
+      const promptFn = vi.fn().mockResolvedValue({
+        answer: 'See file',
+        attachments: [
+          {
+            data: 'hello world',
+            mimeType: 'text/plain',
+            name: 'notes.txt',
+            size: 11,
+          },
+        ],
+      });
+
+      const handler = getToolHandler('conn-txt', promptFn, false);
+      const result = await handler(
+        {
+          projectName: 'proj',
+          message: 'File?',
+          baseDirectory: '/repo',
+        },
+        { signal: mockSignal },
+      );
+
+      const fileText = result.content.find(
+        (p) => p.type === 'text' && p.text?.startsWith('--- File: notes.txt'),
+      );
+      expect(fileText).toBeTruthy();
+      expect(fileText?.text).toContain('hello world');
+    });
+  });
 });
