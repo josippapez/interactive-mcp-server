@@ -28,6 +28,7 @@ import {
   registerConversationHandlers,
   updateConversationPort,
 } from './conversation';
+import { shutdown as shutdownDocIndexer } from './docs/indexer';
 
 let mainWindow: BrowserWindow | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -243,13 +244,31 @@ app.on('window-all-closed', () => {
   }
 });
 
-app.on('before-quit', () => {
+let quitCleanupStarted = false;
+
+app.on('before-quit', (event) => {
+  // Synchronous cleanup is safe to call every time (idempotent).
   isQuitting = true;
   stopSessionTreeManager();
   stopBusEventSubscription();
   stopConversationProviders();
   stopOpenCodeServer();
   stopMcpServer();
+
+  // Async cleanup: defer the real quit until the embedding worker has
+  // fully terminated. Re-entrancy guard ensures we only kick this off once;
+  // the second before-quit (after app.quit()) falls through cleanly.
+  if (quitCleanupStarted) return;
+  quitCleanupStarted = true;
+  event.preventDefault();
+
+  void shutdownDocIndexer()
+    .catch((err) => {
+      console.error('[main] doc indexer shutdown failed:', err);
+    })
+    .finally(() => {
+      app.quit();
+    });
 });
 
 // Export for IPC access

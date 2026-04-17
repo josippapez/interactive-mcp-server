@@ -145,14 +145,14 @@ export function isReady(): boolean {
   return _workerReady;
 }
 
-/** Shut down the worker thread. */
-export function shutdown(): void {
-  if (_worker) {
-    _worker.terminate();
-    _worker = null;
-    _workerReady = false;
-    _pending.clear();
-  }
+/** Shut down the worker thread. Resolves after the worker fully terminates. */
+export async function shutdown(): Promise<void> {
+  if (!_worker) return;
+  const worker = _worker;
+  _worker = null;
+  _workerReady = false;
+  _pending.clear();
+  await worker.terminate();
 }
 
 /** Embed text via the worker. Returns null if worker is not ready. */
