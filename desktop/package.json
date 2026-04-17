@@ -20,7 +20,7 @@
     "copy:opencode:linux": "node scripts/copy-opencode.js --platform linux --arch x64",
     "package": "npm run copy:opencode && electron-vite build && electron-builder --config",
     "package:mac": "npm run copy:opencode:mac && electron-vite build && electron-builder --mac --config",
-    "package:mac-arm64": "npm run copy:opencode:mac-arm64 && electron-vite build && electron-builder --mac --arm64 --config",
+    "package:mac-arm64": "npm run copy:opencode:mac-arm64 && ENABLE_BYTECODE=1 electron-vite build && electron-builder --mac --arm64 --config",
     "package:mac-x64": "npm run copy:opencode:mac-x64 && electron-vite build && electron-builder --mac --x64 --config",
     "package:win": "npm run copy:opencode:win && electron-vite build && electron-builder --win --config",
     "package:linux": "npm run copy:opencode:linux && electron-vite build && electron-builder --linux --config",
