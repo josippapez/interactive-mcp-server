@@ -16,6 +16,17 @@ import {
 } from '../../lib/diff-parser';
 import { gsap, useGSAP, prefersReducedMotion } from '../../lib/gsap';
 
+/**
+ * Module-level set of tool call IDs that have already played their
+ * enter animation. Virtualization can unmount a row when it scrolls out
+ * of view and remount when it returns — without this guard the fade-in
+ * would re-play every time, which is visually wrong and causes
+ * unnecessary GSAP work. The set grows monotonically for the lifetime
+ * of the page; tool IDs are UUIDs so collisions across sessions are
+ * not a concern, and page reload clears it naturally.
+ */
+const animatedToolIds = new Set<string>();
+
 function resolveToolCard(
   tool: ToolCallInfo,
   forceExpanded: boolean,
@@ -74,6 +85,10 @@ const ToolCallView = memo(function ToolCallView({
   useGSAP(
     () => {
       if (prefersReducedMotion()) return;
+      // Skip the fade if this exact tool call has already animated once.
+      // Guards against virtualization remount replaying the enter animation.
+      if (animatedToolIds.has(tool.id)) return;
+      animatedToolIds.add(tool.id);
       gsap.from(containerRef.current, {
         opacity: 0,
         y: 5,
@@ -81,7 +96,7 @@ const ToolCallView = memo(function ToolCallView({
         ease: 'power2.out',
       });
     },
-    { scope: containerRef },
+    { scope: containerRef, dependencies: [tool.id] },
   );
 
   return (
