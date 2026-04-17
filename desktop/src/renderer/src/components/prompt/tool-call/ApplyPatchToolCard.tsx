@@ -1,4 +1,5 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
+import { createElement } from 'react-syntax-highlighter';
 import { SyntaxHighlighter, oneDark, oneLight } from '@/lib/syntax-highlighter';
 import type { ToolCallInfo } from '../../../types/unified-message';
 import { useTheme } from '../../../ThemeContext';
@@ -12,6 +13,10 @@ type PatchLine = {
   oldLineNumber: number | null;
   newLineNumber: number | null;
 };
+
+// react-syntax-highlighter passes each code line to the `renderer` prop as
+// a hast-like node. We treat it opaquely and let `createElement` render it.
+type HastRow = Parameters<typeof createElement>[0]['node'];
 
 export type ApplyPatchFileDiff = {
   id: string;
@@ -343,14 +348,12 @@ function groupLinesForSideBySide(
   return grouped;
 }
 
-const PatchDiffLine = memo(function PatchDiffLine({
+const DecoratedPatchRow = memo(function DecoratedPatchRow({
   line,
-  language,
-  isDark,
+  highlightedContent,
 }: {
   line: PatchLine;
-  language: string;
-  isDark: boolean;
+  highlightedContent: React.ReactNode;
 }): React.ReactElement {
   const backgroundClass =
     line.type === 'addition'
@@ -389,41 +392,26 @@ const PatchDiffLine = memo(function PatchDiffLine({
       <span className={`select-none text-center ${signColorClass}`}>
         {sign}
       </span>
-      <SyntaxHighlighter
-        language={language}
-        style={isDark ? oneDark : oneLight}
-        customStyle={{
-          margin: 0,
-          padding: '0 0.375rem',
-          background: 'transparent',
-          fontSize: '10px',
-          lineHeight: '1.4',
-          overflow: 'visible',
-        }}
-        codeTagProps={{
-          style: {
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          },
-        }}
-        PreTag="span"
+      <span
+        className="min-w-0 px-1.5 whitespace-pre-wrap break-words"
+        style={{ fontSize: '10px', lineHeight: 1.4 }}
       >
-        {line.content || ' '}
-      </SyntaxHighlighter>
+        {highlightedContent}
+      </span>
     </div>
   );
 });
 
-const SideBySidePatchLine = memo(function SideBySidePatchLine({
+const DecoratedSideBySidePatchRow = memo(function DecoratedSideBySidePatchRow({
   left,
   right,
-  language,
-  isDark,
+  leftHighlighted,
+  rightHighlighted,
 }: {
   left: PatchLine | null;
   right: PatchLine | null;
-  language: string;
-  isDark: boolean;
+  leftHighlighted: React.ReactNode | null;
+  rightHighlighted: React.ReactNode | null;
 }): React.ReactElement {
   const leftBg = left?.type === 'removal' ? 'bg-[var(--color-error)]/10' : '';
   const rightBg =
@@ -443,27 +431,12 @@ const SideBySidePatchLine = memo(function SideBySidePatchLine({
           {left?.type === 'removal' ? '-' : ' '}
         </span>
         {left ? (
-          <SyntaxHighlighter
-            language={language}
-            style={isDark ? oneDark : oneLight}
-            customStyle={{
-              margin: 0,
-              padding: '0 0.375rem',
-              background: 'transparent',
-              fontSize: '10px',
-              lineHeight: '1.4',
-              overflow: 'visible',
-            }}
-            codeTagProps={{
-              style: {
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-              },
-            }}
-            PreTag="span"
+          <span
+            className="min-w-0 px-1.5 whitespace-pre-wrap break-words"
+            style={{ fontSize: '10px', lineHeight: 1.4 }}
           >
-            {left.content || ' '}
-          </SyntaxHighlighter>
+            {leftHighlighted}
+          </span>
         ) : (
           <span className="px-1.5 text-[var(--color-text-faint)]"> </span>
         )}
@@ -479,27 +452,12 @@ const SideBySidePatchLine = memo(function SideBySidePatchLine({
           {right?.type === 'addition' ? '+' : ' '}
         </span>
         {right ? (
-          <SyntaxHighlighter
-            language={language}
-            style={isDark ? oneDark : oneLight}
-            customStyle={{
-              margin: 0,
-              padding: '0 0.375rem',
-              background: 'transparent',
-              fontSize: '10px',
-              lineHeight: '1.4',
-              overflow: 'visible',
-            }}
-            codeTagProps={{
-              style: {
-                whiteSpace: 'pre-wrap',
-                wordBreak: 'break-word',
-              },
-            }}
-            PreTag="span"
+          <span
+            className="min-w-0 px-1.5 whitespace-pre-wrap break-words"
+            style={{ fontSize: '10px', lineHeight: 1.4 }}
           >
-            {right.content || ' '}
-          </SyntaxHighlighter>
+            {rightHighlighted}
+          </span>
         ) : (
           <span className="px-1.5 text-[var(--color-text-faint)]"> </span>
         )}
@@ -541,6 +499,29 @@ const FileDiffBody = memo(function FileDiffBody({
     return () => observer.disconnect();
   }, []);
 
+  // Concatenate all line contents so Prism tokenizes the file in one pass via
+  // the SyntaxHighlighter's custom `renderer` prop. Empty lines are replaced
+  // with a single space to prevent the tokenizer from collapsing them.
+  const source = useMemo(
+    () =>
+      file.lines
+        .map((line) => (line.content.length > 0 ? line.content : ' '))
+        .join('\n'),
+    [file.lines],
+  );
+
+  // Populated by the <SyntaxHighlighter renderer={...}> below. We reference
+  // the same Map from both unified and side-by-side renderers so the single
+  // tokenization pass serves whichever layout is active.
+  const highlightedByLine = useMemo(
+    () => new Map<PatchLine, React.ReactNode>(),
+    // Rebuild map when line identities change. file.lines is stable per
+    // parsed patch (memoized upstream), so the dependency is cheap.
+    [file.lines],
+  );
+
+  const style = isDark ? oneDark : oneLight;
+
   return (
     <div
       ref={containerRef}
@@ -553,36 +534,87 @@ const FileDiffBody = memo(function FileDiffBody({
 
       <div className="max-h-64 overflow-auto" data-scrollable="true">
         {file.lines.length > 0 ? (
-          useSideBySide ? (
-            <div>
-              {sideBySideLines.map((line, idx) => (
-                <SideBySidePatchLine
-                  key={`${file.id}-sbs-${idx}`}
-                  left={line.left}
-                  right={line.right}
-                  language={language}
-                  isDark={isDark}
-                />
-              ))}
-            </div>
-          ) : (
-            <div>
-              <div className="grid grid-cols-[52px_52px_18px_minmax(0,1fr)] text-[9px] uppercase tracking-wide text-[var(--color-text-faint)] bg-[var(--color-surface)]/30 border-b border-[var(--color-border)]/40">
-                <span className="px-1 py-0.5 text-right">Old</span>
-                <span className="px-1 py-0.5 text-right">New</span>
-                <span className="px-1 py-0.5 text-center"> </span>
-                <span className="px-1 py-0.5">Content</span>
-              </div>
-              {file.lines.map((line, idx) => (
-                <PatchDiffLine
-                  key={`${file.id}-${line.type}-${line.oldLineNumber ?? 'n'}-${line.newLineNumber ?? 'n'}-${idx}`}
-                  line={line}
-                  language={language}
-                  isDark={isDark}
-                />
-              ))}
-            </div>
-          )
+          <SyntaxHighlighter
+            language={language}
+            style={style}
+            wrapLines
+            PreTag={React.Fragment}
+            CodeTag={React.Fragment}
+            customStyle={{ margin: 0, padding: 0, background: 'transparent' }}
+            renderer={({
+              rows,
+              stylesheet,
+              useInlineStyles,
+            }: {
+              rows: HastRow[];
+              stylesheet: Record<string, React.CSSProperties>;
+              useInlineStyles: boolean;
+            }) => {
+              // Pair each tokenized row with its PatchLine object by array
+              // index so both unified and side-by-side renderers can look up
+              // pre-highlighted content without re-tokenizing.
+              highlightedByLine.clear();
+              rows.forEach((row, idx) => {
+                const line = file.lines[idx];
+                if (!line) return;
+                highlightedByLine.set(
+                  line,
+                  createElement({
+                    node: row,
+                    stylesheet,
+                    useInlineStyles,
+                    key: `code-${idx}`,
+                  }),
+                );
+              });
+
+              if (useSideBySide) {
+                return (
+                  <div>
+                    {sideBySideLines.map((pair, idx) => (
+                      <DecoratedSideBySidePatchRow
+                        key={`${file.id}-sbs-${idx}`}
+                        left={pair.left}
+                        right={pair.right}
+                        leftHighlighted={
+                          pair.left
+                            ? (highlightedByLine.get(pair.left) ?? null)
+                            : null
+                        }
+                        rightHighlighted={
+                          pair.right
+                            ? (highlightedByLine.get(pair.right) ?? null)
+                            : null
+                        }
+                      />
+                    ))}
+                  </div>
+                );
+              }
+
+              return (
+                <div>
+                  <div className="grid grid-cols-[52px_52px_18px_minmax(0,1fr)] text-[9px] uppercase tracking-wide text-[var(--color-text-faint)] bg-[var(--color-surface)]/30 border-b border-[var(--color-border)]/40">
+                    <span className="px-1 py-0.5 text-right">Old</span>
+                    <span className="px-1 py-0.5 text-right">New</span>
+                    <span className="px-1 py-0.5 text-center"> </span>
+                    <span className="px-1 py-0.5">Content</span>
+                  </div>
+                  {file.lines.map((line, idx) => (
+                    <DecoratedPatchRow
+                      key={`${file.id}-${line.type}-${line.oldLineNumber ?? 'n'}-${line.newLineNumber ?? 'n'}-${idx}`}
+                      line={line}
+                      highlightedContent={
+                        highlightedByLine.get(line) ?? line.content
+                      }
+                    />
+                  ))}
+                </div>
+              );
+            }}
+          >
+            {source}
+          </SyntaxHighlighter>
         ) : (
           <div className="px-2 py-2 text-[10px] font-mono text-[var(--color-text-faint)]">
             No diff hunks available.
