@@ -1,10 +1,19 @@
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, lazy, Suspense } from 'react';
 import PromptView from './pages/PromptView';
-import SettingsView from './pages/SettingsView';
-import SkillsView from './pages/SkillsView';
+
+const SettingsView = lazy(() => import('./pages/SettingsView'));
+const SkillsView = lazy(() => import('./pages/SkillsView'));
+const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'));
+
+function LazyViewFallback(): React.ReactElement {
+  return (
+    <div className="flex h-full w-full items-center justify-center text-[var(--color-text-faint)] text-xs">
+      Loading&#x2026;
+    </div>
+  );
+}
 import StatusBar from './components/StatusBar';
 import ShortcutHelpModal from './components/ShortcutHelpModal';
-import QuickSwitcher from './components/QuickSwitcher';
 import PermissionToast from './components/PermissionToast';
 import { TooltipProvider } from './components/ui/tooltip';
 import { useConnections } from './hooks/useConnections';
@@ -19,11 +28,6 @@ export default function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<Tab>('prompt');
   const { settings } = useSettingsSync();
   const compactMode = settings.compactMode;
-
-  // Ref for triggering skill creation from QuickSwitcher
-  const skillsViewRef = useRef<{
-    createNew: (type: 'skill' | 'instruction') => void;
-  } | null>(null);
 
   const switchToPrompt = useCallback(() => setActiveTab('prompt'), []);
 
@@ -69,14 +73,6 @@ export default function App(): React.ReactElement {
 
   const handleRefreshSessions = useCallback(() => {
     void window.api.refreshSessionTree();
-  }, []);
-
-  const handleCreateSkill = useCallback(() => {
-    skillsViewRef.current?.createNew('skill');
-  }, []);
-
-  const handleCreateInstruction = useCallback(() => {
-    skillsViewRef.current?.createNew('instruction');
   }, []);
 
   const handleNavigate = useCallback(
@@ -190,8 +186,16 @@ export default function App(): React.ReactElement {
               onRejectQuestion={handleRejectQuestion}
             />
           </div>
-          {activeTab === 'skills' && <SkillsView />}
-          {activeTab === 'settings' && <SettingsView />}
+          {activeTab === 'skills' && (
+            <Suspense fallback={<LazyViewFallback />}>
+              <SkillsView />
+            </Suspense>
+          )}
+          {activeTab === 'settings' && (
+            <Suspense fallback={<LazyViewFallback />}>
+              <SettingsView />
+            </Suspense>
+          )}
         </main>
 
         <StatusBar
@@ -200,15 +204,17 @@ export default function App(): React.ReactElement {
           onShowShortcuts={openShortcuts}
         />
         <ShortcutHelpModal open={showShortcuts} onClose={closeShortcuts} />
-        <QuickSwitcher
-          open={showQuickSwitcher}
-          onClose={closeQuickSwitcher}
-          onSelectSession={handleSelectSession}
-          onNavigate={handleNavigate}
-          onRefreshSessions={handleRefreshSessions}
-          onCreateSkill={handleCreateSkill}
-          onCreateInstruction={handleCreateInstruction}
-        />
+        {showQuickSwitcher && (
+          <Suspense fallback={null}>
+            <QuickSwitcher
+              open={showQuickSwitcher}
+              onClose={closeQuickSwitcher}
+              onSelectSession={handleSelectSession}
+              onNavigate={handleNavigate}
+              onRefreshSessions={handleRefreshSessions}
+            />
+          </Suspense>
+        )}
         <PermissionToast
           connections={connections}
           onReplyPermission={handleReplyPermission}

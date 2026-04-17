@@ -363,8 +363,7 @@ The root component. Owns tab state, compact mode, and orchestrates the top-level
 - Derives `hasAnyPrompt` by scanning `connections.values()` for any entry where `hasPendingPrompt === true`.
 - Shows the pulsing badge on Prompts tab only when there's a pending prompt on a channel that is NOT currently visible.
 - Renders the Prompts tab wrapped in a div that uses `className="hidden"` when inactive rather than unmounting, preserving all hook and IPC state.
-- `SkillsView` and `SettingsView` are conditionally rendered (`{activeTab === 'skills' && <SkillsView />}` / `{activeTab === 'settings' && <SettingsView />}`), so they mount/unmount on tab switch.
-- Passes a `skillsViewRef` to allow `QuickSwitcher` to trigger skill/instruction creation.
+- `SkillsView` and `SettingsView` are lazy-loaded via `React.lazy` + `<Suspense>` and conditionally rendered (`{activeTab === 'skills' && <SkillsView />}` / `{activeTab === 'settings' && <SettingsView />}`), so they mount/unmount on tab switch. `QuickSwitcher` is similarly lazy-loaded and only rendered when `showQuickSwitcher` is true.
 - Applies `data-compact="true"` attribute when compact mode is enabled.
 - When clicking the Prompts tab, also calls `jumpToFirstPendingPrompt()` to auto-select a session with a pending prompt.
 
@@ -795,16 +794,14 @@ Modal overlay for quick navigation and actions. Opened via `⌘K` / `Ctrl+K`. Wr
 
 #### Props
 
-| Prop                  | Type                                                | Description                                     |
-| --------------------- | --------------------------------------------------- | ----------------------------------------------- |
-| `open`                | `boolean`                                           | Controls visibility.                            |
-| `onClose`             | `() => void`                                        | Called on backdrop click or ESC.                |
-| `connections`         | `Map<string, SessionNode>`                          | All session nodes for building session actions. |
-| `onSelectSession`     | `(sessionId: string) => void`                       | Called when a session is selected.              |
-| `onNavigate`          | `(tab: 'prompt' \| 'skills' \| 'settings') => void` | Called for tab navigation.                      |
-| `onRefreshSessions`   | `() => void`                                        | Called for refresh action.                      |
-| `onCreateSkill`       | `() => void`                                        | Called for new skill action.                    |
-| `onCreateInstruction` | `() => void`                                        | Called for new instruction action.              |
+| Prop                | Type                                                | Description                                     |
+| ------------------- | --------------------------------------------------- | ----------------------------------------------- |
+| `open`              | `boolean`                                           | Controls visibility.                            |
+| `onClose`           | `() => void`                                        | Called on backdrop click or ESC.                |
+| `connections`       | `Map<string, SessionNode>`                          | All session nodes for building session actions. |
+| `onSelectSession`   | `(sessionId: string) => void`                       | Called when a session is selected.              |
+| `onNavigate`        | `(tab: 'prompt' \| 'skills' \| 'settings') => void` | Called for tab navigation.                      |
+| `onRefreshSessions` | `() => void`                                        | Called for refresh action.                      |
 
 #### Features
 
@@ -832,11 +829,9 @@ Modal overlay for quick navigation and actions. Opened via `⌘K` / `Ctrl+K`. Wr
 
 ##### Action Items
 
-| ID                     | Label            | Description              |
-| ---------------------- | ---------------- | ------------------------ |
-| action-new-skill       | New Skill        | Create a new skill       |
-| action-new-instruction | New Instruction  | Create a new instruction |
-| action-refresh         | Refresh Sessions | Reload session list      |
+| ID             | Label            | Description         |
+| -------------- | ---------------- | ------------------- |
+| action-refresh | Refresh Sessions | Reload session list |
 
 #### Keyboard Navigation
 

@@ -22,8 +22,6 @@ type Props = {
   onSelectSession: (sessionId: string) => void;
   onNavigate: (tab: 'prompt' | 'skills' | 'settings') => void;
   onRefreshSessions: () => void;
-  onCreateSkill: () => void;
-  onCreateInstruction: () => void;
 };
 
 const QuickSwitcher = memo(function QuickSwitcher({
@@ -32,8 +30,6 @@ const QuickSwitcher = memo(function QuickSwitcher({
   onSelectSession,
   onNavigate,
   onRefreshSessions,
-  onCreateSkill,
-  onCreateInstruction,
 }: Props): React.ReactElement {
   const sessionActions = useSessionGraphSelector(
     (state) => state.quickSwitcherActions,
@@ -55,26 +51,11 @@ const QuickSwitcher = memo(function QuickSwitcher({
           break;
         case 'action':
           if (action.id === 'action-refresh') onRefreshSessions();
-          else if (action.id === 'action-new-skill') {
-            onNavigate('skills');
-            // Small delay to let the navigation complete
-            setTimeout(() => onCreateSkill(), 100);
-          } else if (action.id === 'action-new-instruction') {
-            onNavigate('skills');
-            setTimeout(() => onCreateInstruction(), 100);
-          }
           break;
       }
       onClose();
     },
-    [
-      onSelectSession,
-      onNavigate,
-      onRefreshSessions,
-      onCreateSkill,
-      onCreateInstruction,
-      onClose,
-    ],
+    [onSelectSession, onNavigate, onRefreshSessions, onClose],
   );
 
   return (

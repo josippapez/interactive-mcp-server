@@ -47,20 +47,6 @@ export const NAVIGATION_ITEMS: QuickSwitcherAction[] = [
 
 export const ACTION_ITEMS: QuickSwitcherAction[] = [
   {
-    id: 'action-new-skill',
-    type: 'action',
-    label: 'New Skill',
-    description: 'Create a new skill',
-    icon: '+',
-  },
-  {
-    id: 'action-new-instruction',
-    type: 'action',
-    label: 'New Instruction',
-    description: 'Create a new instruction',
-    icon: '+',
-  },
-  {
     id: 'action-refresh',
     type: 'action',
     label: 'Refresh Sessions',
