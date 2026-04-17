@@ -1,9 +1,5 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import {
-  oneDark,
-  oneLight,
-} from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { SyntaxHighlighter, oneDark, oneLight } from '@/lib/syntax-highlighter';
 import type { ToolCallInfo } from '../../../types/unified-message';
 import { useTheme } from '../../../ThemeContext';
 
