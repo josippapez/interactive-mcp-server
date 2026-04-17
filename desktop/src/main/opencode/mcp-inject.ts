@@ -10,8 +10,10 @@
  */
 
 import { existsSync, readFileSync } from 'fs';
-import { join } from 'path';
 import { createLogger, type Logger } from '../utils/logger';
+import { stripJsonComments } from '../utils/json-parse';
+import { errorMessage } from '../utils/errors';
+import { getProjectOpencodeConfigPath } from '../utils/opencode-paths';
 import { getClient } from './sdk-client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -75,75 +77,10 @@ export interface McpInjectionOptions {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const CONFIG_PATH = '.opencode/opencode.jsonc';
 const DEFAULT_TIMEOUT_MS = 5000;
 const MCP_INJECTION_CONCURRENCY = 3;
 
 // ─── JSONC Parser ─────────────────────────────────────────────────────────────
-
-/**
- * Strip single-line `// ...` and block `/* ... * /` comments from JSONC.
- * Handles comments outside of strings only.
- */
-function stripJsonComments(text: string): string {
-  let result = '';
-  let inString = false;
-  let escaped = false;
-  let i = 0;
-
-  while (i < text.length) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (escaped) {
-      result += ch;
-      escaped = false;
-      i++;
-      continue;
-    }
-
-    if (ch === '\\' && inString) {
-      result += ch;
-      escaped = true;
-      i++;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      result += ch;
-      i++;
-      continue;
-    }
-
-    if (!inString) {
-      // Single-line comment
-      if (ch === '/' && next === '/') {
-        // Skip to end of line
-        while (i < text.length && text[i] !== '\n') {
-          i++;
-        }
-        continue;
-      }
-
-      // Block comment
-      if (ch === '/' && next === '*') {
-        i += 2;
-        // Skip to end of block comment
-        while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) {
-          i++;
-        }
-        i += 2; // Skip closing */
-        continue;
-      }
-    }
-
-    result += ch;
-    i++;
-  }
-
-  return result;
-}
 
 /**
  * Parse a JSONC file (JSON with comments).
@@ -161,7 +98,7 @@ function parseJsonc<T>(
   try {
     raw = readFileSync(filePath, 'utf-8');
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     logger.error(`Failed to read ${filePath}: ${msg}`);
     return { error: `read-error: ${msg}` };
   }
@@ -172,7 +109,7 @@ function parseJsonc<T>(
     const data = JSON.parse(stripped) as T;
     return { data };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     logger.error(`Failed to parse ${filePath}: ${msg}`);
     return { error: `parse-error: ${msg}` };
   }
@@ -237,7 +174,7 @@ async function registerSingleMcp(
     logger.info(`Successfully registered MCP: ${name}`);
     return { name, status: 'injected' };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     logger.error(`Failed to register MCP ${name}: ${error}`);
     return { name, status: 'error', error };
   }
@@ -293,7 +230,7 @@ export async function injectProjectMcps(
     logger = createLogger('mcp-inject'),
   } = options;
 
-  const configPath = join(baseDirectory, CONFIG_PATH);
+  const configPath = getProjectOpencodeConfigPath(baseDirectory, 'jsonc');
 
   logger.info(`Checking for project MCPs in: ${configPath}`);
 

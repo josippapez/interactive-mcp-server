@@ -19,7 +19,6 @@
  * Frontmatter is optional; missing fields get sensible defaults.
  */
 
-import { homedir } from 'os';
 import { join, resolve, sep } from 'path';
 import {
   promises as fsp,
@@ -28,6 +27,7 @@ import {
   existsSync,
   statSync,
 } from 'fs';
+import { getGlobalAgentDir, getProjectAgentDir } from '../utils/opencode-paths';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -76,9 +76,8 @@ interface AgentDirs {
 }
 
 const defaultDirs: AgentDirs = {
-  globalAgentDir: () => join(homedir(), '.config', 'opencode', 'agent'),
-  projectAgentDir: (baseDirectory: string) =>
-    join(baseDirectory, '.opencode', 'agent'),
+  globalAgentDir: () => getGlobalAgentDir(),
+  projectAgentDir: (baseDirectory: string) => getProjectAgentDir(baseDirectory),
 };
 
 let activeDirs: AgentDirs = defaultDirs;

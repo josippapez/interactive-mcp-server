@@ -7,29 +7,25 @@
  * always copying the on-disk managed value back over whatever the caller
  * supplied.
  *
- * Comment handling: the reader strips `//` line comments and `/* ... * /`
+ * Comment handling: the reader strips `//` line comments and `/* ... *\/`
  * block comments outside of strings. It does NOT understand `//` appearing
  * inside a JSON string value (same limitation documented in config-sync.ts).
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { dirname, join } from 'path';
-import { homedir } from 'os';
+import { dirname } from 'path';
+import { stripJsonComments } from '../utils/json-parse';
+import { errorMessage, errWithCause } from '../utils/errors';
+import {
+  getGlobalOpencodeDir,
+  getGlobalOpencodeConfigPath,
+  getProjectOpencodeConfigPath,
+} from '../utils/opencode-paths';
 
 // ─── Paths ────────────────────────────────────────────────────────────────────
 
-export const OPENCODE_GLOBAL_CONFIG_DIR = join(
-  homedir(),
-  '.config',
-  'opencode',
-);
-export const OPENCODE_GLOBAL_CONFIG_FILE = join(
-  OPENCODE_GLOBAL_CONFIG_DIR,
-  'opencode.json',
-);
-
-const PROJECT_CONFIG_JSONC = '.opencode/opencode.jsonc';
-const PROJECT_CONFIG_JSON = '.opencode/opencode.json';
+export const OPENCODE_GLOBAL_CONFIG_DIR = getGlobalOpencodeDir();
+export const OPENCODE_GLOBAL_CONFIG_FILE = getGlobalOpencodeConfigPath();
 
 // ─── Managed keys ─────────────────────────────────────────────────────────────
 
@@ -52,63 +48,6 @@ export interface WriteConfigResult {
 }
 
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
-
-/**
- * Strip `//` line comments and `/* ... * /` block comments from a JSON-with-
- * comments string. Respects string literals (does not strip inside a string).
- */
-function stripJsonComments(text: string): string {
-  let result = '';
-  let inString = false;
-  let escaped = false;
-  let i = 0;
-
-  while (i < text.length) {
-    const ch = text[i];
-    const next = text[i + 1];
-
-    if (escaped) {
-      result += ch;
-      escaped = false;
-      i++;
-      continue;
-    }
-
-    if (ch === '\\' && inString) {
-      result += ch;
-      escaped = true;
-      i++;
-      continue;
-    }
-
-    if (ch === '"') {
-      inString = !inString;
-      result += ch;
-      i++;
-      continue;
-    }
-
-    if (!inString) {
-      if (ch === '/' && next === '/') {
-        while (i < text.length && text[i] !== '\n') i++;
-        continue;
-      }
-      if (ch === '/' && next === '*') {
-        i += 2;
-        while (i < text.length && !(text[i] === '*' && text[i + 1] === '/')) {
-          i++;
-        }
-        i += 2;
-        continue;
-      }
-    }
-
-    result += ch;
-    i++;
-  }
-
-  return result;
-}
 
 function getPath(
   obj: Record<string, unknown> | null | undefined,
@@ -201,8 +140,7 @@ export function readConfigFile(filePath: string): ReadConfigResult {
   try {
     raw = readFileSync(filePath, 'utf-8');
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to read ${filePath}: ${msg}`, { cause: err });
+    throw errWithCause(`Failed to read ${filePath}: ${errorMessage(err)}`, err);
   }
 
   const stripped = stripJsonComments(raw);
@@ -210,8 +148,10 @@ export function readConfigFile(filePath: string): ReadConfigResult {
     const parsed = JSON.parse(stripped) as Record<string, unknown>;
     return { exists: true, config: parsed, filePath };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse ${filePath}: ${msg}`, { cause: err });
+    throw errWithCause(
+      `Failed to parse ${filePath}: ${errorMessage(err)}`,
+      err,
+    );
   }
 }
 
@@ -232,8 +172,10 @@ export function writeConfigFile(
   try {
     writeFileSync(filePath, serialized, 'utf-8');
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to write ${filePath}: ${msg}`, { cause: err });
+    throw errWithCause(
+      `Failed to write ${filePath}: ${errorMessage(err)}`,
+      err,
+    );
   }
   return { filePath };
 }
@@ -263,11 +205,11 @@ export function writeGlobalConfig(
 // ─── Public API: project config ──────────────────────────────────────────────
 
 function projectJsoncPath(baseDirectory: string): string {
-  return join(baseDirectory, PROJECT_CONFIG_JSONC);
+  return getProjectOpencodeConfigPath(baseDirectory, 'jsonc');
 }
 
 function projectJsonPath(baseDirectory: string): string {
-  return join(baseDirectory, PROJECT_CONFIG_JSON);
+  return getProjectOpencodeConfigPath(baseDirectory, 'json');
 }
 
 /**

@@ -15,11 +15,10 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { join } from 'path';
-import { homedir } from 'os';
+import { stripJsonComments } from '../utils/json-parse';
+import { getGlobalOpencodeConfigPath } from '../utils/opencode-paths';
 
-const OPENCODE_CONFIG_DIR = join(homedir(), '.config', 'opencode');
-const OPENCODE_CONFIG_FILE = join(OPENCODE_CONFIG_DIR, 'opencode.json');
+const OPENCODE_CONFIG_FILE = getGlobalOpencodeConfigPath();
 
 /** Default prompt timeout (seconds) matching defaultSettings.promptTimeoutSeconds. */
 const DEFAULT_PROMPT_TIMEOUT_S = 800;
@@ -132,43 +131,4 @@ export function syncRemoteConfig(
   }
 
   return 'updated';
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Strip single-line `// ...` comments from JSON-with-comments.
- * Does NOT handle block comments or comments inside strings.
- * Good enough for the simple comment style used in OpenCode configs.
- */
-function stripJsonComments(text: string): string {
-  return text
-    .split('\n')
-    .map((line) => {
-      // Find // that is NOT inside a string
-      let inString = false;
-      let escaped = false;
-      for (let i = 0; i < line.length; i++) {
-        const ch = line[i];
-        if (escaped) {
-          escaped = false;
-          continue;
-        }
-        if (ch === '\\') {
-          escaped = true;
-          continue;
-        }
-        if (ch === '"') {
-          inString = !inString;
-          continue;
-        }
-        if (!inString && ch === '/' && line[i + 1] === '/') {
-          return line.slice(0, i);
-        }
-      }
-      return line;
-    })
-    .join('\n');
 }
