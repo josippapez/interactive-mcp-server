@@ -14,7 +14,7 @@
  */
 
 import type { BrowserWindow } from 'electron';
-import type { GlobalEvent } from '@opencode-ai/sdk';
+import type { GlobalEvent } from '@opencode-ai/sdk/v2';
 import type { AppSettings } from '../settings';
 import { createLogger } from '../utils/logger';
 import { getClient } from './sdk-client';
