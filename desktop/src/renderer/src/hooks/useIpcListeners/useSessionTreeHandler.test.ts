@@ -5,7 +5,7 @@ import type { HandlerContext } from './types';
 
 function makeSnapshotNode(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
   return {
-    openCodeSessionId: 'ses_new',
+    providerSessionId: 'ses_new',
     openCodeParentId: null,
     title: 'OpenCode Session',
     directory: '/repo',
@@ -96,7 +96,7 @@ describe('useSessionTreeHandler', () => {
         'ses_existing',
         {
           id: 'ses_existing',
-          openCodeSessionId: 'ses_existing',
+          providerSessionId: 'ses_existing',
           openCodeParentId: null,
           title: 'Existing',
           directory: '/repo',
@@ -131,7 +131,7 @@ describe('useSessionTreeHandler', () => {
     useSessionTreeHandler(context);
     onSessionTreeUpdated?.([
       makeSnapshotNode({
-        openCodeSessionId: 'ses_existing',
+        providerSessionId: 'ses_existing',
         connectionId: 'conn-existing',
         channelName: 'Existing',
       }),
@@ -154,7 +154,7 @@ describe('useSessionTreeHandler', () => {
 
     useSessionTreeHandler(context);
     onSessionTreeUpdated?.([
-      makeSnapshotNode({ openCodeSessionId: 'ses_new' }),
+      makeSnapshotNode({ providerSessionId: 'ses_new' }),
     ]);
 
     expect(context.selectChannel).not.toHaveBeenCalled();
@@ -194,7 +194,7 @@ describe('useSessionTreeHandler', () => {
     useSessionTreeHandler(context);
     onOptimisticSessionNodeCreated?.(
       makeSnapshotNode({
-        openCodeSessionId: 'ses_child',
+        providerSessionId: 'ses_child',
         openCodeParentId: 'ses_parent',
         connectionId: null,
         hasMcpChannel: false,

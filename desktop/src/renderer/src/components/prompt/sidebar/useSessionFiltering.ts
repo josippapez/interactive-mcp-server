@@ -31,7 +31,7 @@ export function useSessionFiltering({
   // Helper to check if a node is "running" (active)
   const isNodeRunning = useCallback(
     (node: SessionNode): boolean => {
-      const status = getStatus(node.openCodeSessionId ?? '');
+      const status = getStatus(node.providerSessionId ?? '');
       return (
         node.hasPendingPrompt ||
         status === 'busy' ||
@@ -69,7 +69,7 @@ export function useSessionFiltering({
           while (parentId) {
             visibleIds.add(parentId);
             const parent = nodes.find(
-              (n) => n.openCodeSessionId === parentId || n.id === parentId,
+              (n) => n.providerSessionId === parentId || n.id === parentId,
             );
             parentId = parent?.openCodeParentId ?? null;
           }
@@ -78,7 +78,7 @@ export function useSessionFiltering({
 
       return nodes.filter(
         (node) =>
-          visibleIds.has(node.id) || visibleIds.has(node.openCodeSessionId!),
+          visibleIds.has(node.id) || visibleIds.has(node.providerSessionId!),
       );
     },
     [showInactive, activeConnectionId, isNodeRunning],

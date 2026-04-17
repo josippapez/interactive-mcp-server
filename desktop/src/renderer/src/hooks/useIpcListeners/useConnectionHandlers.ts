@@ -68,11 +68,11 @@ export function useConnectionHandlers({
   window.api.onChannelLabelUpdated?.((data) => {
     setNodes((prev) => {
       // Standalone nodes are keyed by connectionId; OpenCode nodes are keyed
-      // by openCodeSessionId. Search by field when the direct key lookup fails.
+      // by providerSessionId. Search by field when the direct key lookup fails.
       let targetKey: string | undefined;
 
-      if (data.openCodeSessionId && prev.has(data.openCodeSessionId)) {
-        targetKey = data.openCodeSessionId;
+      if (data.providerSessionId && prev.has(data.providerSessionId)) {
+        targetKey = data.providerSessionId;
       }
 
       if (!targetKey && prev.has(data.connectionId)) {
@@ -82,8 +82,8 @@ export function useConnectionHandlers({
       if (!targetKey) {
         for (const [key, node] of prev) {
           if (
-            data.openCodeSessionId &&
-            node.openCodeSessionId === data.openCodeSessionId
+            data.providerSessionId &&
+            node.providerSessionId === data.providerSessionId
           ) {
             targetKey = key;
             break;

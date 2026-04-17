@@ -1,28 +1,16 @@
 import { useCallback } from 'react';
 import type { Attachment, SessionNode } from '../../types';
-import {
-  getActiveChannelIdSnapshot,
-  type ChannelSelectionSource,
-} from '../../store/channel-selection';
-import {
-  resolvePromptTarget,
-  findNodeKeyWithFallback,
-} from '../../store/message-dispatch';
+import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
+import { resolvePromptTarget } from '../../store/message-dispatch';
 
 interface PromptHandlersOptions {
   nodesRef: React.MutableRefObject<Map<string, SessionNode>>;
   setNodes: React.Dispatch<React.SetStateAction<Map<string, SessionNode>>>;
-  selectChannel: (
-    id: string | null,
-    source: ChannelSelectionSource,
-    intentionalNull?: boolean,
-  ) => void;
 }
 
 export function usePromptHandlers({
   nodesRef,
   setNodes,
-  selectChannel,
 }: PromptHandlersOptions) {
   const ensureQuestionMessage = (node: SessionNode, promptMessage: string) => {
     const hasQuestion = node.channelMessages.some(
@@ -49,7 +37,7 @@ export function usePromptHandlers({
     (answer: string, attachments?: Attachment[]) => {
       const activeChannelId = getActiveChannelIdSnapshot();
       // Use central dispatch system to resolve the correct target.
-      // CRITICAL: For prompt responses, this uses prompt.openCodeSessionId, not node's.
+      // CRITICAL: For prompt responses, this uses prompt.providerSessionId, not node's.
       const target = resolvePromptTarget(nodesRef.current, activeChannelId);
       if (!target) {
         console.warn('[handleSubmit] Could not resolve dispatch target');
@@ -58,22 +46,19 @@ export function usePromptHandlers({
 
       const { node: currentNode, nodeKey } = target;
 
-      // Clear the prompt and append the answer message.
-      // Use findNodeKeyWithFallback to handle node key changes (direct→tree absorption).
+      // Clear the prompt and append the answer message. After Phase 5 the
+      // nodes map is keyed by providerSessionId (or connectionId for direct
+      // connections), so the nodeKey returned by resolvePromptTarget is
+      // authoritative — no re-lookup / key-reshape is required.
       setNodes((prev) => {
-        const effectiveKey = findNodeKeyWithFallback(
-          prev,
-          nodeKey,
-          currentNode.connectionId,
-        );
-        if (!effectiveKey) return prev;
-        const node = prev.get(effectiveKey)!;
+        const node = prev.get(nodeKey);
+        if (!node) return prev;
         const promptMessage = node.prompt?.message;
         const channelMessages = promptMessage
           ? ensureQuestionMessage(node, promptMessage)
           : node.channelMessages;
         const next = new Map(prev);
-        next.set(effectiveKey, {
+        next.set(nodeKey, {
           ...node,
           channelMessages: [
             ...channelMessages,
@@ -91,28 +76,16 @@ export function usePromptHandlers({
         return next;
       });
 
-      // Update the selected node only when the renderer promoted a direct
-      // connection placeholder to a concrete session node. For normal OpenCode
-      // prompt replies, keep the user on the current selected channel.
-      const newKey = findNodeKeyWithFallback(
-        nodesRef.current,
-        nodeKey,
-        currentNode.connectionId,
-      );
-      if (newKey && newKey !== nodeKey && !currentNode.openCodeSessionId) {
-        selectChannel(newKey, 'hook-migration');
-      }
-
       // Inject relevant doc context using the resolved target's session ID.
       const { connectionId, docContextEnabled, baseDirectory } = currentNode;
       if (
-        target.openCodeSessionId &&
+        target.providerSessionId &&
         connectionId &&
         docContextEnabled !== false
       ) {
         void window.api.injectDocContext?.(
           connectionId,
-          target.openCodeSessionId,
+          target.providerSessionId,
           answer,
           baseDirectory ?? undefined,
         );
@@ -124,7 +97,7 @@ export function usePromptHandlers({
         attachments: attachments?.length ? attachments : undefined,
       });
     },
-    [nodesRef, setNodes, selectChannel],
+    [nodesRef, setNodes],
   );
 
   const handleSelectOption = useCallback(
@@ -141,19 +114,14 @@ export function usePromptHandlers({
 
       // Clear the prompt and append the answer message.
       setNodes((prev) => {
-        const effectiveKey = findNodeKeyWithFallback(
-          prev,
-          nodeKey,
-          currentNode.connectionId,
-        );
-        if (!effectiveKey) return prev;
-        const node = prev.get(effectiveKey)!;
+        const node = prev.get(nodeKey);
+        if (!node) return prev;
         const promptMessage = node.prompt?.message;
         const channelMessages = promptMessage
           ? ensureQuestionMessage(node, promptMessage)
           : node.channelMessages;
         const next = new Map(prev);
-        next.set(effectiveKey, {
+        next.set(nodeKey, {
           ...node,
           channelMessages: [
             ...channelMessages,
@@ -170,27 +138,16 @@ export function usePromptHandlers({
         return next;
       });
 
-      // Only migrate selection when a direct connection placeholder was
-      // promoted to a concrete node. Avoid jumping across OpenCode sessions.
-      const newKey = findNodeKeyWithFallback(
-        nodesRef.current,
-        nodeKey,
-        currentNode.connectionId,
-      );
-      if (newKey && newKey !== nodeKey && !currentNode.openCodeSessionId) {
-        selectChannel(newKey, 'hook-migration');
-      }
-
       // Inject relevant doc context using the resolved target's session ID.
       const { connectionId, docContextEnabled, baseDirectory } = currentNode;
       if (
-        target.openCodeSessionId &&
+        target.providerSessionId &&
         connectionId &&
         docContextEnabled !== false
       ) {
         void window.api.injectDocContext?.(
           connectionId,
-          target.openCodeSessionId,
+          target.providerSessionId,
           option,
           baseDirectory ?? undefined,
         );
@@ -201,7 +158,7 @@ export function usePromptHandlers({
         answer: option,
       });
     },
-    [nodesRef, setNodes, selectChannel],
+    [nodesRef, setNodes],
   );
 
   return {

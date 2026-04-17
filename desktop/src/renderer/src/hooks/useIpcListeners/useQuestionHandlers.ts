@@ -18,7 +18,7 @@ export function useQuestionHandlers({
       const nodeId = findKeyByConnectionId(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
       if (!nodeId) {
         bufferQuestion(question);
@@ -26,7 +26,11 @@ export function useQuestionHandlers({
       }
 
       const node = prev.get(nodeId)!;
-      if (node.pendingQuestions.some((item) => item.requestId === question.requestId)) {
+      if (
+        node.pendingQuestions.some(
+          (item) => item.requestId === question.requestId,
+        )
+      ) {
         return prev;
       }
 
@@ -60,8 +64,7 @@ export function useQuestionHandlers({
       next.set(nodeId, {
         ...node,
         pendingQuestions: nextQuestions,
-        hasPendingPrompt:
-          nextQuestions.length > 0 || node.prompt !== null,
+        hasPendingPrompt: nextQuestions.length > 0 || node.prompt !== null,
       });
       return next;
     });

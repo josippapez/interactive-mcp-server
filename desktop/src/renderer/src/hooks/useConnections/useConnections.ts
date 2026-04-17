@@ -20,7 +20,7 @@ import { useUiHandlers } from './ui-handlers';
 
 export function useConnections(onActivatePromptTab: () => void) {
   // ---------------------------------------------------------------------------
-  // State — map key is `node.id` (openCodeSessionId or direct connectionId)
+  // State — map key is `node.id` (providerSessionId or direct connectionId)
   // ---------------------------------------------------------------------------
 
   const [nodes, setNodes] = useState<Map<string, SessionNode>>(new Map());
@@ -97,17 +97,17 @@ export function useConnections(onActivatePromptTab: () => void) {
     withNode,
     clearAllNodes,
     loadChannelHistory,
-      applyStartupHistoryBuffer,
-      applyStartupPromptBuffer,
-      applyStartupPermissionBuffer,
-      applyStartupQuestionBuffer,
-      bufferPrompt,
-      bufferPermission,
-      bufferQuestion,
-      rehydrateActivePrompts,
-      rehydratePendingPermissions,
-      rehydratePendingQuestions,
-    });
+    applyStartupHistoryBuffer,
+    applyStartupPromptBuffer,
+    applyStartupPermissionBuffer,
+    applyStartupQuestionBuffer,
+    bufferPrompt,
+    bufferPermission,
+    bufferQuestion,
+    rehydrateActivePrompts,
+    rehydratePendingPermissions,
+    rehydratePendingQuestions,
+  });
 
   const { inject } = useProviderInjection(nodesRef, withNode);
 
@@ -150,7 +150,6 @@ export function useConnections(onActivatePromptTab: () => void) {
   const { handleSubmit, handleSelectOption } = usePromptHandlers({
     nodesRef,
     setNodes,
-    selectChannel,
   });
 
   const {

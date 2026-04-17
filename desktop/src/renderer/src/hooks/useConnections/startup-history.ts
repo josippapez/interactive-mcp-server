@@ -7,7 +7,7 @@ import type { StartupHistoryBuffer } from './types';
  * Resolve the node key that should receive persisted history for `sessionId`.
  *
  * Priority:
- * 1) Exact node key match (OpenCode sessions are keyed by openCodeSessionId)
+ * 1) Exact node key match (OpenCode sessions are keyed by providerSessionId)
  * 2) Exact `node.id` match
  * 3) Fallback to `node.connectionId` only when it maps to a single node
  *

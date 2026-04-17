@@ -27,7 +27,7 @@ export interface ChannelModelPreference {
   variant?: string;
 }
 
-/** Map of channelId (openCodeSessionId) to model preference. */
+/** Map of channelId (providerSessionId) to model preference. */
 export type ChannelPreferencesMap = Map<string, ChannelModelPreference>;
 
 // -----------------------------------------------------------------------------

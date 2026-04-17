@@ -5,9 +5,11 @@
  * ensuring consistent routing across all message types (prompt responses,
  * queued messages, injections).
  *
- * KEY PRINCIPLE: The dispatch system automatically determines the correct
- * target session based on context, preventing routing bugs in parent-child
- * session scenarios.
+ * KEY PRINCIPLE: After Phase 5 of the provider-session-id unification, the
+ * renderer `nodes` map is keyed by `providerSessionId` for provider-backed
+ * sessions and by `connectionId` for direct (non-provider) connections.
+ * Resolution is therefore a single direct lookup — no multi-priority
+ * fallback chains, no `findNodeKeyWithFallback` patch-up.
  *
  * Usage:
  * ```ts
@@ -25,9 +27,9 @@
  */
 
 import { atom, useAtomValue, useSetAtom } from 'jotai';
-import { useCallback, useRef } from 'react';
-import type { Attachment, SessionNode } from '../types';
-import { activeChannelIdAtom, selectChannelAtom } from './channel-selection';
+import { useCallback } from 'react';
+import type { SessionNode } from '../types';
+import { activeChannelIdAtom } from './channel-selection';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -38,19 +40,23 @@ import { activeChannelIdAtom, selectChannelAtom } from './channel-selection';
  */
 export interface DispatchTarget {
   /**
-   * The session ID to use for routing (openCodeSessionId or connectionId).
+   * The session ID to use for routing. This is the node's
+   * `providerSessionId` for provider-backed sessions, or its `connectionId`
+   * for direct connections.
    */
   sessionId: string;
 
   /**
-   * The MCP transport connection ID.
+   * The MCP transport connection ID, if available. Transport handle only —
+   * never used as an identity key on its own.
    */
-  connectionId: string;
+  connectionId: string | null;
 
   /**
-   * The OpenCode session ID, if available.
+   * The provider session ID (e.g. OpenCode `ses_xxx`), if the node is
+   * bound to a provider.
    */
-  openCodeSessionId: string | null;
+  providerSessionId: string | null;
 
   /**
    * The node key in the nodes map.
@@ -66,10 +72,9 @@ export interface DispatchTarget {
    * How the target was resolved.
    */
   resolvedVia:
-    | 'prompt-session' // From prompt.openCodeSessionId
-    | 'node-session' // From node.openCodeSessionId
-    | 'node-connection' // From node.connectionId
-    | 'active-channel'; // From activeChannelId
+    | 'prompt-session' // Node looked up from prompt-bearing active channel
+    | 'node-session' // Node with providerSessionId
+    | 'node-connection'; // Direct connection node (no providerSessionId)
 }
 
 /**
@@ -117,14 +122,55 @@ export const lastDispatchAtom = atom<{
 } | null>(null);
 
 // -----------------------------------------------------------------------------
+// Internal helpers
+// -----------------------------------------------------------------------------
+
+/**
+ * Build a DispatchTarget from a node that was located in the nodes map.
+ *
+ * The node's identity (`providerSessionId` or `connectionId`) determines
+ * the `sessionId` used for routing — no fallback chains, since the map is
+ * keyed on this identity after Phase 5.
+ */
+function targetFromNode(
+  nodeKey: string,
+  node: SessionNode,
+  resolvedVia: DispatchTarget['resolvedVia'],
+): DispatchTarget {
+  if (node.providerSessionId) {
+    return {
+      sessionId: node.providerSessionId,
+      connectionId: node.connectionId,
+      providerSessionId: node.providerSessionId,
+      nodeKey,
+      node,
+      resolvedVia,
+    };
+  }
+
+  // Direct connection: sessionId == connectionId == nodeKey
+  const connectionId = node.connectionId ?? nodeKey;
+  return {
+    sessionId: connectionId,
+    connectionId,
+    providerSessionId: null,
+    nodeKey,
+    node,
+    resolvedVia: 'node-connection',
+  };
+}
+
+// -----------------------------------------------------------------------------
 // Core resolution functions
 // -----------------------------------------------------------------------------
 
 /**
  * Resolve the dispatch target for a prompt response.
  *
- * CRITICAL: For prompt responses, always use the prompt's openCodeSessionId,
- * NOT the node's. The prompt carries the session ID of the agent that sent it.
+ * The active channel's node is the authoritative target: it carries the
+ * prompt and the provider-session identity. The prompt payload's own
+ * `providerSessionId` is informational — the map lookup is by the active
+ * channel key, which is already `providerSessionId`-keyed.
  */
 export function resolvePromptTarget(
   nodes: Map<string, SessionNode>,
@@ -141,48 +187,15 @@ export function resolvePromptTarget(
     return null;
   }
 
-  const { prompt } = node;
-
-  // PRIORITY 1: Use prompt's openCodeSessionId (the agent that sent the prompt)
-  if (prompt.openCodeSessionId) {
-    return {
-      sessionId: prompt.openCodeSessionId,
-      connectionId: prompt.connectionId,
-      openCodeSessionId: prompt.openCodeSessionId,
-      nodeKey: activeChannelId,
-      node,
-      resolvedVia: 'prompt-session',
-    };
-  }
-
-  // PRIORITY 2: Use node's openCodeSessionId
-  if (node.openCodeSessionId) {
-    return {
-      sessionId: node.openCodeSessionId,
-      connectionId: node.connectionId ?? prompt.connectionId,
-      openCodeSessionId: node.openCodeSessionId,
-      nodeKey: activeChannelId,
-      node,
-      resolvedVia: 'node-session',
-    };
-  }
-
-  // PRIORITY 3: Use connectionId
-  const connectionId = node.connectionId ?? prompt.connectionId;
-  return {
-    sessionId: connectionId,
-    connectionId,
-    openCodeSessionId: null,
-    nodeKey: activeChannelId,
-    node,
-    resolvedVia: 'node-connection',
-  };
+  return targetFromNode(activeChannelId, node, 'prompt-session');
 }
 
 /**
  * Resolve the dispatch target for a user-initiated message.
  *
- * Unlike prompt responses, user messages use the active channel's session ID.
+ * Direct map lookup on the active channel's key. The map key IS the
+ * node's identity (`providerSessionId` or, for direct connections,
+ * `connectionId`), so no fallback is required.
  */
 export function resolveMessageTarget(
   nodes: Map<string, SessionNode>,
@@ -199,43 +212,19 @@ export function resolveMessageTarget(
     return null;
   }
 
-  // PRIORITY 1: Use openCodeSessionId for OpenCode sessions
-  if (node.openCodeSessionId) {
-    return {
-      sessionId: node.openCodeSessionId,
-      connectionId: node.connectionId ?? node.id,
-      openCodeSessionId: node.openCodeSessionId,
-      nodeKey: activeChannelId,
-      node,
-      resolvedVia: 'node-session',
-    };
-  }
-
-  // PRIORITY 2: Use connectionId for direct connections
-  if (node.connectionId) {
-    return {
-      sessionId: node.connectionId,
-      connectionId: node.connectionId,
-      openCodeSessionId: null,
-      nodeKey: activeChannelId,
-      node,
-      resolvedVia: 'node-connection',
-    };
-  }
-
-  // PRIORITY 3: Use node.id as fallback
-  return {
-    sessionId: node.id,
-    connectionId: node.id,
-    openCodeSessionId: null,
-    nodeKey: activeChannelId,
+  return targetFromNode(
+    activeChannelId,
     node,
-    resolvedVia: 'active-channel',
-  };
+    node.providerSessionId ? 'node-session' : 'node-connection',
+  );
 }
 
 /**
- * Resolve target for a specific session ID (used by handleQueueSessionMessage).
+ * Resolve target for a specific session ID (used by handleQueueSessionMessage
+ * and similar flows that reference a session by its identity string).
+ *
+ * Direct map lookup. `sessionId` is expected to be the node's map key —
+ * either a `providerSessionId` or a direct-connection `connectionId`.
  */
 export function resolveTargetBySessionId(
   nodes: Map<string, SessionNode>,
@@ -244,72 +233,26 @@ export function resolveTargetBySessionId(
   logDispatch('resolveTargetBySessionId', 'start', {
     sessionId,
     nodesCount: nodes.size,
-    nodeKeys: Array.from(nodes.keys()),
   });
 
-  // PRIORITY 1: Direct map key lookup
-  if (nodes.has(sessionId)) {
-    const node = nodes.get(sessionId)!;
-    const target = {
-      sessionId: node.openCodeSessionId ?? node.connectionId ?? sessionId,
-      connectionId: node.connectionId ?? sessionId,
-      openCodeSessionId: node.openCodeSessionId,
-      nodeKey: sessionId,
-      node,
-      resolvedVia: 'node-session' as const,
-    };
-    logDispatch('resolveTargetBySessionId', 'direct-key-match', {
-      sessionId,
-      nodeKey: sessionId,
-      resolvedSessionId: target.sessionId,
-      nodeTitle: node.title,
-    });
-    return target;
+  const node = nodes.get(sessionId);
+  if (!node) {
+    logDispatch('resolveTargetBySessionId', 'not-found', { sessionId });
+    return null;
   }
 
-  // PRIORITY 2: Search by openCodeSessionId
-  for (const [key, node] of nodes) {
-    if (node.openCodeSessionId === sessionId) {
-      const target = {
-        sessionId,
-        connectionId: node.connectionId ?? key,
-        openCodeSessionId: sessionId,
-        nodeKey: key,
-        node,
-        resolvedVia: 'node-session' as const,
-      };
-      logDispatch('resolveTargetBySessionId', 'openCodeSessionId-match', {
-        sessionId,
-        nodeKey: key,
-        nodeTitle: node.title,
-      });
-      return target;
-    }
-  }
-
-  // PRIORITY 3: Search by connectionId
-  for (const [key, node] of nodes) {
-    if (node.connectionId === sessionId) {
-      const target = {
-        sessionId,
-        connectionId: sessionId,
-        openCodeSessionId: node.openCodeSessionId,
-        nodeKey: key,
-        node,
-        resolvedVia: 'node-connection' as const,
-      };
-      logDispatch('resolveTargetBySessionId', 'connectionId-match', {
-        sessionId,
-        nodeKey: key,
-        nodeTitle: node.title,
-        openCodeSessionId: node.openCodeSessionId,
-      });
-      return target;
-    }
-  }
-
-  logDispatch('resolveTargetBySessionId', 'not-found', { sessionId });
-  return null;
+  const target = targetFromNode(
+    sessionId,
+    node,
+    node.providerSessionId ? 'node-session' : 'node-connection',
+  );
+  logDispatch('resolveTargetBySessionId', 'direct-key-match', {
+    sessionId,
+    nodeKey: sessionId,
+    resolvedSessionId: target.sessionId,
+    nodeTitle: node.title,
+  });
+  return target;
 }
 
 /**
@@ -407,36 +350,4 @@ export function useDispatchTarget(): {
 export function useUpdateNodesMap(): (nodes: Map<string, SessionNode>) => void {
   const setNodes = useSetAtom(nodesMapAtom);
   return setNodes;
-}
-
-// -----------------------------------------------------------------------------
-// Utility: findNodeKeyWithFallback
-// -----------------------------------------------------------------------------
-
-/**
- * Find the node key with fallback for node key changes (e.g., direct→tree absorption).
- *
- * This handles the case where a node's map key changes from connectionId to
- * openCodeSessionId when it gets absorbed into an OpenCode session tree.
- */
-export function findNodeKeyWithFallback(
-  nodes: Map<string, SessionNode>,
-  primaryKey: string,
-  fallbackConnectionId: string | null,
-): string | null {
-  // Primary lookup
-  if (nodes.has(primaryKey)) {
-    return primaryKey;
-  }
-
-  // Fallback: search by connectionId
-  if (fallbackConnectionId) {
-    for (const [key, node] of nodes) {
-      if (node.connectionId === fallbackConnectionId) {
-        return key;
-      }
-    }
-  }
-
-  return null;
 }

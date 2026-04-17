@@ -12,23 +12,23 @@ type CreateModelSelection = {
   variant?: string;
 };
 
-export function usePromptModelState(openCodeSessionId: string | null) {
-  const { currentModelOverride } = useSessionModelSelection(openCodeSessionId);
+export function usePromptModelState(providerSessionId: string | null) {
+  const { currentModelOverride } = useSessionModelSelection(providerSessionId);
   const selectSessionModel = useSelectSessionModel();
 
   const handleModelSelect = useCallback(
     (model: Model, variant?: string) => {
-      if (!openCodeSessionId) {
+      if (!providerSessionId) {
         return;
       }
 
-      selectSessionModel(openCodeSessionId, {
+      selectSessionModel(providerSessionId, {
         providerId: model.providerId,
         modelId: model.id,
         variant,
       });
     },
-    [openCodeSessionId, selectSessionModel],
+    [providerSessionId, selectSessionModel],
   );
 
   const handleSaveCreateModelSelection = useCallback(

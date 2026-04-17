@@ -99,7 +99,7 @@ interface ContextToolGroupProps {
   tools: ToolCallInfo[];
   /** Whether to expand all tool calls by default */
   forceExpanded?: boolean;
-  /** Callback to navigate to a session by openCodeSessionId */
+  /** Callback to navigate to a session by providerSessionId */
   onNavigateToSession?: (sessionId: string) => void;
 }
 

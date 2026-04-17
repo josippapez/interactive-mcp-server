@@ -12,8 +12,8 @@ export function resolveNewlyCreatedSessionNodeId(
   let newestSessionNodeId: string | null = null;
   let hasConnectedChannel = false;
   for (const snap of snapshotNodes) {
-    if (prev.has(snap.openCodeSessionId)) continue;
-    newestSessionNodeId = snap.openCodeSessionId;
+    if (prev.has(snap.providerSessionId)) continue;
+    newestSessionNodeId = snap.providerSessionId;
     if (snap.hasMcpChannel) {
       hasConnectedChannel = true;
     }
@@ -57,10 +57,10 @@ export function useSessionTreeHandler({
       // Load history once per connectionId for any newly-connected nodes.
       // Also drain any startup-buffered history and prompts for nodes that just appeared.
       for (const snap of snapshotNodes) {
-        // Apply buffered prompts for this session (uses openCodeSessionId)
-        applyStartupPromptBuffer(snap.openCodeSessionId, snap.connectionId);
-        applyStartupPermissionBuffer(snap.openCodeSessionId, snap.connectionId);
-        applyStartupQuestionBuffer(snap.openCodeSessionId, snap.connectionId);
+        // Apply buffered prompts for this session (uses providerSessionId)
+        applyStartupPromptBuffer(snap.providerSessionId, snap.connectionId);
+        applyStartupPermissionBuffer(snap.providerSessionId, snap.connectionId);
+        applyStartupQuestionBuffer(snap.providerSessionId, snap.connectionId);
 
         if (snap.connectionId) {
           // Drain startup buffer first (no-op if nothing buffered)
@@ -85,6 +85,5 @@ export function useSessionTreeHandler({
 
       return next;
     });
-
   });
 }

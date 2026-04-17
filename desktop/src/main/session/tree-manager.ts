@@ -107,9 +107,9 @@ export interface VcsInfo {
 
 /** The data shape emitted over IPC to the renderer per session. */
 export interface SessionNodeData {
-  /** OpenCode session ID — stable primary key. */
-  openCodeSessionId: string;
-  /** Parent's OpenCode session ID, or null for root sessions. */
+  /** Canonical provider-session identity (e.g. OpenCode `ses_xxx`) — stable primary key. */
+  providerSessionId: string;
+  /** Parent's provider session ID, or null for root sessions. */
   openCodeParentId: string | null;
   /** Human-readable title from OpenCode (may be auto-generated). */
   title: string;
@@ -281,7 +281,7 @@ function buildSessionNodeData(
   depthCache: Map<string, number> = new Map(),
 ): SessionNodeData {
   return {
-    openCodeSessionId: sessionId,
+    providerSessionId: sessionId,
     openCodeParentId: session.parentID ?? null,
     title: session.title ?? `Session ${sessionId.slice(0, 8)}`,
     directory: session.directory ?? '',
@@ -406,7 +406,7 @@ function emitSnapshot(): void {
   );
   if (childSessions.length > 0) {
     log.info(
-      `emitSnapshot: child sessions: ${childSessions.map((s) => `${s.openCodeSessionId}(parent=${s.openCodeParentId})`).join(', ')}`,
+      `emitSnapshot: child sessions: ${childSessions.map((s) => `${s.providerSessionId}(parent=${s.openCodeParentId})`).join(', ')}`,
     );
   }
   win.webContents.send('session-tree-updated', snapshot);

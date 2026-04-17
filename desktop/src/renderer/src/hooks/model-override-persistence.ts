@@ -18,7 +18,7 @@ export const STORAGE_KEY = 'imcp-model-overrides';
 /**
  * Load model overrides from localStorage.
  *
- * @returns Map of openCodeSessionId → PersistedModelOverride
+ * @returns Map of providerSessionId → PersistedModelOverride
  */
 export function loadModelOverrides(): Map<string, PersistedModelOverride> {
   const result = new Map<string, PersistedModelOverride>();
@@ -58,7 +58,7 @@ export function loadModelOverrides(): Map<string, PersistedModelOverride> {
 /**
  * Save model overrides to localStorage.
  *
- * @param overrides - Map of openCodeSessionId → PersistedModelOverride
+ * @param overrides - Map of providerSessionId → PersistedModelOverride
  */
 export function saveModelOverrides(
   overrides: Map<string, PersistedModelOverride>,

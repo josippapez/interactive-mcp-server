@@ -15,7 +15,7 @@ import type { SessionNode } from '../types';
 function makeSessionNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
     id: 'node-1',
-    openCodeSessionId: 'ses_1',
+    providerSessionId: 'ses_1',
     openCodeParentId: null,
     title: 'Test Session',
     directory: '/tmp',
@@ -47,7 +47,7 @@ function makeDirectConnectionNode(
 ): SessionNode {
   return makeSessionNode({
     id: connectionId,
-    openCodeSessionId: null,
+    providerSessionId: null,
     openCodeParentId: null,
     title,
     connectionId,
@@ -60,7 +60,7 @@ function makeDirectConnectionNode(
 
 function makeSnapshot(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
   return {
-    openCodeSessionId: 'ses_1',
+    providerSessionId: 'ses_1',
     openCodeParentId: null,
     title: 'Test Session',
     directory: '/tmp',
@@ -87,7 +87,7 @@ describe('mergeSessionTreeSnapshot', () => {
     const prev = new Map<string, SessionNode>();
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_a',
+        providerSessionId: 'ses_a',
         title: 'Root Session',
       }),
     ];
@@ -115,7 +115,7 @@ describe('mergeSessionTreeSnapshot', () => {
         'ses_a',
         makeSessionNode({
           id: 'ses_a',
-          openCodeSessionId: 'ses_a',
+          providerSessionId: 'ses_a',
           channelMessages: existingMessages,
           unreadCount: 3,
           hasPendingPrompt: true,
@@ -124,7 +124,7 @@ describe('mergeSessionTreeSnapshot', () => {
     ]);
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_a',
+        providerSessionId: 'ses_a',
         title: 'Updated Title',
       }),
     ];
@@ -159,7 +159,7 @@ describe('mergeSessionTreeSnapshot', () => {
 
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_main',
+        providerSessionId: 'ses_main',
         connectionId: 'conn-123',
         channelName: 'Claude Code',
         hasMcpChannel: true,
@@ -168,7 +168,7 @@ describe('mergeSessionTreeSnapshot', () => {
 
     const result = mergeSessionTreeSnapshot(prev, snapshot);
 
-    // The tree node should exist under its openCodeSessionId
+    // The tree node should exist under its providerSessionId
     expect(result.has('ses_main')).toBe(true);
 
     // The direct-connection node should be gone
@@ -205,7 +205,7 @@ describe('mergeSessionTreeSnapshot', () => {
 
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_main',
+        providerSessionId: 'ses_main',
         connectionId: 'conn-123',
         channelName: 'Claude Code',
         hasMcpChannel: true,
@@ -214,10 +214,9 @@ describe('mergeSessionTreeSnapshot', () => {
 
     const result = mergeSessionTreeSnapshot(prev, snapshot);
 
-    expect(result.get('ses_main')?.pendingPermissions.map((item) => item.requestId)).toEqual([
-      'perm-1',
-      'perm-2',
-    ]);
+    expect(
+      result.get('ses_main')?.pendingPermissions.map((item) => item.requestId),
+    ).toEqual(['perm-1', 'perm-2']);
   });
 
   it('preserves direct-connection nodes NOT claimed by any snapshot node', () => {
@@ -227,7 +226,7 @@ describe('mergeSessionTreeSnapshot', () => {
 
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_a',
+        providerSessionId: 'ses_a',
         connectionId: 'other-conn',
       }),
     ];
@@ -248,13 +247,13 @@ describe('mergeSessionTreeSnapshot', () => {
         'ses_old',
         makeSessionNode({
           id: 'ses_old',
-          openCodeSessionId: 'ses_old',
+          providerSessionId: 'ses_old',
         }),
       ],
     ]);
 
     const snapshot = [
-      makeSnapshot({ openCodeSessionId: 'ses_new', title: 'New Session' }),
+      makeSnapshot({ providerSessionId: 'ses_new', title: 'New Session' }),
     ];
 
     const result = mergeSessionTreeSnapshot(prev, snapshot);
@@ -266,13 +265,13 @@ describe('mergeSessionTreeSnapshot', () => {
   it('handles multiple snapshot nodes with parent-child relationships', () => {
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_root',
+        providerSessionId: 'ses_root',
         openCodeParentId: null,
         title: 'Root',
         depth: 0,
       }),
       makeSnapshot({
-        openCodeSessionId: 'ses_child',
+        providerSessionId: 'ses_child',
         openCodeParentId: 'ses_root',
         title: 'Subagent',
         depth: 1,
@@ -292,7 +291,7 @@ describe('mergeSessionTreeSnapshot', () => {
   it('uses OpenCode title as authoritative label when both title and channelName are present', () => {
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_1',
+        providerSessionId: 'ses_1',
         title: 'OpenCode Title',
         channelName: 'Claude Code',
       }),
@@ -306,7 +305,7 @@ describe('mergeSessionTreeSnapshot', () => {
   it('uses title when channelName is null', () => {
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_1',
+        providerSessionId: 'ses_1',
         title: 'Auto-generated Title',
         channelName: null,
       }),
@@ -330,7 +329,7 @@ describe('mergeSessionTreeSnapshot', () => {
 
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_x',
+        providerSessionId: 'ses_x',
         connectionId: 'conn-abc',
         hasMcpChannel: true,
       }),
@@ -343,7 +342,7 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(result.get('ses_x')!.unreadCount).toBe(5);
   });
 
-  it('assigns unique sessionChannel.sessionId using openCodeSessionId for parent and child with shared connectionId', () => {
+  it('assigns unique sessionChannel.sessionId using providerSessionId for parent and child with shared connectionId', () => {
     // This test verifies the fix for the message routing bug where parent-child
     // sessions share the same connectionId but need unique sessionChannel.sessionId
     // values for correct message routing.
@@ -353,14 +352,14 @@ describe('mergeSessionTreeSnapshot', () => {
     const sharedConnectionId = 'conn-shared-123';
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_parent',
+        providerSessionId: 'ses_parent',
         openCodeParentId: null,
         connectionId: sharedConnectionId,
         channelName: 'Parent Agent',
         hasMcpChannel: true,
       }),
       makeSnapshot({
-        openCodeSessionId: 'ses_child',
+        providerSessionId: 'ses_child',
         openCodeParentId: 'ses_parent',
         connectionId: sharedConnectionId, // Same connectionId as parent!
         channelName: 'Child Agent',
@@ -378,7 +377,7 @@ describe('mergeSessionTreeSnapshot', () => {
     const childNode = result.get('ses_child')!;
 
     // CRITICAL: sessionChannel.sessionId must be unique for each session
-    // (uses openCodeSessionId, not shared connectionId)
+    // (uses providerSessionId, not shared connectionId)
     expect(parentNode.sessionChannel?.sessionId).toBe('ses_parent');
     expect(childNode.sessionChannel?.sessionId).toBe('ses_child');
 
@@ -392,7 +391,7 @@ describe('mergeSessionTreeSnapshot', () => {
     const optimistic = upsertOptimisticSessionNode(
       new Map(),
       makeSnapshot({
-        openCodeSessionId: 'ses_child',
+        providerSessionId: 'ses_child',
         openCodeParentId: 'ses_parent',
         title: 'Child Agent',
         connectionId: null,
@@ -402,7 +401,7 @@ describe('mergeSessionTreeSnapshot', () => {
 
     const reconciled = mergeSessionTreeSnapshot(optimistic, [
       makeSnapshot({
-        openCodeSessionId: 'ses_child',
+        providerSessionId: 'ses_child',
         openCodeParentId: 'ses_parent',
         title: 'Child Agent Final',
         connectionId: 'conn-child',
@@ -429,7 +428,7 @@ describe('partitionNodes', () => {
         'ses_1',
         makeSessionNode({
           id: 'ses_1',
-          openCodeSessionId: 'ses_1',
+          providerSessionId: 'ses_1',
         }),
       ],
       ['dc-1', makeDirectConnectionNode('dc-1', 'Direct Agent')],
@@ -449,7 +448,7 @@ describe('partitionNodes', () => {
         'ses_root',
         makeSessionNode({
           id: 'ses_root',
-          openCodeSessionId: 'ses_root',
+          providerSessionId: 'ses_root',
           openCodeParentId: null,
           title: 'Root',
         }),
@@ -458,7 +457,7 @@ describe('partitionNodes', () => {
         'ses_child_b',
         makeSessionNode({
           id: 'ses_child_b',
-          openCodeSessionId: 'ses_child_b',
+          providerSessionId: 'ses_child_b',
           openCodeParentId: 'ses_root',
           title: 'B Child',
         }),
@@ -467,7 +466,7 @@ describe('partitionNodes', () => {
         'ses_child_a',
         makeSessionNode({
           id: 'ses_child_a',
-          openCodeSessionId: 'ses_child_a',
+          providerSessionId: 'ses_child_a',
           openCodeParentId: 'ses_root',
           title: 'A Child',
         }),
@@ -503,7 +502,7 @@ describe('partitionNodes', () => {
 
     const snapshot = [
       makeSnapshot({
-        openCodeSessionId: 'ses_main',
+        providerSessionId: 'ses_main',
         openCodeParentId: null,
         connectionId: 'conn-1',
         channelName: 'Claude Code',
@@ -527,7 +526,7 @@ describe('partitionNodes', () => {
         'ses_root',
         makeSessionNode({
           id: 'ses_root',
-          openCodeSessionId: 'ses_root',
+          providerSessionId: 'ses_root',
           openCodeParentId: null,
           title: 'Root',
         }),
@@ -536,7 +535,7 @@ describe('partitionNodes', () => {
         'ses_child',
         makeSessionNode({
           id: 'ses_child',
-          openCodeSessionId: 'ses_child',
+          providerSessionId: 'ses_child',
           openCodeParentId: 'ses_root',
           title: 'Child',
         }),
@@ -545,7 +544,7 @@ describe('partitionNodes', () => {
         'ses_grandchild',
         makeSessionNode({
           id: 'ses_grandchild',
-          openCodeSessionId: 'ses_grandchild',
+          providerSessionId: 'ses_grandchild',
           openCodeParentId: 'ses_child',
           title: 'Grandchild',
         }),
@@ -567,7 +566,7 @@ describe('partitionNodes', () => {
         'ses_root_a',
         makeSessionNode({
           id: 'ses_root_a',
-          openCodeSessionId: 'ses_root_a',
+          providerSessionId: 'ses_root_a',
           openCodeParentId: null,
           title: 'Root A',
         }),
@@ -577,7 +576,7 @@ describe('partitionNodes', () => {
         'ses_root_b',
         makeSessionNode({
           id: 'ses_root_b',
-          openCodeSessionId: 'ses_root_b',
+          providerSessionId: 'ses_root_b',
           openCodeParentId: null,
           title: 'Root B',
         }),
@@ -586,7 +585,7 @@ describe('partitionNodes', () => {
         'ses_child_b',
         makeSessionNode({
           id: 'ses_child_b',
-          openCodeSessionId: 'ses_child_b',
+          providerSessionId: 'ses_child_b',
           openCodeParentId: 'ses_root_b',
           title: 'Child B',
           hasPendingPrompt: true,
@@ -612,7 +611,7 @@ describe('partitionNodes', () => {
         'ses_root_a',
         makeSessionNode({
           id: 'ses_root_a',
-          openCodeSessionId: 'ses_root_a',
+          providerSessionId: 'ses_root_a',
           openCodeParentId: null,
           title: 'Root A',
           channelMessages: [
@@ -625,7 +624,7 @@ describe('partitionNodes', () => {
         'ses_root_b',
         makeSessionNode({
           id: 'ses_root_b',
-          openCodeSessionId: 'ses_root_b',
+          providerSessionId: 'ses_root_b',
           openCodeParentId: null,
           title: 'Root B',
         }),
@@ -634,7 +633,7 @@ describe('partitionNodes', () => {
         'ses_child_b',
         makeSessionNode({
           id: 'ses_child_b',
-          openCodeSessionId: 'ses_child_b',
+          providerSessionId: 'ses_child_b',
           openCodeParentId: 'ses_root_b',
           title: 'Child B',
           channelMessages: [
@@ -659,7 +658,7 @@ describe('partitionNodes', () => {
         'ses_root_a',
         makeSessionNode({
           id: 'ses_root_a',
-          openCodeSessionId: 'ses_root_a',
+          providerSessionId: 'ses_root_a',
           openCodeParentId: null,
           title: 'Root A',
         }),
@@ -669,7 +668,7 @@ describe('partitionNodes', () => {
         'ses_root_b',
         makeSessionNode({
           id: 'ses_root_b',
-          openCodeSessionId: 'ses_root_b',
+          providerSessionId: 'ses_root_b',
           openCodeParentId: null,
           title: 'Root B',
         }),
@@ -678,7 +677,7 @@ describe('partitionNodes', () => {
         'ses_child_b',
         makeSessionNode({
           id: 'ses_child_b',
-          openCodeSessionId: 'ses_child_b',
+          providerSessionId: 'ses_child_b',
           openCodeParentId: 'ses_root_b',
           title: 'Child B',
           unreadCount: 3,
@@ -704,7 +703,7 @@ describe('partitionNodes', () => {
         'ses_root_a',
         makeSessionNode({
           id: 'ses_root_a',
-          openCodeSessionId: 'ses_root_a',
+          providerSessionId: 'ses_root_a',
           openCodeParentId: null,
           title: 'Root A',
           channelMessages: [
@@ -716,7 +715,7 @@ describe('partitionNodes', () => {
         'ses_child_a',
         makeSessionNode({
           id: 'ses_child_a',
-          openCodeSessionId: 'ses_child_a',
+          providerSessionId: 'ses_child_a',
           openCodeParentId: 'ses_root_a',
           title: 'Child A',
         }),
@@ -726,7 +725,7 @@ describe('partitionNodes', () => {
         'ses_root_b',
         makeSessionNode({
           id: 'ses_root_b',
-          openCodeSessionId: 'ses_root_b',
+          providerSessionId: 'ses_root_b',
           openCodeParentId: null,
           title: 'Root B',
           channelMessages: [
@@ -738,7 +737,7 @@ describe('partitionNodes', () => {
         'ses_child_b',
         makeSessionNode({
           id: 'ses_child_b',
-          openCodeSessionId: 'ses_child_b',
+          providerSessionId: 'ses_child_b',
           openCodeParentId: 'ses_root_b',
           title: 'Child B',
         }),
@@ -764,7 +763,7 @@ describe('groupByProject', () => {
         'ses_old',
         makeSessionNode({
           id: 'ses_old',
-          openCodeSessionId: 'ses_old',
+          providerSessionId: 'ses_old',
           openCodeParentId: null,
           baseDirectory: '/workspace/old',
           createdAt: 100,
@@ -774,7 +773,7 @@ describe('groupByProject', () => {
         'ses_new',
         makeSessionNode({
           id: 'ses_new',
-          openCodeSessionId: 'ses_new',
+          providerSessionId: 'ses_new',
           openCodeParentId: null,
           baseDirectory: '/workspace/new',
           createdAt: 200,

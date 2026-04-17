@@ -31,7 +31,7 @@ export function usePromptNavigationState({
     }
 
     for (const [nodeId, node] of connections) {
-      if (node.openCodeSessionId === activeNode.openCodeParentId) {
+      if (node.providerSessionId === activeNode.openCodeParentId) {
         return { id: nodeId, title: node.title };
       }
     }
@@ -57,7 +57,7 @@ export function usePromptNavigationState({
     }
 
     for (const [nodeId, node] of connections) {
-      if (node.openCodeSessionId === pendingSessionSelect) {
+      if (node.providerSessionId === pendingSessionSelect) {
         onSelectConnection(nodeId);
         setPendingSessionSelect(null);
         return;
@@ -80,7 +80,7 @@ export function usePromptNavigationState({
   const handleNavigateToSession = useCallback(
     (sessionId: string) => {
       for (const [nodeId, node] of connections) {
-        if (node.openCodeSessionId === sessionId) {
+        if (node.providerSessionId === sessionId) {
           onSelectConnection(nodeId);
           return;
         }

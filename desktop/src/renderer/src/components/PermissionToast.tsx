@@ -65,7 +65,7 @@ export default function PermissionToast({
         for (const perm of node.pendingPermissions) {
           result.push({
             permission: perm,
-            sessionTitle: node.title ?? node.openCodeSessionId ?? 'Unknown',
+            sessionTitle: node.title ?? node.providerSessionId ?? 'Unknown',
             nodeId,
           });
         }
@@ -216,26 +216,26 @@ export default function PermissionToast({
                   Always
                 </Button>
               )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    console.info('[permission-toast] clicked reject', {
-                      sessionID: perm.sessionID,
-                      requestId: perm.requestId,
-                      directory: perm.directory,
-                      permission: perm.permission,
-                    });
-                    onReplyPermission(
-                      perm.sessionID,
-                      perm.requestId,
-                      'reject',
-                      perm.directory,
-                    );
-                  }}
-                  className="hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
-                >
-                  Reject
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  console.info('[permission-toast] clicked reject', {
+                    sessionID: perm.sessionID,
+                    requestId: perm.requestId,
+                    directory: perm.directory,
+                    permission: perm.permission,
+                  });
+                  onReplyPermission(
+                    perm.sessionID,
+                    perm.requestId,
+                    'reject',
+                    perm.directory,
+                  );
+                }}
+                className="hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
+              >
+                Reject
               </Button>
             </div>
           </div>

@@ -18,10 +18,12 @@ interface UseStartupPromptsOptions {
  */
 export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
   const startupPromptBuffer = useRef<StartupPromptBuffer>(new Map());
-  const startupPermissionBuffer = useRef<
-    Map<string, PendingPermission[]>
-  >(new Map());
-  const startupQuestionBuffer = useRef<Map<string, PendingQuestion[]>>(new Map());
+  const startupPermissionBuffer = useRef<Map<string, PendingPermission[]>>(
+    new Map(),
+  );
+  const startupQuestionBuffer = useRef<Map<string, PendingQuestion[]>>(
+    new Map(),
+  );
 
   const ensureQuestionMessage = useCallback(
     (node: SessionNode, promptData: PromptData) => {
@@ -66,19 +68,21 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
       }
 
       setNodes((prev) => {
-        // Use findKeyByConnectionId which prioritizes openCodeSessionId over
+        // Use findKeyByConnectionId which prioritizes providerSessionId over
         // connectionId. This is critical for prompt recovery after app restart
-        // where nodes may have null connectionId but still have openCodeSessionId.
+        // where nodes may have null connectionId but still have providerSessionId.
         const nodeId = findKeyByConnectionId(
           prev,
           promptData.connectionId,
-          promptData.openCodeSessionId,
+          promptData.providerSessionId,
         );
         if (!nodeId) {
           // Node not in map yet — buffer the prompt to apply when node arrives
           const bufferKey =
-            promptData.openCodeSessionId ?? promptData.connectionId;
-          startupPromptBuffer.current.set(bufferKey, promptData);
+            promptData.providerSessionId ?? promptData.connectionId;
+          if (bufferKey) {
+            startupPromptBuffer.current.set(bufferKey, promptData);
+          }
           return prev;
         }
         const node = prev.get(nodeId)!;
@@ -120,8 +124,11 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
         );
         if (!nodeId) {
           const buffered =
-            startupPermissionBuffer.current.get(pendingPermission.sessionID) ?? [];
-          if (!buffered.some((item) => item.requestId === permission.requestId)) {
+            startupPermissionBuffer.current.get(pendingPermission.sessionID) ??
+            [];
+          if (
+            !buffered.some((item) => item.requestId === permission.requestId)
+          ) {
             startupPermissionBuffer.current.set(pendingPermission.sessionID, [
               ...buffered,
               permission,
@@ -180,7 +187,11 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
         }
 
         const node = prev.get(nodeId)!;
-        if (node.pendingQuestions.some((item) => item.requestId === question.requestId)) {
+        if (
+          node.pendingQuestions.some(
+            (item) => item.requestId === question.requestId,
+          )
+        ) {
           return prev;
         }
 
@@ -209,16 +220,20 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
     return () => {
       cancelled = true;
     };
-  }, [rehydrateActivePrompts, rehydratePendingPermissions, rehydratePendingQuestions]);
+  }, [
+    rehydrateActivePrompts,
+    rehydratePendingPermissions,
+    rehydratePendingQuestions,
+  ]);
 
   /**
-   * Apply any buffered startup prompt for a given openCodeSessionId or connectionId.
+   * Apply any buffered startup prompt for a given providerSessionId or connectionId.
    * Called when a new node arrives via session-tree-updated.
    */
   const applyStartupPromptBuffer = useCallback(
-    (openCodeSessionId: string, connectionId: string | null) => {
-      // Try to find a buffered prompt by openCodeSessionId first, then connectionId
-      const bufferKey = openCodeSessionId;
+    (providerSessionId: string, connectionId: string | null) => {
+      // Try to find a buffered prompt by providerSessionId first, then connectionId
+      const bufferKey = providerSessionId;
       let buffered = startupPromptBuffer.current.get(bufferKey);
       if (!buffered && connectionId) {
         buffered = startupPromptBuffer.current.get(connectionId);
@@ -240,7 +255,7 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
         const nodeId = findKeyByConnectionId(
           prev,
           buffered.connectionId,
-          buffered.openCodeSessionId,
+          buffered.providerSessionId,
         );
         if (!nodeId) return prev;
         const node = prev.get(nodeId)!;
@@ -261,15 +276,15 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
   );
 
   const applyStartupPermissionBuffer = useCallback(
-    (openCodeSessionId: string, connectionId: string | null) => {
-      let buffered = startupPermissionBuffer.current.get(openCodeSessionId);
+    (providerSessionId: string, connectionId: string | null) => {
+      let buffered = startupPermissionBuffer.current.get(providerSessionId);
       if (!buffered && connectionId) {
         buffered = startupPermissionBuffer.current.get(connectionId);
         if (buffered) {
           startupPermissionBuffer.current.delete(connectionId);
         }
       } else if (buffered) {
-        startupPermissionBuffer.current.delete(openCodeSessionId);
+        startupPermissionBuffer.current.delete(providerSessionId);
       }
 
       if (!buffered) return;
@@ -277,8 +292,8 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
       setNodes((prev) => {
         const nodeId = findKeyByConnectionId(
           prev,
-          connectionId ?? openCodeSessionId,
-          openCodeSessionId,
+          connectionId ?? providerSessionId,
+          providerSessionId,
         );
         if (!nodeId) return prev;
 
@@ -303,15 +318,15 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
   );
 
   const applyStartupQuestionBuffer = useCallback(
-    (openCodeSessionId: string, connectionId: string | null) => {
-      let buffered = startupQuestionBuffer.current.get(openCodeSessionId);
+    (providerSessionId: string, connectionId: string | null) => {
+      let buffered = startupQuestionBuffer.current.get(providerSessionId);
       if (!buffered && connectionId) {
         buffered = startupQuestionBuffer.current.get(connectionId);
         if (buffered) {
           startupQuestionBuffer.current.delete(connectionId);
         }
       } else if (buffered) {
-        startupQuestionBuffer.current.delete(openCodeSessionId);
+        startupQuestionBuffer.current.delete(providerSessionId);
       }
 
       if (!buffered) return;
@@ -319,8 +334,8 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
       setNodes((prev) => {
         const nodeId = findKeyByConnectionId(
           prev,
-          connectionId ?? openCodeSessionId,
-          openCodeSessionId,
+          connectionId ?? providerSessionId,
+          providerSessionId,
         );
         if (!nodeId) return prev;
 
@@ -351,12 +366,13 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
    * matching node exists yet (timing race between prompt and session-tree-updated).
    */
   const bufferPrompt = useCallback((promptData: PromptData) => {
-    const bufferKey = promptData.openCodeSessionId ?? promptData.connectionId;
+    const bufferKey = promptData.providerSessionId ?? promptData.connectionId;
     window.api.log(
       'info',
       'prompt-routing',
-      `[bufferPrompt] Buffering prompt until node arrives: bufferKey=${bufferKey} promptId=${promptData.id}`,
+      `[bufferPrompt] Buffering prompt until node arrives: bufferKey=${bufferKey ?? '<none>'} promptId=${promptData.id}`,
     );
+    if (!bufferKey) return;
     startupPromptBuffer.current.set(bufferKey, promptData);
   }, []);
 

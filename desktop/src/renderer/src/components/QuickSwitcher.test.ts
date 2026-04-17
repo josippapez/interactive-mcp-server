@@ -14,7 +14,7 @@ import type { SessionNode } from '../types';
 function makeSessionNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
     id: 'node-1',
-    openCodeSessionId: 'ses_1',
+    providerSessionId: 'ses_1',
     openCodeParentId: null,
     title: 'Test Session',
     directory: '/tmp',

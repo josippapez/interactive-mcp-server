@@ -13,11 +13,11 @@ type SessionModelState = {
  * extracting it from the most recent assistant message. The model ID
  * doesn't change during a session, so we don't need to poll.
  *
- * @param openCodeSessionId - The OpenCode session ID (null to disable)
+ * @param providerSessionId - The OpenCode session ID (null to disable)
  * @param isOpenCodeSession - Whether this is an OpenCode session
  */
 export function useSessionModelId(
-  openCodeSessionId: string | null,
+  providerSessionId: string | null,
   isOpenCodeSession: boolean,
 ): SessionModelState {
   const setSessionBaseModel = useSetSessionBaseModel();
@@ -29,14 +29,14 @@ export function useSessionModelId(
 
   useEffect(() => {
     // Skip if not an OpenCode session or no session ID
-    if (!isOpenCodeSession || !openCodeSessionId) {
+    if (!isOpenCodeSession || !providerSessionId) {
       setState({ modelId: null, providerId: null });
       fetchedSessionRef.current = null;
       return;
     }
 
     // Skip if we already fetched for this session
-    if (fetchedSessionRef.current === openCodeSessionId) {
+    if (fetchedSessionRef.current === providerSessionId) {
       return;
     }
 
@@ -50,7 +50,7 @@ export function useSessionModelId(
 
         // Fetch just a few messages to get the model ID
         const messages = await window.api.fetchConversationMessages(
-          openCodeSessionId,
+          providerSessionId,
           10, // Only need a few to find an assistant message
         );
 
@@ -61,7 +61,7 @@ export function useSessionModelId(
           const msg = messages[i];
           if (msg.role === 'assistant' && msg.modelId) {
             setSessionBaseModel(
-              openCodeSessionId,
+              providerSessionId,
               msg.modelId,
               msg.providerId ?? null,
             );
@@ -69,14 +69,14 @@ export function useSessionModelId(
               modelId: msg.modelId,
               providerId: msg.providerId ?? null,
             });
-            fetchedSessionRef.current = openCodeSessionId;
+            fetchedSessionRef.current = providerSessionId;
             return;
           }
         }
 
         // No model ID found yet - mark as fetched but null
         // We'll try again via SSE events when new messages arrive
-        fetchedSessionRef.current = openCodeSessionId;
+        fetchedSessionRef.current = providerSessionId;
       } catch (err) {
         console.warn('[useSessionModelId] Error fetching model ID:', err);
       }
@@ -89,8 +89,8 @@ export function useSessionModelId(
       type: 'message.created' | 'message.updated' | 'message.completed';
       sessionId: string;
     }) => {
-      if (data.sessionId !== openCodeSessionId) return;
-      if (fetchedSessionRef.current === openCodeSessionId && state.modelId)
+      if (data.sessionId !== providerSessionId) return;
+      if (fetchedSessionRef.current === providerSessionId && state.modelId)
         return;
 
       // Re-fetch to get the model ID from the new message
@@ -105,7 +105,7 @@ export function useSessionModelId(
       cleanupMessageEvent();
     };
   }, [
-    openCodeSessionId,
+    providerSessionId,
     isOpenCodeSession,
     setSessionBaseModel,
     state.modelId,

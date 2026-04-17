@@ -81,7 +81,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
   );
 
   const contextUsageSessionId =
-    view.openCodeSessionId ??
+    view.providerSessionId ??
     (sessionChannel?.sessionId?.startsWith('ses_')
       ? sessionChannel.sessionId
       : null) ??
@@ -151,7 +151,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     connectionId={connectionId}
                   />
                 )}
-              {prompt && !activeSession && (
+                {prompt && !activeSession && (
                   <PromptMessage
                     prompt={prompt}
                     secondsLeft={view.secondsLeft}
@@ -236,7 +236,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                   enabled={Boolean(sessionChannel)}
                   sessionChannelId={sessionChannel?.sessionId}
                   dispatchSessionId={activeConnectionId}
-                  openCodeSessionId={view.openCodeSessionId}
+                  providerSessionId={view.providerSessionId}
                   isOpenCodeSession={view.isOpenCodeSession}
                   noReply={view.noReply}
                   commandPaletteOpen={view.commandPaletteOpen}
@@ -291,7 +291,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
         </div>
 
         {activeConnectionId &&
-          view.openCodeSessionId &&
+          view.providerSessionId &&
           view.isOpenCodeSession && (
             <TasksSidebar
               todos={view.todos}

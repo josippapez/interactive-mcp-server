@@ -59,7 +59,7 @@ export function usePromptViewState(props: PromptViewProps) {
     setPendingSessionSelect,
   });
 
-  const openCodeSessionId = activeNode?.openCodeSessionId ?? null;
+  const providerSessionId = activeNode?.providerSessionId ?? null;
   const isOpenCodeSession = activeNode?.providerType === 'opencode';
   const sessionBaseDirectory =
     activeNode?.baseDirectory ?? activeNode?.directory ?? null;
@@ -90,7 +90,7 @@ export function usePromptViewState(props: PromptViewProps) {
     currentModelOverride,
     handleModelSelect,
     handleSaveCreateModelSelection,
-  } = usePromptModelState(openCodeSessionId);
+  } = usePromptModelState(providerSessionId);
 
   const {
     todos,
@@ -114,7 +114,7 @@ export function usePromptViewState(props: PromptViewProps) {
     removeMcpServerAuth,
     latestStatus,
   } = usePromptConnectionData({
-    openCodeSessionId,
+    providerSessionId,
     isOpenCodeSession,
     sessionBaseDirectory,
     sessionStatuses,
@@ -128,7 +128,7 @@ export function usePromptViewState(props: PromptViewProps) {
     activeConnectionId,
   });
 
-  const canAbort = Boolean(openCodeSessionId);
+  const canAbort = Boolean(providerSessionId);
   const [channelSearchQuery, setChannelSearchQuery] = useState('');
   const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(-1);
   const [channelSearchOpen, setChannelSearchOpen] = useState(false);
@@ -160,14 +160,14 @@ export function usePromptViewState(props: PromptViewProps) {
   }, [onRemoveSession, sessionActionTarget, setRemoveError]);
 
   const handleAbortSession = useCallback(async () => {
-    if (!openCodeSessionId) {
+    if (!providerSessionId) {
       return;
     }
-    const result = await window.api.abortSession(openCodeSessionId);
+    const result = await window.api.abortSession(providerSessionId);
     if (!result.success) {
       console.warn('[PromptView] Failed to abort session:', result.error);
     }
-  }, [openCodeSessionId]);
+  }, [providerSessionId]);
 
   const handleClearMessages = useCallback(() => {
     if (sessionActionTarget) {
@@ -222,8 +222,7 @@ export function usePromptViewState(props: PromptViewProps) {
       if (
         event.target instanceof HTMLInputElement ||
         event.target instanceof HTMLTextAreaElement ||
-        (event.target instanceof HTMLElement &&
-          event.target.isContentEditable)
+        (event.target instanceof HTMLElement && event.target.isContentEditable)
       ) {
         return;
       }
@@ -244,7 +243,9 @@ export function usePromptViewState(props: PromptViewProps) {
 
       const matchingRoots = Array.from(connections.entries())
         .filter(([, node]) => !node.isDirectConnection)
-        .filter(([, node]) => (node.baseDirectory ?? node.directory) === projectPath)
+        .filter(
+          ([, node]) => (node.baseDirectory ?? node.directory) === projectPath,
+        )
         .sort(([, left], [, right]) => {
           const rightUpdated = right.createdAt ?? 0;
           const leftUpdated = left.createdAt ?? 0;
@@ -274,7 +275,7 @@ export function usePromptViewState(props: PromptViewProps) {
     chatEndRef,
     layoutRef,
     activeNode,
-    openCodeSessionId,
+    providerSessionId,
     isOpenCodeSession,
     parentInfo,
     handleNavigateToParent,

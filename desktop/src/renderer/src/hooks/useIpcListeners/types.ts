@@ -32,15 +32,15 @@ export type IpcListenerOpts = {
   applyStartupHistoryBuffer: (connectionId: string) => void;
   /** Apply any startup-buffered prompt for a session once its node arrives. */
   applyStartupPromptBuffer: (
-    openCodeSessionId: string,
+    providerSessionId: string,
     connectionId: string | null,
   ) => void;
   applyStartupPermissionBuffer: (
-    openCodeSessionId: string,
+    providerSessionId: string,
     connectionId: string | null,
   ) => void;
   applyStartupQuestionBuffer: (
-    openCodeSessionId: string,
+    providerSessionId: string,
     connectionId: string | null,
   ) => void;
   /** Buffer a prompt for later application when its target node arrives. */

@@ -8,7 +8,7 @@ import { findNodeBySessionId } from './useProviderInjection';
 function mockNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
     id: 'node-1',
-    openCodeSessionId: null,
+    providerSessionId: null,
     openCodeParentId: null,
     title: 'Test Channel',
     directory: '/test',
@@ -96,23 +96,23 @@ describe('findNodeBySessionId', () => {
     expect(resultB).toEqual({ nodeKey: 'ses_a', node });
   });
 
-  it('prioritizes openCodeSessionId over connectionId for parent-child with shared connectionId', () => {
+  it('prioritizes providerSessionId over connectionId for parent-child with shared connectionId', () => {
     // This test verifies the fix for the message routing bug where:
     // - Parent and child share the same connectionId (MCP transport UUID)
-    // - They have different openCodeSessionId values
-    // - findNodeBySessionId must return the correct node based on openCodeSessionId
+    // - They have different providerSessionId values
+    // - findNodeBySessionId must return the correct node based on providerSessionId
     const sharedConnectionId = 'conn-shared-123';
 
     const parentNode = mockNode({
       id: 'ses_parent',
-      openCodeSessionId: 'ses_parent',
+      providerSessionId: 'ses_parent',
       openCodeParentId: null,
       connectionId: sharedConnectionId,
     });
 
     const childNode = mockNode({
       id: 'ses_child',
-      openCodeSessionId: 'ses_child',
+      providerSessionId: 'ses_child',
       openCodeParentId: 'ses_parent',
       connectionId: sharedConnectionId, // Same connectionId as parent!
     });
@@ -122,22 +122,22 @@ describe('findNodeBySessionId', () => {
       ['ses_child', childNode],
     ]);
 
-    // Search by parent's openCodeSessionId should find parent
+    // Search by parent's providerSessionId should find parent
     const resultParent = findNodeBySessionId(nodes, 'ses_parent');
     expect(resultParent.nodeKey).toBe('ses_parent');
     expect(resultParent.node).toBe(parentNode);
 
-    // Search by child's openCodeSessionId should find child
+    // Search by child's providerSessionId should find child
     const resultChild = findNodeBySessionId(nodes, 'ses_child');
     expect(resultChild.nodeKey).toBe('ses_child');
     expect(resultChild.node).toBe(childNode);
   });
 
-  it('finds node by openCodeSessionId field even when map key differs', () => {
-    // Node's map key might differ from its openCodeSessionId in some edge cases
+  it('finds node by providerSessionId field even when map key differs', () => {
+    // Node's map key might differ from its providerSessionId in some edge cases
     const node = mockNode({
       id: 'some-key',
-      openCodeSessionId: 'ses_target',
+      providerSessionId: 'ses_target',
       connectionId: 'other-conn',
     });
     const nodes = new Map<string, SessionNode>([['some-key', node]]);
@@ -152,7 +152,7 @@ describe('findNodeBySessionId', () => {
 
     const parentNode = mockNode({
       id: 'ses_parent',
-      openCodeSessionId: 'ses_parent',
+      providerSessionId: 'ses_parent',
       openCodeParentId: null,
       connectionId: sharedConnectionId,
       providerType: 'opencode',
@@ -160,7 +160,7 @@ describe('findNodeBySessionId', () => {
 
     const childNode = mockNode({
       id: 'ses_child',
-      openCodeSessionId: 'ses_child',
+      providerSessionId: 'ses_child',
       openCodeParentId: 'ses_parent',
       connectionId: sharedConnectionId,
       providerType: 'opencode',

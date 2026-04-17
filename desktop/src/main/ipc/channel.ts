@@ -21,15 +21,10 @@ import type { BrowserWindow } from 'electron';
 
 /**
  * Base payload included in all session-routed IPC messages.
- * The renderer uses these fields to route messages to the correct channel.
- *
- * Both `providerSessionId` and `openCodeSessionId` are emitted during the
- * rename transition (Phase 3). Phase 5 will drop `openCodeSessionId` from
- * all renderer consumers.
+ * The renderer uses this field to route messages to the correct channel.
  */
 export interface SessionRoutedPayload {
   providerSessionId: string | null;
-  openCodeSessionId: string | null;
 }
 
 // ─── IPC Channel Types ─────────────────────────────────────────────────────
@@ -64,9 +59,6 @@ export interface PromptClearPayload extends SessionRoutedPayload {
  * Callers MUST resolve `providerSessionId` at the tool boundary before calling
  * this function — no resolution is performed here.
  *
- * Emits both `providerSessionId` and `openCodeSessionId` (set to the same
- * value) in the payload during the rename transition.
- *
  * @param win - The BrowserWindow to send to (null-safe)
  * @param channel - The IPC channel name
  * @param providerSessionId - The resolved provider session ID (nullable)
@@ -82,7 +74,6 @@ export function sendToRenderer<T extends Record<string, unknown>>(
 
   win.webContents.send(channel, {
     providerSessionId,
-    openCodeSessionId: providerSessionId,
     ...payload,
   });
 }

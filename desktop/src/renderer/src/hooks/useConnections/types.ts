@@ -8,6 +8,6 @@ export type StartupHistoryBuffer = Map<string, ChannelMessage[]>;
 
 /**
  * Buffer for prompts that arrived before their target node existed.
- * Key is openCodeSessionId (preferred) or connectionId (fallback).
+ * Key is providerSessionId (preferred) or connectionId (fallback).
  */
 export type StartupPromptBuffer = Map<string, PromptData>;

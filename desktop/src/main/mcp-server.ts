@@ -308,7 +308,7 @@ function createMcpServerWithTools(
       getWindow()?.webContents.send('channel-label-updated', {
         connectionId: registeredConnectionId,
         name: channelName,
-        openCodeSessionId,
+        providerSessionId: openCodeSessionId ?? null,
       });
     },
   );

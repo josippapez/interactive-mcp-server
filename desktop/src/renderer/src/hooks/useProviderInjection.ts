@@ -23,12 +23,12 @@ export interface ModelOverride {
  *
  * PRIORITY ORDER (critical for correct routing in parent-child scenarios):
  * 1. Direct map key lookup (node.id === sessionId)
- * 2. Match by openCodeSessionId field — this is the unique session identifier
+ * 2. Match by providerSessionId field — this is the unique session identifier
  * 3. Match by connectionId field — fallback for legacy/standalone clients
  *
  * In OpenCode's shared MCP client architecture, parent and child sessions share
- * the same connectionId (transport UUID). The openCodeSessionId is the unique
- * identifier that distinguishes them. Always prioritize openCodeSessionId.
+ * the same connectionId (transport UUID). The providerSessionId is the unique
+ * identifier that distinguishes them. Always prioritize providerSessionId.
  */
 export function findNodeBySessionId(
   nodes: Map<string, SessionNode>,
@@ -40,9 +40,9 @@ export function findNodeBySessionId(
     return { nodeKey: sessionId, node };
   }
 
-  // Priority 2: Match by openCodeSessionId field
+  // Priority 2: Match by providerSessionId field
   for (const [id, n] of nodes) {
-    if (n.openCodeSessionId === sessionId) {
+    if (n.providerSessionId === sessionId) {
       return { nodeKey: id, node: n };
     }
   }
@@ -144,8 +144,8 @@ export function useProviderInjection(
       const baseDirectory = node?.baseDirectory ?? undefined;
       const connectionId = node?.connectionId ?? sessionId;
       const directProviderSessionId =
-        node?.providerType === 'opencode' && node.openCodeSessionId
-          ? node.openCodeSessionId
+        node?.providerType === 'opencode' && node.providerSessionId
+          ? node.providerSessionId
           : null;
 
       /**
@@ -412,7 +412,7 @@ export function useProviderInjection(
                 m.id === outboundId ? { ...m, sent: true } : m,
               ),
               ...(result.sessionId !== providerSessionId
-                ? { openCodeSessionId: result.sessionId }
+                ? { providerSessionId: result.sessionId }
                 : {}),
               ...(buildInjectionSuccessStatus(
                 result.noReply ?? false,
@@ -469,7 +469,7 @@ export function useProviderInjection(
                 m.id === outboundId ? { ...m, sent: false } : m,
               ),
               ...(result.sessionId !== providerSessionId
-                ? { openCodeSessionId: result.sessionId }
+                ? { providerSessionId: result.sessionId }
                 : {}),
               sessionStatuses: [
                 ...n.sessionStatuses,

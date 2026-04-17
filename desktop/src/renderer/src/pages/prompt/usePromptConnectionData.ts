@@ -16,14 +16,14 @@ type SessionStatus = {
 };
 
 type Args = {
-  openCodeSessionId: string | null;
+  providerSessionId: string | null;
   isOpenCodeSession: boolean;
   sessionBaseDirectory: string | null;
   sessionStatuses: SessionStatus[];
 };
 
 export function usePromptConnectionData({
-  openCodeSessionId,
+  providerSessionId,
   isOpenCodeSession,
   sessionBaseDirectory,
   sessionStatuses,
@@ -33,24 +33,24 @@ export function usePromptConnectionData({
     isLoading: todosLoading,
     error: todosError,
     refresh: refreshTodos,
-  } = useTodos(openCodeSessionId);
+  } = useTodos(providerSessionId);
 
-  const { vcsInfo } = useVcsInfo(Boolean(openCodeSessionId));
+  const { vcsInfo } = useVcsInfo(Boolean(providerSessionId));
 
   const { messages: conversationMessages, isAvailable: conversationAvailable } =
     useConversation(
-      isOpenCodeSession ? openCodeSessionId : null,
+      isOpenCodeSession ? providerSessionId : null,
       isOpenCodeSession,
     );
 
   const { modelId: currentModelId, providerId: currentProviderId } =
-    useSessionModelId(openCodeSessionId, isOpenCodeSession);
-  const sessionModelSelection = useSessionModelSelection(openCodeSessionId);
+    useSessionModelId(providerSessionId, isOpenCodeSession);
+  const sessionModelSelection = useSessionModelSelection(providerSessionId);
 
   const { getStatus } = useSessionStatus(isOpenCodeSession);
   const sessionBusy =
-    openCodeSessionId && isOpenCodeSession
-      ? getStatus(openCodeSessionId) === 'busy'
+    providerSessionId && isOpenCodeSession
+      ? getStatus(providerSessionId) === 'busy'
       : false;
 
   const {

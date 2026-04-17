@@ -56,7 +56,7 @@ interface VirtualizedMessageListProps {
   expandAllTools?: boolean;
   /** List of tool names to exclude from auto-expand */
   toolAutoExpandExclusions?: string[];
-  /** Callback to navigate to a session by openCodeSessionId */
+  /** Callback to navigate to a session by providerSessionId */
   onNavigateToSession?: (sessionId: string) => void;
   /** Whether to show thinking sections expanded by default */
   showThinking?: boolean;

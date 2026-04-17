@@ -9,7 +9,7 @@ import type { SessionNode } from '../types';
 function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
     id: 'node-1',
-    openCodeSessionId: null,
+    providerSessionId: null,
     openCodeParentId: null,
     title: 'Test',
     directory: '',
@@ -54,14 +54,14 @@ describe('findKeyByConnectionId', () => {
     expect(findKeyByConnectionId(nodes, 'conn-direct')).toBe('conn-direct');
   });
 
-  it('returns the openCodeSessionId map key when the node is an OpenCode-backed session', () => {
-    // OpenCode sessions are keyed by openCodeSessionId, but their connectionId differs
+  it('returns the providerSessionId map key when the node is an OpenCode-backed session', () => {
+    // OpenCode sessions are keyed by providerSessionId, but their connectionId differs
     const nodes = new Map<string, SessionNode>([
       [
         'ses_opencode_123',
         makeNode({
           id: 'ses_opencode_123',
-          openCodeSessionId: 'ses_opencode_123',
+          providerSessionId: 'ses_opencode_123',
           connectionId: 'conn-mcp-456',
           isDirectConnection: false,
         }),
@@ -69,7 +69,7 @@ describe('findKeyByConnectionId', () => {
     ]);
 
     // data.sessionId = connectionId = 'conn-mcp-456'
-    // but the map key = openCodeSessionId = 'ses_opencode_123'
+    // but the map key = providerSessionId = 'ses_opencode_123'
     expect(findKeyByConnectionId(nodes, 'conn-mcp-456')).toBe(
       'ses_opencode_123',
     );
@@ -81,7 +81,7 @@ describe('findKeyByConnectionId', () => {
         'ses_opencode_abc',
         makeNode({
           id: 'ses_opencode_abc',
-          openCodeSessionId: 'ses_opencode_abc',
+          providerSessionId: 'ses_opencode_abc',
           connectionId: 'conn-xyz',
         }),
       ],
@@ -106,38 +106,38 @@ describe('findKeyByConnectionId', () => {
   });
 
   // -------------------------------------------------------------------------
-  // openCodeSessionId priority (critical for prompt recovery after app restart)
+  // providerSessionId priority (critical for prompt recovery after app restart)
   // -------------------------------------------------------------------------
 
-  it('prioritizes openCodeSessionId over connectionId when both are provided', () => {
+  it('prioritizes providerSessionId over connectionId when both are provided', () => {
     // After app restart, a node might have a null connectionId but still have
-    // an openCodeSessionId. The prompt recovery needs to match by openCodeSessionId.
+    // an providerSessionId. The prompt recovery needs to match by providerSessionId.
     const nodes = new Map<string, SessionNode>([
       [
         'ses_abc123',
         makeNode({
           id: 'ses_abc123',
-          openCodeSessionId: 'ses_abc123',
+          providerSessionId: 'ses_abc123',
           connectionId: null, // Not yet reconnected
         }),
       ],
     ]);
 
-    // When openCodeSessionId is provided, it should find the node even if
+    // When providerSessionId is provided, it should find the node even if
     // connectionId doesn't match (because node.connectionId is null)
     expect(findKeyByConnectionId(nodes, 'conn-old-uuid', 'ses_abc123')).toBe(
       'ses_abc123',
     );
   });
 
-  it('matches by openCodeSessionId field when map key differs', () => {
-    // Edge case: node.openCodeSessionId differs from map key
+  it('matches by providerSessionId field when map key differs', () => {
+    // Edge case: node.providerSessionId differs from map key
     const nodes = new Map<string, SessionNode>([
       [
         'some-other-key',
         makeNode({
           id: 'some-other-key',
-          openCodeSessionId: 'ses_xyz789',
+          providerSessionId: 'ses_xyz789',
           connectionId: 'conn-456',
         }),
       ],
@@ -148,31 +148,31 @@ describe('findKeyByConnectionId', () => {
     );
   });
 
-  it('falls back to connectionId match when openCodeSessionId is not found', () => {
+  it('falls back to connectionId match when providerSessionId is not found', () => {
     const nodes = new Map<string, SessionNode>([
       [
         'ses_abc123',
         makeNode({
           id: 'ses_abc123',
-          openCodeSessionId: 'ses_abc123',
+          providerSessionId: 'ses_abc123',
           connectionId: 'conn-mcp-456',
         }),
       ],
     ]);
 
-    // No matching openCodeSessionId, but connectionId matches
+    // No matching providerSessionId, but connectionId matches
     expect(findKeyByConnectionId(nodes, 'conn-mcp-456', 'ses_unknown')).toBe(
       'ses_abc123',
     );
   });
 
-  it('returns null when neither openCodeSessionId nor connectionId matches', () => {
+  it('returns null when neither providerSessionId nor connectionId matches', () => {
     const nodes = new Map<string, SessionNode>([
       [
         'ses_abc123',
         makeNode({
           id: 'ses_abc123',
-          openCodeSessionId: 'ses_abc123',
+          providerSessionId: 'ses_abc123',
           connectionId: 'conn-mcp-456',
         }),
       ],
@@ -195,7 +195,7 @@ describe('findPromptTargetKey', () => {
         'ses_root',
         makeNode({
           id: 'ses_root',
-          openCodeSessionId: 'ses_root',
+          providerSessionId: 'ses_root',
           openCodeParentId: null,
           connectionId: 'conn-root',
           depth: 0,
@@ -212,7 +212,7 @@ describe('findPromptTargetKey', () => {
         'ses_parent',
         makeNode({
           id: 'ses_parent',
-          openCodeSessionId: 'ses_parent',
+          providerSessionId: 'ses_parent',
           openCodeParentId: null,
           connectionId: 'conn-parent',
           depth: 0,
@@ -222,7 +222,7 @@ describe('findPromptTargetKey', () => {
         'ses_child',
         makeNode({
           id: 'ses_child',
-          openCodeSessionId: 'ses_child',
+          providerSessionId: 'ses_child',
           openCodeParentId: 'ses_parent',
           connectionId: 'conn-child',
           depth: 1,
@@ -240,7 +240,7 @@ describe('findPromptTargetKey', () => {
         'ses_root',
         makeNode({
           id: 'ses_root',
-          openCodeSessionId: 'ses_root',
+          providerSessionId: 'ses_root',
           openCodeParentId: null,
           connectionId: 'conn-root',
           depth: 0,
@@ -250,7 +250,7 @@ describe('findPromptTargetKey', () => {
         'ses_mid',
         makeNode({
           id: 'ses_mid',
-          openCodeSessionId: 'ses_mid',
+          providerSessionId: 'ses_mid',
           openCodeParentId: 'ses_root',
           connectionId: 'conn-mid',
           depth: 1,
@@ -260,7 +260,7 @@ describe('findPromptTargetKey', () => {
         'ses_leaf',
         makeNode({
           id: 'ses_leaf',
-          openCodeSessionId: 'ses_leaf',
+          providerSessionId: 'ses_leaf',
           openCodeParentId: 'ses_mid',
           connectionId: 'conn-leaf',
           depth: 2,
@@ -282,7 +282,7 @@ describe('findPromptTargetKey', () => {
         'conn-direct',
         makeNode({
           id: 'conn-direct',
-          openCodeSessionId: null,
+          providerSessionId: null,
           openCodeParentId: null,
           connectionId: 'conn-direct',
           isDirectConnection: true,

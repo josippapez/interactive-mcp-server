@@ -5,7 +5,6 @@ import {
   resolveMessageTarget,
   resolveInteractiveMessageTarget,
   resolveTargetBySessionId,
-  findNodeKeyWithFallback,
   type DispatchTarget,
 } from './message-dispatch';
 
@@ -16,7 +15,7 @@ import {
 function createMockNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
     id: 'test-node-id',
-    openCodeSessionId: null,
+    providerSessionId: null,
     openCodeParentId: null,
     title: 'Test Node',
     directory: '/test/dir',
@@ -78,14 +77,14 @@ describe('resolvePromptTarget', () => {
     expect(result).toBeNull();
   });
 
-  it('prioritizes prompt.openCodeSessionId over node.openCodeSessionId', () => {
+  it('uses node.providerSessionId (node is the authoritative target)', () => {
     const prompt = createMockPrompt({
-      openCodeSessionId: 'ses_prompt_session',
+      providerSessionId: 'ses_prompt_session',
       connectionId: 'conn-shared',
     });
     const node = createMockNode({
       id: 'node-1',
-      openCodeSessionId: 'ses_node_session', // Different from prompt's
+      providerSessionId: 'ses_node_session', // Node identity wins
       connectionId: 'conn-shared',
       prompt,
     });
@@ -94,19 +93,19 @@ describe('resolvePromptTarget', () => {
     const result = resolvePromptTarget(nodes, 'node-1');
 
     expect(result).not.toBeNull();
-    expect(result!.sessionId).toBe('ses_prompt_session');
-    expect(result!.openCodeSessionId).toBe('ses_prompt_session');
+    expect(result!.sessionId).toBe('ses_node_session');
+    expect(result!.providerSessionId).toBe('ses_node_session');
     expect(result!.resolvedVia).toBe('prompt-session');
   });
 
-  it('falls back to node.openCodeSessionId when prompt has no session ID', () => {
+  it('uses node.providerSessionId when prompt has no session ID', () => {
     const prompt = createMockPrompt({
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: 'conn-abc',
     });
     const node = createMockNode({
       id: 'node-1',
-      openCodeSessionId: 'ses_node_session',
+      providerSessionId: 'ses_node_session',
       connectionId: 'conn-abc',
       prompt,
     });
@@ -116,18 +115,18 @@ describe('resolvePromptTarget', () => {
 
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe('ses_node_session');
-    expect(result!.openCodeSessionId).toBe('ses_node_session');
-    expect(result!.resolvedVia).toBe('node-session');
+    expect(result!.providerSessionId).toBe('ses_node_session');
+    expect(result!.resolvedVia).toBe('prompt-session');
   });
 
   it('falls back to connectionId when no session IDs are available', () => {
     const prompt = createMockPrompt({
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: 'conn-abc',
     });
     const node = createMockNode({
       id: 'node-1',
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: 'conn-abc',
       prompt,
     });
@@ -138,18 +137,18 @@ describe('resolvePromptTarget', () => {
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe('conn-abc');
     expect(result!.connectionId).toBe('conn-abc');
-    expect(result!.openCodeSessionId).toBeNull();
+    expect(result!.providerSessionId).toBeNull();
     expect(result!.resolvedVia).toBe('node-connection');
   });
 
-  it('uses prompt.connectionId when node.connectionId is null', () => {
+  it('uses nodeKey as connectionId when node.connectionId is null', () => {
     const prompt = createMockPrompt({
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: 'conn-from-prompt',
     });
     const node = createMockNode({
       id: 'node-1',
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: null,
       prompt,
     });
@@ -158,12 +157,13 @@ describe('resolvePromptTarget', () => {
     const result = resolvePromptTarget(nodes, 'node-1');
 
     expect(result).not.toBeNull();
-    expect(result!.sessionId).toBe('conn-from-prompt');
-    expect(result!.connectionId).toBe('conn-from-prompt');
+    // Prompt payload's connectionId is ignored; falls back to nodeKey.
+    expect(result!.sessionId).toBe('node-1');
+    expect(result!.connectionId).toBe('node-1');
   });
 
   it('includes the full node in the result', () => {
-    const prompt = createMockPrompt({ openCodeSessionId: 'ses_abc' });
+    const prompt = createMockPrompt({ providerSessionId: 'ses_abc' });
     const node = createMockNode({
       id: 'node-1',
       title: 'My Test Node',
@@ -196,10 +196,10 @@ describe('resolveMessageTarget', () => {
     expect(result).toBeNull();
   });
 
-  it('prioritizes openCodeSessionId for routing', () => {
+  it('prioritizes providerSessionId for routing', () => {
     const node = createMockNode({
       id: 'node-1',
-      openCodeSessionId: 'ses_abc123',
+      providerSessionId: 'ses_abc123',
       connectionId: 'conn-xyz',
     });
     const nodes = new Map([['node-1', node]]);
@@ -208,7 +208,7 @@ describe('resolveMessageTarget', () => {
 
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe('ses_abc123');
-    expect(result!.openCodeSessionId).toBe('ses_abc123');
+    expect(result!.providerSessionId).toBe('ses_abc123');
     expect(result!.connectionId).toBe('conn-xyz');
     expect(result!.resolvedVia).toBe('node-session');
   });
@@ -216,7 +216,7 @@ describe('resolveMessageTarget', () => {
   it('falls back to connectionId for direct connections', () => {
     const node = createMockNode({
       id: 'conn-direct',
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: 'conn-direct',
       isDirectConnection: true,
     });
@@ -227,14 +227,14 @@ describe('resolveMessageTarget', () => {
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe('conn-direct');
     expect(result!.connectionId).toBe('conn-direct');
-    expect(result!.openCodeSessionId).toBeNull();
+    expect(result!.providerSessionId).toBeNull();
     expect(result!.resolvedVia).toBe('node-connection');
   });
 
   it('falls back to node.id when no session or connection ID', () => {
     const node = createMockNode({
       id: 'fallback-id',
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: null,
     });
     const nodes = new Map([['fallback-id', node]]);
@@ -244,13 +244,13 @@ describe('resolveMessageTarget', () => {
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe('fallback-id');
     expect(result!.connectionId).toBe('fallback-id');
-    expect(result!.resolvedVia).toBe('active-channel');
+    expect(result!.resolvedVia).toBe('node-connection');
   });
 
   it('does not require a prompt (unlike resolvePromptTarget)', () => {
     const node = createMockNode({
       id: 'node-1',
-      openCodeSessionId: 'ses_abc',
+      providerSessionId: 'ses_abc',
       prompt: null, // No prompt
     });
     const nodes = new Map([['node-1', node]]);
@@ -276,7 +276,7 @@ describe('resolveTargetBySessionId', () => {
   it('finds node by direct map key lookup', () => {
     const node = createMockNode({
       id: 'ses_abc123',
-      openCodeSessionId: 'ses_abc123',
+      providerSessionId: 'ses_abc123',
       connectionId: 'conn-xyz',
     });
     const nodes = new Map([['ses_abc123', node]]);
@@ -288,63 +288,75 @@ describe('resolveTargetBySessionId', () => {
     expect(result!.sessionId).toBe('ses_abc123');
   });
 
-  it('finds node by openCodeSessionId field when key differs', () => {
+  it('returns null when sessionId does not match a map key (no field-scan fallback)', () => {
     const node = createMockNode({
       id: 'different-key',
-      openCodeSessionId: 'ses_target',
+      providerSessionId: 'ses_target',
       connectionId: 'conn-xyz',
     });
     const nodes = new Map([['different-key', node]]);
 
+    // After Phase 5, resolveTargetBySessionId is a direct map lookup.
+    // The node's providerSessionId field is not scanned.
     const result = resolveTargetBySessionId(nodes, 'ses_target');
 
-    expect(result).not.toBeNull();
-    expect(result!.nodeKey).toBe('different-key');
-    expect(result!.sessionId).toBe('ses_target');
-    expect(result!.resolvedVia).toBe('node-session');
+    expect(result).toBeNull();
   });
 
-  it('finds node by connectionId field as fallback', () => {
+  it('returns null when sessionId matches only a connectionId field (no field-scan fallback)', () => {
     const node = createMockNode({
       id: 'node-key',
-      openCodeSessionId: null,
+      providerSessionId: null,
       connectionId: 'conn-target',
     });
     const nodes = new Map([['node-key', node]]);
 
     const result = resolveTargetBySessionId(nodes, 'conn-target');
 
+    expect(result).toBeNull();
+  });
+
+  it('resolves a direct-connection node by its connectionId-keyed map entry', () => {
+    const node = createMockNode({
+      id: 'conn-target',
+      providerSessionId: null,
+      connectionId: 'conn-target',
+      isDirectConnection: true,
+    });
+    const nodes = new Map([['conn-target', node]]);
+
+    const result = resolveTargetBySessionId(nodes, 'conn-target');
+
     expect(result).not.toBeNull();
-    expect(result!.nodeKey).toBe('node-key');
+    expect(result!.nodeKey).toBe('conn-target');
     expect(result!.sessionId).toBe('conn-target');
     expect(result!.connectionId).toBe('conn-target');
     expect(result!.resolvedVia).toBe('node-connection');
   });
 
-  it('prioritizes openCodeSessionId match over connectionId match', () => {
-    // Node 1: has matching openCodeSessionId
+  it('returns the node matching the exact sessionId map key', () => {
+    // After Phase 5 the map is keyed by identity; duplicate identities via
+    // other fields are not scanned. Only the exact key lookup matters.
     const node1 = createMockNode({
-      id: 'node-1',
-      openCodeSessionId: 'ses_target',
+      id: 'ses_target',
+      providerSessionId: 'ses_target',
       connectionId: 'conn-other',
     });
-    // Node 2: has matching connectionId
     const node2 = createMockNode({
       id: 'node-2',
-      openCodeSessionId: null,
-      connectionId: 'ses_target', // Same as node1's openCodeSessionId
+      providerSessionId: null,
+      connectionId: 'ses_target', // Only here as a field; not a map key.
     });
     const nodes = new Map([
-      ['node-1', node1],
+      ['ses_target', node1],
       ['node-2', node2],
     ]);
 
     const result = resolveTargetBySessionId(nodes, 'ses_target');
 
     expect(result).not.toBeNull();
-    // Should find node-1 via openCodeSessionId, not node-2 via connectionId
-    expect(result!.nodeKey).toBe('node-1');
-    expect(result!.openCodeSessionId).toBe('ses_target');
+    expect(result!.nodeKey).toBe('ses_target');
+    expect(result!.providerSessionId).toBe('ses_target');
   });
 });
 
@@ -352,13 +364,13 @@ describe('resolveInteractiveMessageTarget', () => {
   it('prefers active channel target when requested session belongs to another channel', () => {
     const activeNode = createMockNode({
       id: 'ses_active',
-      openCodeSessionId: 'ses_active',
+      providerSessionId: 'ses_active',
       connectionId: 'conn_shared',
       title: 'Active',
     });
     const staleNode = createMockNode({
       id: 'ses_stale',
-      openCodeSessionId: 'ses_stale',
+      providerSessionId: 'ses_stale',
       connectionId: 'conn_shared',
       title: 'Stale',
     });
@@ -381,7 +393,7 @@ describe('resolveInteractiveMessageTarget', () => {
   it('uses requested target when it matches active channel', () => {
     const node = createMockNode({
       id: 'ses_active',
-      openCodeSessionId: 'ses_active',
+      providerSessionId: 'ses_active',
       connectionId: 'conn_shared',
     });
     const nodes = new Map([['ses_active', node]]);
@@ -400,7 +412,7 @@ describe('resolveInteractiveMessageTarget', () => {
   it('falls back to requested target when no active channel exists', () => {
     const node = createMockNode({
       id: 'ses_requested',
-      openCodeSessionId: 'ses_requested',
+      providerSessionId: 'ses_requested',
       connectionId: 'conn_requested',
     });
     const nodes = new Map([['ses_requested', node]]);
@@ -419,7 +431,7 @@ describe('resolveInteractiveMessageTarget', () => {
   it('falls back to active channel target when requested session cannot be resolved', () => {
     const activeNode = createMockNode({
       id: 'ses_active',
-      openCodeSessionId: 'ses_active',
+      providerSessionId: 'ses_active',
       connectionId: 'conn_shared',
     });
     const nodes = new Map([['ses_active', activeNode]]);
@@ -450,17 +462,17 @@ describe('resolveInteractiveMessageTarget', () => {
   it('uses requested target when active channel is missing but requested session resolves', () => {
     const activeNode = createMockNode({
       id: 'ses_active',
-      openCodeSessionId: 'ses_active',
+      providerSessionId: 'ses_active',
       connectionId: 'conn_shared',
     });
     const requestedNode = createMockNode({
-      id: 'tree-node-key',
-      openCodeSessionId: 'ses_requested',
+      id: 'ses_requested',
+      providerSessionId: 'ses_requested',
       connectionId: 'conn_shared',
     });
     const nodes = new Map([
       ['ses_active', activeNode],
-      ['tree-node-key', requestedNode],
+      ['ses_requested', requestedNode],
     ]);
 
     const result = resolveInteractiveMessageTarget(
@@ -470,14 +482,14 @@ describe('resolveInteractiveMessageTarget', () => {
     );
 
     expect(result).not.toBeNull();
-    expect(result!.nodeKey).toBe('tree-node-key');
+    expect(result!.nodeKey).toBe('ses_requested');
     expect(result!.sessionId).toBe('ses_requested');
   });
 
   it('returns null when active channel is specified but cannot be resolved', () => {
     const requestedNode = createMockNode({
       id: 'ses_requested',
-      openCodeSessionId: 'ses_requested',
+      providerSessionId: 'ses_requested',
       connectionId: 'conn_requested',
     });
     const nodes = new Map([['ses_requested', requestedNode]]);
@@ -505,105 +517,26 @@ describe('resolveInteractiveMessageTarget', () => {
 });
 
 // -----------------------------------------------------------------------------
-// findNodeKeyWithFallback
-// -----------------------------------------------------------------------------
-
-describe('findNodeKeyWithFallback', () => {
-  it('returns primaryKey when it exists in map', () => {
-    const node = createMockNode({ id: 'primary-key' });
-    const nodes = new Map([['primary-key', node]]);
-
-    const result = findNodeKeyWithFallback(
-      nodes,
-      'primary-key',
-      'fallback-conn',
-    );
-
-    expect(result).toBe('primary-key');
-  });
-
-  it('returns null when primaryKey not found and no fallback', () => {
-    const nodes = new Map<string, SessionNode>();
-
-    const result = findNodeKeyWithFallback(nodes, 'missing-key', null);
-
-    expect(result).toBeNull();
-  });
-
-  it('searches by connectionId when primaryKey not found', () => {
-    const node = createMockNode({
-      id: 'actual-key',
-      connectionId: 'fallback-conn',
-    });
-    const nodes = new Map([['actual-key', node]]);
-
-    const result = findNodeKeyWithFallback(
-      nodes,
-      'missing-key',
-      'fallback-conn',
-    );
-
-    expect(result).toBe('actual-key');
-  });
-
-  it('handles node key changes (direct→tree absorption scenario)', () => {
-    // Simulate: node was originally keyed by connectionId, then absorbed into
-    // OpenCode tree and re-keyed by openCodeSessionId
-    const node = createMockNode({
-      id: 'ses_new_key', // New key after absorption
-      openCodeSessionId: 'ses_new_key',
-      connectionId: 'conn-original', // Original connectionId preserved
-    });
-    const nodes = new Map([['ses_new_key', node]]);
-
-    // Caller still has the old key (connectionId)
-    const result = findNodeKeyWithFallback(
-      nodes,
-      'conn-original',
-      'conn-original',
-    );
-
-    expect(result).toBe('ses_new_key');
-  });
-
-  it('returns null when fallback connectionId also not found', () => {
-    const node = createMockNode({
-      id: 'some-key',
-      connectionId: 'different-conn',
-    });
-    const nodes = new Map([['some-key', node]]);
-
-    const result = findNodeKeyWithFallback(
-      nodes,
-      'missing-key',
-      'also-missing-conn',
-    );
-
-    expect(result).toBeNull();
-  });
-});
-
-// -----------------------------------------------------------------------------
 // Parent-Child Session Routing Scenarios
 // -----------------------------------------------------------------------------
 
 describe('Parent-Child Session Routing', () => {
   it('routes prompt response to correct child session (not parent)', () => {
-    // Scenario: Parent and child share connectionId, but have different openCodeSessionIds
+    // Scenario: Parent and child share connectionId, but have different providerSessionIds
     const parentNode = createMockNode({
       id: 'ses_parent',
-      openCodeSessionId: 'ses_parent',
+      providerSessionId: 'ses_parent',
       connectionId: 'conn-shared', // Shared with child
       prompt: null,
     });
 
     const childPrompt = createMockPrompt({
-      openCodeSessionId: 'ses_child', // Child's session ID
+      providerSessionId: 'ses_child', // Child's session ID
       connectionId: 'conn-shared', // Same as parent
     });
     const childNode = createMockNode({
       id: 'ses_child',
-      openCodeSessionId: 'ses_child',
+      providerSessionId: 'ses_child',
       openCodeParentId: 'ses_parent',
       connectionId: 'conn-shared', // Shared with parent
       prompt: childPrompt,
@@ -619,20 +552,20 @@ describe('Parent-Child Session Routing', () => {
 
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe('ses_child'); // NOT ses_parent
-    expect(result!.openCodeSessionId).toBe('ses_child');
+    expect(result!.providerSessionId).toBe('ses_child');
     expect(result!.connectionId).toBe('conn-shared');
   });
 
   it('routes queued message to correct session even with shared connectionId', () => {
     const parentNode = createMockNode({
       id: 'ses_parent',
-      openCodeSessionId: 'ses_parent',
+      providerSessionId: 'ses_parent',
       connectionId: 'conn-shared',
     });
 
     const childNode = createMockNode({
       id: 'ses_child',
-      openCodeSessionId: 'ses_child',
+      providerSessionId: 'ses_child',
       openCodeParentId: 'ses_parent',
       connectionId: 'conn-shared',
     });
@@ -653,24 +586,24 @@ describe('Parent-Child Session Routing', () => {
   it('handles grandchild session routing correctly', () => {
     const parentNode = createMockNode({
       id: 'ses_parent',
-      openCodeSessionId: 'ses_parent',
+      providerSessionId: 'ses_parent',
       connectionId: 'conn-shared',
     });
 
     const childNode = createMockNode({
       id: 'ses_child',
-      openCodeSessionId: 'ses_child',
+      providerSessionId: 'ses_child',
       openCodeParentId: 'ses_parent',
       connectionId: 'conn-shared',
     });
 
     const grandchildPrompt = createMockPrompt({
-      openCodeSessionId: 'ses_grandchild',
+      providerSessionId: 'ses_grandchild',
       connectionId: 'conn-shared',
     });
     const grandchildNode = createMockNode({
       id: 'ses_grandchild',
-      openCodeSessionId: 'ses_grandchild',
+      providerSessionId: 'ses_grandchild',
       openCodeParentId: 'ses_child',
       connectionId: 'conn-shared',
       prompt: grandchildPrompt,
@@ -686,7 +619,7 @@ describe('Parent-Child Session Routing', () => {
 
     expect(result).not.toBeNull();
     expect(result!.sessionId).toBe('ses_grandchild');
-    expect(result!.openCodeSessionId).toBe('ses_grandchild');
+    expect(result!.providerSessionId).toBe('ses_grandchild');
   });
 });
 
@@ -701,13 +634,12 @@ describe('Edge Cases', () => {
     expect(resolvePromptTarget(nodes, 'any-id')).toBeNull();
     expect(resolveMessageTarget(nodes, 'any-id')).toBeNull();
     expect(resolveTargetBySessionId(nodes, 'any-id')).toBeNull();
-    expect(findNodeKeyWithFallback(nodes, 'any-key', 'any-conn')).toBeNull();
   });
 
   it('handles node with all IDs being the same', () => {
     const node = createMockNode({
       id: 'same-id',
-      openCodeSessionId: 'same-id',
+      providerSessionId: 'same-id',
       connectionId: 'same-id',
     });
     const nodes = new Map([['same-id', node]]);
@@ -719,14 +651,14 @@ describe('Edge Cases', () => {
     expect(result!.nodeKey).toBe('same-id');
   });
 
-  it('handles prompt with empty string openCodeSessionId', () => {
+  it('prompt payload session ID is ignored; node identity is authoritative', () => {
     const prompt = createMockPrompt({
-      openCodeSessionId: '', // Empty string (falsy)
+      providerSessionId: '', // Empty string (falsy)
       connectionId: 'conn-abc',
     });
     const node = createMockNode({
       id: 'node-1',
-      openCodeSessionId: 'ses_node',
+      providerSessionId: 'ses_node',
       connectionId: 'conn-abc',
       prompt,
     });
@@ -735,8 +667,7 @@ describe('Edge Cases', () => {
     const result = resolvePromptTarget(nodes, 'node-1');
 
     expect(result).not.toBeNull();
-    // Empty string is falsy, so should fall back to node.openCodeSessionId
     expect(result!.sessionId).toBe('ses_node');
-    expect(result!.resolvedVia).toBe('node-session');
+    expect(result!.resolvedVia).toBe('prompt-session');
   });
 });

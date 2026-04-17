@@ -7,14 +7,14 @@ import { useTodos } from '../../hooks/useTodos';
 import { useVcsInfo } from '../../hooks/useVcsInfo';
 
 type Args = {
-  openCodeSessionId: string | null;
+  providerSessionId: string | null;
   isOpenCodeSession: boolean;
   sessionBaseDirectory: string | null;
   sessionStatuses: { status: string; type: string; timestamp: Date }[];
 };
 
 export function usePromptDataState({
-  openCodeSessionId,
+  providerSessionId,
   isOpenCodeSession,
   sessionBaseDirectory,
   sessionStatuses,
@@ -24,23 +24,23 @@ export function usePromptDataState({
     isLoading: todosLoading,
     error: todosError,
     refresh: refreshTodos,
-  } = useTodos(openCodeSessionId);
+  } = useTodos(providerSessionId);
 
-  const { vcsInfo } = useVcsInfo(Boolean(openCodeSessionId));
+  const { vcsInfo } = useVcsInfo(Boolean(providerSessionId));
 
   const { messages: conversationMessages, isAvailable: conversationAvailable } =
     useConversation(
-      isOpenCodeSession ? openCodeSessionId : null,
+      isOpenCodeSession ? providerSessionId : null,
       isOpenCodeSession,
     );
 
   const { modelId: currentModelId, providerId: currentProviderId } =
-    useSessionModelId(openCodeSessionId, isOpenCodeSession);
+    useSessionModelId(providerSessionId, isOpenCodeSession);
 
   const { getStatus } = useSessionStatus(isOpenCodeSession);
   const sessionBusy =
-    openCodeSessionId && isOpenCodeSession
-      ? getStatus(openCodeSessionId) === 'busy'
+    providerSessionId && isOpenCodeSession
+      ? getStatus(providerSessionId) === 'busy'
       : false;
 
   const {
@@ -49,7 +49,7 @@ export function usePromptDataState({
     error: mcpError,
     refresh: refreshMcpServers,
   } = useMcpServers(
-    isOpenCodeSession ? sessionBaseDirectory ?? undefined : undefined,
+    isOpenCodeSession ? (sessionBaseDirectory ?? undefined) : undefined,
     isOpenCodeSession,
   );
 

@@ -10,13 +10,13 @@ import type { SessionNode } from '../types';
 
 function makeNode(
   id: string,
-  openCodeSessionId: string | null,
+  providerSessionId: string | null,
   openCodeParentId: string | null,
   connectionId?: string | null,
 ): SessionNode {
   return {
     id,
-    openCodeSessionId,
+    providerSessionId,
     openCodeParentId,
     title: id,
     directory: '',
@@ -42,7 +42,7 @@ function makeNode(
 
 function makeSnapshotNode(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
   return {
-    openCodeSessionId: 'ses_new',
+    providerSessionId: 'ses_new',
     openCodeParentId: null,
     title: 'OpenCode Session',
     directory: '/repo',
@@ -70,17 +70,17 @@ describe('findKeyByConnectionId', () => {
     expect(findKeyByConnectionId(nodes, 'uuid-aaa')).toBe('ses_root');
   });
 
-  it('returns null when no node matches and no openCodeSessionId hint', () => {
+  it('returns null when no node matches and no providerSessionId hint', () => {
     const nodes = new Map([
       ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
     ]);
     expect(findKeyByConnectionId(nodes, 'uuid-unknown')).toBeNull();
   });
 
-  it('falls back to openCodeSessionId when connectionId does not match any node', () => {
-    // Node is keyed by openCodeSessionId "ses_sub123" with a stale auto-connectionId.
+  it('falls back to providerSessionId when connectionId does not match any node', () => {
+    // Node is keyed by providerSessionId "ses_sub123" with a stale auto-connectionId.
     // The new UUID doesn't match any node's connectionId, but the
-    // openCodeSessionId hint allows the fallback to find the correct node.
+    // providerSessionId hint allows the fallback to find the correct node.
     const nodes = new Map([
       [
         'ses_sub123',
@@ -92,29 +92,29 @@ describe('findKeyByConnectionId', () => {
     );
   });
 
-  it('prefers openCodeSessionId over connectionId when openCodeSessionId is provided', () => {
-    // Two nodes: one with matching connectionId, another with matching openCodeSessionId key.
+  it('prefers providerSessionId over connectionId when providerSessionId is provided', () => {
+    // Two nodes: one with matching connectionId, another with matching providerSessionId key.
     // This simulates OpenCode's shared MCP client where multiple sessions share the same connectionId.
-    // When the caller provides openCodeSessionId, that should take priority over connectionId.
+    // When the caller provides providerSessionId, that should take priority over connectionId.
     const nodes = new Map([
       ['ses_a', makeNode('ses_a', 'ses_a', null, 'uuid-shared')],
       ['ses_b', makeNode('ses_b', 'ses_b', null, 'uuid-shared')],
     ]);
-    // openCodeSessionId hint wins when provided - routes to the correct subagent
+    // providerSessionId hint wins when provided - routes to the correct subagent
     expect(findKeyByConnectionId(nodes, 'uuid-shared', 'ses_b')).toBe('ses_b');
   });
 
-  it('falls back to connectionId when openCodeSessionId is not provided', () => {
-    // When no openCodeSessionId is provided, fall back to connectionId matching
+  it('falls back to connectionId when providerSessionId is not provided', () => {
+    // When no providerSessionId is provided, fall back to connectionId matching
     const nodes = new Map([
       ['ses_a', makeNode('ses_a', 'ses_a', null, 'uuid-match')],
       ['ses_b', makeNode('ses_b', 'ses_b', null, 'auto-ses_b')],
     ]);
-    // No openCodeSessionId hint - use connectionId matching
+    // No providerSessionId hint - use connectionId matching
     expect(findKeyByConnectionId(nodes, 'uuid-match')).toBe('ses_a');
   });
 
-  it('returns null when openCodeSessionId hint has no corresponding node', () => {
+  it('returns null when providerSessionId hint has no corresponding node', () => {
     const nodes = new Map([
       ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
     ]);
@@ -136,14 +136,14 @@ describe('findPromptTargetKey', () => {
     expect(findPromptTargetKey(nodes, 'uuid-aaa')).toBe('ses_root');
   });
 
-  it('falls back to openCodeSessionId when connectionId is stale', () => {
+  it('falls back to providerSessionId when connectionId is stale', () => {
     const nodes = new Map([
       ['ses_sub', makeNode('ses_sub', 'ses_sub', 'ses_root', 'auto-ses_sub')],
     ]);
     expect(findPromptTargetKey(nodes, 'uuid-new', 'ses_sub')).toBe('ses_sub');
   });
 
-  it('returns null when neither connectionId nor openCodeSessionId matches', () => {
+  it('returns null when neither connectionId nor providerSessionId matches', () => {
     const nodes = new Map([
       ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
     ]);
@@ -214,11 +214,11 @@ describe('resolveNewlyCreatedSessionNodeId', () => {
     ]);
     const snapshotNodes = [
       makeSnapshotNode({
-        openCodeSessionId: 'ses_existing',
+        providerSessionId: 'ses_existing',
         connectionId: 'conn-existing',
       }),
       makeSnapshotNode({
-        openCodeSessionId: 'ses_new',
+        providerSessionId: 'ses_new',
         connectionId: 'conn-new',
       }),
     ];
@@ -235,7 +235,7 @@ describe('resolveNewlyCreatedSessionNodeId', () => {
     ]);
     const snapshotNodes = [
       makeSnapshotNode({
-        openCodeSessionId: 'ses_existing',
+        providerSessionId: 'ses_existing',
         connectionId: 'conn-existing',
       }),
     ];
@@ -247,7 +247,7 @@ describe('resolveNewlyCreatedSessionNodeId', () => {
     const prev = new Map<string, { id: string }>();
     const snapshotNodes = [
       makeSnapshotNode({
-        openCodeSessionId: 'ses_unbound',
+        providerSessionId: 'ses_unbound',
         connectionId: null,
         hasMcpChannel: false,
       }),

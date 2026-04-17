@@ -43,7 +43,7 @@ type Props = {
   toolAutoExpandExclusions?: string[];
   /** Callback when a new tool is discovered (for settings) */
   onToolDiscovered?: (toolName: string) => void;
-  /** Callback to navigate to a session by openCodeSessionId (for subagent links) */
+  /** Callback to navigate to a session by providerSessionId (for subagent links) */
   onNavigateToSession?: (sessionId: string) => void;
   /** Whether to show thinking sections expanded by default */
   showThinking?: boolean;

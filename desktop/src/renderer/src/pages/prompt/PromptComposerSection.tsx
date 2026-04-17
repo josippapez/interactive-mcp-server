@@ -12,7 +12,7 @@ type Props = {
   enabled: boolean;
   sessionChannelId?: string;
   dispatchSessionId?: string;
-  openCodeSessionId: string | null;
+  providerSessionId: string | null;
   isOpenCodeSession: boolean;
   noReply: boolean;
   commandPaletteOpen: boolean;
@@ -47,7 +47,7 @@ export function PromptComposerSection({
   enabled,
   sessionChannelId,
   dispatchSessionId,
-  openCodeSessionId,
+  providerSessionId,
   isOpenCodeSession,
   noReply,
   commandPaletteOpen,
@@ -85,7 +85,7 @@ export function PromptComposerSection({
         currentActiveChannelId: getActiveChannelIdSnapshot(),
         dispatchSessionId,
         sessionChannelId,
-        openCodeSessionId,
+        providerSessionId,
         connectionId,
         isOpenCodeSession,
         noReply,
@@ -103,7 +103,7 @@ export function PromptComposerSection({
         baseDirectory={promptBaseDirectory}
         placeholder={promptPlaceholder}
         onSubmit={onSubmit}
-        sessionId={openCodeSessionId}
+        sessionId={providerSessionId}
         commandPaletteOpen={commandPaletteOpen}
         onCommandPaletteChange={onCommandPaletteChange}
         modelId={modelId ?? undefined}
@@ -131,7 +131,7 @@ export function PromptComposerSection({
         logComposerSubmit('queue', text, attachments);
         onQueueSubmit(text, attachments);
       }}
-      showReplyButton={Boolean(openCodeSessionId) && isOpenCodeSession}
+      showReplyButton={Boolean(providerSessionId) && isOpenCodeSession}
       onSubmitWithReply={(text, attachments) => {
         logComposerSubmit('reply', text, attachments);
         if (dispatchSessionId && onSubmitWithReply) {
@@ -145,7 +145,7 @@ export function PromptComposerSection({
       }}
       noReply={noReply}
       onNoReplyChange={onNoReplyChange}
-      sessionId={openCodeSessionId}
+      sessionId={providerSessionId}
       commandPaletteOpen={commandPaletteOpen}
       onCommandPaletteChange={onCommandPaletteChange}
       modelId={modelId ?? undefined}

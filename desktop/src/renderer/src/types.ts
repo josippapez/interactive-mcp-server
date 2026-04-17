@@ -21,15 +21,16 @@ export type PromptData = {
   projectName: string;
   predefinedOptions?: string[];
   sessionId?: string;
-  connectionId: string;
+  /** MCP transport handle (optional; not always present on IPC payloads). */
+  connectionId?: string;
   connectionName: string;
   timeoutSeconds: number;
   /** Unix ms timestamp when this prompt expires. 0 means no timeout. */
   expiresAt: number;
   baseDirectory?: string;
   clientInfo?: { model?: string; mode?: string };
-  /** OpenCode session ID resolved from the DB for this connectionId. */
-  openCodeSessionId?: string | null;
+  /** Canonical provider-session identity (e.g. OpenCode `ses_xxx`). */
+  providerSessionId?: string | null;
 };
 
 export type MessageKind = 'question' | 'answer' | 'outbound' | 'agent_message';
@@ -83,14 +84,13 @@ export type PendingQuestion = {
 };
 
 /**
- * Represents one OpenCode session (or a direct MCP connection with no OpenCode
- * session) as shown in the sidebar.
+ * Represents one session (OpenCode/other provider session, or a direct MCP
+ * connection with no provider session) as shown in the sidebar.
  *
- * Primary key: `openCodeSessionId` for sessions discovered via the OpenCode
- * API, or `connectionId` for "Direct Connections" that have no OpenCode
- * session at all.
+ * Primary key: `providerSessionId` for sessions bound to a provider, or
+ * `connectionId` for "Direct Connections" that have no provider session.
  *
- * The renderer uses `openCodeSessionId ?? connectionId` as the map key so both
+ * The renderer uses `providerSessionId ?? connectionId` as the map key so both
  * types can live in the same `Map<string, SessionNode>`.
  */
 /** Provider types supported by the multi-provider architecture. */
@@ -115,15 +115,19 @@ export type VcsInfo = {
 export type SessionNode = {
   /**
    * Stable key for this node.
-   * - OpenCode sessions: their OpenCode session ID.
-   * - Direct connections (no OpenCode): their MCP connectionId.
+   * - Provider-bound sessions: their provider session ID (e.g. OpenCode `ses_xxx`).
+   * - Direct connections (no provider session): their MCP connectionId.
    */
   id: string;
 
-  /** OpenCode session ID, or null for direct connections. */
-  openCodeSessionId: string | null;
+  /**
+   * Canonical provider-session identity. For OpenCode this is the `ses_xxx`
+   * session ID; for other providers it's the stable identity captured at
+   * registration. `null` only for direct connections with no provider session.
+   */
+  providerSessionId: string | null;
 
-  /** Parent's OpenCode session ID, or null for root/direct-connection nodes. */
+  /** Parent's provider session ID, or null for root/direct-connection nodes. */
   openCodeParentId: string | null;
 
   /** Human-readable display name (OpenCode title or registered agent name). */

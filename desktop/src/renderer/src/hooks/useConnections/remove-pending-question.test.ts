@@ -21,7 +21,7 @@ function makeQuestion(requestId: string): PendingQuestion {
 function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
     id: 'node-1',
-    openCodeSessionId: null,
+    providerSessionId: null,
     openCodeParentId: null,
     title: 'Test',
     directory: '',

@@ -579,7 +579,7 @@ export async function initDocContext(
         connectionId,
         status,
         type,
-        openCodeSessionId: openCodeSessionId ?? null,
+        providerSessionId: openCodeSessionId ?? null,
       });
     }
   };

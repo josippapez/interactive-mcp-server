@@ -20,7 +20,7 @@ export const channelSelectionStore = createStore();
 
 /**
  * The currently selected channel ID.
- * This is the `openCodeSessionId` for OpenCode sessions, or `connectionId` for
+ * This is the `providerSessionId` for OpenCode sessions, or `connectionId` for
  * direct MCP connections.
  */
 export const activeChannelIdAtom = atom<string | null>(null);

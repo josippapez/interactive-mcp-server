@@ -52,20 +52,20 @@ export function usePromptHandlers({
       const nodeId = findPromptTargetKey(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
 
       // Diagnostic logging for prompt routing
       const nodeKeys = Array.from(prev.keys());
       const nodeInfos = Array.from(prev.values()).map((n) => ({
         id: n.id,
-        openCodeSessionId: n.openCodeSessionId,
+        providerSessionId: n.providerSessionId,
         connectionId: n.connectionId,
       }));
       window.api.log(
         'info',
         'prompt-routing',
-        `[onPromptRequest] promptId=${data.id} connectionId=${data.connectionId} openCodeSessionId=${data.openCodeSessionId ?? 'null'} foundNodeId=${nodeId ?? 'null'} nodeKeys=${JSON.stringify(nodeKeys)} nodeInfos=${JSON.stringify(nodeInfos)}`,
+        `[onPromptRequest] promptId=${data.id} connectionId=${data.connectionId} providerSessionId=${data.providerSessionId ?? 'null'} foundNodeId=${nodeId ?? 'null'} nodeKeys=${JSON.stringify(nodeKeys)} nodeInfos=${JSON.stringify(nodeInfos)}`,
       );
 
       if (!nodeId) {
@@ -75,7 +75,7 @@ export function usePromptHandlers({
         window.api.log(
           'warn',
           'prompt-routing',
-          `[onPromptRequest] No matching node found — buffering prompt for later. connectionId=${data.connectionId} openCodeSessionId=${data.openCodeSessionId ?? 'null'}`,
+          `[onPromptRequest] No matching node found — buffering prompt for later. connectionId=${data.connectionId} providerSessionId=${data.providerSessionId ?? 'null'}`,
         );
         bufferPrompt(data);
         return prev;
@@ -117,7 +117,7 @@ export function usePromptHandlers({
       const nodeId = findKeyByConnectionId(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
       if (!nodeId) return prev;
       const node = prev.get(nodeId)!;
@@ -150,7 +150,7 @@ export function usePromptHandlers({
       const nodeId = findKeyByConnectionId(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
       if (!nodeId) return prev;
       const next = new Map(prev);
@@ -172,7 +172,7 @@ export function usePromptHandlers({
       const nodeId = findKeyByConnectionId(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
       if (!nodeId) return prev;
       const next = new Map(prev);

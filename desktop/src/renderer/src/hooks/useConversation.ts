@@ -30,12 +30,12 @@ type UseConversationResult = {
 };
 
 export function useConversation(
-  openCodeSessionId: string | null,
+  providerSessionId: string | null,
   enabled = true,
 ): UseConversationResult {
   const [messages, setMessages] = useState<ConversationMessage[]>(() => {
-    if (openCodeSessionId && enabled) {
-      return getCachedMessages(openCodeSessionId);
+    if (providerSessionId && enabled) {
+      return getCachedMessages(providerSessionId);
     }
     return [];
   });
@@ -50,10 +50,10 @@ export function useConversation(
         | ((prev: ConversationMessage[]) => ConversationMessage[]),
     ) => {
       setMessages((prev) =>
-        applyMessagesWithSessionCache(prev, update, openCodeSessionId),
+        applyMessagesWithSessionCache(prev, update, providerSessionId),
       );
     },
-    [openCodeSessionId],
+    [providerSessionId],
   );
 
   const currentSessionRef = useRef<string | null>(null);
@@ -76,14 +76,14 @@ export function useConversation(
   }, []);
 
   const fetchMessages = useCallback(async () => {
-    if (!openCodeSessionId || !enabled) {
+    if (!providerSessionId || !enabled) {
       setMessagesAndCache([]);
       return;
     }
 
-    currentSessionRef.current = openCodeSessionId;
+    currentSessionRef.current = providerSessionId;
 
-    const cached = getCachedMessages(openCodeSessionId);
+    const cached = getCachedMessages(providerSessionId);
     if (cached && cached.length > 0) {
       setMessagesAndCache(cached);
     }
@@ -102,24 +102,24 @@ export function useConversation(
       }
 
       const fetched = await window.api.fetchConversationMessages(
-        openCodeSessionId,
+        providerSessionId,
         100,
       );
 
       // Only update if this is still the current session
-      if (currentSessionRef.current === openCodeSessionId) {
+      if (currentSessionRef.current === providerSessionId) {
         setMessagesAndCache(fetched);
       }
     } catch (err) {
-      if (currentSessionRef.current === openCodeSessionId) {
+      if (currentSessionRef.current === providerSessionId) {
         setError(err instanceof Error ? err.message : String(err));
       }
     } finally {
-      if (currentSessionRef.current === openCodeSessionId) {
+      if (currentSessionRef.current === providerSessionId) {
         setIsLoading(false);
       }
     }
-  }, [openCodeSessionId, enabled, setMessagesAndCache]);
+  }, [providerSessionId, enabled, setMessagesAndCache]);
 
   const scheduleReconcileFetch = useCallback(
     createReconcileScheduler(
@@ -135,24 +135,24 @@ export function useConversation(
   scheduleReconcileFetchRef.current = scheduleReconcileFetch;
 
   useEffect(() => {
-    if (openCodeSessionId && enabled) {
-      const cached = getCachedMessages(openCodeSessionId);
+    if (providerSessionId && enabled) {
+      const cached = getCachedMessages(providerSessionId);
       if (cached.length > 0) {
         setMessagesAndCache(cached);
       }
     }
     void fetchMessages();
-  }, [fetchMessages, openCodeSessionId, enabled, setMessagesAndCache]);
+  }, [fetchMessages, providerSessionId, enabled, setMessagesAndCache]);
 
   useEffect(() => {
-    if (!openCodeSessionId || !enabled) return;
+    if (!providerSessionId || !enabled) return;
 
     const batcher = createDeltaBatcher(setMessagesAndCache, {
       paceMs: SSE_RENDER_PACE_MS,
     });
 
     const handleMessageEvent = createMessageEventHandler({
-      openCodeSessionId,
+      providerSessionId,
       lastSseEventRef,
       lastDeltaAtRef,
       lastMessageEventRef,
@@ -164,19 +164,19 @@ export function useConversation(
         scheduleReconcileFetchRef.current?.(delayMs, flush),
     });
     const handlePartEvent = createPartEventHandler({
-      openCodeSessionId,
+      providerSessionId,
       lastSseEventRef,
       batcher,
       setMessagesAndCache,
     });
     const handlePartDelta = createPartDeltaHandler({
-      openCodeSessionId,
+      providerSessionId,
       lastSseEventRef,
       lastDeltaAtRef,
       batcher,
     });
     const handleCompacted = createCompactedHandler({
-      openCodeSessionId,
+      providerSessionId,
       lastSseEventRef,
       clearReconcileTimer,
       batcher,
@@ -199,10 +199,10 @@ export function useConversation(
       cleanupPartDelta();
       cleanupCompacted();
     };
-  }, [openCodeSessionId, enabled, fetchMessages, setMessagesAndCache]);
+  }, [providerSessionId, enabled, fetchMessages, setMessagesAndCache]);
 
   useEffect(() => {
-    if (!openCodeSessionId || !enabled || !isAvailable) return;
+    if (!providerSessionId || !enabled || !isAvailable) return;
 
     const interval = setInterval(() => {
       const timeSinceLastSse = Date.now() - lastSseEventRef.current;
@@ -212,7 +212,7 @@ export function useConversation(
     }, FALLBACK_POLL_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [openCodeSessionId, enabled, isAvailable, fetchMessages]);
+  }, [providerSessionId, enabled, isAvailable, fetchMessages]);
 
   return {
     messages,

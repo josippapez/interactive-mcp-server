@@ -74,7 +74,7 @@ function emitOptimisticRegistrationNode(
 
   const now = Date.now();
   const optimisticNode: SessionNodeData = {
-    openCodeSessionId: options.openCodeSessionId,
+    providerSessionId: options.openCodeSessionId,
     openCodeParentId: options.parentSessionId,
     title: options.channelName,
     directory: options.baseDirectory ?? '',

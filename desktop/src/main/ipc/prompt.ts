@@ -464,11 +464,8 @@ export function promptUser(
 
         const sendPromptClear = (): void => {
           if (win && !win.isDestroyed()) {
-            // Dual-emit openCodeSessionId + providerSessionId for Phase 5
-            // migration; drop openCodeSessionId when Phase 5 lands.
             win.webContents.send('prompt-clear', {
               id: data.id,
-              openCodeSessionId: promptWithExpiry.providerSessionId ?? null,
               providerSessionId: promptWithExpiry.providerSessionId ?? null,
             });
           }
@@ -494,11 +491,8 @@ export function promptUser(
         void durablePromise.then(resolveOuter);
 
         // ── Send prompt to renderer ───────────────────────────────────────────
-        // Dual-emit openCodeSessionId + providerSessionId during Phase 5
-        // migration; drop openCodeSessionId when the renderer consumes
-        // providerSessionId exclusively. connectionId is intentionally NOT
-        // included in the renderer payload — it is an internal transport
-        // handle only.
+        // connectionId is intentionally NOT included in the renderer payload
+        // — it is an internal transport handle only.
         win.webContents.send('prompt-request', {
           id: promptWithExpiry.id,
           message: promptWithExpiry.message,
@@ -511,7 +505,6 @@ export function promptUser(
           baseDirectory: promptWithExpiry.baseDirectory,
           clientInfo: promptWithExpiry.clientInfo,
           providerSessionId: promptWithExpiry.providerSessionId,
-          openCodeSessionId: promptWithExpiry.providerSessionId ?? null,
         });
         appendSessionChannelMessage({
           sessionId: promptKey,

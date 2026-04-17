@@ -5,7 +5,7 @@ import { resolveHistoryNodeKey } from './startup-history';
 function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
     id: 'node-1',
-    openCodeSessionId: null,
+    providerSessionId: null,
     openCodeParentId: null,
     title: 'Test',
     directory: '',
@@ -36,7 +36,7 @@ describe('resolveHistoryNodeKey', () => {
         'ses_child',
         makeNode({
           id: 'ses_child',
-          openCodeSessionId: 'ses_child',
+          providerSessionId: 'ses_child',
           connectionId: 'conn-shared',
         }),
       ],
@@ -44,7 +44,7 @@ describe('resolveHistoryNodeKey', () => {
         'ses_parent',
         makeNode({
           id: 'ses_parent',
-          openCodeSessionId: 'ses_parent',
+          providerSessionId: 'ses_parent',
           connectionId: 'conn-shared',
         }),
       ],
@@ -74,7 +74,7 @@ describe('resolveHistoryNodeKey', () => {
         'ses_a',
         makeNode({
           id: 'ses_a',
-          openCodeSessionId: 'ses_a',
+          providerSessionId: 'ses_a',
           connectionId: 'conn-shared',
         }),
       ],
@@ -82,7 +82,7 @@ describe('resolveHistoryNodeKey', () => {
         'ses_b',
         makeNode({
           id: 'ses_b',
-          openCodeSessionId: 'ses_b',
+          providerSessionId: 'ses_b',
           connectionId: 'conn-shared',
         }),
       ],

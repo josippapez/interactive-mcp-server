@@ -28,9 +28,9 @@ export function useSessionChannelHandlers({
 
       deletedKey = key;
       const deletedNode = prev.get(key);
-      // Prefer the node's openCodeSessionId for child lookup; fall back to
-      // the map key (which IS the openCodeSessionId for OC-backed nodes).
-      deletedOcId = deletedNode?.openCodeSessionId ?? key;
+      // Prefer the node's providerSessionId for child lookup; fall back to
+      // the map key (which IS the providerSessionId for OC-backed nodes).
+      deletedOcId = deletedNode?.providerSessionId ?? key;
 
       // Collect descendants so the entire subtree is removed at once.
       const descendantKeys = collectDescendantKeys(prev, deletedOcId);
@@ -63,7 +63,7 @@ export function useSessionChannelHandlers({
         });
         return next;
       }
-      // OpenCode session keyed by openCodeSessionId
+      // OpenCode session keyed by providerSessionId
       const nodeId = findKeyByConnectionId(prev, data.sessionId);
       if (!nodeId) return prev;
       const next = new Map(prev);

@@ -17,7 +17,7 @@ export function useStatusHandlers({
       const nodeId = findKeyByConnectionId(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
       if (!nodeId) return prev;
       const node = prev.get(nodeId)!;
@@ -47,7 +47,7 @@ export function useStatusHandlers({
     // This prevents stale "working" indicators when subagents finish
     if (data.status === 'idle') {
       setNodes((prev) => {
-        // Find node by openCodeSessionId (the sessionID from SSE is the openCodeSessionId)
+        // Find node by providerSessionId (the sessionID from SSE is the providerSessionId)
         const nodeId = data.sessionID;
         if (!prev.has(nodeId)) return prev;
 
@@ -77,7 +77,7 @@ export function useStatusHandlers({
       const nodeId = findKeyByConnectionId(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
       if (nodeId) {
         // Schedule the message append outside this updater.

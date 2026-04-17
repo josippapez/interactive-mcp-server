@@ -26,7 +26,7 @@ describe('useConnectionHandlers', () => {
     | ((data: {
         connectionId: string;
         name: string;
-        openCodeSessionId?: string | null;
+        providerSessionId?: string | null;
       }) => void)
     | undefined;
 
@@ -40,7 +40,7 @@ describe('useConnectionHandlers', () => {
           cb: (data: {
             connectionId: string;
             name: string;
-            openCodeSessionId?: string | null;
+            providerSessionId?: string | null;
           }) => void,
         ) => {
           onChannelLabelUpdated = cb;
@@ -94,13 +94,13 @@ describe('useConnectionHandlers', () => {
     expect(context.rehydrateActivePrompts).toHaveBeenCalledTimes(1);
   });
 
-  it('updates channel title by openCodeSessionId when provided', () => {
+  it('updates channel title by providerSessionId when provided', () => {
     let nodes = new Map([
       [
         'ses_child',
         {
           id: 'ses_child',
-          openCodeSessionId: 'ses_child',
+          providerSessionId: 'ses_child',
           openCodeParentId: null,
           title: 'Old Child Name',
           directory: '/repo',
@@ -136,7 +136,7 @@ describe('useConnectionHandlers', () => {
     onChannelLabelUpdated?.({
       connectionId: 'conn-shared',
       name: 'New Child Name',
-      openCodeSessionId: 'ses_child',
+      providerSessionId: 'ses_child',
     });
 
     expect(nodes.get('ses_child')?.title).toBe('New Child Name');

@@ -6,7 +6,10 @@ import { findKeyByConnectionId } from './helpers';
  * Registers IPC listeners for permission-related events.
  * Handles: onPermissionAsked, onPermissionReplied
  */
-export function usePermissionHandlers({ setNodes, bufferPermission }: HandlerContext): void {
+export function usePermissionHandlers({
+  setNodes,
+  bufferPermission,
+}: HandlerContext): void {
   // ------------------------------------------------------------------
   // Permission events — push/remove pending permission requests
   // ------------------------------------------------------------------
@@ -26,7 +29,7 @@ export function usePermissionHandlers({ setNodes, bufferPermission }: HandlerCon
       const nodeId = findKeyByConnectionId(
         prev,
         data.connectionId,
-        data.openCodeSessionId,
+        data.providerSessionId,
       );
       if (!nodeId) {
         bufferPermission(permission);

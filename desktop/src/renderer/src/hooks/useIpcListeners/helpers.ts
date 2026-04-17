@@ -12,7 +12,7 @@ export function createDirectConnectionNode(
 ): SessionNode {
   return {
     id: connectionId,
-    openCodeSessionId: null,
+    providerSessionId: null,
     openCodeParentId: null,
     title: name,
     directory: '',
@@ -42,29 +42,33 @@ export function createDirectConnectionNode(
 
 export function findKeyByConnectionId(
   nodes: Map<string, SessionNode>,
-  connectionId: string,
-  openCodeSessionId?: string | null,
+  connectionId: string | null | undefined,
+  providerSessionId?: string | null,
 ): string | null {
-  // PRIMARY: When openCodeSessionId is provided, match by that FIRST.
+  // PRIMARY: When providerSessionId is provided, match by that FIRST.
   // This is critical for OpenCode's shared MCP client where multiple sessions
-  // share the same connectionId (transport UUID). The openCodeSessionId is the
+  // share the same connectionId (transport UUID). The providerSessionId is the
   // unique identifier for each agent session.
-  if (openCodeSessionId) {
+  if (providerSessionId) {
     // Direct map key lookup
-    if (nodes.has(openCodeSessionId)) {
-      return openCodeSessionId;
+    if (nodes.has(providerSessionId)) {
+      return providerSessionId;
     }
 
-    // Search by node.openCodeSessionId field
+    // Search by node.providerSessionId field
     for (const [id, node] of nodes) {
-      if (node.openCodeSessionId === openCodeSessionId) {
+      if (node.providerSessionId === providerSessionId) {
         return id;
       }
     }
   }
 
+  if (!connectionId) {
+    return null;
+  }
+
   // FALLBACK 1: match by node.connectionId field
-  // Only used when openCodeSessionId is not provided or not found
+  // Only used when providerSessionId is not provided or not found
   for (const [id, node] of nodes) {
     if (node.connectionId === connectionId) {
       return id;
@@ -87,10 +91,10 @@ export function findKeyByConnectionId(
  */
 export function findPromptTargetKey(
   nodes: Map<string, SessionNode>,
-  connectionId: string,
-  openCodeSessionId?: string | null,
+  connectionId: string | null | undefined,
+  providerSessionId?: string | null,
 ): string | null {
-  return findKeyByConnectionId(nodes, connectionId, openCodeSessionId);
+  return findKeyByConnectionId(nodes, connectionId, providerSessionId);
 }
 
 // ---------------------------------------------------------------------------
@@ -114,9 +118,9 @@ export function collectDescendantKeys(
     for (const [key, node] of nodes) {
       if (node.openCodeParentId === parentId) {
         result.add(key);
-        // Walk into grandchildren using the child's own openCodeSessionId
-        if (node.openCodeSessionId) {
-          queue.push(node.openCodeSessionId);
+        // Walk into grandchildren using the child's own providerSessionId
+        if (node.providerSessionId) {
+          queue.push(node.providerSessionId);
         }
       }
     }

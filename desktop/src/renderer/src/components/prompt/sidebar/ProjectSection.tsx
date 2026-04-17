@@ -192,7 +192,7 @@ export const ProjectSection = memo(function ProjectSection({
               while (parentId) {
                 if (collapsedSessions.has(parentId)) return false;
                 const parent = project.sessions.find(
-                  (s) => s.openCodeSessionId === parentId,
+                  (s) => s.providerSessionId === parentId,
                 );
                 parentId = parent?.openCodeParentId ?? null;
               }
@@ -201,7 +201,7 @@ export const ProjectSection = memo(function ProjectSection({
             .map((node) => {
               // Check if this node has children
               const hasChildren = project.sessions.some(
-                (s) => s.openCodeParentId === node.openCodeSessionId,
+                (s) => s.openCodeParentId === node.providerSessionId,
               );
               return (
                 <ChannelItem
@@ -209,15 +209,15 @@ export const ProjectSection = memo(function ProjectSection({
                   node={node}
                   isActive={node.id === activeConnectionId}
                   onSelect={onSelect}
-                  sessionStatus={getStatus(node.openCodeSessionId ?? '')}
+                  sessionStatus={getStatus(node.providerSessionId ?? '')}
                   showStartTime={!node.openCodeParentId}
                   hasChildren={hasChildren}
                   isSessionCollapsed={collapsedSessions.has(
-                    node.openCodeSessionId ?? '',
+                    node.providerSessionId ?? '',
                   )}
                   onToggleCollapse={
                     hasChildren
-                      ? () => onToggleSession(node.openCodeSessionId ?? '')
+                      ? () => onToggleSession(node.providerSessionId ?? '')
                       : undefined
                   }
                 />

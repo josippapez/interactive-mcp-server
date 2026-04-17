@@ -6,22 +6,24 @@ export type PromptRequest = {
   projectName: string;
   predefinedOptions?: string[];
   sessionId?: string;
-  connectionId: string;
+  /** MCP transport handle (optional; not always present on IPC payloads). */
+  connectionId?: string;
   connectionName: string;
   timeoutSeconds: number;
   /** Unix ms timestamp when this prompt expires. 0 means no timeout. */
   expiresAt: number;
   baseDirectory?: string;
   clientInfo?: { model?: string; mode?: string };
-  /** OpenCode session ID resolved from the DB — used by the renderer to find
-   *  the correct channel node after app restart when connectionIds may have changed. */
-  openCodeSessionId?: string | null;
+  /** Canonical provider-session identity — the renderer uses this to route
+   *  the prompt to the correct channel. */
+  providerSessionId?: string | null;
 };
 
 export type PromptClearData = {
   id: string;
-  connectionId: string;
-  openCodeSessionId?: string | null;
+  /** Optional MCP transport handle (legacy callers may still include this). */
+  connectionId?: string;
+  providerSessionId?: string | null;
   answer?: string;
   rejected?: boolean;
 };
@@ -280,7 +282,7 @@ const api = {
       sessionId: string;
       title: string;
       connectionId: string;
-      openCodeSessionId?: string | null;
+      providerSessionId?: string | null;
     }) => void,
   ) => {
     ipcRenderer.removeAllListeners('intensive-chat-start');
@@ -290,7 +292,7 @@ const api = {
     callback: (data: {
       sessionId: string;
       connectionId: string;
-      openCodeSessionId?: string | null;
+      providerSessionId?: string | null;
     }) => void,
   ) => {
     ipcRenderer.removeAllListeners('intensive-chat-stop');
@@ -303,7 +305,7 @@ const api = {
   onSessionTreeUpdated: (
     callback: (
       nodes: {
-        openCodeSessionId: string;
+        providerSessionId: string;
         openCodeParentId: string | null;
         title: string;
         directory: string;
@@ -335,7 +337,7 @@ const api = {
   },
   onOptimisticSessionNodeCreated: (
     callback: (node: {
-      openCodeSessionId: string;
+      providerSessionId: string;
       openCodeParentId: string | null;
       title: string;
       directory: string;
@@ -390,7 +392,7 @@ const api = {
     callback: (data: {
       connectionId: string;
       name: string;
-      openCodeSessionId?: string | null;
+      providerSessionId?: string | null;
     }) => void,
   ) => {
     ipcRenderer.removeAllListeners('channel-label-updated');
@@ -514,7 +516,7 @@ const api = {
       sessionId: string;
       label: string | null;
       createdAt: string;
-      openCodeSessionId: string | null;
+      providerSessionId: string | null;
       parentSessionId: string | null;
     }[]
   > => ipcRenderer.invoke('get-persisted-session-channels'),
@@ -594,7 +596,7 @@ const api = {
     callback: (data: {
       connectionId: string;
       message: string;
-      openCodeSessionId?: string | null;
+      providerSessionId?: string | null;
     }) => void,
   ): void => {
     ipcRenderer.removeAllListeners('agent-message');
@@ -642,7 +644,7 @@ const api = {
       connectionId: string;
       status: string;
       type: string;
-      openCodeSessionId?: string | null;
+      providerSessionId?: string | null;
     }) => void,
   ): void => {
     ipcRenderer.removeAllListeners('session-status-update');
@@ -661,7 +663,7 @@ const api = {
       always?: string[];
       tool?: { messageID: string; callID: string };
       metadata?: Record<string, unknown>;
-      openCodeSessionId?: string | null;
+      providerSessionId?: string | null;
     }) => void,
   ): void => {
     ipcRenderer.removeAllListeners('permission-asked');
@@ -683,7 +685,7 @@ const api = {
     callback: (
       data: PendingQuestionRequest & {
         connectionId: string;
-        openCodeSessionId?: string | null;
+        providerSessionId?: string | null;
       },
     ) => void,
   ): void => {

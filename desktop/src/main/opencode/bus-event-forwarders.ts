@@ -92,7 +92,7 @@ export function forwardPermissionEvent(
 
     sendToWindow(win, 'permission-asked', {
       connectionId,
-      openCodeSessionId: sessionID,
+      providerSessionId: sessionID,
       requestId,
       sessionID,
       permission,
@@ -188,7 +188,7 @@ export function forwardQuestionEvent(
 
     sendToWindow(win, 'question-asked', {
       connectionId,
-      openCodeSessionId: sessionID,
+      providerSessionId: sessionID,
       requestId: questionId,
       sessionID,
       questions,

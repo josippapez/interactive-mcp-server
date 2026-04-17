@@ -39,7 +39,7 @@ describe('resolveSessionActionTarget', () => {
       getRemoveSessionTarget(
         {
           id: 'ses_open_code',
-          openCodeSessionId: 'ses_open_code',
+          providerSessionId: 'ses_open_code',
           openCodeParentId: null,
           title: 'Claude Code',
           directory: '/repo',

@@ -14,7 +14,7 @@ import type { ProviderType, SessionNode, VcsInfo } from '../types';
  * main-process session-tree-manager.
  */
 export interface SnapshotNode {
-  openCodeSessionId: string;
+  providerSessionId: string;
   openCodeParentId: string | null;
   title: string;
   directory: string;
@@ -31,12 +31,12 @@ export interface SnapshotNode {
 }
 
 function createSessionChannel(
-  snap: Pick<SnapshotNode, 'openCodeSessionId' | 'connectionId' | 'title'>,
+  snap: Pick<SnapshotNode, 'providerSessionId' | 'connectionId' | 'title'>,
   fallback: SessionNode | undefined,
 ): SessionNode['sessionChannel'] {
-  if (snap.openCodeSessionId) {
+  if (snap.providerSessionId) {
     return {
-      sessionId: snap.openCodeSessionId,
+      sessionId: snap.providerSessionId,
       label: snap.title,
     };
   }
@@ -55,7 +55,7 @@ function mergeSnapshotNode(
   prev: Map<string, SessionNode>,
   snap: SnapshotNode,
 ): SessionNode {
-  const existing = prev.get(snap.openCodeSessionId);
+  const existing = prev.get(snap.providerSessionId);
 
   let directNode: SessionNode | undefined;
   if (snap.connectionId) {
@@ -76,8 +76,8 @@ function mergeSnapshotNode(
   const resolvedLabel = snap.title;
 
   return {
-    id: snap.openCodeSessionId,
-    openCodeSessionId: snap.openCodeSessionId,
+    id: snap.providerSessionId,
+    providerSessionId: snap.providerSessionId,
     openCodeParentId: snap.openCodeParentId,
     title: resolvedLabel,
     directory: snap.directory,
@@ -108,7 +108,7 @@ export function upsertOptimisticSessionNode(
 ): Map<string, SessionNode> {
   const next = new Map(prev);
   next.set(
-    snapshotNode.openCodeSessionId,
+    snapshotNode.providerSessionId,
     mergeSnapshotNode(prev, snapshotNode),
   );
   return next;
@@ -118,7 +118,7 @@ export function upsertOptimisticSessionNode(
  * Merge a session-tree snapshot into the existing SessionNode map.
  *
  * Rules:
- * 1. Every snapshot node becomes a tree entry keyed by openCodeSessionId.
+ * 1. Every snapshot node becomes a tree entry keyed by providerSessionId.
  * 2. If a snapshot node's connectionId matches an existing direct-connection
  *    node, that direct-connection's runtime state (messages, prompts, unread)
  *    is absorbed into the tree node and the direct-connection is removed.
@@ -141,7 +141,7 @@ export function mergeSessionTreeSnapshot(
   }
 
   for (const snap of snapshotNodes) {
-    next.set(snap.openCodeSessionId, mergeSnapshotNode(prev, snap));
+    next.set(snap.providerSessionId, mergeSnapshotNode(prev, snap));
   }
 
   // Preserve direct-connection nodes that were NOT absorbed.
@@ -183,7 +183,7 @@ function getSubtreeLatestActivityTime(
 
   // Find all children recursively
   const children = allNodes.filter(
-    (n) => n.openCodeParentId === node.openCodeSessionId,
+    (n) => n.openCodeParentId === node.providerSessionId,
   );
 
   if (children.length === 0) return nodeTime;
@@ -207,7 +207,7 @@ function isSubtreeRunning(node: SessionNode, allNodes: SessionNode[]): boolean {
 
   // Check children recursively
   const children = allNodes.filter(
-    (n) => n.openCodeParentId === node.openCodeSessionId,
+    (n) => n.openCodeParentId === node.providerSessionId,
   );
 
   return children.some((child) => isSubtreeRunning(child, allNodes));
@@ -220,7 +220,7 @@ function hasSubtreeUnread(node: SessionNode, allNodes: SessionNode[]): boolean {
   if (node.unreadCount > 0) return true;
 
   const children = allNodes.filter(
-    (n) => n.openCodeParentId === node.openCodeSessionId,
+    (n) => n.openCodeParentId === node.providerSessionId,
   );
 
   return children.some((child) => hasSubtreeUnread(child, allNodes));
@@ -269,7 +269,7 @@ export function partitionNodes(nodes: Map<string, SessionNode>): {
   const openCodeTree: SessionNode[] = [];
   for (const root of sortedRoots) {
     openCodeTree.push({ ...root, depth: 0 });
-    openCodeTree.push(...collectSubtree(ocNodes, root.openCodeSessionId, 1));
+    openCodeTree.push(...collectSubtree(ocNodes, root.providerSessionId, 1));
   }
 
   return { openCodeTree, directConnections };
@@ -290,7 +290,7 @@ function collectSubtree(
   const result: SessionNode[] = [];
   for (const child of children) {
     result.push({ ...child, depth });
-    result.push(...collectSubtree(nodes, child.openCodeSessionId, depth + 1));
+    result.push(...collectSubtree(nodes, child.providerSessionId, depth + 1));
   }
   return result;
 }
@@ -404,7 +404,7 @@ export function groupByProject(
     const sessions: SessionNode[] = [];
     for (const root of sortedRoots) {
       sessions.push({ ...root, depth: 0 });
-      sessions.push(...collectSubtree(ocNodes, root.openCodeSessionId, 1));
+      sessions.push(...collectSubtree(ocNodes, root.providerSessionId, 1));
     }
 
     // Calculate project-level stats

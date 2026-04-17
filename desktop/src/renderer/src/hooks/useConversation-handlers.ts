@@ -41,7 +41,7 @@ type PartDeltaEvent = {
 type Batcher = ReturnType<typeof createDeltaBatcher>;
 
 export function createMessageEventHandler(args: {
-  openCodeSessionId: string;
+  providerSessionId: string;
   lastSseEventRef: React.MutableRefObject<number>;
   lastDeltaAtRef: React.MutableRefObject<number>;
   lastMessageEventRef: React.MutableRefObject<{
@@ -57,7 +57,7 @@ export function createMessageEventHandler(args: {
   scheduleReconcileFetch: (delayMs: number, flush: () => void) => void;
 }) {
   return (data: MessageEvent) => {
-    if (data.sessionId !== args.openCodeSessionId) return;
+    if (data.sessionId !== args.providerSessionId) return;
 
     const now = Date.now();
     args.lastSseEventRef.current = now;
@@ -112,7 +112,7 @@ export function createMessageEventHandler(args: {
 }
 
 export function createPartEventHandler(args: {
-  openCodeSessionId: string;
+  providerSessionId: string;
   lastSseEventRef: React.MutableRefObject<number>;
   batcher: Batcher;
   setMessagesAndCache: React.Dispatch<
@@ -120,7 +120,7 @@ export function createPartEventHandler(args: {
   >;
 }) {
   return (data: PartEvent) => {
-    if (data.sessionId !== args.openCodeSessionId) return;
+    if (data.sessionId !== args.providerSessionId) return;
     args.lastSseEventRef.current = Date.now();
 
     if (data.type === 'part.removed' && data.partId) {
@@ -154,13 +154,13 @@ export function createPartEventHandler(args: {
 }
 
 export function createPartDeltaHandler(args: {
-  openCodeSessionId: string;
+  providerSessionId: string;
   lastSseEventRef: React.MutableRefObject<number>;
   lastDeltaAtRef: React.MutableRefObject<number>;
   batcher: Batcher;
 }) {
   return (data: PartDeltaEvent) => {
-    if (data.sessionId !== args.openCodeSessionId) return;
+    if (data.sessionId !== args.providerSessionId) return;
 
     const now = Date.now();
     args.lastSseEventRef.current = now;
@@ -178,14 +178,14 @@ export function createPartDeltaHandler(args: {
 }
 
 export function createCompactedHandler(args: {
-  openCodeSessionId: string;
+  providerSessionId: string;
   lastSseEventRef: React.MutableRefObject<number>;
   clearReconcileTimer: () => void;
   batcher: Batcher;
   fetchMessages: () => Promise<void>;
 }) {
   return (data: { sessionId: string }) => {
-    if (data.sessionId !== args.openCodeSessionId) return;
+    if (data.sessionId !== args.providerSessionId) return;
     args.lastSseEventRef.current = Date.now();
     args.clearReconcileTimer();
     args.batcher.flush();
