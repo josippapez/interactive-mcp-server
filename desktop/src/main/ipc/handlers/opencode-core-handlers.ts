@@ -3,6 +3,12 @@ import { softRestartMcpServer, restartMcpServer } from '../../mcp-server';
 import { autoDetectOpenCodeSessionId } from '../../opencode/session';
 import { registerMcpAcrossReachablePorts } from '../../opencode/mcp-register';
 import { syncRemoteConfig } from '../../opencode/config-sync';
+import {
+  readGlobalConfig,
+  readProjectConfig,
+  writeGlobalConfig,
+  writeProjectConfig,
+} from '../../opencode/config-io';
 import { resolveSession, reResolveStaleSession } from '../../session/resolver';
 import { IpcHandlerDeps } from './types';
 import { logIpcInfo } from './shared';
@@ -26,6 +32,62 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
     );
     return `register=${regResult.status}, config=${syncResult}`;
   });
+
+  // ─── OpenCode config file IO ────────────────────────────────────────────────
+  // Read/write the global and per-project OpenCode config files from the UI.
+  // Writes preserve the `mcp["interactive-desktop"]` managed key.
+
+  ipcMain.handle('read-opencode-global-config', async () => {
+    try {
+      return readGlobalConfig();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      logIpcInfo(`read-opencode-global-config failed: ${message}`);
+      throw new Error(message, { cause: err });
+    }
+  });
+
+  ipcMain.handle(
+    'read-opencode-project-config',
+    async (_event, baseDirectory: string) => {
+      try {
+        return readProjectConfig(baseDirectory);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logIpcInfo(`read-opencode-project-config failed: ${message}`);
+        throw new Error(message, { cause: err });
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'write-opencode-global-config',
+    async (_event, config: Record<string, unknown>) => {
+      try {
+        return writeGlobalConfig(config);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logIpcInfo(`write-opencode-global-config failed: ${message}`);
+        throw new Error(message, { cause: err });
+      }
+    },
+  );
+
+  ipcMain.handle(
+    'write-opencode-project-config',
+    async (
+      _event,
+      data: { baseDirectory: string; config: Record<string, unknown> },
+    ) => {
+      try {
+        return writeProjectConfig(data.baseDirectory, data.config);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        logIpcInfo(`write-opencode-project-config failed: ${message}`);
+        throw new Error(message, { cause: err });
+      }
+    },
+  );
 
   ipcMain.handle(
     'detect-opencode-session',

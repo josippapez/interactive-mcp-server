@@ -324,12 +324,51 @@ const CREATE_SESSION_TIMEOUT_MS = 10_000;
 const SESSION_MESSAGE_TIMEOUT_MS = 120_000;
 
 /**
+ * Body sent to OpenCode's `POST /session/{id}/prompt_async` when seeding a
+ * freshly created session with its initial user message.
+ *
+ * The `agent` key is intentionally optional and omitted entirely when not
+ * provided — OpenCode treats a missing key differently from an empty string.
+ */
+export interface InitialPromptBody {
+  parts: { type: 'text'; text: string }[];
+  agent?: string;
+}
+
+/**
+ * Pure helper that builds the body for the initial `prompt_async` call.
+ *
+ * - When `agent` is undefined, empty, or whitespace-only, the `agent` key is
+ *   omitted from the returned body (OpenCode treats missing ≠ empty string).
+ * - Otherwise the agent name is trimmed and included.
+ */
+export function buildInitialPromptBody(input: {
+  initialMessage: string;
+  agent?: string;
+}): InitialPromptBody {
+  const body: InitialPromptBody = {
+    parts: [{ type: 'text', text: input.initialMessage }],
+  };
+
+  const trimmedAgent = input.agent?.trim();
+  if (trimmedAgent && trimmedAgent.length > 0) {
+    body.agent = trimmedAgent;
+  }
+
+  return body;
+}
+
+/**
  * Create a new OpenCode session via SDK.
  *
  * Uses sessionCreate() with optional title and parentID.
  * When a directory is provided, the session is created in that directory context,
  * which loads the project's `.opencode/opencode.jsonc` config and project-specific MCPs.
  * After creating the session, optionally sends an initial message via promptAsync.
+ * If an `agent` is provided alongside an `initialMessage`, it is forwarded to
+ * `promptAsync` (OpenCode's `POST /session/{id}/prompt_async` accepts `agent`).
+ * Note: OpenCode's `POST /session` does NOT accept `agent`, so it is never
+ * passed to `sessionCreate`.
  * If attachments are provided, they will be included in the initial message.
  */
 export async function createOpenCodeSession(
@@ -341,6 +380,12 @@ export async function createOpenCodeSession(
     attachments?: SessionAttachment[];
     /** Directory context for the session - loads project-specific config from .opencode/ */
     directory?: string;
+    /**
+     * Optional OpenCode agent name (e.g. "build", "plan", "docs-maintainer").
+     * Forwarded to `prompt_async` only — OpenCode ignores this on session
+     * creation, so we never pass it to `sessionCreate`.
+     */
+    agent?: string;
   } = {},
 ): Promise<CreateSessionResult> {
   try {
@@ -375,9 +420,10 @@ export async function createOpenCodeSession(
         const messageResponse = await sessionPromptAsync(
           openCodePort,
           session.id,
-          {
-            parts: [{ type: 'text', text: options.initialMessage }],
-          },
+          buildInitialPromptBody({
+            initialMessage: options.initialMessage,
+            agent: options.agent,
+          }),
           {
             directory: options.directory,
             signal: AbortSignal.timeout(SESSION_MESSAGE_TIMEOUT_MS),

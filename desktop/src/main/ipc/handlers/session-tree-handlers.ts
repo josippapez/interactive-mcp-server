@@ -141,6 +141,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
         baseDirectory?: string;
         attachments?: AttachmentPayload[];
         modelSelection?: ModelSelectionPayload;
+        agent?: string;
       },
     ): Promise<{
       ok: boolean;
@@ -148,7 +149,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       error?: string;
     }> => {
       logIpcInfo(
-        `create-opencode-session: title=${data.title ?? '(none)'} parentID=${data.parentID ?? '(none)'} baseDirectory=${data.baseDirectory ?? '(none)'}`,
+        `create-opencode-session: title=${data.title ?? '(none)'} parentID=${data.parentID ?? '(none)'} baseDirectory=${data.baseDirectory ?? '(none)'} agent=${data.agent ?? '(none)'}`,
       );
       const {
         openCodePort,
@@ -188,6 +189,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
         initialMessage:
           !needsInject && hasInitialMessage ? data.initialMessage : undefined,
         directory: data.baseDirectory,
+        agent: data.agent,
       });
 
       if (!result.ok) {

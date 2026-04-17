@@ -1,3 +1,4 @@
+import { registerAgentsHandlers } from './handlers/agents-handlers';
 import { registerContextTrackingHandlers } from './handlers/context-tracking-handlers';
 import { registerMcpStatusHandlers } from './handlers/mcp-status-handlers';
 import { registerOpenCodeCoreHandlers } from './handlers/opencode-core-handlers';
@@ -25,4 +26,5 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   registerContextTrackingHandlers(deps);
   registerProviderHandlers(deps);
   registerMcpStatusHandlers(deps);
+  registerAgentsHandlers();
 }

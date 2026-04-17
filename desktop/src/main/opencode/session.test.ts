@@ -7,6 +7,7 @@ import {
   expandOpenCodeSessionTree,
   autoDetectOpenCodeSession,
   createOpenCodeSession,
+  buildInitialPromptBody,
 } from './session';
 import { _setClientFactory, _resetClientFactory } from './sdk-client';
 
@@ -461,5 +462,141 @@ describe('createOpenCodeSession', () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toBeDefined();
+  });
+
+  it('forwards agent to promptAsync when provided', async () => {
+    const promptAsyncMock = vi.fn().mockResolvedValue({
+      data: {},
+      error: undefined,
+    });
+
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            create: vi.fn().mockResolvedValue({
+              data: { id: 'ses_new' },
+              error: undefined,
+            }),
+            promptAsync: promptAsyncMock,
+          },
+        }) as never,
+    );
+
+    const result = await createOpenCodeSession(4096, {
+      initialMessage: 'hello',
+      agent: 'docs-maintainer',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(promptAsyncMock).toHaveBeenCalledTimes(1);
+    const callArgs = promptAsyncMock.mock.calls[0][0] as {
+      parts: unknown;
+      agent?: string;
+    };
+    expect(callArgs.agent).toBe('docs-maintainer');
+    expect(callArgs.parts).toEqual([{ type: 'text', text: 'hello' }]);
+  });
+
+  it('omits agent from promptAsync body when not provided', async () => {
+    const promptAsyncMock = vi.fn().mockResolvedValue({
+      data: {},
+      error: undefined,
+    });
+
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            create: vi.fn().mockResolvedValue({
+              data: { id: 'ses_new' },
+              error: undefined,
+            }),
+            promptAsync: promptAsyncMock,
+          },
+        }) as never,
+    );
+
+    await createOpenCodeSession(4096, { initialMessage: 'hello' });
+
+    const callArgs = promptAsyncMock.mock.calls[0][0] as Record<
+      string,
+      unknown
+    >;
+    expect('agent' in callArgs).toBe(false);
+  });
+
+  it('does NOT forward agent to sessionCreate', async () => {
+    const createMock = vi.fn().mockResolvedValue({
+      data: { id: 'ses_new' },
+      error: undefined,
+    });
+
+    _setClientFactory(
+      () =>
+        ({
+          session: {
+            create: createMock,
+            promptAsync: vi.fn().mockResolvedValue({
+              data: {},
+              error: undefined,
+            }),
+          },
+        }) as never,
+    );
+
+    await createOpenCodeSession(4096, {
+      title: 'T',
+      agent: 'plan',
+      initialMessage: 'hi',
+    });
+
+    const createArgs = createMock.mock.calls[0][0] as Record<string, unknown>;
+    expect('agent' in createArgs).toBe(false);
+  });
+});
+
+describe('buildInitialPromptBody', () => {
+  it('returns a body without an agent key when agent is undefined', () => {
+    const body = buildInitialPromptBody({ initialMessage: 'hi' });
+    expect(body).toEqual({
+      parts: [{ type: 'text', text: 'hi' }],
+    });
+    expect('agent' in body).toBe(false);
+  });
+
+  it('includes the agent field when agent is provided', () => {
+    const body = buildInitialPromptBody({
+      initialMessage: 'hi',
+      agent: 'docs-maintainer',
+    });
+    expect(body).toEqual({
+      parts: [{ type: 'text', text: 'hi' }],
+      agent: 'docs-maintainer',
+    });
+  });
+
+  it('omits agent when empty string', () => {
+    const body = buildInitialPromptBody({
+      initialMessage: 'hi',
+      agent: '',
+    });
+    expect('agent' in body).toBe(false);
+  });
+
+  it('omits agent when whitespace-only', () => {
+    const body = buildInitialPromptBody({
+      initialMessage: 'hi',
+      agent: '   \t\n  ',
+    });
+    expect('agent' in body).toBe(false);
+  });
+
+  it('trims whitespace around a valid agent name', () => {
+    const body = buildInitialPromptBody({
+      initialMessage: 'hi',
+      agent: '  plan  ',
+    });
+    expect(body.agent).toBe('plan');
   });
 });

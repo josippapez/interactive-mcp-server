@@ -24,6 +24,7 @@ type Props = {
     baseDirectory: string,
     attachments?: Attachment[],
     modelSelection?: ModelSelection,
+    agent?: string,
   ) => Promise<void>;
   /** List of pinned projects */
   pinnedProjects?: PinnedProject[];
@@ -77,6 +78,7 @@ function IdleStateView({
       baseDirectory: string,
       attachments?: Attachment[],
       modelSelection?: ModelSelection,
+      agent?: string,
     ) => {
       if (!onCreateSession) return;
       setIsCreating(true);
@@ -86,6 +88,7 @@ function IdleStateView({
           baseDirectory,
           attachments,
           modelSelection,
+          agent,
         );
         // Clear the pre-selected project after successful session creation
         onClearPreSelectedProject?.();

@@ -34,12 +34,14 @@ export function usePromptProjectState(
       baseDirectory: string,
       attachments?: Attachment[],
       modelSelection?: CreateSessionModelSelection,
+      agent?: string,
     ) => {
       const result = await window.api.createOpenCodeSession({
         initialMessage,
         baseDirectory,
         attachments,
         modelSelection,
+        agent,
       });
 
       if (!result.ok) {

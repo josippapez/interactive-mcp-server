@@ -12,7 +12,7 @@ const SELECTED_PROJECT_KEY = 'sidebar-selected-project';
 function readPersistedProjectSelection(): string {
   try {
     const stored = localStorage.getItem(SELECTED_PROJECT_KEY);
-    return stored ? (JSON.parse(stored) as string | null) ?? '' : '';
+    return stored ? ((JSON.parse(stored) as string | null) ?? '') : '';
   } catch {
     return '';
   }
@@ -45,6 +45,7 @@ type Props = {
     baseDirectory: string,
     attachments?: Attachment[],
     modelSelection?: ModelSelection,
+    agent?: string,
   ) => Promise<void>;
   /** Whether a session creation is in progress */
   isCreating?: boolean;
@@ -117,7 +118,9 @@ function NewSessionInput({
       return;
     }
 
-    const availablePaths = new Set(pinnedProjects.map((project) => project.path));
+    const availablePaths = new Set(
+      pinnedProjects.map((project) => project.path),
+    );
     if (selectedProject && availablePaths.has(selectedProject)) {
       return;
     }

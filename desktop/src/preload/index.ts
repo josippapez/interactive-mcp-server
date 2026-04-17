@@ -132,6 +132,20 @@ export type SkillOrInstructionRecord = {
   updatedAt: string;
 };
 
+export type AgentDefinition = {
+  name: string;
+  filePath: string;
+  scope: 'global' | 'project';
+  baseDirectory?: string;
+  description: string;
+  mode: 'subagent' | 'primary' | string;
+  tools: Record<string, boolean>;
+  model?: string;
+  body: string;
+  rawContents: string;
+  overridden?: boolean;
+};
+
 // ─── Provider Auth Types ─────────────────────────────────────────────────────
 
 export type PromptWhen = {
@@ -591,6 +605,40 @@ const api = {
   syncOpencodeConfig: (): Promise<string> =>
     ipcRenderer.invoke('sync-opencode-config'),
 
+  // ─── OpenCode config file IO (read/write global + per-project configs) ────
+  // Writes preserve the `mcp["interactive-desktop"]` managed subtree; callers
+  // should not attempt to change it. Comments in .jsonc/.json files are stripped
+  // on read (block, line, and string-internal `//` limitations documented in
+  // config-sync.ts). Reads return `{ exists:false, config:null }` when absent.
+
+  readOpenCodeGlobalConfig: (): Promise<{
+    exists: boolean;
+    config: Record<string, unknown> | null;
+    filePath: string;
+  }> => ipcRenderer.invoke('read-opencode-global-config'),
+
+  readOpenCodeProjectConfig: (
+    baseDirectory: string,
+  ): Promise<{
+    exists: boolean;
+    config: Record<string, unknown> | null;
+    filePath: string;
+  }> => ipcRenderer.invoke('read-opencode-project-config', baseDirectory),
+
+  writeOpenCodeGlobalConfig: (
+    config: Record<string, unknown>,
+  ): Promise<{ filePath: string }> =>
+    ipcRenderer.invoke('write-opencode-global-config', config),
+
+  writeOpenCodeProjectConfig: (
+    baseDirectory: string,
+    config: Record<string, unknown>,
+  ): Promise<{ filePath: string }> =>
+    ipcRenderer.invoke('write-opencode-project-config', {
+      baseDirectory,
+      config,
+    }),
+
   // Fired when the agent sends a message via send_message tool
   onAgentMessage: (
     callback: (data: {
@@ -825,11 +873,65 @@ const api = {
       modelId: string;
       variant?: string;
     };
+    /**
+     * Optional OpenCode agent name (e.g. "build", "plan", "docs-maintainer").
+     * Forwarded to `prompt_async` — OpenCode accepts this per-prompt.
+     */
+    agent?: string;
   }): Promise<{
     ok: boolean;
     sessionId?: string;
     error?: string;
   }> => ipcRenderer.invoke('create-opencode-session', options ?? {}),
+
+  // ─── OpenCode Custom Agents ──────────────────────────────────────────────
+
+  /**
+   * List all OpenCode custom agents (global + project-scoped for baseDirectory).
+   * Returns project-scoped agents first, then globals. Globals with the same
+   * name as a project agent are marked `overridden: true`.
+   */
+  listAgents: (
+    baseDirectory?: string,
+  ): Promise<
+    { ok: true; data: AgentDefinition[] } | { ok: false; error: string }
+  > => ipcRenderer.invoke('list-agents', baseDirectory),
+
+  /**
+   * Read a single agent by absolute file path. Returns null if missing.
+   */
+  readAgent: (
+    filePath: string,
+  ): Promise<
+    { ok: true; data: AgentDefinition | null } | { ok: false; error: string }
+  > => ipcRenderer.invoke('read-agent', filePath),
+
+  /**
+   * Create or overwrite an agent file.
+   * scope='global' → ~/.config/opencode/agent/<name>.md
+   * scope='project' → <baseDirectory>/.opencode/agent/<name>.md (baseDirectory required)
+   */
+  writeAgent: (params: {
+    scope: 'global' | 'project';
+    baseDirectory?: string;
+    name: string;
+    description: string;
+    mode: string;
+    tools: Record<string, boolean>;
+    model?: string;
+    body: string;
+  }): Promise<
+    { ok: true; data: { filePath: string } } | { ok: false; error: string }
+  > => ipcRenderer.invoke('write-agent', params),
+
+  /**
+   * Delete the agent file at the given absolute path. Rejects paths outside
+   * the known agent directories.
+   */
+  deleteAgent: (
+    filePath: string,
+  ): Promise<{ ok: true; data: null } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('delete-agent', filePath),
 
   // Listen for todo updates (emitted by the main process when todos change)
   onTodosUpdated: (
