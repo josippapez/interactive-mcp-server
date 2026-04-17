@@ -1,16 +1,5 @@
 import React from 'react';
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogHeader,
-  AlertDialogTitle,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogCancel,
-  AlertDialogAction,
-} from './ui/alert-dialog';
-import { buttonVariants } from './ui/button';
-import { cn } from '@/lib/utils';
+import { ConfirmDialog } from './ui/ConfirmDialog';
 
 type Props = {
   open: boolean;
@@ -19,6 +8,14 @@ type Props = {
   onCancel: () => void;
 };
 
+/**
+ * Session-specific delete confirmation. Thin wrapper over the generic
+ * `ConfirmDialog` that bakes in the "Remove session?" title, destructive
+ * styling, and the monospace label span inside the description.
+ *
+ * Prefer `ConfirmDialog` (components/ui/ConfirmDialog.tsx) directly for
+ * new confirm flows that don't reuse this exact copy.
+ */
 export default function ConfirmDeleteModal({
   open,
   label,
@@ -26,27 +23,20 @@ export default function ConfirmDeleteModal({
   onCancel,
 }: Props): React.ReactElement {
   return (
-    <AlertDialog open={open} onOpenChange={(isOpen) => !isOpen && onCancel()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogTitle>Remove session?</AlertDialogTitle>
-          <AlertDialogDescription>
-            <span className="font-mono text-[var(--color-text)]">{label}</span>{' '}
-            will be permanently deleted and cannot be recovered.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel onClick={onCancel}>Cancel</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={onConfirm}
-            className={cn(
-              buttonVariants({ variant: 'destructive', size: 'sm' }),
-            )}
-          >
-            Delete
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={open}
+      title="Remove session?"
+      description={
+        <>
+          <span className="font-mono text-[var(--color-text)]">{label}</span>{' '}
+          will be permanently deleted and cannot be recovered.
+        </>
+      }
+      confirmLabel="Delete"
+      cancelLabel="Cancel"
+      destructive
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+    />
   );
 }

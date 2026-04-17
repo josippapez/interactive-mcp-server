@@ -15,7 +15,12 @@ import { cn } from '@/lib/utils';
 export interface ConfirmDialogProps {
   open: boolean;
   title: string;
-  description?: string;
+  /**
+   * Description body. Accepts a ReactNode so callers can embed inline
+   * styling (monospace spans, emphasis, etc.) — matching the flexibility
+   * of the older hand-rolled `ConfirmDeleteModal`.
+   */
+  description?: React.ReactNode;
   confirmLabel?: string;
   cancelLabel?: string;
   /** Apply destructive styling to the confirm button. */
