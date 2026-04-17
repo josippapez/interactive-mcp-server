@@ -16,6 +16,7 @@ import { mapPartType, mapToolStatus } from './part-mapping';
 import { seedCacheFromRest } from './rest-seed';
 import { emitOptimisticChildSession, scheduleSnapshot } from './snapshot';
 import { _sessionCache, _tombstonedSessionIds, state } from './state';
+import { resolveChildSessionIdFromTaskPart } from './task-subagent-detect';
 import {
   SSE_RECONNECT_DELAY_MS,
   type SessionInfo,
@@ -217,22 +218,21 @@ export function handleSyncEvent(envelope: SyncEventEnvelope): void {
     // When the OpenCode Task tool spawns a subagent, the child session is
     // created server-side but the `/global/event` stream does NOT emit
     // a `session.created.1` event for it. The only signal we receive is this
-    // `message.part.updated.1` event whose `part.state.metadata.sessionId`
-    // carries the child's session ID. Hydrate the child into the cache so
-    // it appears in the sidebar without requiring a manual refresh.
-    if (part['tool'] === 'task') {
-      const partState = part['state'] as Record<string, unknown> | undefined;
-      const metadata = partState?.['metadata'] as
-        | Record<string, unknown>
-        | undefined;
-      const childSessionId = metadata?.['sessionId'] as string | undefined;
-      if (
-        childSessionId &&
-        !_sessionCache.has(childSessionId) &&
-        !_tombstonedSessionIds.has(childSessionId)
-      ) {
-        void hydrateTaskSubagentSession(childSessionId, sessionID);
-      }
+    // `message.part.updated.1` event whose `part.state.metadata` carries
+    // the child's session ID (under one of several possible key names).
+    // Hydrate the child into the cache so it appears in the sidebar without
+    // requiring a manual refresh.
+    //
+    // Detection is widened via `resolveChildSessionIdFromTaskPart` to tolerate
+    // tool-name casing variations (`task`, `Task`, `TASK`) and metadata key
+    // variants (`sessionId`, `sessionID`, `childSessionID`).
+    const childSessionId = resolveChildSessionIdFromTaskPart(part);
+    if (
+      childSessionId &&
+      !_sessionCache.has(childSessionId) &&
+      !_tombstonedSessionIds.has(childSessionId)
+    ) {
+      void hydrateTaskSubagentSession(childSessionId, sessionID);
     }
 
     const win = state.getWindow?.();
