@@ -351,7 +351,6 @@ describe('injectOpenCodeMessage', () => {
     vi.mocked(getRegisteredConnectionBySessionId).mockReturnValue({
       providerType: 'opencode',
       providerSessionId: 's1',
-      openCodeSessionId: 's1',
       connectionId: 'c1',
       channelName: 'Channel',
       projectName: 'Project',

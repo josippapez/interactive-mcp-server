@@ -22,6 +22,8 @@ const mockGetAll = getAllRegisteredConnections as Mock;
 const mockDelete = deleteRegisteredConnection as Mock;
 const mockFetchSessions = fetchAllOpenCodeSessions as Mock;
 
+type ProviderType = 'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone';
+
 function makeConnection(
   overrides: Partial<{
     connectionId: string;
@@ -29,7 +31,8 @@ function makeConnection(
     projectName: string;
     baseDirectory: string | null;
     idFilePath: string;
-    openCodeSessionId: string | null;
+    providerSessionId: string | null;
+    providerType: ProviderType;
     parentSessionId: string | null;
     createdAt: string;
     updatedAt: string;
@@ -42,10 +45,11 @@ function makeConnection(
     baseDirectory:
       'baseDirectory' in overrides ? overrides.baseDirectory : '/tmp/proj',
     idFilePath: overrides.idFilePath ?? '/tmp/imcp-agent-1.json',
-    openCodeSessionId:
-      'openCodeSessionId' in overrides
-        ? overrides.openCodeSessionId
+    providerSessionId:
+      'providerSessionId' in overrides
+        ? overrides.providerSessionId
         : 'oc-session-1',
+    providerType: overrides.providerType ?? ('opencode' as ProviderType),
     parentSessionId: overrides.parentSessionId ?? null,
     createdAt: overrides.createdAt ?? '2025-01-01T00:00:00Z',
     updatedAt: overrides.updatedAt ?? '2025-01-01T00:00:00Z',
@@ -66,11 +70,11 @@ describe('reconcileSessionConnections', () => {
     mockGetAll.mockReturnValueOnce([
       makeConnection({
         connectionId: 'conn-stale',
-        openCodeSessionId: 'oc-session-gone',
+        providerSessionId: 'oc-session-gone',
       }),
       makeConnection({
         connectionId: 'conn-alive',
-        openCodeSessionId: 'oc-session-alive',
+        providerSessionId: 'oc-session-alive',
       }),
     ]);
 
@@ -78,8 +82,8 @@ describe('reconcileSessionConnections', () => {
 
     expect(result).toEqual({ matched: 1, cleaned: 1, total: 2 });
     expect(mockDelete).toHaveBeenCalledTimes(1);
-    // deleteRegisteredConnection now takes the openCodeSessionId (PK), not connectionId
-    expect(mockDelete).toHaveBeenCalledWith('oc-session-gone');
+    // deleteRegisteredConnection now takes (providerSessionId, providerType)
+    expect(mockDelete).toHaveBeenCalledWith('oc-session-gone', 'opencode');
   });
 
   it('keeps connections that match live OpenCode sessions', async () => {
@@ -90,11 +94,11 @@ describe('reconcileSessionConnections', () => {
     mockGetAll.mockReturnValueOnce([
       makeConnection({
         connectionId: 'conn-1',
-        openCodeSessionId: 'oc-session-1',
+        providerSessionId: 'oc-session-1',
       }),
       makeConnection({
         connectionId: 'conn-2',
-        openCodeSessionId: 'oc-session-2',
+        providerSessionId: 'oc-session-2',
       }),
     ]);
 
@@ -109,11 +113,11 @@ describe('reconcileSessionConnections', () => {
     mockGetAll.mockReturnValueOnce([
       makeConnection({
         connectionId: 'conn-1',
-        openCodeSessionId: 'oc-session-1',
+        providerSessionId: 'oc-session-1',
       }),
       makeConnection({
         connectionId: 'conn-2',
-        openCodeSessionId: 'oc-session-2',
+        providerSessionId: 'oc-session-2',
       }),
     ]);
 
@@ -135,24 +139,24 @@ describe('reconcileSessionConnections', () => {
     expect(mockDelete).not.toHaveBeenCalled();
   });
 
-  it('ignores connections without openCodeSessionId (not cleaned)', async () => {
+  it('ignores connections without providerSessionId (not cleaned)', async () => {
     mockFetchSessions.mockResolvedValueOnce([
       { id: 'oc-session-1', parentID: null },
     ]);
     mockGetAll.mockReturnValueOnce([
       makeConnection({
         connectionId: 'conn-no-session',
-        openCodeSessionId: null,
+        providerSessionId: null,
       }),
       makeConnection({
         connectionId: 'conn-with-session',
-        openCodeSessionId: 'oc-session-1',
+        providerSessionId: 'oc-session-1',
       }),
     ]);
 
     const result = await reconcileSessionConnections(4096);
 
-    // The connection without openCodeSessionId should be ignored (not counted as matched or cleaned)
+    // The connection without providerSessionId should be ignored (not counted as matched or cleaned)
     expect(result).toEqual({ matched: 1, cleaned: 0, total: 2 });
     expect(mockDelete).not.toHaveBeenCalled();
   });

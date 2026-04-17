@@ -210,7 +210,7 @@ describe('session-tree-manager', () => {
       fetchMock: Mock,
       autoRegisterSubagents = true,
     ) {
-      global.fetch = fetchMock;
+      global.fetch = fetchMock as unknown as typeof fetch;
       mockGetAllRegisteredConnections.mockReturnValue([]);
       stopSessionTreeManager();
       startSessionTreeManager(
@@ -687,9 +687,9 @@ describe('session-tree-manager', () => {
       expect(snapshotCalls.length).toBeGreaterThan(0);
 
       const latestSnapshot = snapshotCalls[snapshotCalls.length - 1]?.[1] as
-        | Array<{ openCodeSessionId: string }>
+        | Array<{ providerSessionId: string }>
         | undefined;
-      const sessionIds = (latestSnapshot ?? []).map((s) => s.openCodeSessionId);
+      const sessionIds = (latestSnapshot ?? []).map((s) => s.providerSessionId);
 
       // Keep prior cached sessions until authoritative session.deleted.1 arrives
       expect(sessionIds).toContain('seed-a');
@@ -760,10 +760,10 @@ describe('session-tree-manager', () => {
       expect(snapshotCall).toBeTruthy();
 
       const snapshot = snapshotCall?.[1] as Array<{
-        openCodeSessionId: string;
+        providerSessionId: string;
         title: string;
       }>;
-      const target = snapshot.find((s) => s.openCodeSessionId === 'ses_name_1');
+      const target = snapshot.find((s) => s.providerSessionId === 'ses_name_1');
       expect(target?.title).toBe('OpenCode Canonical Name');
 
       stopSessionTreeManager();
@@ -785,7 +785,7 @@ describe('session-tree-manager', () => {
     }
 
     function startManager(win: BrowserWindow, fetchMock: Mock) {
-      global.fetch = fetchMock;
+      global.fetch = fetchMock as unknown as typeof fetch;
       mockGetAllRegisteredConnections.mockReturnValue([]);
       stopSessionTreeManager();
       startSessionTreeManager(

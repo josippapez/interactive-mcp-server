@@ -14,7 +14,12 @@ const mocks = vi.hoisted(() => ({
   matchSkillsForMessage: vi.fn(() => []),
   buildSkillSuggestionText: vi.fn(() => ''),
   sdkPermissionReply: vi.fn(),
-  getRegisteredConnectionBySessionId: vi.fn(() => null),
+  getRegisteredConnectionBySessionId: vi.fn(
+    () => null as unknown as { baseDirectory?: string } | null,
+  ),
+  getRegisteredConnection: vi.fn(
+    () => null as unknown as { providerSessionId?: string } | null,
+  ),
   upsertRegisteredConnection: vi.fn(),
   refreshSessionTreeCache: vi.fn(),
   triggerSessionTreeUpdate: vi.fn(),
@@ -41,9 +46,14 @@ vi.mock('electron', () => ({
   BrowserWindow: class {},
 }));
 
-vi.mock('../settings', () => ({
-  saveSettings: vi.fn(),
-}));
+vi.mock('../settings', async () => {
+  const actual =
+    await vi.importActual<typeof import('../settings')>('../settings');
+  return {
+    ...actual,
+    saveSettings: vi.fn(),
+  };
+});
 
 vi.mock('../attachment-store', () => ({
   saveAttachment: vi.fn(() => 'mock-uuid.png'),
@@ -75,7 +85,7 @@ vi.mock('../database', () => ({
   clearSessionChannelMessages: vi.fn(),
   deleteSessionChannel: vi.fn(),
   deleteRegisteredConnection: vi.fn(),
-  getRegisteredConnection: vi.fn(() => null),
+  getRegisteredConnection: mocks.getRegisteredConnection,
   getRegisteredConnectionBySessionId: mocks.getRegisteredConnectionBySessionId,
   resetDatabase: vi.fn(),
   upsertRegisteredConnection: mocks.upsertRegisteredConnection,
@@ -214,34 +224,41 @@ import { queueSessionMessage } from '../database';
 import { injectOpenCodeMessage } from '../opencode/injector';
 import { registerMcpAcrossReachablePorts } from '../opencode/mcp-register';
 import * as mcpStatus from '../opencode/mcp-status';
+import { defaultSettings } from '../settings';
+import type { AppSettings } from '../settings';
 
 function getRegisteredHandle(channel: string) {
   const call = mocks.ipcMainHandle.mock.calls.find(
-    ([registeredChannel]: [string]) => registeredChannel === channel,
+    ([registeredChannel]: string[]) => registeredChannel === channel,
   );
   expect(call).toBeDefined();
   return call?.[1] as (...args: unknown[]) => unknown;
 }
 
+function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
+  return { ...defaultSettings, ...overrides };
+}
+
 function registerHandlers() {
   registerIpcHandlers({
     getMainWindow: () => null,
-    getSettings: () => ({
-      port: 3100,
-      promptTimeoutSeconds: 30,
-      openCodePort: 4096,
-      soundEnabled: false,
-      agentBackend: 'claude_sdk',
-      autoStartOpenCode: false,
-      autoSyncOpencode: false,
-      launchAtLogin: false,
-      docContextDebug: false,
-      docIndexingEnabled: true,
-      autoRestoreSessions: false,
-      autoRegisterSubagents: true,
-      allowedReadFolders: [],
-      allowedPermissions: [],
-    }),
+    getSettings: () =>
+      makeSettings({
+        port: 3100,
+        promptTimeoutSeconds: 30,
+        openCodePort: 4096,
+        soundEnabled: false,
+        agentBackend: 'claude_sdk',
+        autoStartOpenCode: false,
+        autoSyncOpencode: false,
+        launchAtLogin: false,
+        docContextDebug: false,
+        docIndexingEnabled: true,
+        autoRestoreSessions: false,
+        autoRegisterSubagents: true,
+        allowedReadFolders: [],
+        allowedPermissions: [],
+      }),
     setSettings: vi.fn(),
   });
 }
@@ -249,22 +266,23 @@ function registerHandlers() {
 function registerHandlersWithBackend(agentBackend: 'opencode' | 'claude_sdk') {
   registerIpcHandlers({
     getMainWindow: () => null,
-    getSettings: () => ({
-      port: 3100,
-      promptTimeoutSeconds: 30,
-      openCodePort: 4096,
-      soundEnabled: false,
-      agentBackend,
-      autoStartOpenCode: false,
-      autoSyncOpencode: false,
-      launchAtLogin: false,
-      docContextDebug: false,
-      docIndexingEnabled: true,
-      autoRestoreSessions: false,
-      autoRegisterSubagents: true,
-      allowedReadFolders: [],
-      allowedPermissions: [],
-    }),
+    getSettings: () =>
+      makeSettings({
+        port: 3100,
+        promptTimeoutSeconds: 30,
+        openCodePort: 4096,
+        soundEnabled: false,
+        agentBackend,
+        autoStartOpenCode: false,
+        autoSyncOpencode: false,
+        launchAtLogin: false,
+        docContextDebug: false,
+        docIndexingEnabled: true,
+        autoRestoreSessions: false,
+        autoRegisterSubagents: true,
+        allowedReadFolders: [],
+        allowedPermissions: [],
+      }),
     setSettings: vi.fn(),
   });
 }
@@ -276,7 +294,7 @@ describe('registerIpcHandlers reply-permission', () => {
 
   it('registers the reply-permission channel', () => {
     registerHandlers();
-    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: [string]) => ch);
+    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: string[]) => ch);
     expect(channels).toContain('reply-permission');
   });
 
@@ -340,7 +358,7 @@ describe('registerIpcHandlers get-pending-permissions', () => {
 
   it('registers the get-pending-permissions channel', () => {
     registerHandlers();
-    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: [string]) => ch);
+    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: string[]) => ch);
     expect(channels).toContain('get-pending-permissions');
   });
 
@@ -355,22 +373,23 @@ describe('registerIpcHandlers get-pending-permissions', () => {
 
     registerIpcHandlers({
       getMainWindow: () => null,
-      getSettings: () => ({
-        port: 3100,
-        promptTimeoutSeconds: 30,
-        openCodePort: 4096,
-        soundEnabled: false,
-        agentBackend: 'opencode',
-        autoStartOpenCode: false,
-        autoSyncOpencode: false,
-        launchAtLogin: false,
-        docContextDebug: false,
-        docIndexingEnabled: true,
-        autoRestoreSessions: false,
-        autoRegisterSubagents: true,
-        allowedReadFolders: [],
-        allowedPermissions: [],
-      }),
+      getSettings: () =>
+        makeSettings({
+          port: 3100,
+          promptTimeoutSeconds: 30,
+          openCodePort: 4096,
+          soundEnabled: false,
+          agentBackend: 'opencode',
+          autoStartOpenCode: false,
+          autoSyncOpencode: false,
+          launchAtLogin: false,
+          docContextDebug: false,
+          docIndexingEnabled: true,
+          autoRestoreSessions: false,
+          autoRegisterSubagents: true,
+          allowedReadFolders: [],
+          allowedPermissions: [],
+        }),
       setSettings: vi.fn(),
     });
 
@@ -395,7 +414,7 @@ describe('registerIpcHandlers question handlers', () => {
 
   it('registers question channels', () => {
     registerHandlers();
-    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: [string]) => ch);
+    const channels = mocks.ipcMainHandle.mock.calls.map(([ch]: string[]) => ch);
     expect(channels).toContain('get-pending-questions');
     expect(channels).toContain('reply-question');
     expect(channels).toContain('reject-question');
@@ -468,6 +487,9 @@ describe('registerIpcHandlers inject-claude-message', () => {
       responseText: 'Injected successfully',
     };
     mocks.injectClaudeMessageForConnection.mockResolvedValue(expectedResult);
+    mocks.getRegisteredConnection.mockReturnValue({
+      providerSessionId: 'ses_abc',
+    });
 
     registerHandlers();
 
@@ -489,7 +511,7 @@ describe('registerIpcHandlers inject-claude-message', () => {
     const result = await handler({}, request);
 
     expect(mocks.injectClaudeMessageForConnection).toHaveBeenCalledWith({
-      connectionId: 'conn-1',
+      providerSessionId: 'ses_abc',
       message: 'Please inject this message',
       baseDirectory: '/repo/path',
       attachments: request.attachments,
@@ -501,6 +523,9 @@ describe('registerIpcHandlers inject-claude-message', () => {
     mocks.injectClaudeMessageForConnection.mockResolvedValue({
       ok: false,
       error: 'runtime unavailable',
+    });
+    mocks.getRegisteredConnection.mockReturnValue({
+      providerSessionId: 'ses_abc',
     });
 
     registerHandlers();
@@ -515,7 +540,7 @@ describe('registerIpcHandlers inject-claude-message', () => {
     registerHandlers();
 
     const registeredChannels = mocks.ipcMainHandle.mock.calls.map(
-      ([channel]: [string]) => channel,
+      ([channel]: string[]) => channel,
     );
 
     expect(registeredChannels).toEqual(
@@ -882,22 +907,23 @@ describe('registerIpcHandlers save-clipboard-attachment', () => {
   it('returns url:null when MCP server port is not available', async () => {
     registerIpcHandlers({
       getMainWindow: () => null,
-      getSettings: () => ({
-        port: 0,
-        promptTimeoutSeconds: 30,
-        openCodePort: 4096,
-        soundEnabled: false,
-        agentBackend: 'claude_sdk',
-        autoStartOpenCode: false,
-        autoSyncOpencode: false,
-        launchAtLogin: false,
-        docContextDebug: false,
-        docIndexingEnabled: true,
-        autoRestoreSessions: false,
-        autoRegisterSubagents: true,
-        allowedReadFolders: [],
-        allowedPermissions: [],
-      }),
+      getSettings: () =>
+        makeSettings({
+          port: 0,
+          promptTimeoutSeconds: 30,
+          openCodePort: 4096,
+          soundEnabled: false,
+          agentBackend: 'claude_sdk',
+          autoStartOpenCode: false,
+          autoSyncOpencode: false,
+          launchAtLogin: false,
+          docContextDebug: false,
+          docIndexingEnabled: true,
+          autoRestoreSessions: false,
+          autoRegisterSubagents: true,
+          allowedReadFolders: [],
+          allowedPermissions: [],
+        }),
       setSettings: vi.fn(),
     });
     const handler = getRegisteredHandle('save-clipboard-attachment');

@@ -89,7 +89,9 @@ describe('session-tree-manager reasoning event mapping', () => {
 
     global.fetch = vi
       .fn()
-      .mockResolvedValue(makeSseResponse([partUpdatedEvent]));
+      .mockResolvedValue(
+        makeSseResponse([partUpdatedEvent]),
+      ) as unknown as typeof fetch;
 
     startSessionTreeManager(
       () => win,

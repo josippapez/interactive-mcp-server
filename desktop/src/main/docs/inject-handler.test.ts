@@ -199,7 +199,6 @@ describe('handleInjectDocContext', () => {
     expect(result).toEqual({ ok: true, injectedCount: 2 });
 
     expect(deps.sendAgentMessage).toHaveBeenCalledWith(
-      'conn-123',
       'ses_abc',
       expect.stringContaining('Context injected (2 docs)'),
     );
@@ -391,9 +390,8 @@ describe('handleInjectDocContext', () => {
       deps,
     );
 
-    // sendAgentMessage should receive connectionId, openCodeSessionId, and the message
+    // sendAgentMessage should receive providerSessionId and the message
     expect(deps.sendAgentMessage).toHaveBeenCalledWith(
-      'conn-123',
       'ses_abc',
       expect.stringContaining('Context injected (1 docs)'),
     );
@@ -413,8 +411,8 @@ describe('handleInjectDocContext', () => {
     );
 
     const mockCalls = (deps.sendAgentMessage as ReturnType<typeof vi.fn>).mock
-      .calls as Array<[string, string | null, string]>;
-    const [, , messageText] = mockCalls[0];
+      .calls as Array<[string, string]>;
+    const [, messageText] = mockCalls[0];
     expect(messageText).toContain('`docs/api.md`');
     expect(messageText).toContain('`docs/guide.md`');
   });

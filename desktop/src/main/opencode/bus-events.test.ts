@@ -10,6 +10,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RegisteredConnection } from '../database';
+import { defaultSettings } from '../settings';
 
 // ─── Hoisted mocks ────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ function makeWindow(): {
 
 function makeRegisteredConnection(
   connectionId: string,
-  openCodeSessionId: string,
+  providerSessionId: string,
 ) {
   return {
     connectionId,
@@ -55,8 +56,7 @@ function makeRegisteredConnection(
     projectName: 'test',
     baseDirectory: null,
     idFilePath: '/tmp/test.json',
-    providerSessionId: openCodeSessionId,
-    openCodeSessionId,
+    providerSessionId,
     parentSessionId: null,
     providerType: 'standalone' as const,
     createdAt: new Date().toISOString(),
@@ -108,7 +108,7 @@ describe('opencode-bus-events — permission.asked', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
       connectionId: 'conn-abc',
-      openCodeSessionId: 'ses-123',
+      providerSessionId: 'ses-123',
       requestId: 'req-001',
       sessionID: 'ses-123',
       directory: undefined,
@@ -141,7 +141,7 @@ describe('opencode-bus-events — permission.asked', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
       connectionId: 'ses-123',
-      openCodeSessionId: 'ses-123',
+      providerSessionId: 'ses-123',
       requestId: 'req-002',
       sessionID: 'ses-123',
       permission: 'bash',
@@ -195,7 +195,7 @@ describe('opencode-bus-events — permission.asked', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
       connectionId: 'conn-abc',
-      openCodeSessionId: 'ses-123',
+      providerSessionId: 'ses-123',
       requestId: 'req-004',
       sessionID: 'ses-123',
       permission: 'file_write',
@@ -227,6 +227,7 @@ describe('opencode-bus-events — permission.asked', () => {
       {
         getOpenCodePort: () => 4096,
         getSettings: () => ({
+          ...defaultSettings,
           allowedReadFolders: [],
           allowedPermissions: ['glob'],
         }),
@@ -314,7 +315,7 @@ describe('opencode-bus-events — question events', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('question-asked', {
       connectionId: 'conn-abc',
-      openCodeSessionId: 'ses-123',
+      providerSessionId: 'ses-123',
       requestId: 'q-1',
       sessionID: 'ses-123',
       questions: [
@@ -383,7 +384,7 @@ describe('opencode-bus-events — question events', () => {
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('question-asked', {
       connectionId: 'conn-abc',
-      openCodeSessionId: 'ses-123',
+      providerSessionId: 'ses-123',
       requestId: 'q-2',
       sessionID: 'ses-123',
       questions: [

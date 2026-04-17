@@ -15,7 +15,9 @@ vi.mock('express', async (importOriginal) => {
     const origListen = app.listen.bind(app);
     app.listen = function (...listenArgs: unknown[]) {
       capturedApp.current = app;
-      return origListen(...listenArgs) as ReturnType<typeof app.listen>;
+      return (origListen as (...a: unknown[]) => unknown)(
+        ...listenArgs,
+      ) as ReturnType<typeof app.listen>;
     } as typeof app.listen;
     return app;
   }
@@ -202,10 +204,10 @@ describe('debug5 — full flow', () => {
       statusCode: 200,
     } as unknown as express.Response;
 
-    app(postReq, postRes, (err?: Error) => {
+    app(postReq, postRes, ((err?: Error) => {
       if (err) console.log('[POST next with error]', err.message);
       else console.log('[POST next without error]');
-    });
+    }) as express.NextFunction);
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
     const sessionId = lastTransportRef.current?.sessionId;
@@ -239,10 +241,14 @@ describe('debug5 — full flow', () => {
       ip: '127.0.0.1',
     } as unknown as express.Request;
 
-    app(getReq, res as unknown as express.Response, (err?: Error) => {
-      if (err) console.log('[GET next with error]', err.message);
-      else console.log('[GET next without error — probably 404?]');
-    });
+    app(
+      getReq,
+      res as unknown as express.Response,
+      ((err?: Error) => {
+        if (err) console.log('[GET next with error]', err.message);
+        else console.log('[GET next without error — probably 404?]');
+      }) as express.NextFunction,
+    );
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
     console.log('[test] socket listeners count:', socket.eventNames());

@@ -14,7 +14,7 @@ vi.mock('../opencode/session', () => ({
 import {
   resolveSession,
   reResolveStaleSession,
-  resolveOpenCodeSessionId,
+  resolveProviderSessionId,
 } from './resolver';
 import {
   getRegisteredConnection,
@@ -35,7 +35,7 @@ function makeConnection(
     projectName: string;
     baseDirectory: string | null;
     idFilePath: string;
-    openCodeSessionId: string | null;
+    providerSessionId: string | null;
     parentSessionId: string | null;
     createdAt: string;
     updatedAt: string;
@@ -48,9 +48,9 @@ function makeConnection(
     baseDirectory:
       'baseDirectory' in overrides ? overrides.baseDirectory : '/repo',
     idFilePath: overrides.idFilePath ?? '/tmp/imcp-agent-1.json',
-    openCodeSessionId:
-      'openCodeSessionId' in overrides
-        ? overrides.openCodeSessionId
+    providerSessionId:
+      'providerSessionId' in overrides
+        ? overrides.providerSessionId
         : 'ses_abc123',
     parentSessionId:
       'parentSessionId' in overrides ? overrides.parentSessionId : null,
@@ -97,9 +97,9 @@ describe('resolveSession', () => {
 
   // ── OpenCode: cached path ────────────────────────────────────────────
 
-  it('returns "cached" when DB has a non-null openCodeSessionId', async () => {
+  it('returns "cached" when DB has a non-null providerSessionId', async () => {
     mockGetConnection.mockReturnValue(
-      makeConnection({ openCodeSessionId: 'ses_cached' }),
+      makeConnection({ providerSessionId: 'ses_cached' }),
     );
 
     const result = await resolveSession({
@@ -116,7 +116,7 @@ describe('resolveSession', () => {
   it('returns parentSessionId from cached DB record', async () => {
     mockGetConnection.mockReturnValue(
       makeConnection({
-        openCodeSessionId: 'ses_child',
+        providerSessionId: 'ses_child',
         parentSessionId: 'ses_parent',
       }),
     );
@@ -133,9 +133,9 @@ describe('resolveSession', () => {
 
   // ── OpenCode: re-resolve path ────────────────────────────────────────
 
-  it('re-resolves when openCodeSessionId is null and OpenCode API returns a session', async () => {
+  it('re-resolves when providerSessionId is null and OpenCode API returns a session', async () => {
     mockGetConnection.mockReturnValue(
-      makeConnection({ openCodeSessionId: null }),
+      makeConnection({ providerSessionId: null }),
     );
     mockAutoDetect.mockResolvedValue({ id: 'ses_new', parentId: null });
 
@@ -153,14 +153,14 @@ describe('resolveSession', () => {
     expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         connectionId: 'conn-uuid-1',
-        openCodeSessionId: 'ses_new',
+        providerSessionId: 'ses_new',
       }),
     );
   });
 
   it('uses baseDirectory from opts when provided for re-resolve', async () => {
     mockGetConnection.mockReturnValue(
-      makeConnection({ openCodeSessionId: null, baseDirectory: '/old' }),
+      makeConnection({ providerSessionId: null, baseDirectory: '/old' }),
     );
     mockAutoDetect.mockResolvedValue({ id: 'ses_x', parentId: null });
 
@@ -177,7 +177,7 @@ describe('resolveSession', () => {
   it('falls back to DB baseDirectory for re-resolve when opts.baseDirectory is absent', async () => {
     mockGetConnection.mockReturnValue(
       makeConnection({
-        openCodeSessionId: null,
+        providerSessionId: null,
         baseDirectory: '/from-db',
       }),
     );
@@ -196,7 +196,7 @@ describe('resolveSession', () => {
 
   it('returns "none" when no OpenCode port is configured', async () => {
     mockGetConnection.mockReturnValue(
-      makeConnection({ openCodeSessionId: null }),
+      makeConnection({ providerSessionId: null }),
     );
 
     const result = await resolveSession({
@@ -212,7 +212,7 @@ describe('resolveSession', () => {
 
   it('returns "none" when OpenCode API is unreachable', async () => {
     mockGetConnection.mockReturnValue(
-      makeConnection({ openCodeSessionId: null }),
+      makeConnection({ providerSessionId: null }),
     );
     mockAutoDetect.mockResolvedValue(null);
 
@@ -232,7 +232,7 @@ describe('resolveSession', () => {
     mockGetConnection.mockReturnValue(
       makeConnection({
         connectionId: 'conn-claude-1',
-        openCodeSessionId: null,
+        providerSessionId: null,
       }),
     );
 
@@ -269,11 +269,11 @@ describe('reResolveStaleSession', () => {
   });
 
   it('delegates to resolveSession and returns cached result when session exists', async () => {
-    // With openCodeSessionId as PK (Phase 2 schema), reResolveStaleSession
+    // With providerSessionId as PK (Phase 2 schema), reResolveStaleSession
     // no longer clears the cached session ID — it simply delegates to
     // resolveSession. The session ID IS the primary key; you cannot null it out.
     mockGetConnection.mockReturnValueOnce(
-      makeConnection({ openCodeSessionId: 'ses_existing' }),
+      makeConnection({ providerSessionId: 'ses_existing' }),
     );
 
     const result = await reResolveStaleSession({
@@ -302,10 +302,10 @@ describe('reResolveStaleSession', () => {
     expect(mockUpsert).not.toHaveBeenCalled();
   });
 
-  it('skips clear if openCodeSessionId is already null', async () => {
+  it('skips clear if providerSessionId is already null', async () => {
     // Both calls return the same record with null session.
     mockGetConnection.mockReturnValue(
-      makeConnection({ openCodeSessionId: null }),
+      makeConnection({ providerSessionId: null }),
     );
     mockAutoDetect.mockResolvedValue({ id: 'ses_new', parentId: 'ses_p' });
 
@@ -322,7 +322,7 @@ describe('reResolveStaleSession', () => {
     expect(upsertCalls.length).toBe(1);
     expect(upsertCalls[0][0]).toEqual(
       expect.objectContaining({
-        openCodeSessionId: 'ses_new',
+        providerSessionId: 'ses_new',
       }),
     );
 

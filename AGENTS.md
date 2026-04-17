@@ -70,7 +70,7 @@ The CLI package (`src/`) is published to npm. The desktop app (`desktop/`) is di
 - **Config-file timeout** — MCP tool call timeout is set in `opencode.json` via `syncRemoteConfig` at startup. Dynamic registration does not reliably override session timeouts.
 - **Prompt timeout behaviour** — when a prompt times out, it clears immediately and an expiry notice is appended. No grace period.
 - **SQLite via sql.js** — all session/message history is persisted in an embedded SQLite database (no native sqlite3 bindings).
-- **openCodeSessionId as primary key** — after the session-ID refactor, `openCodeSessionId` is the canonical DB identity for every session. The MCP `connectionId` is an internal transport handle only. Agents must pass `openCodeSessionId` on every tool call to ensure correct channel routing.
+- **providerSessionId as primary key** — after the provider-session-id unification refactor (Phase 6), `providerSessionId` is the canonical DB identity for every session, paired with `providerType` as a composite primary key `(providerType, providerSessionId)`. For OpenCode sessions, `providerSessionId` equals the OpenCode session ID. The MCP `connectionId` is an internal transport handle only. Agents pass `openCodeSessionId` on the MCP wire (kept for agent-facing compatibility); it is mapped to `providerSessionId` internally at the MCP boundary. Agents must pass `openCodeSessionId` on every tool call to ensure correct channel routing.
 
 ---
 

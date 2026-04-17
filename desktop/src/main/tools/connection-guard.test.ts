@@ -1,33 +1,21 @@
-import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
-vi.mock('../database', () => ({
-  getRegisteredConnection: vi.fn(),
-}));
-
-import { getRegisteredConnection } from '../database';
 import {
-  missingSessionIdError,
-  missingSessionIdParamError,
-  markConnectionDeleted,
-  staleConnectionError,
+  requireProviderSessionId,
+  markSessionDeleted,
+  staleSessionError,
 } from './connection-guard';
 
 describe('connection-guard', () => {
-  const mockGetRegisteredConnection = getRegisteredConnection as Mock;
-
-  beforeEach(() => {
-    mockGetRegisteredConnection.mockReset();
-  });
-
-  describe('staleConnectionError', () => {
-    it('returns null when connection has not been deleted', () => {
-      const result = staleConnectionError('conn-active');
+  describe('staleSessionError', () => {
+    it('returns null when session has not been deleted', () => {
+      const result = staleSessionError('ses_active');
       expect(result).toBeNull();
     });
 
-    it('returns SESSION_REMOVED error when connection was deleted', () => {
-      markConnectionDeleted('conn-deleted-guard-test');
-      const result = staleConnectionError('conn-deleted-guard-test');
+    it('returns SESSION_REMOVED error when session was deleted', () => {
+      markSessionDeleted('ses_deleted-guard-test');
+      const result = staleSessionError('ses_deleted-guard-test');
       expect(result).not.toBeNull();
       expect(result?.isError).toBe(true);
       const payload = JSON.parse(
@@ -37,119 +25,24 @@ describe('connection-guard', () => {
     });
   });
 
-  describe('missingSessionIdError', () => {
+  describe('requireProviderSessionId', () => {
     it('returns null when requireSessionId is false (standalone mode)', () => {
-      // Even if the connection has no openCodeSessionId, standalone mode is fine
-      mockGetRegisteredConnection.mockReturnValue({
-        connectionId: 'conn-standalone',
-        channelName: 'Standalone',
-        projectName: 'proj',
-        openCodeSessionId: null,
-      });
-
-      const result = missingSessionIdError('conn-standalone', false);
-      expect(result).toBeNull();
-    });
-
-    it('returns null when requireSessionId is false even without any connection record', () => {
-      mockGetRegisteredConnection.mockReturnValue(null);
-
-      const result = missingSessionIdError('conn-missing', false);
-      expect(result).toBeNull();
-    });
-
-    it('returns null when requireSessionId is true and openCodeSessionId is present', () => {
-      mockGetRegisteredConnection.mockReturnValue({
-        connectionId: 'conn-oc',
-        channelName: 'Agent',
-        projectName: 'proj',
-        openCodeSessionId: 'ses_abc123',
-      });
-
-      const result = missingSessionIdError('conn-oc', true);
-      expect(result).toBeNull();
-    });
-
-    it('returns MISSING_SESSION_ID error when requireSessionId is true and openCodeSessionId is null', () => {
-      mockGetRegisteredConnection.mockReturnValue({
-        connectionId: 'conn-no-session',
-        channelName: 'Agent',
-        projectName: 'proj',
-        openCodeSessionId: null,
-      });
-
-      const result = missingSessionIdError('conn-no-session', true);
-      expect(result).not.toBeNull();
-      expect(result?.isError).toBe(true);
-
-      const payload = JSON.parse(
-        result!.content[0].type === 'text' ? result!.content[0].text : '',
-      ) as {
-        error: string;
-        message: string;
-        action: string;
-        connectionId: string;
-      };
-
-      expect(payload.error).toBe('MISSING_SESSION_ID');
-      expect(payload.connectionId).toBe('conn-no-session');
-      expect(payload.action).toMatch(/register_connection/);
-      expect(payload.action).toMatch(/openCodeSessionId/);
-    });
-
-    it('returns MISSING_SESSION_ID error when requireSessionId is true and openCodeSessionId is undefined (no connection record)', () => {
-      mockGetRegisteredConnection.mockReturnValue(null);
-
-      const result = missingSessionIdError('conn-unregistered', true);
-      expect(result).not.toBeNull();
-      expect(result?.isError).toBe(true);
-
-      const payload = JSON.parse(
-        result!.content[0].type === 'text' ? result!.content[0].text : '',
-      ) as { error: string; connectionId: string };
-
-      expect(payload.error).toBe('MISSING_SESSION_ID');
-      expect(payload.connectionId).toBe('conn-unregistered');
-    });
-
-    it('returns MISSING_SESSION_ID error when requireSessionId is true and connection has empty string session ID', () => {
-      mockGetRegisteredConnection.mockReturnValue({
-        connectionId: 'conn-empty',
-        channelName: 'Agent',
-        projectName: 'proj',
-        openCodeSessionId: '',
-      });
-
-      const result = missingSessionIdError('conn-empty', true);
-      expect(result).not.toBeNull();
-      expect(result?.isError).toBe(true);
-
-      const payload = JSON.parse(
-        result!.content[0].type === 'text' ? result!.content[0].text : '',
-      ) as { error: string };
-
-      expect(payload.error).toBe('MISSING_SESSION_ID');
-    });
-  });
-
-  describe('missingSessionIdParamError', () => {
-    it('returns null when requireSessionId is false (standalone mode)', () => {
-      const result = missingSessionIdParamError(undefined, false);
+      const result = requireProviderSessionId(undefined, false);
       expect(result).toBeNull();
     });
 
     it('returns null when requireSessionId is false even with empty string', () => {
-      const result = missingSessionIdParamError('', false);
+      const result = requireProviderSessionId('', false);
       expect(result).toBeNull();
     });
 
-    it('returns null when requireSessionId is true and openCodeSessionId is provided', () => {
-      const result = missingSessionIdParamError('ses_abc123', true);
+    it('returns null when requireSessionId is true and providerSessionId is provided', () => {
+      const result = requireProviderSessionId('ses_abc123', true);
       expect(result).toBeNull();
     });
 
-    it('returns MISSING_SESSION_ID_PARAM error when requireSessionId is true and openCodeSessionId is undefined', () => {
-      const result = missingSessionIdParamError(undefined, true);
+    it('returns MISSING_SESSION_ID error when requireSessionId is true and providerSessionId is undefined', () => {
+      const result = requireProviderSessionId(undefined, true);
       expect(result).not.toBeNull();
       expect(result?.isError).toBe(true);
 
@@ -157,14 +50,14 @@ describe('connection-guard', () => {
         result!.content[0].type === 'text' ? result!.content[0].text : '',
       ) as { error: string; message: string; action: string; hint: string };
 
-      expect(payload.error).toBe('MISSING_SESSION_ID_PARAM');
+      expect(payload.error).toBe('MISSING_SESSION_ID');
       expect(payload.message).toMatch(/MUST pass.*openCodeSessionId/);
       expect(payload.action).toMatch(/ses_<alphanumeric>/);
       expect(payload.hint).toMatch(/system-reminder/);
     });
 
-    it('returns MISSING_SESSION_ID_PARAM error when requireSessionId is true and openCodeSessionId is null', () => {
-      const result = missingSessionIdParamError(null, true);
+    it('returns MISSING_SESSION_ID error when requireSessionId is true and providerSessionId is null', () => {
+      const result = requireProviderSessionId(null, true);
       expect(result).not.toBeNull();
       expect(result?.isError).toBe(true);
 
@@ -172,11 +65,11 @@ describe('connection-guard', () => {
         result!.content[0].type === 'text' ? result!.content[0].text : '',
       ) as { error: string };
 
-      expect(payload.error).toBe('MISSING_SESSION_ID_PARAM');
+      expect(payload.error).toBe('MISSING_SESSION_ID');
     });
 
-    it('returns MISSING_SESSION_ID_PARAM error when requireSessionId is true and openCodeSessionId is empty string', () => {
-      const result = missingSessionIdParamError('', true);
+    it('returns MISSING_SESSION_ID error when requireSessionId is true and providerSessionId is empty string', () => {
+      const result = requireProviderSessionId('', true);
       expect(result).not.toBeNull();
       expect(result?.isError).toBe(true);
 
@@ -184,11 +77,11 @@ describe('connection-guard', () => {
         result!.content[0].type === 'text' ? result!.content[0].text : '',
       ) as { error: string };
 
-      expect(payload.error).toBe('MISSING_SESSION_ID_PARAM');
+      expect(payload.error).toBe('MISSING_SESSION_ID');
     });
 
-    it('returns MISSING_SESSION_ID_PARAM error when requireSessionId is true and openCodeSessionId is whitespace only', () => {
-      const result = missingSessionIdParamError('   ', true);
+    it('returns MISSING_SESSION_ID error when requireSessionId is true and providerSessionId is whitespace only', () => {
+      const result = requireProviderSessionId('   ', true);
       expect(result).not.toBeNull();
       expect(result?.isError).toBe(true);
 
@@ -196,7 +89,7 @@ describe('connection-guard', () => {
         result!.content[0].type === 'text' ? result!.content[0].text : '',
       ) as { error: string };
 
-      expect(payload.error).toBe('MISSING_SESSION_ID_PARAM');
+      expect(payload.error).toBe('MISSING_SESSION_ID');
     });
   });
 });

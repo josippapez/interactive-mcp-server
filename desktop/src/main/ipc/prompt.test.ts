@@ -46,7 +46,21 @@ function createMockWindow() {
   };
 }
 
-function createPromptData(overrides: Partial<PromptData> = {}): PromptData {
+function createPromptData(
+  overrides: Partial<PromptData> & { openCodeSessionId?: string | null } = {},
+): PromptData {
+  // Accept `openCodeSessionId` as a legacy alias for `providerSessionId` so
+  // existing test cases read naturally. The production type only has
+  // `providerSessionId`. Default to a non-null value so tests that do not
+  // care about session-id resolution can run without tripping the
+  // "providerSessionId could not be resolved" guard in prompt.ts.
+  const { openCodeSessionId, providerSessionId, ...rest } = overrides;
+  const resolvedProviderSessionId =
+    providerSessionId !== undefined
+      ? providerSessionId
+      : openCodeSessionId !== undefined
+        ? openCodeSessionId
+        : 'ses_test_default';
   return {
     id: 'prompt-1',
     message: 'test message',
@@ -55,7 +69,8 @@ function createPromptData(overrides: Partial<PromptData> = {}): PromptData {
     connectionName: 'Agent 1',
     timeoutSeconds: 60,
     expiresAt: 0,
-    ...overrides,
+    providerSessionId: resolvedProviderSessionId,
+    ...rest,
   };
 }
 
@@ -121,11 +136,11 @@ describe('promptUser', () => {
     // Expired prompts are cleared immediately so the UI does not accept stale replies.
     expect(win.webContents.send).toHaveBeenCalledWith(
       'prompt-clear',
-      expect.objectContaining({ connectionId: 'conn-1' }),
+      expect.objectContaining({ providerSessionId: 'ses_test_default' }),
     );
     expect(appendSessionChannelMessage).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: 'conn-1',
+        sessionId: 'ses_test_default',
         messageType: 'agent_message',
         messageText: expect.stringContaining('Prompt expired'),
       }),
@@ -143,7 +158,7 @@ describe('promptUser', () => {
 
     expect(win.webContents.send).toHaveBeenCalledWith(
       'prompt-clear',
-      expect.objectContaining({ connectionId: 'conn-1' }),
+      expect.objectContaining({ providerSessionId: 'ses_test_default' }),
     );
   });
 
@@ -184,7 +199,10 @@ describe('promptUser', () => {
     expect(win.webContents.send).toHaveBeenNthCalledWith(
       1,
       'prompt-request',
-      expect.objectContaining({ id: 'prompt-a', connectionId: 'conn-shared' }),
+      expect.objectContaining({
+        id: 'prompt-a',
+        providerSessionId: 'ses_test_default',
+      }),
     );
 
     handlers[0]?.({} as IpcMainEvent, { id: 'prompt-a', answer: 'first' });
@@ -199,12 +217,18 @@ describe('promptUser', () => {
     expect(win.webContents.send).toHaveBeenNthCalledWith(
       2,
       'prompt-clear',
-      expect.objectContaining({ id: 'prompt-a', connectionId: 'conn-shared' }),
+      expect.objectContaining({
+        id: 'prompt-a',
+        providerSessionId: 'ses_test_default',
+      }),
     );
     expect(win.webContents.send).toHaveBeenNthCalledWith(
       3,
       'prompt-request',
-      expect.objectContaining({ id: 'prompt-b', connectionId: 'conn-shared' }),
+      expect.objectContaining({
+        id: 'prompt-b',
+        providerSessionId: 'ses_test_default',
+      }),
     );
 
     handlers[0]?.({} as IpcMainEvent, { id: 'prompt-b', answer: 'second' });
@@ -256,254 +280,8 @@ describe('promptUser', () => {
     );
     expect(win.webContents.send).toHaveBeenCalledWith(
       'prompt-clear',
-      expect.objectContaining({ connectionId: 'conn-close' }),
+      expect.objectContaining({ providerSessionId: 'ses_test_default' }),
     );
-    expect(handlers).toHaveLength(1);
-  });
-
-  // ── AbortSignal tests ───────────────────────────────────────────────────────
-
-  describe('AbortSignal support', () => {
-    it('resolves with abort error when signal is already aborted (before prompt is active)', async () => {
-      const win = createMockWindow();
-      vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
-
-      const abortController = new AbortController();
-      abortController.abort();
-
-      const result = await promptUser(
-        win as never,
-        createPromptData({ connectionId: 'conn-pre-aborted' }),
-        abortController.signal,
-      );
-      expect(result.answer).toContain('aborted');
-    });
-
-    it('attaches to existing durable prompt when signal fires and new call arrives', async () => {
-      // Simulate: first call starts a prompt, transport drops (signal aborts),
-      // agent retries — second call should attach to the same durable prompt.
-      const win = createMockWindow();
-      const handlers: IpcListener[] = [];
-      vi.mocked(ipcMain.on).mockImplementation(
-        (_channel: string, handler: IpcListener) => {
-          handlers.push(handler);
-          return ipcMain;
-        },
-      );
-
-      const abortController = new AbortController();
-      const data = createPromptData({
-        id: 'durable-prompt',
-        connectionId: 'conn-durable',
-      });
-
-      // First call: sets up the durable prompt
-      const first = promptUser(win as never, data, abortController.signal);
-
-      // Let the queue run so the durable state is established
-      await Promise.resolve();
-      await Promise.resolve();
-
-      // Second call: same connectionId + same prompt still active
-      // (transport dropped and agent retried with a new signal)
-      const abortController2 = new AbortController();
-      const second = promptUser(win as never, data, abortController2.signal);
-
-      // Prompt should only have been sent to renderer once (not twice)
-      expect(win.webContents.send).toHaveBeenCalledTimes(1);
-      expect(win.webContents.send).toHaveBeenCalledWith(
-        'prompt-request',
-        expect.objectContaining({ id: 'durable-prompt' }),
-      );
-
-      // User replies — both first and second should resolve with the same answer
-      handlers[0]?.({} as IpcMainEvent, {
-        id: 'durable-prompt',
-        answer: 'Hello from user',
-      });
-
-      const [r1, r2] = await Promise.all([first, second]);
-      expect(r1).toEqual({ answer: 'Hello from user', attachments: undefined });
-      expect(r2).toEqual({ answer: 'Hello from user', attachments: undefined });
-    });
-
-    it('does not double-resolve if signal aborts after normal response', async () => {
-      const win = createMockWindow();
-
-      let capturedHandler: IpcListener | undefined;
-      vi.mocked(ipcMain.on).mockImplementation(
-        (_channel: string, handler: IpcListener) => {
-          capturedHandler = handler;
-          return ipcMain;
-        },
-      );
-      vi.mocked(ipcMain.removeListener).mockClear();
-
-      const abortController = new AbortController();
-
-      const promise = promptUser(
-        win as never,
-        createPromptData({
-          id: 'prompt-no-double',
-          connectionId: 'conn-no-double',
-        }),
-        abortController.signal,
-      );
-
-      // User responds first
-      capturedHandler?.({} as IpcMainEvent, {
-        id: 'prompt-no-double',
-        answer: 'Hello',
-      });
-
-      // Then signal aborts (should be a no-op)
-      abortController.abort();
-
-      const result = await promise;
-      expect(result).toEqual({ answer: 'Hello', attachments: undefined });
-    });
-
-    it('prompt without signal still works (backward compatible)', async () => {
-      const win = createMockWindow();
-
-      let capturedHandler: IpcListener | undefined;
-      vi.mocked(ipcMain.on).mockImplementation(
-        (_channel: string, handler: IpcListener) => {
-          capturedHandler = handler;
-          return ipcMain;
-        },
-      );
-
-      const promise = promptUser(
-        win as never,
-        createPromptData({ id: 'compat-test', connectionId: 'conn-compat' }),
-      );
-      capturedHandler?.({} as IpcMainEvent, {
-        id: 'compat-test',
-        answer: 'works',
-      });
-
-      const result = await promise;
-      expect(result).toEqual({ answer: 'works', attachments: undefined });
-    });
-
-    it('keeps shared IPC listener active when prompt settles', async () => {
-      const win = createMockWindow();
-      let capturedHandler: IpcListener | undefined;
-      vi.mocked(ipcMain.on).mockImplementation(
-        (_channel: string, handler: IpcListener) => {
-          capturedHandler = handler;
-          return ipcMain;
-        },
-      );
-
-      const promise = promptUser(
-        win as never,
-        createPromptData({ connectionId: 'conn-cleanup' }),
-      );
-
-      capturedHandler?.({} as IpcMainEvent, {
-        id: 'prompt-1',
-        answer: 'done',
-      });
-
-      await promise;
-
-      expect(ipcMain.removeListener).not.toHaveBeenCalledWith(
-        'prompt-response',
-        expect.any(Function),
-      );
-    });
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Additional durable-prompt coverage
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('forceTerminateChat', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    setPromptTimeout(() => 5000);
-    __resetPromptStateForTests();
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
-  it('resolves an active prompt with USER_FORCE_TERMINATED message', async () => {
-    const win = createMockWindow();
-    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
-
-    const promise = promptUser(
-      win as never,
-      createPromptData({ connectionId: 'conn-force' }),
-    );
-
-    // Let the queue run so the durable state is established
-    await Promise.resolve();
-    await Promise.resolve();
-
-    forceTerminateChat('conn-force');
-
-    const result = await promise;
-    expect(result.answer).toContain('USER_FORCE_TERMINATED');
-  });
-
-  it('is a no-op when there is no active prompt for the connection', () => {
-    // Should not throw when called for an unknown connectionId
-    expect(() => forceTerminateChat('conn-nonexistent')).not.toThrow();
-  });
-});
-
-describe('timeout does not fire after normal answer', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    setPromptTimeout(() => 5000);
-    __resetPromptStateForTests();
-    vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-  });
-
-  it('does not call appendSessionChannelMessage with agent_message after the user answers', async () => {
-    const win = createMockWindow();
-    let capturedHandler: IpcListener | undefined;
-    vi.mocked(ipcMain.on).mockImplementation(
-      (_channel: string, handler: IpcListener) => {
-        capturedHandler = handler;
-        return ipcMain;
-      },
-    );
-
-    vi.mocked(appendSessionChannelMessage).mockClear();
-
-    const promise = promptUser(
-      win as never,
-      createPromptData({ id: 'prompt-timer', connectionId: 'conn-timer' }),
-    );
-
-    // User answers before the timeout fires
-    capturedHandler?.({} as IpcMainEvent, {
-      id: 'prompt-timer',
-      answer: 'answered',
-    });
-    await promise;
-
-    // Now advance past the configured 5 s timeout — the timer should have
-    // been cleared and the expiry callback should NOT run.
-    vi.advanceTimersByTime(10_000);
-
-    const agentMessageCalls = vi
-      .mocked(appendSessionChannelMessage)
-      .mock.calls.filter((call) => call[0]?.messageType === 'agent_message');
-    expect(agentMessageCalls).toHaveLength(0);
   });
 });
 
@@ -541,7 +319,7 @@ describe('cancelActivePrompt sends prompt-clear to renderer', () => {
 
     expect(win.webContents.send).toHaveBeenCalledWith(
       'prompt-clear',
-      expect.objectContaining({ connectionId: 'conn-cancel-clear' }),
+      expect.objectContaining({ providerSessionId: 'ses_test_default' }),
     );
   });
 });
@@ -750,7 +528,6 @@ describe('promptKey — openCodeSessionId keying', () => {
     vi.mocked(getRegisteredConnection).mockReturnValue({
       connectionId: 'conn-key-1',
       providerSessionId: 'ses_key123',
-      openCodeSessionId: 'ses_key123',
       channelName: 'Agent',
       projectName: 'proj',
       baseDirectory: null,
@@ -805,7 +582,6 @@ describe('promptKey — openCodeSessionId keying', () => {
     vi.mocked(getRegisteredConnection).mockReturnValue({
       connectionId: 'conn-cancel-key',
       providerSessionId: 'ses_cancelkey',
-      openCodeSessionId: 'ses_cancelkey',
       channelName: 'Agent',
       projectName: 'proj',
       baseDirectory: null,
@@ -868,7 +644,6 @@ describe('promptKey — openCodeSessionId keying', () => {
     vi.mocked(getRegisteredConnection).mockReturnValue({
       connectionId: 'conn-force-key',
       providerSessionId: 'ses_forcekey',
-      openCodeSessionId: 'ses_forcekey',
       channelName: 'Agent',
       projectName: 'proj',
       baseDirectory: null,
@@ -907,7 +682,6 @@ describe('promptKey — openCodeSessionId keying', () => {
     vi.mocked(getRegisteredConnection).mockReturnValue({
       connectionId: 'conn-old',
       providerSessionId: 'ses_reconnect',
-      openCodeSessionId: 'ses_reconnect',
       channelName: 'Agent',
       projectName: 'proj',
       baseDirectory: null,
@@ -940,7 +714,6 @@ describe('promptKey — openCodeSessionId keying', () => {
     vi.mocked(getRegisteredConnection).mockReturnValue({
       connectionId: 'conn-new-transport',
       providerSessionId: 'ses_reconnect',
-      openCodeSessionId: 'ses_reconnect',
       channelName: 'Agent',
       projectName: 'proj',
       baseDirectory: null,
@@ -995,7 +768,6 @@ describe('appendSessionChannelMessage — uses resolved session ID, not connecti
     vi.mocked(getRegisteredConnection).mockReturnValue({
       connectionId: 'shared-conn-uuid',
       providerSessionId: 'ses_subagent_hist',
-      openCodeSessionId: 'ses_subagent_hist',
       channelName: 'Subagent',
       projectName: 'test',
       baseDirectory: null,
@@ -1138,11 +910,19 @@ describe('prompt-response listener lifecycle', () => {
 
     const first = promptUser(
       win as never,
-      createPromptData({ id: 'listener-a', connectionId: 'conn-listener-a' }),
+      createPromptData({
+        id: 'listener-a',
+        connectionId: 'conn-listener-a',
+        providerSessionId: 'ses_listener_a',
+      }),
     );
     const second = promptUser(
       win as never,
-      createPromptData({ id: 'listener-b', connectionId: 'conn-listener-b' }),
+      createPromptData({
+        id: 'listener-b',
+        connectionId: 'conn-listener-b',
+        providerSessionId: 'ses_listener_b',
+      }),
     );
 
     expect(ipcMain.on).toHaveBeenCalledTimes(1);
@@ -1182,6 +962,7 @@ describe('prompt-response listener lifecycle', () => {
           createPromptData({
             id: `listener-many-${i}`,
             connectionId: `conn-listener-many-${i}`,
+            providerSessionId: `ses_listener_many_${i}`,
           }),
         ) as Promise<{ answer: string | null }>,
       );

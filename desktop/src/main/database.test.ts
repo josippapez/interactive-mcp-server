@@ -279,19 +279,6 @@ describe('upsertRegisteredConnection with composite primary key', () => {
     expect(result).not.toBeNull();
     expect(result?.providerType).toBe('standalone');
   });
-
-  it('supports backwards compatibility with openCodeSessionId param', () => {
-    upsertRegisteredConnection({
-      openCodeSessionId: 'ses_compat',
-      providerType: 'opencode',
-      channelName: 'Compat Agent',
-      projectName: 'proj',
-    });
-
-    const result = getRegisteredConnectionBySessionId('ses_compat', 'opencode');
-    expect(result).not.toBeNull();
-    expect(result?.providerSessionId).toBe('ses_compat');
-  });
 });
 
 describe('getRegisteredConnection secondary lookup by connection_id', () => {

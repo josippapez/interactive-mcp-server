@@ -190,18 +190,18 @@ CREATE TABLE IF NOT EXISTS registered_connections (
 );
 ```
 
-| Column                | Type     | Nullable | Description                                                                                                                                                                                                                     |
-| --------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `provider_type`       | TEXT     | No       | Provider type for this connection: `'opencode'`, `'copilot-cli'`, `'claude-sdk'`, or `'standalone'`. Combined with `provider_session_id` forms the composite primary key.                                                       |
-| `provider_session_id` | TEXT     | No       | Provider-specific session ID. For `'opencode'`: the OpenCode session ID (e.g., `ses_xxx`). For other providers: the MCP connectionId (UUID). Combined with `provider_type` forms the composite primary key.                     |
-| `connection_id`       | TEXT     | Yes      | The MCP transport connectionId (UUID), bound at MCP initialize time. Used as a secondary lookup key.                                                                                                                            |
-| `agent_name`          | TEXT     | No       | Human-readable channel name supplied to `register_connection` (e.g. `"Claude Code - my-project"`). **SQLite column name is `agent_name`; the TypeScript `RegisteredConnection` interface exposes this field as `channelName`.** |
-| `project_name`        | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                                                                 |
+| Column                | Type     | Nullable | Description                                                                                                                                                                                                                                                        |
+| --------------------- | -------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `provider_type`       | TEXT     | No       | Provider type for this connection: `'opencode'`, `'copilot-cli'`, `'claude-sdk'`, or `'standalone'`. Combined with `provider_session_id` forms the composite primary key.                                                                                          |
+| `provider_session_id` | TEXT     | No       | Provider-specific session ID. For `'opencode'`: the OpenCode session ID (e.g., `ses_xxx`). For other providers: the MCP connectionId (UUID). Combined with `provider_type` forms the composite primary key.                                                        |
+| `connection_id`       | TEXT     | Yes      | The MCP transport connectionId (UUID), bound at MCP initialize time. Used as a secondary lookup key.                                                                                                                                                               |
+| `agent_name`          | TEXT     | No       | Human-readable channel name supplied to `register_connection` (e.g. `"Claude Code - my-project"`). **SQLite column name is `agent_name`; the TypeScript `RegisteredConnection` interface exposes this field as `channelName`.**                                    |
+| `project_name`        | TEXT     | No       | Project name supplied to `register_connection`.                                                                                                                                                                                                                    |
 | `base_directory`      | TEXT     | Yes      | Absolute path to the agent's working directory, or `NULL` if not supplied. Used primarily for repo-aware features such as file autocomplete, repository-doc indexing, and `find_repo_docs`; it is not the canonical sidebar grouping source for OpenCode sessions. |
-| `id_file_path`        | TEXT     | No       | Absolute path to the `/tmp/imcp-agent-<provider>-<name>-<session>.json` ID file written at registration time. Used for recovery after restarts.                                                                                 |
-| `parent_session_id`   | TEXT     | Yes      | The OpenCode session ID of the parent session that spawned this agent. Used to nest the subagent channel under its parent in the sidebar. `NULL` if not a subagent.                                                             |
-| `created_at`          | DATETIME | No       | Row creation timestamp.                                                                                                                                                                                                         |
-| `updated_at`          | DATETIME | No       | Last upsert timestamp (updated on every `register_connection` call for this connection).                                                                                                                                        |
+| `id_file_path`        | TEXT     | No       | Absolute path to the `/tmp/imcp-agent-<provider>-<name>-<session>.json` ID file written at registration time. Used for recovery after restarts.                                                                                                                    |
+| `parent_session_id`   | TEXT     | Yes      | The OpenCode session ID of the parent session that spawned this agent. Used to nest the subagent channel under its parent in the sidebar. `NULL` if not a subagent.                                                                                                |
+| `created_at`          | DATETIME | No       | Row creation timestamp.                                                                                                                                                                                                                                            |
+| `updated_at`          | DATETIME | No       | Last upsert timestamp (updated on every `register_connection` call for this connection).                                                                                                                                                                           |
 
 #### Provider types
 
@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS registered_connections (
 
 - **Set** during `register_connection`: For OpenCode providers, this is the session ID passed via `openCodeSessionId`. For other providers, this is typically the MCP `connectionId`.
 - **Used** as the primary lookup key (combined with `provider_type`) for all connection operations.
-- **Backwards compatibility**: The `openCodeSessionId` field in the TypeScript interface mirrors `providerSessionId` for compatibility with existing code.
+- **Backwards compatibility**: `openCodeSessionId` has been fully removed from internal APIs in Phase 6 of the provider-session-id unification. Internal code now uses `providerSessionId` exclusively. The MCP wire parameter `openCodeSessionId` on public tool schemas is still accepted for agent-facing compatibility, but is mapped to `providerSessionId` internally at the MCP boundary.
 
 #### `base_directory` preservation
 
@@ -1048,8 +1048,7 @@ Returns the path for a per-agent connection ID file in `/tmp`. Includes provider
 
 ```ts
 export function upsertRegisteredConnection(data: {
-  providerSessionId?: string;
-  openCodeSessionId?: string; // deprecated, use providerSessionId
+  providerSessionId: string;
   channelName: string;
   projectName: string;
   connectionId?: string | null;
@@ -1063,18 +1062,15 @@ Upserts a registered connection. Writes the ID file to /tmp and persists the rec
 
 Uses composite primary key `(provider_type, provider_session_id)`. This ensures connections from different providers cannot overwrite each other.
 
-| Parameter           | Required | Description                                                             |
-| ------------------- | -------- | ----------------------------------------------------------------------- |
-| `providerSessionId` | Yes\*    | Provider-specific session ID. For OpenCode, use the session ID.         |
-| `openCodeSessionId` | No       | **Deprecated.** Falls back to this if `providerSessionId` not provided. |
-| `channelName`       | Yes      | Human-readable channel name.                                            |
-| `projectName`       | Yes      | Project name.                                                           |
-| `connectionId`      | No       | MCP transport connectionId (UUID).                                      |
-| `baseDirectory`     | No       | Absolute path to working directory.                                     |
-| `parentSessionId`   | No       | Parent session ID for subagents.                                        |
-| `providerType`      | No       | Provider type. Defaults to `'standalone'`.                              |
-
-\* Either `providerSessionId` or `openCodeSessionId` must be provided.
+| Parameter           | Required | Description                                                     |
+| ------------------- | -------- | --------------------------------------------------------------- |
+| `providerSessionId` | Yes      | Provider-specific session ID. For OpenCode, use the session ID. |
+| `channelName`       | Yes      | Human-readable channel name.                                    |
+| `projectName`       | Yes      | Project name.                                                   |
+| `connectionId`      | No       | MCP transport connectionId (UUID).                              |
+| `baseDirectory`     | No       | Absolute path to working directory.                             |
+| `parentSessionId`   | No       | Parent session ID for subagents.                                |
+| `providerType`      | No       | Provider type. Defaults to `'standalone'`.                      |
 
 **Returns:** The path to the ID file written to `/tmp`.
 
@@ -1133,22 +1129,6 @@ Primary lookup: find a registered connection by its composite key (providerType,
 | `providerType`      | `'opencode'` | Provider type.                |
 
 **Returns:** The matching `RegisteredConnection`, or `null` if not found.
-
-**No side effects.**
-
----
-
-### `getRegisteredConnectionByOpenCodeSessionId` _(deprecated)_
-
-```ts
-export function getRegisteredConnectionByOpenCodeSessionId(
-  openCodeSessionId: string,
-): RegisteredConnection | null;
-```
-
-**Deprecated.** Use `getRegisteredConnectionBySessionId` with explicit `providerType` instead.
-
-Legacy lookup that searches across all provider types but only returns the first match.
 
 **No side effects.**
 
@@ -1218,16 +1198,6 @@ Returns true if the given provider session already has a registered connection r
 
 ---
 
-### `isOpenCodeSessionClaimed` _(deprecated)_
-
-```ts
-export function isOpenCodeSessionClaimed(openCodeSessionId: string): boolean;
-```
-
-**Deprecated.** Use `isProviderSessionClaimed` with `providerType` instead.
-
----
-
 ### `getRegisteredConnectionsByProvider`
 
 ```ts
@@ -1269,19 +1239,6 @@ With the composite PK, this creates a new row with the new session ID and delete
 | `newProviderType`      | `'opencode'` | Provider type for the new row.      |
 
 **Side effects:** May delete old row and insert new row; calls `persist()`.
-
----
-
-### `updateConnectionOpenCodeSession` _(deprecated)_
-
-```ts
-export function updateConnectionOpenCodeSession(
-  connectionId: string,
-  openCodeSessionId: string,
-): void;
-```
-
-**Deprecated.** Use `updateConnectionProviderSession` instead.
 
 ---
 

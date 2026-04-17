@@ -7,10 +7,13 @@ vi.mock('../database', () => ({
   listSkillsAndInstructions: vi.fn(),
   getSkillOrInstructionByName: vi.fn(),
   deleteSkillOrInstruction: vi.fn(),
+  getRegisteredConnection: vi.fn(() => null),
+  getRegisteredConnectionBySessionId: vi.fn(() => null),
 }));
 
 vi.mock('./connection-guard', () => ({
-  staleConnectionError: vi.fn().mockReturnValue(null),
+  staleSessionError: vi.fn().mockReturnValue(null),
+  requireProviderSessionId: vi.fn(() => null),
 }));
 
 import {

@@ -8,7 +8,7 @@ vi.mock('../database', () => ({
 }));
 
 vi.mock('../session/resolver', () => ({
-  resolveOpenCodeSessionId: vi.fn(),
+  resolveProviderSessionId: vi.fn(),
 }));
 
 vi.mock('../ipc/channel', () => ({
@@ -17,16 +17,15 @@ vi.mock('../ipc/channel', () => ({
 }));
 
 vi.mock('./connection-guard', () => ({
-  staleConnectionError: vi.fn(() => null),
-  missingSessionIdError: vi.fn(() => null),
-  missingSessionIdParamError: vi.fn(() => null),
+  staleSessionError: vi.fn(() => null),
+  requireProviderSessionId: vi.fn(() => null),
 }));
 
 import {
   appendSessionChannelMessage,
   getRegisteredConnection,
 } from '../database';
-import { resolveOpenCodeSessionId } from '../session/resolver';
+import { resolveProviderSessionId } from '../session/resolver';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Bug #1: send_message persists history using connectionId instead of resolved
@@ -40,7 +39,6 @@ describe('send_message — session ID routing for persistence', () => {
     vi.mocked(getRegisteredConnection).mockReturnValue({
       providerType: 'opencode' as const,
       providerSessionId: 'ses_subagent',
-      openCodeSessionId: 'ses_subagent',
       connectionId: 'shared-conn-uuid',
       channelName: 'Subagent',
       projectName: 'test',
@@ -53,8 +51,8 @@ describe('send_message — session ID routing for persistence', () => {
   });
 
   it('persists message history under resolved openCodeSessionId, not connectionId', async () => {
-    // ARRANGE: resolveOpenCodeSessionId returns the subagent's session ID
-    vi.mocked(resolveOpenCodeSessionId).mockReturnValue('ses_subagent');
+    // ARRANGE: resolveProviderSessionId returns the subagent's session ID
+    vi.mocked(resolveProviderSessionId).mockReturnValue('ses_subagent');
 
     // We need to import and call the actual tool handler.
     // Since registerSendMessageTool registers on an McpServer, we test the
@@ -116,7 +114,7 @@ describe('send_message — session ID routing for persistence', () => {
 
   it('falls back to connectionId when openCodeSessionId is not provided and resolver returns null', async () => {
     // ARRANGE: no openCodeSessionId passed, resolver returns null
-    vi.mocked(resolveOpenCodeSessionId).mockReturnValue(null);
+    vi.mocked(resolveProviderSessionId).mockReturnValue(null);
 
     const { registerSendMessageTool } = await import('./session-channel');
 

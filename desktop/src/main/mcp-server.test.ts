@@ -228,9 +228,10 @@ function makeFakeSseReqRes(sessionId: string) {
   };
   // Prevent unhandled 'error' events from throwing in tests.
   socket.on('error', () => {});
-  socket.removeListener = vi.fn(
-    (...args: Parameters<typeof socket.removeListener>) =>
-      EventEmitter.prototype.removeListener.call(socket, ...args),
+  socket.removeListener = vi.fn((...args: unknown[]) =>
+    (
+      EventEmitter.prototype.removeListener as (...a: unknown[]) => unknown
+    ).call(socket, ...args),
   ) as Mock;
 
   const res = new EventEmitter() as EventEmitter & {
@@ -521,7 +522,7 @@ describe('register_connection callback wiring', () => {
 
       const latestCall = (registerConnectionTool as Mock).mock.calls.at(-1);
       expect(latestCall).toBeTruthy();
-      const latestOnRegistered = latestCall[7] as (data: {
+      const latestOnRegistered = latestCall![7] as (data: {
         connectionId: string;
         channelName: string;
         openCodeSessionId: string | null;
@@ -538,7 +539,7 @@ describe('register_connection callback wiring', () => {
         {
           connectionId: 'conn-1',
           name: 'Agent Name',
-          openCodeSessionId: 'ses_1',
+          providerSessionId: 'ses_1',
         },
       ]);
     } finally {

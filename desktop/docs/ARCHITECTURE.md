@@ -411,26 +411,26 @@ Extracted hook that handles all IPC event registration. Key features:
 
 ## Session Identity and Routing
 
-### The `openCodeSessionId` Primary Key
+### The `providerSessionId` Primary Key
 
 OpenCode uses a **shared MCP client** per server name — all agents (main agent + subagents spawned via Task tool) share the same MCP transport connection and therefore receive the same `connectionId`. This creates a routing challenge: without additional context, all tool calls would route to whichever channel called `register_connection` last.
 
-**Solution:** `openCodeSessionId` is the primary routing key for all tool calls:
+**Solution:** `providerSessionId` is the canonical primary routing key for all tool calls. For OpenCode sessions, `providerSessionId` equals the OpenCode session ID (`ses_*`). The MCP wire-level parameter is named `openCodeSessionId` (kept for agent-facing compatibility) and is mapped to `providerSessionId` internally at the MCP boundary.
 
-| Identifier          | Purpose                               | Where stored                                                                    |
-| ------------------- | ------------------------------------- | ------------------------------------------------------------------------------- |
-| `connectionId`      | Internal MCP transport handle (UUID)  | In-memory session map                                                           |
-| `openCodeSessionId` | OpenCode session identity (`ses_*`)   | `registered_connections` table (as `provider_session_id` for opencode provider) |
-| `parentSessionId`   | Parent OpenCode session for subagents | `registered_connections` table                                                  |
-| `providerType`      | Provider isolation key                | `registered_connections` table                                                  |
-| `providerSessionId` | Provider-specific session ID          | `registered_connections` table (composite PK with `providerType`)               |
+| Identifier          | Purpose                                                          | Where stored                                                      |
+| ------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------- |
+| `connectionId`      | Internal MCP transport handle (UUID)                             | In-memory session map                                             |
+| `providerSessionId` | Provider-specific session identity (canonical routing key)       | `registered_connections` table (composite PK with `providerType`) |
+| `providerType`      | Provider isolation key (`opencode`/`copilot-cli`/`claude-sdk`/…) | `registered_connections` table (composite PK)                     |
+| `parentSessionId`   | Parent session ID for subagents                                  | `registered_connections` table                                    |
+| `openCodeSessionId` | **MCP wire parameter only** — maps to `providerSessionId`        | Not persisted under this name                                     |
 
 **Session identity flow:**
 
 1. When OpenCode spawns a child session, the desktop app receives a `session.created.1` SSE event and proactively registers the session in the DB, keyed by `(providerType='opencode', providerSessionId=sessionId)`.
 2. The desktop app injects a `<system-reminder>` into the agent's context containing its `openCodeSessionId` (format: `ses_<alphanumeric>`).
-3. The agent calls `register_connection` and passes that `openCodeSessionId`. The DB row already exists — registration just updates the channel name and metadata.
-4. All subsequent tool calls (`request_user_input`, `push_session_status`, `send_message`, etc.) include `openCodeSessionId` for correct routing.
+3. The agent calls `register_connection` and passes that `openCodeSessionId`. The DB row already exists — registration just updates the channel name and metadata. Internally, the value is stored as `providerSessionId`.
+4. All subsequent tool calls (`request_user_input`, `push_session_status`, `send_message`, etc.) include `openCodeSessionId` on the wire for correct routing.
 
 **Multi-provider support:** The composite primary key `(providerType, providerSessionId)` ensures connections from different providers (OpenCode, Copilot CLI, Claude SDK, standalone) cannot overwrite each other.
 
@@ -466,8 +466,9 @@ The following traces the full lifecycle of a single `request_user_input` tool ca
       └─ McpServer dispatches to request_user_input handler (tools/request-user-input.ts)
 
 3. Tool handler resolves target session from openCodeSessionId
-   └─ Looks up registered_connections by (providerType='opencode', providerSessionId=openCodeSessionId)
-   └─ Falls back to connectionId lookup if openCodeSessionId not found
+   └─ Maps the wire parameter `openCodeSessionId` to `providerSessionId` internally
+   └─ Looks up registered_connections by (providerType='opencode', providerSessionId)
+   └─ Falls back to connectionId lookup if no match is found
 
 4. Tool handler calls promptUser()
    └─ ipc-prompt.ts:promptUser(win, { id, message, projectName, connectionId, openCodeSessionId, ... })

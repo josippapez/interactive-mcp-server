@@ -3,9 +3,8 @@ import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { registerRequestUserInput } from './request-user-input';
 
 vi.mock('./connection-guard', () => ({
-  staleConnectionError: vi.fn().mockReturnValue(null),
-  missingSessionIdError: vi.fn().mockReturnValue(null),
-  missingSessionIdParamError: vi.fn().mockReturnValue(null),
+  staleSessionError: vi.fn().mockReturnValue(null),
+  requireProviderSessionId: vi.fn().mockReturnValue(null),
 }));
 
 vi.mock('../ipc-prompt', () => ({
@@ -14,9 +13,8 @@ vi.mock('../ipc-prompt', () => ({
 }));
 
 import {
-  staleConnectionError,
-  missingSessionIdError,
-  missingSessionIdParamError,
+  staleSessionError,
+  requireProviderSessionId,
 } from './connection-guard';
 
 type ToolInput = {
@@ -24,6 +22,7 @@ type ToolInput = {
   message: string;
   predefinedOptions?: string[];
   baseDirectory: string;
+  openCodeSessionId?: string;
 };
 
 type ToolResult = {
@@ -61,17 +60,17 @@ function getToolHandler(
 const mockSignal = {} as AbortSignal;
 
 describe('request_user_input tool', () => {
-  const mockStaleError = staleConnectionError as Mock;
-  const mockMissingSessionError = missingSessionIdError as Mock;
+  const mockStaleError = staleSessionError as Mock;
+  const mockRequireProviderSessionId = requireProviderSessionId as Mock;
 
   beforeEach(() => {
     mockStaleError.mockReset();
-    mockMissingSessionError.mockReset();
+    mockRequireProviderSessionId.mockReset();
     mockStaleError.mockReturnValue(null);
-    mockMissingSessionError.mockReturnValue(null);
+    mockRequireProviderSessionId.mockReturnValue(null);
   });
 
-  it('returns MISSING_SESSION_ID error when missingSessionIdError returns an error', async () => {
+  it('returns MISSING_SESSION_ID error when requireProviderSessionId returns an error', async () => {
     const expectedError = {
       isError: true,
       content: [
@@ -81,12 +80,11 @@ describe('request_user_input tool', () => {
             error: 'MISSING_SESSION_ID',
             message: 'Missing session ID',
             action: 'Call register_connection with openCodeSessionId',
-            connectionId: 'conn-no-session',
           }),
         },
       ],
     };
-    mockMissingSessionError.mockReturnValue(expectedError);
+    mockRequireProviderSessionId.mockReturnValue(expectedError);
 
     const handler = getToolHandler('conn-no-session', vi.fn(), true);
     const result = await handler(
@@ -99,13 +97,10 @@ describe('request_user_input tool', () => {
     );
 
     expect(result).toBe(expectedError);
-    expect(mockMissingSessionError).toHaveBeenCalledWith(
-      'conn-no-session',
-      true,
-    );
+    expect(mockRequireProviderSessionId).toHaveBeenCalled();
   });
 
-  it('checks staleConnectionError before missingSessionIdError', async () => {
+  it('checks staleSessionError before requireProviderSessionId', async () => {
     const staleErr = {
       isError: true,
       content: [{ type: 'text' as const, text: '{"error":"SESSION_REMOVED"}' }],
@@ -118,16 +113,17 @@ describe('request_user_input tool', () => {
         projectName: 'proj',
         message: 'Test?',
         baseDirectory: '/repo',
+        openCodeSessionId: 'ses_stale',
       },
       { signal: mockSignal },
     );
 
-    // staleConnectionError should short-circuit before missingSessionIdError
+    // staleSessionError should short-circuit before requireProviderSessionId
     expect(result).toBe(staleErr);
   });
 
-  it('proceeds normally when missingSessionIdError returns null (openCodeSessionId present)', async () => {
-    mockMissingSessionError.mockReturnValue(null);
+  it('proceeds normally when requireProviderSessionId returns null (openCodeSessionId present)', async () => {
+    mockRequireProviderSessionId.mockReturnValue(null);
 
     const promptFn = vi.fn().mockResolvedValue({
       answer: 'User said yes',
@@ -140,6 +136,7 @@ describe('request_user_input tool', () => {
         projectName: 'proj',
         message: 'Test question?',
         baseDirectory: '/repo',
+        openCodeSessionId: 'ses_ok',
       },
       { signal: mockSignal },
     );
@@ -152,7 +149,7 @@ describe('request_user_input tool', () => {
   });
 
   it('proceeds normally when requireSessionId is false (standalone mode)', async () => {
-    mockMissingSessionError.mockReturnValue(null);
+    mockRequireProviderSessionId.mockReturnValue(null);
 
     const promptFn = vi.fn().mockResolvedValue({
       answer: 'Hello',
@@ -170,9 +167,6 @@ describe('request_user_input tool', () => {
     );
 
     expect(result.isError).toBeFalsy();
-    expect(mockMissingSessionError).toHaveBeenCalledWith(
-      'conn-standalone',
-      false,
-    );
+    expect(mockRequireProviderSessionId).toHaveBeenCalled();
   });
 });
