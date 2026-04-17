@@ -1,18 +1,6 @@
 import { useMemo } from 'react';
-import {
-  AdvancedSection,
-  PermissionsSection,
-  PreferencesSection,
-} from './settings/SettingsSectionMore';
-import {
-  DocumentationSection,
-  ProviderSection,
-  ServerSection,
-  SessionSection,
-} from './settings/SettingsSectionBasics';
-import { AgentsSection } from './settings/SettingsSectionAgents';
-import { OpenCodeConfigSection } from './settings/SettingsSectionOpenCode';
 import { SECTIONS } from './settings/settings-types';
+import { getSectionById } from './settings/section-registry';
 import { useSettingsState } from './settings/useSettingsState';
 
 export default function SettingsView(): React.ReactElement {
@@ -21,104 +9,15 @@ export default function SettingsView(): React.ReactElement {
 
   const activeSectionLabel = isLoading
     ? 'Settings'
-    : (SECTIONS.find((s) => s.id === state.activeSection)?.label ?? 'Settings');
+    : (getSectionById(state.activeSection)?.label ?? 'Settings');
 
   const sectionContent = useMemo(() => {
     if (isLoading) return null;
-
-    switch (state.activeSection) {
-      case 'server':
-        return (
-          <ServerSection
-            portInput={state.portInput}
-            setPortInput={state.setPortInput}
-            openCodePortInput={state.openCodePortInput}
-            setOpenCodePortInput={state.setOpenCodePortInput}
-            timeoutInput={state.timeoutInput}
-            setTimeoutInput={state.setTimeoutInput}
-            isPortValid={state.isPortValid}
-            isOpenCodePortValid={state.isOpenCodePortValid}
-            isTimeoutValid={state.isTimeoutValid}
-          />
-        );
-      case 'provider':
-        return (
-          <ProviderSection
-            settings={state.settings}
-            setSettings={state.setSettings}
-            providerStatusText={state.providerStatusText}
-            syncStatus={state.syncStatus}
-            setSyncStatus={state.setSyncStatus}
-          />
-        );
-      case 'sessions':
-        return (
-          <SessionSection
-            settings={state.settings}
-            setSettings={state.setSettings}
-          />
-        );
-      case 'documentation':
-        return (
-          <DocumentationSection
-            settings={state.settings}
-            setSettings={state.setSettings}
-          />
-        );
-      case 'permissions':
-        return (
-          <PermissionsSection
-            settings={state.settings}
-            setSettings={state.setSettings}
-          />
-        );
-      case 'preferences':
-        return (
-          <PreferencesSection
-            settings={state.settings}
-            setSettings={state.setSettings}
-          />
-        );
-      case 'agents':
-        return <AgentsSection />;
-      case 'opencode-config':
-        return <OpenCodeConfigSection />;
-      case 'advanced':
-        return (
-          <AdvancedSection
-            settings={state.settings}
-            setSettings={state.setSettings}
-            copied={state.copied}
-            setCopied={state.setCopied}
-            dbResetStatus={state.dbResetStatus}
-            setDbResetStatus={state.setDbResetStatus}
-          />
-        );
-      default:
-        return null;
-    }
-  }, [
-    isLoading,
-    state.activeSection,
-    state.portInput,
-    state.setPortInput,
-    state.openCodePortInput,
-    state.setOpenCodePortInput,
-    state.timeoutInput,
-    state.setTimeoutInput,
-    state.isPortValid,
-    state.isOpenCodePortValid,
-    state.isTimeoutValid,
-    state.settings,
-    state.setSettings,
-    state.providerStatusText,
-    state.syncStatus,
-    state.setSyncStatus,
-    state.copied,
-    state.setCopied,
-    state.dbResetStatus,
-    state.setDbResetStatus,
-  ]);
+    const entry = getSectionById(state.activeSection);
+    if (!entry) return null;
+    const SectionComponent = entry.component;
+    return <SectionComponent state={state} />;
+  }, [isLoading, state]);
 
   if (isLoading) {
     return (

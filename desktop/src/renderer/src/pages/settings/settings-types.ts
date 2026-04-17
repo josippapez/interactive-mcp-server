@@ -49,15 +49,17 @@ export const PREDEFINED_TOOLS = [
   'skill',
 ] as const;
 
-export const SECTIONS: { id: SettingsSection; label: string; icon: string }[] =
-  [
-    { id: 'server', label: 'Server', icon: '⚙' },
-    { id: 'provider', label: 'Provider', icon: '⬡' },
-    { id: 'sessions', label: 'Sessions', icon: '◎' },
-    { id: 'documentation', label: 'Documentation', icon: '📄' },
-    { id: 'permissions', label: 'Permissions', icon: '🔒' },
-    { id: 'preferences', label: 'Preferences', icon: '🔔' },
-    { id: 'agents', label: 'Agents', icon: '🤖' },
-    { id: 'opencode-config', label: 'OpenCode Config', icon: '📝' },
-    { id: 'advanced', label: 'Advanced', icon: '⚡' },
-  ];
+// `SECTIONS` is now a thin re-export derived from the section registry so
+// that the sidebar and the content renderer share one source of truth.
+// See `./section-registry.tsx`.
+export type SectionListEntry = {
+  id: SettingsSection;
+  label: string;
+  icon: string;
+};
+
+// Re-exported from the registry module. Declared here as a pass-through so
+// that callers importing `SECTIONS` keep working after the registry was
+// introduced. The registry imports `SettingsSection` from this file, not the
+// other way around, to avoid a circular import surface.
+export { SETTINGS_SECTIONS as SECTIONS } from './section-registry';
