@@ -12,6 +12,7 @@ import {
   getRegisteredConnectionBySessionId,
   upsertContextInjection,
 } from '../database';
+import { errorMessage } from '../utils/errors';
 
 export interface InjectDocContextInput {
   connectionId: string;
@@ -95,7 +96,7 @@ export async function handleInjectDocContext(
   try {
     results = await deps.searchDocs(message, baseDirectory, 5);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     return { ok: false, injectedCount: 0, error: `searchDocs failed: ${msg}` };
   }
 

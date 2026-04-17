@@ -16,6 +16,7 @@ import {
   sessionCreate,
   sessionPromptAsync,
 } from './session-api';
+import { errorMessage } from '../utils/errors';
 
 export interface DetectedSession {
   id: string;
@@ -447,7 +448,7 @@ export async function createOpenCodeSession(
 
     return { ok: true, session };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     return { ok: false, error: msg };
   }
 }

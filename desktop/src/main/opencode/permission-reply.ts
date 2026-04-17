@@ -4,6 +4,7 @@ import {
   type OpencodeClient,
 } from '@opencode-ai/sdk/v2/client';
 import { createLogger } from '../utils/logger';
+import { errorMessage } from '../utils/errors';
 
 export type PermissionReply = 'once' | 'always' | 'reject';
 
@@ -68,7 +69,7 @@ export async function replyToOpenCodePermission(
 
     return { ok: true };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     permissionLog.error(
       `reply exception session=${sessionID} request=${requestID} reply=${reply} error=${message}`,
     );

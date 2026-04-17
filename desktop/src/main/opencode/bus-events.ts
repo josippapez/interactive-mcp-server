@@ -19,6 +19,7 @@ import type { AppSettings } from '../settings';
 import { createLogger } from '../utils/logger';
 import { getClient } from './sdk-client';
 import { handleBusEvent } from './bus-event-handler';
+import { errorMessage } from '../utils/errors';
 
 const sseLog = createLogger('sse');
 
@@ -83,9 +84,7 @@ async function subscribeToPortWithSdk(
     }
   } catch (err: unknown) {
     if ((err as { name?: string }).name === 'AbortError') return;
-    sseLog.error(
-      `SSE error on port ${port}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    sseLog.error(`SSE error on port ${port}: ${errorMessage(err)}`);
   }
 }
 

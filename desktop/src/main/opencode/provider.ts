@@ -4,6 +4,7 @@ import {
 } from '../../shared/reasoning-variant';
 import { getClient } from './sdk-client';
 import { setModelContextLimit } from './context-tracking';
+import { errorMessage } from '../utils/errors';
 
 /**
  * OpenCode provider/model API integration.
@@ -399,7 +400,7 @@ export async function authorizeProvider(
   } catch (err: unknown) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     };
   }
 }
@@ -436,7 +437,7 @@ export async function callbackProvider(
   } catch (err: unknown) {
     return {
       ok: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage(err),
     };
   }
 }

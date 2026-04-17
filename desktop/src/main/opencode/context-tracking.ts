@@ -290,6 +290,7 @@ export function handleCompaction(
 // ─── Compaction API ──────────────────────────────────────────────────────────
 
 import { sessionGet, sessionMessages, sessionSummarize } from './session-api';
+import { errorMessage } from '../utils/errors';
 
 export interface CompactionResult {
   ok: boolean;
@@ -337,7 +338,7 @@ export async function triggerCompaction(
 
     return { ok: true };
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = errorMessage(err);
     return { ok: false, error: msg };
   }
 }

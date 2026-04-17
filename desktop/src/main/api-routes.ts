@@ -13,6 +13,7 @@ import { resolveAttachmentPath } from './attachment-store';
 import { forceTerminateChat } from './ipc/prompt';
 import { closeSessionByConnectionId } from './mcp-server';
 import { markSessionDeleted } from './tools/connection-guard';
+import { errorMessage } from './utils/errors';
 import {
   triggerSessionTreeUpdate,
   tombstoneOpenCodeSession,
@@ -46,7 +47,7 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
       res.status(500).json({
         ok: false,
         cleared: 0,
-        message: `Reconnect failed: ${err instanceof Error ? err.message : String(err)}`,
+        message: `Reconnect failed: ${errorMessage(err)}`,
       });
     }
   });

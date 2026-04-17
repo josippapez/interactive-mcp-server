@@ -1,4 +1,5 @@
 import { sessionMessages, sessionStatus } from './session-api';
+import { errorMessage } from '../utils/errors';
 
 type LoggerLike = {
   warn: (message: string) => void;
@@ -134,7 +135,7 @@ export async function reconcileDeliveryAfterTimeout(
         return true;
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
+      const msg = errorMessage(err);
       log.warn(
         `[injectOpenCodeMessage] Delivery reconciliation error for session ${openCodeSessionId}: ${msg}`,
       );

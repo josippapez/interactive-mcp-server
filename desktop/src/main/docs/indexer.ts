@@ -15,6 +15,7 @@
 import { Worker, isMainThread, parentPort } from 'node:worker_threads';
 import { readFileSync, writeFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import { errorMessage } from '../utils/errors';
 
 const MODEL_ID = 'Xenova/all-MiniLM-L6-v2';
 const MAX_CHARS_PER_DOC = 2000;
@@ -48,7 +49,7 @@ if (!isMainThread && parentPort) {
           } catch (err) {
             port.postMessage({
               type: 'error',
-              message: err instanceof Error ? err.message : String(err),
+              message: errorMessage(err),
             });
           }
         }
@@ -59,7 +60,7 @@ if (!isMainThread && parentPort) {
   })().catch((err) => {
     port.postMessage({
       type: 'error',
-      message: err instanceof Error ? err.message : String(err),
+      message: errorMessage(err),
     });
     process.exit(1);
   });

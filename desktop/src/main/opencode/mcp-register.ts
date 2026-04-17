@@ -7,6 +7,7 @@
  */
 
 import { getClient } from './sdk-client';
+import { errorMessage } from '../utils/errors';
 
 /** Default name for the MCP server entry in OpenCode. */
 const DEFAULT_MCP_NAME = 'interactive-desktop';
@@ -138,7 +139,7 @@ export async function registerMcpWithOpenCode(
 
     return { status: 'registered' };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     const isConnectionError =
       message.includes('ECONNREFUSED') ||
       message.includes('fetch failed') ||

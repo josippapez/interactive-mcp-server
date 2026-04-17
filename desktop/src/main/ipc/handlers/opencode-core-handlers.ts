@@ -12,6 +12,7 @@ import {
 import { resolveSession, reResolveStaleSession } from '../../session/resolver';
 import { IpcHandlerDeps } from './types';
 import { logIpcInfo } from './shared';
+import { errorMessage } from '../../utils/errors';
 
 export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
   // Manually trigger MCP registration + config sync into OpenCode
@@ -41,7 +42,7 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
     try {
       return readGlobalConfig();
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const message = errorMessage(err);
       logIpcInfo(`read-opencode-global-config failed: ${message}`);
       throw new Error(message, { cause: err });
     }
@@ -53,7 +54,7 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
       try {
         return readProjectConfig(baseDirectory);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         logIpcInfo(`read-opencode-project-config failed: ${message}`);
         throw new Error(message, { cause: err });
       }
@@ -66,7 +67,7 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
       try {
         return writeGlobalConfig(config);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         logIpcInfo(`write-opencode-global-config failed: ${message}`);
         throw new Error(message, { cause: err });
       }
@@ -82,7 +83,7 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
       try {
         return writeProjectConfig(data.baseDirectory, data.config);
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
+        const message = errorMessage(err);
         logIpcInfo(`write-opencode-project-config failed: ${message}`);
         throw new Error(message, { cause: err });
       }

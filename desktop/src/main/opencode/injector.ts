@@ -4,6 +4,7 @@ import { createLogger } from '../utils/logger';
 import { toProviderReasoningVariant } from '../../shared/reasoning-variant';
 import { reconcileDeliveryAfterTimeout } from './injector-reconcile';
 import { sessionPromptAsync } from './session-api';
+import { errorMessage } from '../utils/errors';
 
 const log = createLogger('injector');
 
@@ -254,7 +255,7 @@ export async function injectOpenCodeMessage(
       );
       return { ok: true, noReply };
     } catch (err) {
-      const rawMsg = err instanceof Error ? err.message : String(err);
+      const rawMsg = errorMessage(err);
       const isTimeout = isTimeoutError(err);
 
       if (isTimeout && !noReply) {

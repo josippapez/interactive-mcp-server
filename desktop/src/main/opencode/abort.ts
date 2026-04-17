@@ -17,6 +17,7 @@
 import { getRegisteredConnectionBySessionId } from '../database';
 import { sessionAbort } from './session-api';
 import { createLogger } from '../utils/logger';
+import { errorMessage } from '../utils/errors';
 
 const abortLog = createLogger('abort');
 
@@ -73,7 +74,7 @@ export async function abortOpenCodeSession(
     // Don't log AbortError (timeout) as it's expected when server is unavailable
     if ((err as { name?: string }).name !== 'AbortError') {
       abortLog.warn(
-        `exception session=${sessionId} directory=${effectiveDirectory ?? '(none)'} error=${err instanceof Error ? err.message : String(err)}`,
+        `exception session=${sessionId} directory=${effectiveDirectory ?? '(none)'} error=${errorMessage(err)}`,
       );
     }
     return false;

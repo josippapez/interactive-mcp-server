@@ -30,6 +30,7 @@ import { createApiRouter } from './api-routes';
 import { cleanupOldAttachments } from './attachment-store';
 import type { AgentBackend } from './settings';
 import { createLogger } from './utils/logger';
+import { errorMessage } from './utils/errors';
 import { getEffectiveProvider } from './mcp-server/provider-detection';
 import { createMcpServerWithTools } from './mcp-server/server-factory';
 import { createNoopResponse } from './mcp-server/noop-response';
@@ -471,7 +472,7 @@ export async function startMcpServer(
         return;
       } catch (err) {
         mcpLog.error(
-          `Transparent reinit failed for sessionId=${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+          `Transparent reinit failed for sessionId=${sessionId}: ${errorMessage(err)}`,
         );
         console.error(
           '[mcp] transparent reinit failed, falling back to 404:',

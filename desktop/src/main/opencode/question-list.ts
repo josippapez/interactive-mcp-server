@@ -4,6 +4,7 @@ import {
   type OpencodeClient,
 } from '@opencode-ai/sdk/v2/client';
 import { createLogger } from '../utils/logger';
+import { errorMessage } from '../utils/errors';
 
 export type PendingQuestionOption = {
   label: string;
@@ -71,9 +72,7 @@ export async function fetchPendingQuestions(
         tool: item.tool,
       }));
   } catch (err: unknown) {
-    questionLog.error(
-      `fetchPendingQuestions error: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    questionLog.error(`fetchPendingQuestions error: ${errorMessage(err)}`);
     return [];
   }
 }
@@ -133,7 +132,7 @@ export async function replyToOpenCodeQuestion(
     questionLog.info(`reply success session=${sessionID} request=${requestID}`);
     return { ok: true };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     questionLog.error(
       `reply exception session=${sessionID} request=${requestID} error=${message}`,
     );
@@ -175,7 +174,7 @@ export async function rejectOpenCodeQuestion(
     );
     return { ok: true };
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     questionLog.error(
       `reject exception session=${sessionID} request=${requestID} error=${message}`,
     );

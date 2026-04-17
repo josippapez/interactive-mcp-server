@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { errorMessage } from '../utils/errors';
 
 const mocks = vi.hoisted(() => ({
   ipcMainHandle: vi.fn(),
@@ -199,7 +200,7 @@ vi.mock('../opencode/permission-reply', () => ({
       } catch (err: unknown) {
         return {
           ok: false,
-          error: err instanceof Error ? err.message : String(err),
+          error: errorMessage(err),
         };
       }
     },

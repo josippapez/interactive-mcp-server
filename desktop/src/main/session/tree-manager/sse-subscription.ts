@@ -22,6 +22,7 @@ import {
   type SessionInfo,
   type SyncEventEnvelope,
 } from './types';
+import { errorMessage } from '../../utils/errors';
 
 const log = createLogger('session-tree');
 
@@ -352,9 +353,7 @@ export async function subscribeToSyncEvents(
     }
   } catch (err: unknown) {
     if ((err as { name?: string }).name === 'AbortError') return;
-    log.warn(
-      `SSE error on port ${openCodePort}: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    log.warn(`SSE error on port ${openCodePort}: ${errorMessage(err)}`);
   }
 
   scheduleReconnect();

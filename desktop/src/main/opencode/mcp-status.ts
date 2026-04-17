@@ -13,6 +13,7 @@ import type {
 } from '@opencode-ai/sdk/v2';
 import { createLogger } from '../utils/logger';
 import { getClient } from './sdk-client';
+import { errorMessage } from '../utils/errors';
 
 const log = createLogger('mcp-status');
 const MCP_STATUS_REQUEST_TIMEOUT_MS = 10_000;
@@ -263,7 +264,7 @@ export async function fetchMcpStatus(
     log.info(`Fetched ${servers.length} MCP servers`);
     return { ok: true, servers };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to fetch MCP status: ${error}`);
     return { ok: false, error };
   }
@@ -302,7 +303,7 @@ export async function connectMcp(
     log.info(`Successfully connected MCP: ${mcpName}`);
     return { ok: true };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to connect MCP ${mcpName}: ${error}`);
     return { ok: false, error };
   }
@@ -341,7 +342,7 @@ export async function disconnectMcp(
     log.info(`Successfully disconnected MCP: ${mcpName}`);
     return { ok: true };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to disconnect MCP ${mcpName}: ${error}`);
     return { ok: false, error };
   }
@@ -405,7 +406,7 @@ export async function registerMcp(
     log.info(`Successfully registered MCP: ${name}`);
     return { ok: true };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to register MCP ${name}: ${error}`);
     return { ok: false, error };
   }
@@ -446,7 +447,7 @@ export async function startMcpAuth(
 
     return { ok: true, authorizationUrl: response.data.authorizationUrl };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to start MCP auth ${mcpName}: ${error}`);
     return { ok: false, error };
   }
@@ -492,7 +493,7 @@ export async function callbackMcpAuth(
       status: mapped === 'disabled' ? 'disconnected' : mapped,
     };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to complete MCP auth callback ${mcpName}: ${error}`);
     return { ok: false, error };
   }
@@ -537,7 +538,7 @@ export async function authenticateMcp(
       status: mapped === 'disabled' ? 'disconnected' : mapped,
     };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to authenticate MCP ${mcpName}: ${error}`);
     return { ok: false, error };
   }
@@ -572,7 +573,7 @@ export async function removeMcpAuth(
 
     return { ok: true };
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
+    const error = errorMessage(err);
     log.error(`Failed to remove MCP auth ${mcpName}: ${error}`);
     return { ok: false, error };
   }
