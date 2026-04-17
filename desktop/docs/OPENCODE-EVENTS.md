@@ -270,14 +270,23 @@ dispatcher in `desktop/src/main/session/tree-manager.ts:handleSyncEvent` routes 
 | `message.part.updated.1` | Forward tool part to renderer. **Special case**: if `part.tool === 'task'` and `part.state.metadata.sessionId` is present, hydrate the child subagent session (workaround for missing `session.created.1`). |
 | `message.part.removed.1` | Forward to conversation provider.                                                                                                                                                                           |
 
+Non-sync events consumed (forwarded from `bus-event-forwarders.ts`):
+
+| Event                | IPC channel              | Consumer status                                                                                                                                                       |
+| -------------------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `permission.asked`   | `permission-asked`       | Fully wired — maps OpenCode `sessionID` → desktop `connectionId`, surfaces tool permission prompt in the renderer.                                                    |
+| `permission.replied` | `permission-replied`     | Fully wired — updates prompt state when user answers.                                                                                                                 |
+| `session.idle`       | `opencode-session-idle`  | **Foundation only** — forwarded with `sessionID` payload. No renderer consumer yet. Intended for "turn finished" UX (hide spinners, play a sound).                    |
+| `session.error`      | `opencode-session-error` | **Foundation only** — forwards the full error object. Consumer should branch on `error.name` (v2 discriminated union: ProviderAuthError, ContextOverflowError, etc.). |
+| `file.edited`        | `opencode-file-edited`   | **Foundation only** — payload `{ directory, file }`. Useful for "files changed this turn" indicators or cache invalidation.                                           |
+
 Events we explicitly do **not** consume yet (candidates for future wiring):
 
-- `session.error`, `session.idle`, `session.status`, `session.compacted`
+- `session.status`, `session.compacted`
 - `message.part.delta` (streaming tokens)
-- `permission.asked` / `permission.replied`
 - `question.*`
 - `todo.updated`
-- `file.edited`, `file.watcher.updated`
+- `file.watcher.updated`
 - `vcs.branch.updated`, `project.updated`
 - `mcp.tools.changed`, `mcp.browser.open.failed`
 - `pty.*`
