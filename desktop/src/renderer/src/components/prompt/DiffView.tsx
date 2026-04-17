@@ -1,4 +1,5 @@
 import React, { memo, useMemo } from 'react';
+import { createElement } from 'react-syntax-highlighter';
 import { SyntaxHighlighter, oneDark, oneLight } from '@/lib/syntax-highlighter';
 import { useTheme } from '../../ThemeContext';
 import {
@@ -22,6 +23,10 @@ type DisplayLine = {
   oldLineNumber: number | null;
   newLineNumber: number | null;
 };
+
+// react-syntax-highlighter passes each code line to the `renderer` prop as
+// a hast-like node. We treat it opaquely and let `createElement` render it.
+type HastRow = Parameters<typeof createElement>[0]['node'];
 
 const MAX_LINES = 500;
 
@@ -120,14 +125,19 @@ function lineKey(line: DisplayLine, idx: number): string {
   return `${line.type}-${line.oldLineNumber ?? 'n'}-${line.newLineNumber ?? 'n'}-${idx}`;
 }
 
-const UnifiedLine = memo(function UnifiedLine({
+/**
+ * Renders the per-row decoration (old/new line numbers, sign gutter, background
+ * tint) around a pre-highlighted code fragment provided by the shared Prism
+ * pass. `highlightedContent` is already a `<span>` tree from
+ * `react-syntax-highlighter`'s `createElement` helper, so no re-tokenization
+ * happens here.
+ */
+const DecoratedRow = memo(function DecoratedRow({
   line,
-  language,
-  isDark,
+  highlightedContent,
 }: {
   line: DisplayLine;
-  language: string;
-  isDark: boolean;
+  highlightedContent: React.ReactNode;
 }): React.ReactElement {
   const backgroundClass =
     line.type === 'addition'
@@ -166,27 +176,12 @@ const UnifiedLine = memo(function UnifiedLine({
       <span className={`select-none text-center ${signColorClass}`}>
         {sign}
       </span>
-      <SyntaxHighlighter
-        language={language}
-        style={isDark ? oneDark : oneLight}
-        customStyle={{
-          margin: 0,
-          padding: '0 0.375rem',
-          background: 'transparent',
-          fontSize: '10px',
-          lineHeight: '1.4',
-          overflow: 'visible',
-        }}
-        codeTagProps={{
-          style: {
-            whiteSpace: 'pre-wrap',
-            wordBreak: 'break-word',
-          },
-        }}
-        PreTag="span"
+      <span
+        className="min-w-0 px-1.5 whitespace-pre-wrap break-words"
+        style={{ fontSize: '10px', lineHeight: 1.4 }}
       >
-        {line.content || ' '}
-      </SyntaxHighlighter>
+        {highlightedContent}
+      </span>
     </div>
   );
 });
@@ -222,10 +217,19 @@ const DiffView = memo(function DiffView({
     const truncated = displayLines.length > MAX_LINES;
     const lines = truncated ? displayLines.slice(0, MAX_LINES) : displayLines;
 
+    // Concatenate content into a single source so Prism tokenizes it in one
+    // pass via the SyntaxHighlighter's custom `renderer` prop. Each line must
+    // end up on its own row, so we join with '\n' and preserve empty lines as
+    // a single space to avoid the tokenizer collapsing them.
+    const source = lines
+      .map((line) => (line.content.length > 0 ? line.content : ' '))
+      .join('\n');
+
     return {
       filePath: parsed.filePath,
       language: getLanguageFromPath(parsed.filePath),
       lines,
+      source,
       additions,
       removals,
       totalLines: displayLines.length,
@@ -234,6 +238,8 @@ const DiffView = memo(function DiffView({
   }, [tool.input, tool.name]);
 
   if (!diffData) return null;
+
+  const style = isDark ? oneDark : oneLight;
 
   return (
     <div className="rounded overflow-hidden bg-[var(--color-background)] border border-[var(--color-border)]">
@@ -264,14 +270,43 @@ const DiffView = memo(function DiffView({
             <span className="px-1 py-0.5">Content</span>
           </div>
 
-          {diffData.lines.map((line, idx) => (
-            <UnifiedLine
-              key={lineKey(line, idx)}
-              line={line}
-              language={diffData.language}
-              isDark={isDark}
-            />
-          ))}
+          <SyntaxHighlighter
+            language={diffData.language}
+            style={style}
+            wrapLines
+            PreTag={React.Fragment}
+            CodeTag={React.Fragment}
+            customStyle={{ margin: 0, padding: 0, background: 'transparent' }}
+            renderer={({
+              rows,
+              stylesheet,
+              useInlineStyles,
+            }: {
+              rows: HastRow[];
+              stylesheet: Record<string, React.CSSProperties>;
+              useInlineStyles: boolean;
+            }) =>
+              rows.map((row, idx) => {
+                const line = diffData.lines[idx];
+                if (!line) return null;
+                const highlighted = createElement({
+                  node: row,
+                  stylesheet,
+                  useInlineStyles,
+                  key: `code-${idx}`,
+                });
+                return (
+                  <DecoratedRow
+                    key={lineKey(line, idx)}
+                    line={line}
+                    highlightedContent={highlighted}
+                  />
+                );
+              })
+            }
+          >
+            {diffData.source}
+          </SyntaxHighlighter>
 
           {diffData.truncated && (
             <div className="px-2 py-1 text-[9px] text-[var(--color-text-faint)] border-t border-[var(--color-border)]/40 bg-[var(--color-surface)]/30">
