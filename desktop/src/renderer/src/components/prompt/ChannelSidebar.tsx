@@ -53,16 +53,16 @@ const ChannelSidebar = memo(function ChannelSidebar({
   return (
     <div className="flex h-full">
       {/* Project Rail - far left */}
-        <ProjectRail
-          projects={allProjects}
-          selectedPath={selectedProjectPath}
-          onSelect={(path) => {
-            handleSelectProject(path);
-            onSelectProjectSession?.(path);
-          }}
-          onAddProject={handleAddProject}
-          onRemoveProject={handleRemoveProject}
-        />
+      <ProjectRail
+        projects={allProjects}
+        selectedPath={selectedProjectPath}
+        onSelect={(path) => {
+          handleSelectProject(path);
+          onSelectProjectSession?.(path);
+        }}
+        onAddProject={handleAddProject}
+        onRemoveProject={handleRemoveProject}
+      />
 
       {/* Main sidebar content */}
       <aside
@@ -97,7 +97,6 @@ const ChannelSidebar = memo(function ChannelSidebar({
             onCreateSession={onCreateSession}
             collapsedSessions={collapsedSessions}
             onToggleSession={handleToggleSession}
-            onAddProject={handleAddProject}
             hasDirectConnections={filteredDirectConnections.length > 0}
             selectedProjectPath={selectedProjectPath}
           />

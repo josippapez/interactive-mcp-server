@@ -1,5 +1,4 @@
 import { memo } from 'react';
-import { Button } from '@/components/ui/button';
 import type { Project } from '../../../hooks/session-tree-merge';
 import type { SessionStatusType } from '../../../hooks/useSessionStatus';
 import { ProviderFilter, PROVIDER_LABELS } from './types';
@@ -133,7 +132,6 @@ type ProjectsSectionProps = {
   onCreateSession?: (baseDirectory: string) => void;
   collapsedSessions: Set<string>;
   onToggleSession: (sessionId: string) => void;
-  onAddProject: () => void;
   hasDirectConnections: boolean;
   /** Currently selected project path from the rail (null = all projects) */
   selectedProjectPath?: string | null;
@@ -158,7 +156,6 @@ export const ProjectsSection = memo(function ProjectsSection({
   onCreateSession,
   collapsedSessions,
   onToggleSession,
-  onAddProject,
   hasDirectConnections,
   selectedProjectPath,
 }: ProjectsSectionProps): React.ReactElement {
@@ -254,30 +251,6 @@ export const ProjectsSection = memo(function ProjectsSection({
           ))}
         </div>
       ))}
-      {/* Add Project button - only show when no project is selected */}
-      {!isProjectSelected && (
-        <Button
-          variant="ghost"
-          onClick={onAddProject}
-          className="w-full justify-start gap-2 px-3 py-2 h-auto text-sm text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-border)]"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          <span>Add Project Folder</span>
-        </Button>
-      )}
     </section>
   );
 });
