@@ -70,6 +70,13 @@ export async function injectOpenCodeMessage(
   modelOverride?: ModelOverride,
   /** Optional system-level message (injected into model's system prompt). */
   systemMessage?: string,
+  /**
+   * Optional OpenCode agent name (e.g. 'build', 'plan', 'docs-maintainer').
+   * Forwarded to OpenCode as the `agent` field on `prompt_async`. Whitespace
+   * is trimmed; empty/whitespace-only values are omitted entirely so OpenCode
+   * falls back to its default agent.
+   */
+  agent?: string,
 ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> {
   log.info(
     `[injectOpenCodeMessage] Starting injection to session ${openCodeSessionId}`,
@@ -85,6 +92,10 @@ export async function injectOpenCodeMessage(
   log.info(
     `[injectOpenCodeMessage] systemMessage: ${systemMessage ? `${systemMessage.length} chars` : 'none'}`,
   );
+  const trimmedAgent = agent?.trim();
+  log.info(
+    `[injectOpenCodeMessage] agent: ${trimmedAgent && trimmedAgent.length > 0 ? trimmedAgent : '(none)'}`,
+  );
   // Capture raw model override values to detect malformed/empty selections.
   if (modelOverride) {
     log.info(
@@ -98,10 +109,18 @@ export async function injectOpenCodeMessage(
   let fullText = message;
   for (const att of attachments ?? []) {
     if (att.mimeType.startsWith('image/')) {
-      // Save image to persistent attachment store and reference by URL
-      const filename = saveAttachment(att.data, att.mimeType);
+      // Save image to the per-session tmpdir folder and reference by URL
+      const filename = saveAttachment(
+        openCodeSessionId,
+        att.data,
+        att.mimeType,
+      );
       if (filename && mcpServerPort) {
-        const imageUrl = attachmentUrl(filename, mcpServerPort);
+        const imageUrl = attachmentUrl(
+          openCodeSessionId,
+          filename,
+          mcpServerPort,
+        );
         fullText += `\n\n[Image: ${att.name}](${imageUrl})`;
       } else if (filename) {
         // Fallback: reference the file by name (no port available)
@@ -206,6 +225,7 @@ export async function injectOpenCodeMessage(
         model?: { providerID: string; modelID: string };
         variant?: string;
         system?: string;
+        agent?: string;
       } = {
         noReply,
         parts,
@@ -219,6 +239,9 @@ export async function injectOpenCodeMessage(
       }
       if (systemMessage) {
         requestBody.system = systemMessage;
+      }
+      if (trimmedAgent && trimmedAgent.length > 0) {
+        requestBody.agent = trimmedAgent;
       }
 
       log.info(

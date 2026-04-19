@@ -7,14 +7,57 @@ import type { OpenCodeSession } from '../../opencode/session';
 
 // ─── Sync event payload shapes ───────────────────────────────────────────────
 
-export interface SyncEventPayload {
+/**
+ * Legacy / flat sync event payload shape. Older OpenCode builds (and our test
+ * fixtures) emit events directly on `payload`. Retained for back-compat.
+ */
+export interface FlatSyncEventPayload {
   type: string;
-  aggregate: string;
+  aggregate?: string;
   data: Record<string, unknown>;
 }
 
+/**
+ * The versioned sync event the current OpenCode (`packages/opencode/src/sync`)
+ * publishes on `/global/event`. Wrapped in `{ payload: { type: "sync",
+ * syncEvent: {...} } }`.
+ */
+export interface WrappedSyncEventPayload {
+  type: 'sync';
+  syncEvent: {
+    type: string;
+    id?: string;
+    seq?: number;
+    aggregateID?: string;
+    data: Record<string, unknown>;
+  };
+}
+
+export type SyncEventPayload = FlatSyncEventPayload | WrappedSyncEventPayload;
+
 export interface SyncEventEnvelope {
   payload: SyncEventPayload;
+}
+
+/**
+ * Runtime helper to unwrap the real event `{ type, data }` from either
+ * shape. Returns `null` when the envelope is malformed.
+ */
+export function extractSyncEvent(
+  envelope: SyncEventEnvelope,
+): { type: string; data: Record<string, unknown> } | null {
+  const payload = envelope?.payload;
+  if (!payload || typeof payload !== 'object') return null;
+
+  if ((payload as WrappedSyncEventPayload).type === 'sync') {
+    const inner = (payload as WrappedSyncEventPayload).syncEvent;
+    if (!inner || typeof inner.type !== 'string' || !inner.data) return null;
+    return { type: inner.type, data: inner.data };
+  }
+
+  const flat = payload as FlatSyncEventPayload;
+  if (typeof flat.type !== 'string' || !flat.data) return null;
+  return { type: flat.type, data: flat.data };
 }
 
 export interface SessionInfo {
@@ -79,9 +122,6 @@ export interface SessionNodeData {
 }
 
 // ─── Timing constants ────────────────────────────────────────────────────────
-
-/** How long after a register_connection call to consider a connection "pending" for auto-bind. */
-export const AUTO_BIND_WINDOW_MS = 3_000;
 
 /** Reconnect delay when the SSE stream drops (ms). */
 export const SSE_RECONNECT_DELAY_MS = 2_000;

@@ -1,14 +1,23 @@
 /**
- * Pure function that builds the `<system-reminder>` startup context message
- * injected into agent sessions at `register_connection` time.
+ * Pure functions that build the `<system-reminder>` startup-context message
+ * and the post-write skills/instructions change reminder.
  *
- * Extracted from `register-connection.ts` so it can be unit-tested without
+ * Extracted from `register-connection.ts` so they can be unit-tested without
  * needing the full tool registration machinery.
  *
  * Design rules:
- * - Skills: show name + description only (on-demand loaded via the skill tool).
- * - Instructions: show name, description, AND full content (always-active
- *   policies that the agent must follow immediately without a separate tool call).
+ * - Skills: emitted in an `<available_skills source="db">` block with name +
+ *   description only. Full content is on-demand via the
+ *   `manage_skills_and_instructions get` tool — same on-demand pattern as
+ *   file-based skills.
+ * - Instructions: emitted in an `<instructions source="db">` block with full
+ *   content inlined verbatim. Always-active policies that the agent must
+ *   follow immediately without a separate tool call.
+ * - The `<source>db</source>` / `source="db"` markers let agents distinguish
+ *   DB-stored entries from file-based skills (which OpenCode injects with
+ *   `<location>file://...</location>`).
+ * - Empty XML blocks are NEVER emitted — sections are only included when they
+ *   have content.
  */
 
 import type { SkillOrInstruction } from '../database';
@@ -36,8 +45,6 @@ export function buildStartupContextMessage(
     ? `- Base directory: ${baseDirectory}`
     : '- Base directory: not provided';
 
-  // Build the output lines as a single system-reminder block.
-  // The openCodeSessionId is included once in the bootstrap section when available.
   const lines: string[] = [];
 
   lines.push('<system-reminder>');
@@ -60,42 +67,78 @@ export function buildStartupContextMessage(
     '- Parallel subagents should use unique agent names to avoid sidebar name collisions.',
   );
 
-  // Filter to only include enabled entries for injection
-  const enabledEntries = entries.filter((e) => e.enabled);
+  // Filter to only enabled entries
+  const enabled = entries.filter((e) => e.enabled);
+  const skills = enabled.filter((e) => e.type === 'skill');
+  const instructions = enabled.filter((e) => e.type === 'instruction');
 
-  if (enabledEntries.length > 0) {
-    const skills = enabledEntries.filter((e) => e.type === 'skill');
-    const instructions = enabledEntries.filter((e) => e.type === 'instruction');
-
-    if (skills.length > 0) {
-      lines.push('');
-      lines.push('Available Skills:');
-      for (const skill of skills) {
-        lines.push(`- ${skill.name}: ${skill.description}`);
-      }
+  if (skills.length > 0) {
+    lines.push('');
+    lines.push('<available_skills source="db">');
+    for (const skill of skills) {
+      lines.push('  <skill>');
+      lines.push(`    <name>${skill.name}</name>`);
+      lines.push(`    <description>${skill.description}</description>`);
+      lines.push('    <source>db</source>');
+      lines.push('  </skill>');
     }
+    lines.push('</available_skills>');
+  }
 
-    if (instructions.length > 0) {
-      lines.push('');
-      lines.push('Active Instructions:');
-      for (const instruction of instructions) {
-        // Include name, description, AND full content for instructions.
-        // Instructions are always-active policies — agents must see the full
-        // content immediately without a separate tool call.
-        lines.push(`- ${instruction.name}: ${instruction.description}`);
-        lines.push('');
-        lines.push(instruction.content);
-        lines.push('');
-      }
+  if (instructions.length > 0) {
+    lines.push('');
+    lines.push('<instructions source="db">');
+    for (const instruction of instructions) {
+      lines.push('  <instruction>');
+      lines.push(`    <name>${instruction.name}</name>`);
+      lines.push(`    <description>${instruction.description}</description>`);
+      lines.push('    <content>');
+      lines.push(instruction.content);
+      lines.push('    </content>');
+      lines.push('  </instruction>');
     }
+    lines.push('</instructions>');
+  }
 
-    if (skills.length > 0) {
-      lines.push(
-        'Use the manage_skills_and_instructions tool with action "get" to retrieve the full content of any skill or instruction by name.',
-      );
-    }
+  if (skills.length > 0) {
+    lines.push('');
+    lines.push(
+      'Use the manage_skills_and_instructions tool with action "get" to retrieve the full content of any skill by name.',
+    );
   }
 
   lines.push('</system-reminder>');
   return lines.join('\n');
+}
+
+// ─── Post-write reminder ────────────────────────────────────────────────────
+
+export type SkillsChangeAction = 'registered' | 'updated' | 'deleted';
+
+export interface SkillsChangedReminderParams {
+  action: SkillsChangeAction;
+  type: 'skill' | 'instruction';
+  name: string;
+}
+
+/**
+ * Build a small `<system-reminder>` notice indicating that a DB-stored skill
+ * or instruction was added/updated/deleted. Sent to all active sessions on
+ * every write so agents know the available_skills/instructions context is
+ * stale. The notice does NOT re-inject the full block — agents are pointed at
+ * `manage_skills_and_instructions list` to fetch the latest list on demand.
+ */
+export function buildSkillsChangedReminder(
+  params: SkillsChangedReminderParams,
+): string {
+  const { action, type, name } = params;
+  return [
+    '<system-reminder>',
+    `A DB-stored ${type} was ${action}: ${name}.`,
+    'The latest list is available via the manage_skills_and_instructions tool with action "list".',
+    type === 'skill'
+      ? 'Use action "get" with the skill name to fetch its full content on demand.'
+      : 'Updated instruction content will be re-injected on the next session bootstrap.',
+    '</system-reminder>',
+  ].join('\n');
 }

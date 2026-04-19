@@ -28,6 +28,7 @@ function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
     sessionStatuses: [],
     baseDirectory: null,
     pendingPermissions: [],
+    pendingQuestions: [],
     vcsInfo: null,
     ...overrides,
   };
@@ -55,7 +56,11 @@ describe('findKeyByConnectionId', () => {
   });
 
   it('returns the providerSessionId map key when the node is an OpenCode-backed session', () => {
-    // OpenCode sessions are keyed by providerSessionId, but their connectionId differs
+    // OpenCode-backed nodes can ONLY be matched by providerSessionId.
+    // Without a providerSessionId hint, the connectionId-only fallback is
+    // intentionally disabled for these nodes (multiple OC sessions share the
+    // same MCP transport UUID, so a connectionId-only match would be
+    // non-deterministic and corrupt cross-channel routing).
     const nodes = new Map<string, SessionNode>([
       [
         'ses_opencode_123',
@@ -68,11 +73,12 @@ describe('findKeyByConnectionId', () => {
       ],
     ]);
 
-    // data.sessionId = connectionId = 'conn-mcp-456'
-    // but the map key = providerSessionId = 'ses_opencode_123'
-    expect(findKeyByConnectionId(nodes, 'conn-mcp-456')).toBe(
-      'ses_opencode_123',
-    );
+    // With providerSessionId: matches.
+    expect(
+      findKeyByConnectionId(nodes, 'conn-mcp-456', 'ses_opencode_123'),
+    ).toBe('ses_opencode_123');
+    // Without providerSessionId: returns null (cannot disambiguate).
+    expect(findKeyByConnectionId(nodes, 'conn-mcp-456')).toBeNull();
   });
 
   it('returns null when no node matches the given connectionId', () => {
@@ -94,15 +100,62 @@ describe('findKeyByConnectionId', () => {
     expect(findKeyByConnectionId(new Map(), 'conn-any')).toBeNull();
   });
 
-  it('returns the first matching key when multiple nodes share a connectionId', () => {
-    // Degenerate case — should not happen in practice, but function is deterministic
+  it('returns the first matching key when multiple direct-connection nodes share a connectionId', () => {
+    // Degenerate case for direct connections — should not happen in practice.
+    // Both nodes are direct connections (no providerSessionId), so connectionId
+    // fallback is allowed.
     const nodes = new Map<string, SessionNode>([
-      ['key-a', makeNode({ id: 'key-a', connectionId: 'conn-shared' })],
-      ['key-b', makeNode({ id: 'key-b', connectionId: 'conn-shared' })],
+      [
+        'key-a',
+        makeNode({
+          id: 'key-a',
+          connectionId: 'conn-shared',
+          isDirectConnection: true,
+        }),
+      ],
+      [
+        'key-b',
+        makeNode({
+          id: 'key-b',
+          connectionId: 'conn-shared',
+          isDirectConnection: true,
+        }),
+      ],
     ]);
 
     const result = findKeyByConnectionId(nodes, 'conn-shared');
     expect(['key-a', 'key-b']).toContain(result);
+  });
+
+  it('does NOT match an OpenCode-backed node by connectionId alone (prevents cross-channel routing)', () => {
+    // Two OC sessions sharing the same MCP transport UUID — the bug scenario.
+    // Without a providerSessionId hint, neither should match.
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_a',
+        makeNode({
+          id: 'ses_a',
+          providerSessionId: 'ses_a',
+          connectionId: 'shared-mcp-uuid',
+        }),
+      ],
+      [
+        'ses_b',
+        makeNode({
+          id: 'ses_b',
+          providerSessionId: 'ses_b',
+          connectionId: 'shared-mcp-uuid',
+        }),
+      ],
+    ]);
+
+    expect(findKeyByConnectionId(nodes, 'shared-mcp-uuid')).toBeNull();
+    expect(findKeyByConnectionId(nodes, 'shared-mcp-uuid', 'ses_a')).toBe(
+      'ses_a',
+    );
+    expect(findKeyByConnectionId(nodes, 'shared-mcp-uuid', 'ses_b')).toBe(
+      'ses_b',
+    );
   });
 
   // -------------------------------------------------------------------------
@@ -148,7 +201,26 @@ describe('findKeyByConnectionId', () => {
     );
   });
 
-  it('falls back to connectionId match when providerSessionId is not found', () => {
+  it('falls back to connectionId match when providerSessionId is not found AND target node is a direct connection', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'conn-direct-1',
+        makeNode({
+          id: 'conn-direct-1',
+          providerSessionId: null,
+          connectionId: 'conn-direct-1',
+          isDirectConnection: true,
+        }),
+      ],
+    ]);
+
+    // No matching providerSessionId, but connectionId matches a direct connection
+    expect(findKeyByConnectionId(nodes, 'conn-direct-1', 'ses_unknown')).toBe(
+      'conn-direct-1',
+    );
+  });
+
+  it('does NOT fall back to connectionId match when target node is OpenCode-backed', () => {
     const nodes = new Map<string, SessionNode>([
       [
         'ses_abc123',
@@ -156,14 +228,16 @@ describe('findKeyByConnectionId', () => {
           id: 'ses_abc123',
           providerSessionId: 'ses_abc123',
           connectionId: 'conn-mcp-456',
+          isDirectConnection: false,
         }),
       ],
     ]);
 
-    // No matching providerSessionId, but connectionId matches
-    expect(findKeyByConnectionId(nodes, 'conn-mcp-456', 'ses_unknown')).toBe(
-      'ses_abc123',
-    );
+    // Even though connectionId matches, the OC-backed node refuses
+    // connectionId-only matching when the providerSessionId hint is wrong.
+    expect(
+      findKeyByConnectionId(nodes, 'conn-mcp-456', 'ses_unknown'),
+    ).toBeNull();
   });
 
   it('returns null when neither providerSessionId nor connectionId matches', () => {
@@ -203,7 +277,9 @@ describe('findPromptTargetKey', () => {
       ],
     ]);
 
-    expect(findPromptTargetKey(nodes, 'conn-root')).toBe('ses_root');
+    expect(findPromptTargetKey(nodes, 'conn-root', 'ses_root')).toBe(
+      'ses_root',
+    );
   });
 
   it('returns the child node key itself (no parent walking)', () => {
@@ -231,7 +307,9 @@ describe('findPromptTargetKey', () => {
     ]);
 
     // Prompt from child agent appears in the child's own channel
-    expect(findPromptTargetKey(nodes, 'conn-child')).toBe('ses_child');
+    expect(findPromptTargetKey(nodes, 'conn-child', 'ses_child')).toBe(
+      'ses_child',
+    );
   });
 
   it('returns the leaf node key itself for deeply nested agents', () => {
@@ -269,7 +347,9 @@ describe('findPromptTargetKey', () => {
     ]);
 
     // Prompt from deeply nested leaf stays in its own channel
-    expect(findPromptTargetKey(nodes, 'conn-leaf')).toBe('ses_leaf');
+    expect(findPromptTargetKey(nodes, 'conn-leaf', 'ses_leaf')).toBe(
+      'ses_leaf',
+    );
   });
 
   it('returns null when connectionId is not found', () => {

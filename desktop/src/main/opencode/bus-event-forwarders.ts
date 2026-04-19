@@ -35,7 +35,13 @@ export function forwardPermissionEvent(
     if (!sessionID) return true;
 
     const registeredConnection = getRegisteredConnectionForSession(sessionID);
-    const connectionId = registeredConnection?.connectionId ?? sessionID;
+    // Phase 6 routing fix: do NOT alias sessionID as connectionId when no MCP
+    // transport is registered for this session. Aliasing produced cross-channel
+    // routing corruption because two sibling OC sessions sharing one MCP
+    // transport would resolve to whichever node `findKeyByConnectionId` scanned
+    // first. The renderer routes by `providerSessionId` (sent below); a missing
+    // connectionId is signalled with `null`.
+    const connectionId = registeredConnection?.connectionId ?? null;
 
     const permission = getStringProperty(properties, ['permission']);
     const requestId = getStringProperty(properties, ['id']);
@@ -143,7 +149,9 @@ export function forwardQuestionEvent(
     if (!sessionID || !questionId) return true;
 
     const registeredConnection = getRegisteredConnectionForSession(sessionID);
-    const connectionId = registeredConnection?.connectionId ?? sessionID;
+    // Phase 6 routing fix: see permission.asked above. Do not alias sessionID
+    // as connectionId; renderer routes by providerSessionId.
+    const connectionId = registeredConnection?.connectionId ?? null;
 
     const questions = Array.isArray(properties['questions'])
       ? (properties['questions'] as Array<Record<string, unknown>>).map(
@@ -298,12 +306,15 @@ export function forwardSessionEvent(
   win: BrowserWindow,
 ): boolean {
   if (type === 'session.status') {
-    sendToWindow(win, 'session-status-update', {
-      connectionId: properties['connectionId'] as string,
-      status: properties['status'] as string,
-      type: properties['type'] as string,
-    });
-
+    // NOTE: OpenCode SSE `session.status` events do NOT carry a `connectionId`
+    // property. The `session-status-update` IPC channel (used for visual status
+    // badges) is fed exclusively by the `push_session_status` MCP tool via
+    // `ipc/channel.ts`, where the providerSessionId is known. Forwarding here
+    // would have produced payloads with `connectionId: undefined` and routed
+    // them non-deterministically across sibling channels that share an MCP
+    // transport — a cross-channel routing corruption bug. We only forward the
+    // canonical `opencode-session-status` event below, which is keyed by the
+    // SSE `sessionID` (the providerSessionId).
     const sessionID = getStringProperty(properties, ['sessionID']);
     const status = properties['status'] as
       | { type: 'idle' | 'busy' | 'retry' }

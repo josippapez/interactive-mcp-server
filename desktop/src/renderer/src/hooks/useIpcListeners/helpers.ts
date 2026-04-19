@@ -67,17 +67,28 @@ export function findKeyByConnectionId(
     return null;
   }
 
-  // FALLBACK 1: match by node.connectionId field
-  // Only used when providerSessionId is not provided or not found
+  // FALLBACK 1: match by node.connectionId field, but ONLY for nodes that
+  // are direct connections OR have no providerSessionId. OpenCode-backed
+  // nodes (providerSessionId !== null && !isDirectConnection) MUST be matched
+  // by providerSessionId — multiple OC sessions share the same MCP transport
+  // UUID, so a connectionId-only match would be non-deterministic and would
+  // route messages to the wrong channel (the cross-channel routing bug).
   for (const [id, node] of nodes) {
-    if (node.connectionId === connectionId) {
+    if (
+      node.connectionId === connectionId &&
+      (node.isDirectConnection || node.providerSessionId === null)
+    ) {
       return id;
     }
   }
 
-  // FALLBACK 2: direct map key lookup by connectionId
-  // For direct connections, the map key IS the connectionId.
-  if (nodes.has(connectionId)) {
+  // FALLBACK 2: direct map key lookup by connectionId — only safe when the
+  // matched node is itself a direct connection (its map key IS its connectionId).
+  const direct = nodes.get(connectionId);
+  if (
+    direct &&
+    (direct.isDirectConnection || direct.providerSessionId === null)
+  ) {
     return connectionId;
   }
 

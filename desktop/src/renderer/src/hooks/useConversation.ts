@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ConversationMessage } from '../../../preload/index';
+import { mergeConversationMessages } from './conversation-merge';
 import { createDeltaBatcher } from './delta-batcher';
 import { createReconcileScheduler } from './useConversation-fetch';
 import {
@@ -15,6 +16,14 @@ import {
   SSE_RENDER_PACE_MS,
   shouldReconcileMessageEvent,
 } from './useConversation-pacing';
+
+/**
+ * Upper bound on messages fetched per reconcile call. Raised from 100 so
+ * long-running sessions don't lose older messages when the user navigates
+ * away and back. Merge-by-id below additionally preserves anything already
+ * in memory that falls outside this window.
+ */
+const MESSAGE_FETCH_LIMIT = 1000;
 
 type UseConversationResult = {
   /** All conversation messages for this session */
@@ -103,12 +112,12 @@ export function useConversation(
 
       const fetched = await window.api.fetchConversationMessages(
         providerSessionId,
-        100,
+        MESSAGE_FETCH_LIMIT,
       );
 
       // Only update if this is still the current session
       if (currentSessionRef.current === providerSessionId) {
-        setMessagesAndCache(fetched);
+        setMessagesAndCache((prev) => mergeConversationMessages(prev, fetched));
       }
     } catch (err) {
       if (currentSessionRef.current === providerSessionId) {

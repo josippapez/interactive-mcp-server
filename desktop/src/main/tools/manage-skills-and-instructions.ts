@@ -8,13 +8,67 @@ import {
   listSkillsAndInstructions,
   getSkillOrInstructionByName,
   deleteSkillOrInstruction,
+  getRegisteredConnectionsByProvider,
 } from '../database';
 import type { BrowserWindow } from 'electron';
+import { injectOpenCodeMessage } from '../opencode/injector';
+import { createLogger } from '../utils/logger';
+import {
+  buildSkillsChangedReminder,
+  type SkillsChangeAction,
+} from './startup-context';
+import { pickReminderTargets } from './skills-broadcast';
+
+const broadcastLog = createLogger('manage-skills-broadcast');
+
+/**
+ * Fire-and-forget broadcast of a `<system-reminder>` to every active OpenCode
+ * session. Used when a skill/instruction is registered, updated, or deleted so
+ * agents know to re-fetch the list. Errors are logged but never thrown — UI
+ * mutations must not be blocked by injection failures.
+ */
+function broadcastSkillsChanged(
+  action: SkillsChangeAction,
+  type: 'skill' | 'instruction',
+  name: string,
+  port: number,
+): void {
+  try {
+    const connections = getRegisteredConnectionsByProvider('opencode');
+    const targets = pickReminderTargets(connections);
+    if (targets.length === 0) return;
+    const reminder = buildSkillsChangedReminder({ action, type, name });
+    for (const target of targets) {
+      // Send the `<system-reminder>` as a `noReply` user message so it persists
+      // in `messages[]` and gets replayed on every subsequent step. The legacy
+      // `system` slot is per-call only and would vanish on the next user turn.
+      void injectOpenCodeMessage(
+        target.providerSessionId,
+        reminder, // user-message body — `<system-reminder>` block
+        undefined,
+        port,
+        undefined,
+        true, // noReply
+        undefined,
+        undefined, // systemMessage — intentionally unused
+      ).catch((err) => {
+        broadcastLog.warn(
+          `failed to inject skills-changed reminder into session ${target.providerSessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+  } catch (err) {
+    broadcastLog.warn(
+      `broadcastSkillsChanged failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
 
 export function registerManageSkillsAndInstructionsTool(
   server: McpServer,
   getWindow: () => BrowserWindow | null,
   connectionId: string,
+  getOpenCodePort: () => number,
 ): void {
   server.registerTool(
     'manage_skills_and_instructions',
@@ -152,6 +206,10 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
             };
           }
 
+          // Detect whether this is a fresh registration or an overwrite of
+          // an existing entry, so the broadcast reminder uses the right verb.
+          const preExisting = getSkillOrInstructionByName(name);
+
           const record = upsertSkillOrInstruction({
             name,
             type,
@@ -180,13 +238,21 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
           // Notify the renderer so the UI can update live
           getWindow()?.webContents.send('skills-updated');
 
+          // Notify all active OpenCode sessions so agents know to re-fetch.
+          broadcastSkillsChanged(
+            preExisting ? 'updated' : 'registered',
+            record.type,
+            record.name,
+            getOpenCodePort(),
+          );
+
           return {
             content: [
               {
                 type: 'text' as const,
                 text: JSON.stringify({
                   ok: true,
-                  action: 'registered',
+                  action: preExisting ? 'updated' : 'registered',
                   entry: {
                     name: record.name,
                     type: record.type,
@@ -302,11 +368,21 @@ Use this tool to register, list, retrieve, or delete skills and instructions.
             };
           }
 
+          const existing = getSkillOrInstructionByName(name);
           const deleted = deleteSkillOrInstruction(name);
 
           if (deleted) {
             // Notify the renderer so the UI can update live
             getWindow()?.webContents.send('skills-updated');
+            // Broadcast to active OpenCode sessions
+            if (existing) {
+              broadcastSkillsChanged(
+                'deleted',
+                existing.type,
+                name,
+                getOpenCodePort(),
+              );
+            }
           }
 
           return {

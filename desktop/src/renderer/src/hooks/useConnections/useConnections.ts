@@ -4,6 +4,7 @@ import { useIpcListeners } from '../useIpcListeners';
 import { useProviderInjection } from '../useProviderInjection';
 import {
   getActiveChannelIdSnapshot,
+  getIntentionalNullSelectionSnapshot,
   useChannelSelection,
   type ChannelSelectionSource,
 } from '../../store/channel-selection';
@@ -90,6 +91,7 @@ export function useConnections(onActivatePromptTab: () => void) {
 
   useIpcListeners({
     getActiveConnectionId: getActiveChannelIdSnapshot,
+    getIsIntentionalNullSelection: getIntentionalNullSelectionSnapshot,
     activateRef,
     setNodes,
     selectChannel,

@@ -7,6 +7,8 @@ import {
   getStreamingMessageId,
   useSeenMessageIds,
 } from './virtualized-message-list-helpers';
+import { computeAutoScrollSignature } from './auto-scroll-signature';
+import { shouldRescrollOnResize } from './auto-scroll-resize';
 
 interface VirtualizedMessageListProps {
   /** Messages to render */
@@ -108,76 +110,91 @@ const VirtualizedMessageList = memo(function VirtualizedMessageList({
     },
   });
 
-  // Ref to track the content container for MutationObserver
+  // Ref to the content wrapper, kept for the combined ref callback below.
   const contentElRef = useRef<HTMLDivElement | null>(null);
 
-  // Keep the latest followOutput + onAutoFollowContent in refs so the
-  // MutationObserver callback always reads the freshest values without
-  // being re-subscribed on every re-render.
+  // Keep the latest followOutput + onAutoFollowContent in refs so auto-scroll
+  // effects always read the freshest values without re-subscribing.
   const followOutputRef = useRef(followOutput);
   followOutputRef.current = followOutput;
   const onAutoFollowContentRef = useRef(onAutoFollowContent);
   onAutoFollowContentRef.current = onAutoFollowContent;
 
   /**
-   * When `followOutput` is true and new content arrives, scroll to bottom.
-   * Delegates to the parent-owned callback so the parent's auto-scroll marker
-   * stays in sync (prevents the scroll event from being misclassified as user).
+   * Deterministic auto-scroll driver using TanStack Virtual natives plus a
+   * ResizeObserver feedback loop.
+   *
+   * Why a ResizeObserver?
+   *   `getTotalSize()` is built from a mix of estimated (`estimateSize`) and
+   *   measured row heights. When TanStack Virtual measures a row *after* our
+   *   initial `scrollToIndex` (e.g. estimate 240px, actual 920px), the inner
+   *   wrapper's height grows and we end up "one row short" of the bottom.
+   *   The previous design tried to compensate with a single rAF retry, but a
+   *   row that re-measures two frames later (markdown re-render, image load,
+   *   tool-result expansion) would still slip past it.
+   *
+   *   By observing the wrapper element directly, every measurement-driven
+   *   height change re-fires the scroll while we're still meant to be
+   *   following output. This is the virtualized equivalent of a sentinel
+   *   element + `scrollIntoView`, but it works correctly because it reacts
+   *   to the *measured* total size, not the estimated one.
+   *
+   * Driver layout:
+   *   1. A signature-keyed effect handles the **content delta** case (new
+   *      message arrived, streaming text grew). It marks + scrolls once.
+   *   2. The ResizeObserver effect handles the **measurement delta** case
+   *      (row height changed without new content). It marks + scrolls
+   *      whenever the wrapper height moves while following.
+   *   3. Both paths call `onAutoFollowContent` first so the parent's
+   *      `useAutoScroll` marker classifies the resulting scroll event as
+   *      programmatic (preserving `isStickyToBottom`).
    */
-  const followToBottom = useCallback(() => {
+  const signature = computeAutoScrollSignature(messages);
+
+  const messagesLengthRef = useRef(messages.length);
+  messagesLengthRef.current = messages.length;
+
+  const scrollToBottomNow = useCallback(() => {
     if (!followOutputRef.current) return;
-    const cb = onAutoFollowContentRef.current;
-    if (cb) {
-      cb();
-      return;
-    }
-    // Fallback: if no parent callback was provided, scroll directly.
-    const scrollEl = scrollContainerRef.current;
-    if (!scrollEl) return;
-    scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: 'auto' });
-  }, [scrollContainerRef]);
+    if (messagesLengthRef.current === 0) return;
+    const markCb = onAutoFollowContentRef.current;
+    if (markCb) markCb();
+    virtualizer.scrollToIndex(messagesLengthRef.current - 1, { align: 'end' });
+  }, [virtualizer]);
 
-  // Auto-scroll driver: MutationObserver on the content container is the
-  // single source of truth for "content changed, maybe scroll". It fires on:
-  //   - new messages being mounted (childList)
-  //   - text streaming into existing messages (characterData via subtree)
-  //   - tool cards / thinking sections expanding (subtree childList)
-  //   - virtualized rows coming into view and growing (subtree)
-  //
-  // We intentionally do NOT also compute a content hash over `messages` and
-  // drive a second effect off it — that was the previous design, and the
-  // two drivers raced (signature-effect scrolled before the DOM had
-  // actually grown, causing sporadic "stuck 1 row above bottom" bugs) and
-  // doubled the work per streaming tick.
+  // Content-delta driver: fires once per new message / streaming text change.
   useEffect(() => {
-    const contentEl = contentElRef.current;
-    if (!contentEl) return;
+    scrollToBottomNow();
+  }, [signature, scrollToBottomNow]);
 
-    // Debounce scroll calls to coalesce rapid mutations.
-    let rafId: number | null = null;
+  // Measurement-delta driver: re-scrolls whenever the items wrapper height
+  // changes (late row measurements, image loads, tool-card expansions).
+  useEffect(() => {
+    const node = contentElRef.current;
+    if (!node) return;
+    if (typeof ResizeObserver === 'undefined') return;
 
-    const mutationObserver = new MutationObserver(() => {
-      if (!followOutputRef.current) return;
-      if (rafId !== null) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        rafId = null;
-        followToBottom();
+    let prevHeight: number | null = null;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const nextHeight = entry.contentRect.height;
+      const decision = shouldRescrollOnResize({
+        prevHeight,
+        nextHeight,
+        isFollowing: followOutputRef.current,
+        messageCount: messagesLengthRef.current,
       });
+      prevHeight = nextHeight;
+      if (decision) scrollToBottomNow();
     });
-
-    // Watch structural changes + text streaming. Attribute changes are too
-    // noisy (class toggles, aria updates) and usually don't affect height.
-    mutationObserver.observe(contentEl, {
-      childList: true,
-      subtree: true,
-      characterData: true,
-    });
-
-    return () => {
-      mutationObserver.disconnect();
-      if (rafId !== null) cancelAnimationFrame(rafId);
-    };
-  }, [followToBottom]);
+    observer.observe(node);
+    return () => observer.disconnect();
+    // We re-attach when the message-count signature changes only via the
+    // `scrollToBottomNow` reference (stable). The observer itself reads the
+    // freshest follow-state and message count via refs, so it never needs to
+    // be torn down on those changes.
+  }, [scrollToBottomNow]);
 
   // Combined ref callback to capture content element for the MutationObserver.
   const combinedContentRef = useCallback(

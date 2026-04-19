@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import type { SessionNode } from '../../types';
 import type { ChannelSelectionSource } from '../../store/channel-selection';
+import { dismissStatus } from './dismiss-status';
 
 interface UiHandlersOptions {
   nodesRef: React.MutableRefObject<Map<string, SessionNode>>;
@@ -21,21 +22,7 @@ export function useUiHandlers({
 }: UiHandlersOptions) {
   const handleDismissStatus = useCallback(
     (connectionId: string, timestamp: Date) => {
-      setNodes((prev) => {
-        for (const [id, node] of prev) {
-          if (node.connectionId === connectionId || node.id === connectionId) {
-            const next = new Map(prev);
-            next.set(id, {
-              ...node,
-              sessionStatuses: node.sessionStatuses.filter(
-                (s) => s.timestamp !== timestamp,
-              ),
-            });
-            return next;
-          }
-        }
-        return prev;
-      });
+      setNodes((prev) => dismissStatus(prev, connectionId, timestamp));
     },
     [setNodes],
   );

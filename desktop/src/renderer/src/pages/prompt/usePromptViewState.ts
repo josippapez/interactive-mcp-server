@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   getPromptComposerBaseDirectory,
   getPromptPlaceholder,
   getQueueComposerBaseDirectory,
 } from './prompt-utils';
+import { useDeriveSessionAgentEffect } from './useDeriveSessionAgentEffect';
 import { usePromptConnectionData } from './usePromptConnectionData';
 import { usePromptInteractionState } from './usePromptInteractionState';
 import { usePromptModelState } from './usePromptModelState';
@@ -38,6 +39,8 @@ export function usePromptViewState(props: PromptViewProps) {
     setPendingNewSessionProject,
     pendingSessionSelect,
     setPendingSessionSelect,
+    pendingNewSessionAgent,
+    setPendingNewSessionAgent,
     handleCreateSession,
     handleAddProject,
     handleNavigateToNewSession,
@@ -57,6 +60,8 @@ export function usePromptViewState(props: PromptViewProps) {
     pendingSessionSelect,
     onSelectConnection,
     setPendingSessionSelect,
+    pendingNewSessionAgent,
+    setPendingNewSessionAgent,
   });
 
   const providerSessionId = activeNode?.providerSessionId ?? null;
@@ -126,6 +131,11 @@ export function usePromptViewState(props: PromptViewProps) {
     channelMessages,
     conversationMessagesLength: conversationMessages.length,
     activeConnectionId,
+  });
+
+  useDeriveSessionAgentEffect({
+    connectionId: activeConnectionId,
+    conversationMessages,
   });
 
   const canAbort = Boolean(providerSessionId);

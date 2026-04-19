@@ -48,6 +48,19 @@ export interface UseAutoScrollOptions {
   threshold?: number;
   /** Distance from bottom (px) beyond which the jump button should show. */
   jumpThreshold?: number;
+  /**
+   * External stick-to-bottom preference (Bug 3 — global toggle). When this
+   * value flips from false → true the hook re-engages sticky and scrolls to
+   * bottom. When the hook internally flips sticky → false (because the user
+   * scrolled away), the consumer's `onStickyChange` callback fires so the
+   * preference can be persisted.
+   */
+  stickyPreference?: boolean;
+  /**
+   * Called whenever the hook's internal `isStickyToBottom` changes. The
+   * consumer is expected to mirror this into the persisted preference.
+   */
+  onStickyChange?: (sticky: boolean) => void;
 }
 
 export interface UseAutoScrollReturn {
@@ -188,17 +201,30 @@ export function createAutoScrollMarker(): AutoScrollMarker {
 export function useAutoScroll(
   options: UseAutoScrollOptions,
 ): UseAutoScrollReturn {
-  const { threshold = 10, jumpThreshold = 400 } = options;
+  const {
+    threshold = 10,
+    jumpThreshold = 400,
+    stickyPreference,
+    onStickyChange,
+  } = options;
 
   // Single source of truth.
-  const [isStickyToBottom, setIsStickyToBottom] = useState(true);
+  const [isStickyToBottom, setIsStickyToBottom] = useState(
+    stickyPreference ?? true,
+  );
   const [isAtBottom, setIsAtBottom] = useState(true);
   const [showJump, setShowJump] = useState(false);
   const [pauseVersion, setPauseVersion] = useState(0);
 
   const scrollElRef = useRef<HTMLDivElement | null>(null);
-  const stickyRef = useRef(true);
+  const stickyRef = useRef(stickyPreference ?? true);
   const markerRef = useRef(createAutoScrollMarker());
+  // Keep the latest onStickyChange callback in a ref so setSticky stays stable
+  // even when the consumer passes an inline callback.
+  const onStickyChangeRef = useRef(onStickyChange);
+  useEffect(() => {
+    onStickyChangeRef.current = onStickyChange;
+  }, [onStickyChange]);
   /**
    * Timestamp (ms since epoch) until which scroll events should be treated as
    * programmatic regardless of the marker's exact-scrollTop match. Set by
@@ -218,6 +244,9 @@ export function useAutoScroll(
     stickyRef.current = next;
     setIsStickyToBottom(next);
     if (!next) setPauseVersion((v) => v + 1);
+    // Notify the consumer so external state (e.g. a persisted atom) can mirror
+    // the change. Using a ref keeps this callback effectively stable.
+    onStickyChangeRef.current?.(next);
   }, []);
 
   const getDistanceFromBottom = useCallback((el: HTMLDivElement): number => {
@@ -353,6 +382,21 @@ export function useAutoScroll(
     },
     [syncDerivedState],
   );
+
+  // External stick-to-bottom preference (Bug 3). When the consumer flips the
+  // preference (e.g. via the toggle button or on channel switch), reflect it
+  // here. Crucially we only react when the preference *differs* from the
+  // current internal sticky state, otherwise we'd loop with `onStickyChange`.
+  useEffect(() => {
+    if (stickyPreference === undefined) return;
+    if (stickyPreference === stickyRef.current) return;
+    if (stickyPreference) {
+      // Re-engage: sticky=true AND scroll to bottom.
+      scrollToBottomInternal('auto', true);
+    } else {
+      setSticky(false);
+    }
+  }, [stickyPreference, scrollToBottomInternal, setSticky]);
 
   return {
     scrollRef,

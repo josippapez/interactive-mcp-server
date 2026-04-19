@@ -99,6 +99,7 @@ export default function QuestionDock({
       const saver = (
         window.api as unknown as {
           saveClipboardAttachment?: (
+            sessionKey: string,
             data: string,
             mimeType: string,
           ) => Promise<{
@@ -112,7 +113,11 @@ export default function QuestionDock({
         setPasteNotice('Image paste not supported in this build');
         return;
       }
-      const result = await saver(base64, file.type || 'image/png');
+      const result = await saver(
+        question.sessionID,
+        base64,
+        file.type || 'image/png',
+      );
       if (!result) {
         setPasteNotice('Failed to save pasted image');
         return;

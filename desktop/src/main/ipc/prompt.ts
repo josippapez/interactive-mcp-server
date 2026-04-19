@@ -246,18 +246,25 @@ export function __resetPromptStateForTests(): void {
 }
 
 /**
- * Cancel and clean up any active prompt originating from a given MCP transport.
- * Call when a connection drops to avoid leaked listeners.
+ * Cancel and clean up any active prompt matching the given identity.
  *
- * We scan the activePrompts map (keyed on providerSessionId) for any prompt
- * whose PromptData.connectionId matches the dropped transport. This is why
- * `connectionId` remains a field on PromptData — it is the only link between
- * a transport and the providerSessionId-keyed prompts that originated on it.
+ * The `identity` argument is opaque: it may be either an MCP transport
+ * `connectionId` (when called from transport-drop paths in mcp-server.ts) or
+ * a `providerSessionId` (when called from session-removal paths that only
+ * know the canonical session id). We match against BOTH fields on each
+ * active prompt so callers do not need to know which form they hold.
+ *
+ * For queued prompts, the map key IS the providerSessionId, and the queued
+ * entry carries the originating connectionId — we match against both.
  */
-export function cancelActivePrompt(connectionId: string): void {
+export function cancelActivePrompt(identity: string): void {
   const keysToCancel = new Set<string>();
   for (const [key, state] of activePrompts.entries()) {
-    if (state.data.connectionId === connectionId) {
+    if (
+      state.data.connectionId === identity ||
+      state.data.providerSessionId === identity ||
+      key === identity
+    ) {
       keysToCancel.add(key);
     }
   }
@@ -279,7 +286,7 @@ export function cancelActivePrompt(connectionId: string): void {
 
     const remaining: typeof queued = [];
     for (const entry of queued) {
-      if (entry.connectionId !== connectionId) {
+      if (entry.connectionId !== identity && key !== identity) {
         remaining.push(entry);
         continue;
       }
@@ -298,17 +305,21 @@ export function cancelActivePrompt(connectionId: string): void {
 }
 
 /**
- * Force-terminate a chat originating from a given MCP transport. Resolves any
- * pending prompt with a termination message so the agent knows the user
- * closed the chat.
+ * Force-terminate a chat matching the given identity. See cancelActivePrompt
+ * for the opaque-identity matching rules. Resolves any pending prompt with
+ * a termination message so the agent knows the user closed the chat.
  */
-export function forceTerminateChat(connectionId: string): void {
+export function forceTerminateChat(identity: string): void {
   const terminationMessage =
     'USER_FORCE_TERMINATED: The user has force-terminated this conversation. Stop all current work and acknowledge the termination.';
 
   const keysToTerminate = new Set<string>();
   for (const [key, state] of activePrompts.entries()) {
-    if (state.data.connectionId === connectionId) {
+    if (
+      state.data.connectionId === identity ||
+      state.data.providerSessionId === identity ||
+      key === identity
+    ) {
       keysToTerminate.add(key);
     }
   }
@@ -327,7 +338,7 @@ export function forceTerminateChat(connectionId: string): void {
 
     const remaining: typeof queued = [];
     for (const entry of queued) {
-      if (entry.connectionId !== connectionId) {
+      if (entry.connectionId !== identity && key !== identity) {
         remaining.push(entry);
         continue;
       }

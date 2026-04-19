@@ -20,19 +20,6 @@ export const _sessionCache = new Map<string, SessionInfo>();
  */
 export const _tombstonedSessionIds = new Set<string>();
 
-/**
- * Ring buffer of recently registered connections (connectionId → timestamp).
- * Used by auto-bind to find unbound connections within AUTO_BIND_WINDOW_MS.
- *
- * Phase 2 exception: this map is intentionally keyed by `connectionId` (not
- * `providerSessionId`). At the moment a connection is recorded here it has
- * NOT yet been bound to an OpenCode session — that binding is exactly what
- * `tryAutoBindSession` performs. The transport-level `connectionId` is the
- * only stable identifier available at registration time. Do not rekey this
- * map as part of the provider-session-id unification.
- */
-export const _pendingConnections = new Map<string, number>();
-
 // ─── Lifecycle state ─────────────────────────────────────────────────────────
 
 export const state = {

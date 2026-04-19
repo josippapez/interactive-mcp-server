@@ -28,6 +28,7 @@ export function createSystemApi() {
       size: number;
     } | null> => ipcRenderer.invoke('read-file-for-attachment', filePath),
     saveClipboardAttachment: (
+      sessionKey: string,
       data: string,
       mimeType: string,
     ): Promise<{
@@ -35,7 +36,11 @@ export function createSystemApi() {
       absolutePath: string;
       url: string | null;
     } | null> =>
-      ipcRenderer.invoke('save-clipboard-attachment', { data, mimeType }),
+      ipcRenderer.invoke('save-clipboard-attachment', {
+        sessionKey,
+        data,
+        mimeType,
+      }),
 
     selectFolderDialog: (): Promise<{
       canceled: boolean;

@@ -11,6 +11,12 @@ export type SessionStatusType = 'info' | 'working' | 'success' | 'error';
 
 export type IpcListenerOpts = {
   getActiveConnectionId: () => string | null;
+  /**
+   * Synchronously read whether the active null selection is intentional
+   * (i.e., the user opened the "+ New Session" idle view). Used to suppress
+   * snapshot-driven auto-select that would otherwise steal focus.
+   */
+  getIsIntentionalNullSelection: () => boolean;
   activateRef: React.RefObject<() => void>;
   setNodes: React.Dispatch<React.SetStateAction<Map<string, SessionNode>>>;
   /**

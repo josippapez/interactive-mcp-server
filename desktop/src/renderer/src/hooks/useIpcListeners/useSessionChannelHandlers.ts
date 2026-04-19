@@ -20,10 +20,14 @@ export function useSessionChannelHandlers({
     let deletedOcId: string | null = null;
 
     setNodes((prev) => {
-      // Resolve the primary key to delete
+      // Resolve the primary key to delete.
+      // `data.sessionId` is the channel's session_id, which IS the
+      // providerSessionId for OpenCode-backed channels (see getActiveSessionChannels).
+      // Pass it as providerSessionId so the helper matches by that field rather
+      // than falling back to the shared connectionId scan. (Bug A fix #4)
       const key: string | null = prev.has(data.sessionId)
         ? data.sessionId
-        : findKeyByConnectionId(prev, data.sessionId);
+        : findKeyByConnectionId(prev, data.sessionId, data.sessionId);
       if (!key) return prev;
 
       deletedKey = key;
@@ -63,8 +67,15 @@ export function useSessionChannelHandlers({
         });
         return next;
       }
-      // OpenCode session keyed by providerSessionId
-      const nodeId = findKeyByConnectionId(prev, data.sessionId);
+      // OpenCode session keyed by providerSessionId.
+      // `data.sessionId` is the channel's session_id which IS the
+      // providerSessionId; pass it as providerSessionId so the helper avoids
+      // the shared-connectionId fallback scan. (Bug A fix #4)
+      const nodeId = findKeyByConnectionId(
+        prev,
+        data.sessionId,
+        data.sessionId,
+      );
       if (!nodeId) return prev;
       const next = new Map(prev);
       next.set(nodeId, {

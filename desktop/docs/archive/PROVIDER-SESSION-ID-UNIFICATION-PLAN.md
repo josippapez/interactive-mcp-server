@@ -6,6 +6,42 @@
 
 ---
 
+## Post-Phase-6 follow-up (2026-04)
+
+Several routing bugs surfaced after Phase 6 because residual code paths still
+matched on the shared MCP `connectionId` instead of the unique
+`providerSessionId`. Cross-channel message corruption (a subagent's messages
+appearing in a sibling/parent channel) was traced to those fallbacks.
+
+Fixes applied as a follow-up sweep (see git history around the "providerSessionId
+routing fix" commits):
+
+- Removed dead `?? findKeyByConnectionId(...)` fallbacks in
+  `useConnections/message-handlers.ts` and `useConnections/startup-prompts.ts`.
+- Stopped emitting a broken `session-status-update` from `bus-event-forwarders`
+  and changed `connectionId` fallbacks from `?? sessionID` to `?? null` so OC
+  SSE events never fabricate a connection identity.
+- Refactored `cancelActivePrompt` and `forceTerminateChat` to treat the
+  argument as an opaque identity (no implicit connectionId routing).
+- Restricted the `findKeyByConnectionId` and `findNodeBySessionId`
+  connectionId-only fallback to nodes where
+  `isDirectConnection || providerSessionId === null`.
+- Extracted a pure `dismissStatus` helper (co-located test) so dismiss flows
+  use the same restricted matcher.
+- **Removed `tryAutoBindSession`, `recordPendingConnection`, the
+  `_pendingConnections` map and `AUTO_BIND_WINDOW_MS` entirely.** With the
+  post-Phase-6 contract requiring agents to pass `openCodeSessionId` on every
+  call, the timestamp-based bind heuristic was both dead and a real
+  data-corruption risk: when two subagents called `register_connection` within
+  the bind window without a session id, the LIFO tiebreak could swap their
+  MCP transports.
+
+The notes below describe the _original_ plan; sections that mention the
+auto-bind heuristic, `_pendingConnections`, or the connectionId-as-session-id
+priority chain are now historical.
+
+---
+
 ## 1. Motivation
 
 ### Why not just drop `openCodeSessionId` and use `connectionId`?

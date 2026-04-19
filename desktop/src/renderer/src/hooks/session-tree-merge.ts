@@ -54,11 +54,12 @@ function createSessionChannel(
 function mergeSnapshotNode(
   prev: Map<string, SessionNode>,
   snap: SnapshotNode,
+  claimedConnectionIds?: Set<string>,
 ): SessionNode {
   const existing = prev.get(snap.providerSessionId);
 
   let directNode: SessionNode | undefined;
-  if (snap.connectionId) {
+  if (snap.connectionId && !claimedConnectionIds?.has(snap.connectionId)) {
     for (const [prevId, prevNode] of prev) {
       if (
         prevNode.isDirectConnection &&
@@ -66,6 +67,10 @@ function mergeSnapshotNode(
           prevId === snap.connectionId)
       ) {
         directNode = prevNode;
+        // Mark this connectionId as claimed so sibling snapshot nodes that
+        // share the same MCP transport don't re-absorb its runtime state and
+        // duplicate channelMessages / pendingPermissions / etc.
+        claimedConnectionIds?.add(snap.connectionId);
         break;
       }
     }
@@ -140,8 +145,18 @@ export function mergeSessionTreeSnapshot(
     if (snap.connectionId) snapshotConnectionIds.add(snap.connectionId);
   }
 
+  // Track which direct-connection connectionIds have already been absorbed
+  // during this merge pass. A single MCP transport can be shared by multiple
+  // OC sessions (parent + child subagent), and only ONE of them may inherit
+  // the direct-connection's runtime state — otherwise channelMessages bleed
+  // across sibling channels and render in the wrong chat history view.
+  const claimedConnectionIds = new Set<string>();
+
   for (const snap of snapshotNodes) {
-    next.set(snap.providerSessionId, mergeSnapshotNode(prev, snap));
+    next.set(
+      snap.providerSessionId,
+      mergeSnapshotNode(prev, snap, claimedConnectionIds),
+    );
   }
 
   // Preserve direct-connection nodes that were NOT absorbed.

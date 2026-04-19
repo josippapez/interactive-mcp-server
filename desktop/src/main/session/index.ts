@@ -40,7 +40,6 @@ export {
 // tree-manager
 export {
   tombstoneOpenCodeSession,
-  recordPendingConnection,
   startSessionTreeManager,
   stopSessionTreeManager,
   triggerSessionTreeUpdate,

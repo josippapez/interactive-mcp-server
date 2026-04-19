@@ -1,26 +1,14 @@
 import {
+  resolveNewlyCreatedSessionNodeId,
+  shouldAutoSelectNewSession,
+} from './auto-select-decision';
+import {
   mergeSessionTreeSnapshot,
   upsertOptimisticSessionNode,
-  type SnapshotNode,
 } from '../session-tree-merge';
 import type { HandlerContext } from './types';
 
-export function resolveNewlyCreatedSessionNodeId(
-  prev: Map<string, { id: string }>,
-  snapshotNodes: SnapshotNode[],
-): { sessionId: string; hasConnectedChannel: boolean } | null {
-  let newestSessionNodeId: string | null = null;
-  let hasConnectedChannel = false;
-  for (const snap of snapshotNodes) {
-    if (prev.has(snap.providerSessionId)) continue;
-    newestSessionNodeId = snap.providerSessionId;
-    if (snap.hasMcpChannel) {
-      hasConnectedChannel = true;
-    }
-  }
-  if (!newestSessionNodeId) return null;
-  return { sessionId: newestSessionNodeId, hasConnectedChannel };
-}
+export { resolveNewlyCreatedSessionNodeId } from './auto-select-decision';
 
 /**
  * Registers the IPC listener for session tree updates.
@@ -28,6 +16,7 @@ export function resolveNewlyCreatedSessionNodeId(
  */
 export function useSessionTreeHandler({
   getActiveConnectionId,
+  getIsIntentionalNullSelection,
   activateRef,
   setNodes,
   selectChannel,
@@ -48,38 +37,45 @@ export function useSessionTreeHandler({
   // ------------------------------------------------------------------
   window.api.onSessionTreeUpdated?.((snapshotNodes) => {
     setNodes((prev) => {
-      const newestSessionNode = resolveNewlyCreatedSessionNodeId(
-        prev,
-        snapshotNodes,
-      );
+      const candidate = resolveNewlyCreatedSessionNodeId(prev, snapshotNodes);
       const next = mergeSessionTreeSnapshot(prev, snapshotNodes);
 
-      // Load history once per connectionId for any newly-connected nodes.
-      // Also drain any startup-buffered history and prompts for nodes that just appeared.
+      // Load history once per providerSessionId for any newly-connected nodes.
+      // Also drain any startup-buffered history and prompts for nodes that just
+      // appeared. We key on providerSessionId (not connectionId) because the
+      // channel-history DB is keyed by providerSessionId, and a single MCP
+      // transport (connectionId) is shared across an OpenCode parent + all
+      // child agents — keying on connectionId here causes cross-channel bleed
+      // and skips siblings after the first load. (Bug A fix #5)
       for (const snap of snapshotNodes) {
         // Apply buffered prompts for this session (uses providerSessionId)
         applyStartupPromptBuffer(snap.providerSessionId, snap.connectionId);
         applyStartupPermissionBuffer(snap.providerSessionId, snap.connectionId);
         applyStartupQuestionBuffer(snap.providerSessionId, snap.connectionId);
 
-        if (snap.connectionId) {
+        const historyKey = snap.providerSessionId;
+        if (historyKey) {
           // Drain startup buffer first (no-op if nothing buffered)
-          applyStartupHistoryBuffer(snap.connectionId);
-          if (!loadedHistoryIds.current.has(snap.connectionId)) {
-            loadedHistoryIds.current.add(snap.connectionId);
-            void loadChannelHistory(snap.connectionId);
+          applyStartupHistoryBuffer(historyKey);
+          if (!loadedHistoryIds.current.has(historyKey)) {
+            loadedHistoryIds.current.add(historyKey);
+            void loadChannelHistory(historyKey);
           }
         }
       }
 
-      // Do not steal focus from a currently active channel. User-entered
-      // messages route through the active channel selection.
+      // Do not steal focus from a currently active channel, and do not
+      // override a deliberate user deselection (e.g., the "+ New Session"
+      // idle view). User-entered messages route through the active channel
+      // selection.
       if (
-        newestSessionNode &&
-        newestSessionNode.hasConnectedChannel &&
-        !getActiveConnectionId()
+        shouldAutoSelectNewSession({
+          candidate,
+          activeChannelId: getActiveConnectionId(),
+          isIntentionalNullSelection: getIsIntentionalNullSelection(),
+        })
       ) {
-        selectChannel(newestSessionNode.sessionId, 'connection-opened');
+        selectChannel(candidate!.sessionId, 'connection-opened');
         activateRef.current();
       }
 

@@ -47,9 +47,17 @@ export function findNodeBySessionId(
     }
   }
 
-  // Priority 3: Match by connectionId field (fallback for legacy/standalone)
+  // Priority 3: Match by connectionId field — RESTRICTED to direct/standalone
+  // connections only. OpenCode-backed nodes (which have a providerSessionId)
+  // share the same connectionId across parent/child sessions, so a
+  // connectionId-only match would corrupt cross-channel routing. Only allow
+  // this fallback for nodes that are direct connections or have no
+  // providerSessionId set yet.
   for (const [id, n] of nodes) {
-    if (n.connectionId === sessionId) {
+    if (
+      n.connectionId === sessionId &&
+      (n.isDirectConnection || n.providerSessionId === null)
+    ) {
       return { nodeKey: id, node: n };
     }
   }
@@ -100,6 +108,7 @@ export function useProviderInjection(
     attachments?: Attachment[],
     noReply?: boolean,
     modelOverride?: ModelOverride,
+    agent?: string,
   ) => Promise<void>;
 } {
   const inject = useCallback(
@@ -110,6 +119,7 @@ export function useProviderInjection(
       attachments?: Attachment[],
       noReply = true,
       modelOverride?: ModelOverride,
+      agent?: string,
     ): Promise<void> => {
       console.log('[useProviderInjection] inject() called', {
         sessionId,
@@ -356,6 +366,7 @@ export function useProviderInjection(
                   attachmentsCount: attachments?.length ?? 0,
                   noReply,
                   modelOverride,
+                  agent,
                   timestamp: new Date().toISOString(),
                 },
               );
@@ -366,6 +377,7 @@ export function useProviderInjection(
                 attachments,
                 noReply,
                 modelOverride,
+                agent,
               )) ?? { ok: false, error: 'OpenCode inject bridge unavailable' };
               const injectElapsed = performance.now() - injectStartTime;
               console.log(

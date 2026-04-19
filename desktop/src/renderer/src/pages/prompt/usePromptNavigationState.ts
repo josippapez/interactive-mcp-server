@@ -1,6 +1,12 @@
+import { useSetAtom } from 'jotai';
 import { useCallback, useEffect, useMemo } from 'react';
 import { resolveSessionActionTarget } from '../../hooks/remove-session-target';
+import { setSessionAgentAtom } from '../../store/session-agents';
 import type { SessionNode } from '../../types';
+import {
+  resolvePendingAgentAssignment,
+  type PendingNewSessionAgent,
+} from './pending-agent-assignment';
 
 type Args = {
   connections: Map<string, SessionNode>;
@@ -10,6 +16,8 @@ type Args = {
   pendingSessionSelect: string | null;
   onSelectConnection: (connectionId: string | null) => void;
   setPendingSessionSelect: (value: string | null) => void;
+  pendingNewSessionAgent: PendingNewSessionAgent | null;
+  setPendingNewSessionAgent: (value: PendingNewSessionAgent | null) => void;
 };
 
 export function usePromptNavigationState({
@@ -20,7 +28,10 @@ export function usePromptNavigationState({
   pendingSessionSelect,
   onSelectConnection,
   setPendingSessionSelect,
+  pendingNewSessionAgent,
+  setPendingNewSessionAgent,
 }: Args) {
+  const setSessionAgent = useSetAtom(setSessionAgentAtom);
   const activeNode = activeConnectionId
     ? connections.get(activeConnectionId)
     : null;
@@ -58,6 +69,18 @@ export function usePromptNavigationState({
 
     for (const [nodeId, node] of connections) {
       if (node.providerSessionId === pendingSessionSelect) {
+        const assignment = resolvePendingAgentAssignment({
+          matchedNodeId: nodeId,
+          matchedSessionId: pendingSessionSelect,
+          pendingNewSessionAgent,
+        });
+        if (assignment) {
+          setSessionAgent({
+            connectionId: assignment.connectionId,
+            agent: assignment.agent,
+          });
+          setPendingNewSessionAgent(null);
+        }
         onSelectConnection(nodeId);
         setPendingSessionSelect(null);
         return;
@@ -68,6 +91,9 @@ export function usePromptNavigationState({
     pendingSessionSelect,
     onSelectConnection,
     setPendingSessionSelect,
+    pendingNewSessionAgent,
+    setPendingNewSessionAgent,
+    setSessionAgent,
   ]);
 
   const handleNavigateToParent = useCallback(() => {

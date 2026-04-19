@@ -1,6 +1,5 @@
 import { useCallback } from 'react';
 import type { Attachment, SessionNode } from '../../types';
-import { findKeyByConnectionId } from '../useIpcListeners';
 import { resolveInteractiveMessageTarget } from '../../store/message-dispatch';
 import type { ModelOverride } from '../useProviderInjection';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
@@ -31,6 +30,7 @@ interface MessageHandlersOptions {
     attachments?: Attachment[],
     noReply?: boolean,
     modelOverride?: ModelOverride,
+    agent?: string,
   ) => Promise<void>;
 }
 
@@ -75,8 +75,7 @@ export function useMessageHandlers({
 
       // Update the UI with the outbound message
       setNodes((prev) => {
-        const key =
-          target.nodeKey ?? findKeyByConnectionId(prev, sessionId, sessionId);
+        const key = target.nodeKey;
         if (!key) return prev;
         const node = prev.get(key)!;
         if (node.channelMessages.some((m) => m.id === outboundId)) {
@@ -114,6 +113,12 @@ export function useMessageHandlers({
       message: string,
       attachments?: Attachment[],
       modelOverride?: ModelOverride,
+      /**
+       * Optional per-message OpenCode agent override (e.g. 'plan',
+       * 'docs-maintainer'). Whitespace-only or empty values fall back to
+       * the session's default agent. The override is ephemeral.
+       */
+      agent?: string,
     ) => {
       const activeChannelId = getActiveChannelIdSnapshot();
       // Interactive sends must always follow the currently selected channel.
@@ -134,6 +139,7 @@ export function useMessageHandlers({
         messageLength: message.length,
         attachmentsCount: attachments?.length ?? 0,
         hasModelOverride: !!modelOverride,
+        agent: agent ?? '(none)',
       });
 
       if (!target) {
@@ -148,8 +154,7 @@ export function useMessageHandlers({
 
       // Add outbound message to UI immediately using resolved target
       setNodes((prev) => {
-        const key =
-          target.nodeKey ?? findKeyByConnectionId(prev, sessionId, sessionId);
+        const key = target.nodeKey;
         if (!key) {
           logHandler('handleInjectWithReply', 'CRITICAL-key-null', {
             sessionId,
@@ -193,6 +198,7 @@ export function useMessageHandlers({
         attachments,
         false,
         modelOverride,
+        agent,
       );
     },
     [nodesRef, setNodes, inject],

@@ -1,4 +1,5 @@
 import type { BrowserWindow } from 'electron';
+import { clearSessionAttachments } from './attachment-store';
 
 export interface RemovePersistedSessionDeps {
   getWindow: () => BrowserWindow | null;
@@ -77,6 +78,14 @@ export async function removePersistedSession(
   deps.deleteSessionChannel(sessionId);
   deps.deleteRegisteredConnection(providerSessionId);
   deps.markSessionDeleted(providerSessionId);
+
+  // Remove any ephemeral attachment files for this session. Both the
+  // providerSessionId (OpenCode) and the connectionId (non-OpenCode) may have
+  // been used as the attachment sessionKey, so clear both directories.
+  clearSessionAttachments(providerSessionId);
+  if (sessionId !== providerSessionId) {
+    clearSessionAttachments(sessionId);
+  }
 
   // Tombstone the provider session so the session-tree poller never re-adds
   // the just-deleted node while the OpenCode session itself still lives.

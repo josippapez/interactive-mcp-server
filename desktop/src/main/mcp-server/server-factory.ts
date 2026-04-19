@@ -102,7 +102,12 @@ export function createMcpServerWithTools(
     },
   );
   registerFindRepoDocsTool(server, connectionId, requireSessionId);
-  registerManageSkillsAndInstructionsTool(server, getWindow, connectionId);
+  registerManageSkillsAndInstructionsTool(
+    server,
+    getWindow,
+    connectionId,
+    getOpenCodePort,
+  );
   registerPollContextInjectionsTool(server, connectionId, requireSessionId);
   applyHiddenToolListFilter(server);
   return server;

@@ -25,10 +25,7 @@ import { subscribeToSyncEvents } from './tree-manager/sse-subscription';
 
 // ─── Re-exports ──────────────────────────────────────────────────────────────
 
-export {
-  recordPendingConnection,
-  tombstoneOpenCodeSession,
-} from './tree-manager/auto-register';
+export { tombstoneOpenCodeSession } from './tree-manager/auto-register';
 export { refreshSessionTreeCache } from './tree-manager/rest-seed';
 export type {
   OpenCodeSession,

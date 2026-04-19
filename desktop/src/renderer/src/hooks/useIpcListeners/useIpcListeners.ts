@@ -29,6 +29,7 @@ export {
  */
 export function useIpcListeners({
   getActiveConnectionId,
+  getIsIntentionalNullSelection,
   activateRef,
   setNodes,
   selectChannel,
@@ -46,7 +47,7 @@ export function useIpcListeners({
   rehydrateActivePrompts,
   rehydratePendingPermissions,
   rehydratePendingQuestions,
-  }: IpcListenerOpts): void {
+}: IpcListenerOpts): void {
   const listenersRegistered = useRef(false);
   // Track which connectionIds we've already loaded history for.
   const loadedHistoryIds = useRef(new Set<string>());
@@ -81,6 +82,7 @@ export function useIpcListeners({
     // Build the shared handler context
     const context = {
       getActiveConnectionId,
+      getIsIntentionalNullSelection,
       activateRef,
       setNodes,
       selectChannel,
@@ -120,6 +122,7 @@ export function useIpcListeners({
     // listenersRegistered guard prevents double-registration in StrictMode.
   }, [
     getActiveConnectionId,
+    getIsIntentionalNullSelection,
     activateRef,
     loadChannelHistory,
     selectChannel,

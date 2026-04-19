@@ -115,6 +115,13 @@ export function createOpenCodeSessionsApi() {
         modelId: string;
         variant?: string;
       },
+      /**
+       * Optional per-message OpenCode agent override (e.g. 'plan',
+       * 'docs-maintainer'). Whitespace-only or empty strings fall back to
+       * the session's default agent. The override is ephemeral — it is
+       * applied to a single prompt only and is not persisted.
+       */
+      agent?: string,
     ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> =>
       ipcRenderer.invoke('inject-opencode-message', {
         openCodeSessionId,
@@ -122,6 +129,7 @@ export function createOpenCodeSessionsApi() {
         attachments,
         noReply,
         modelOverride,
+        agent,
       }),
 
     injectClaudeMessage: (

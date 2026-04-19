@@ -15,7 +15,6 @@ import {
   autoDetectOpenCodeSession,
   fetchOpenCodeSession,
 } from '../opencode/session';
-import { recordPendingConnection } from '../session/tree-manager';
 import type { AgentBackend } from '../settings';
 import {
   startStartupContextInjection,
@@ -155,9 +154,10 @@ export function registerConnectionTool(
         parentSessionId: parentSessionId ?? undefined,
       });
 
-      if (!openCodeSessionId && backend.supportsProviderInjection) {
-        recordPendingConnection(connectionId);
-      }
+      // Phase 6 follow-up: the legacy `recordPendingConnection` /
+      // `tryAutoBindSession` heuristic was removed. Agents must pass
+      // `openCodeSessionId` explicitly per the post-Phase-6 contract, so
+      // there is no longer any timestamp-based binding fallback here.
 
       createSessionChannel(connectionId, channelName);
 

@@ -3,28 +3,30 @@
  *
  * - autoRegisterSession: create a registered_connections row with connection_id=NULL
  *   for any new OpenCode session, so it appears in the sidebar immediately.
- * - tryAutoBindSession: if a pending transport was registered within
- *   AUTO_BIND_WINDOW_MS, bind its connectionId onto the session's row.
  * - tombstoneOpenCodeSession: exclude a session from all future snapshots.
- * - recordPendingConnection: track a just-registered MCP transport awaiting binding.
+ *
+ * NOTE (Phase 6 follow-up): the legacy `recordPendingConnection` /
+ * `tryAutoBindSession` heuristic was removed. The post-Phase-6 agent contract
+ * (root `AGENTS.md`) requires every tool call — including `register_connection`
+ * — to pass `openCodeSessionId`, which means there is no longer any case where
+ * we need to guess a connection→session binding from timestamps. Routing now
+ * always uses the explicit session ID. Removing the heuristic also removes a
+ * mis-binding (data corruption) race when two subagents registered without
+ * `openCodeSessionId` within `AUTO_BIND_WINDOW_MS`.
  */
 
 import {
   getRegisteredConnectionBySessionId,
   isProviderSessionClaimed,
-  updateConnectionId,
+  listSkillsAndInstructions,
   upsertRegisteredConnection,
 } from '../../database';
 import { injectOpenCodeMessage } from '../../opencode/injector';
+import { buildStartupContextMessage } from '../../tools/startup-context';
 import { createLogger } from '../../utils/logger';
-import {
-  _pendingConnections,
-  _sessionCache,
-  _tombstonedSessionIds,
-  state,
-} from './state';
+import { _sessionCache, _tombstonedSessionIds, state } from './state';
 import { scheduleSnapshot } from './snapshot';
-import { AUTO_BIND_WINDOW_MS, type SessionInfo } from './types';
+import { type SessionInfo } from './types';
 
 const log = createLogger('session-tree');
 
@@ -38,57 +40,6 @@ export function tombstoneOpenCodeSession(openCodeSessionId: string): void {
   _tombstonedSessionIds.add(openCodeSessionId);
   _sessionCache.delete(openCodeSessionId);
   scheduleSnapshot();
-}
-
-// ─── Pending-connection registry ─────────────────────────────────────────────
-
-/**
- * Record a newly-registered connection as "pending" for auto-bind.
- * Called from register_connection immediately after the DB upsert.
- * Only connections without an explicit openCodeSessionId are registered here.
- */
-export function recordPendingConnection(connectionId: string): void {
-  _pendingConnections.set(connectionId, Date.now());
-}
-
-// ─── Auto-bind logic ─────────────────────────────────────────────────────────
-
-export function tryAutoBindSession(info: SessionInfo): void {
-  // Only auto-bind child sessions.
-  if (!info.parentID) return;
-
-  const now = Date.now();
-  const cutoff = now - AUTO_BIND_WINDOW_MS;
-
-  // Expire stale pending entries first.
-  for (const [connId, ts] of _pendingConnections) {
-    if (ts < cutoff) _pendingConnections.delete(connId);
-  }
-
-  if (_pendingConnections.size === 0) return;
-
-  // Find the most recently registered pending connection.
-  let bestConnId: string | null = null;
-  let bestTs = -1;
-  for (const [connId, ts] of _pendingConnections) {
-    if (ts > bestTs) {
-      bestTs = ts;
-      bestConnId = connId;
-    }
-  }
-
-  if (!bestConnId) return;
-
-  console.log(
-    `[session-tree] auto-bind: connection=${bestConnId} → session=${info.id} (parentID=${info.parentID})`,
-  );
-
-  // Phase 4: the SSE auto-register path has already created the row with
-  // connection_id = NULL. Bind the waiting transport by setting connection_id
-  // on the existing row (never by recreating it, and never by setting
-  // connection_id = provider_session_id).
-  updateConnectionId(info.id, bestConnId, 'opencode');
-  _pendingConnections.delete(bestConnId);
 }
 
 // ─── Session bootstrap injection ─────────────────────────────────────────────
@@ -176,12 +127,18 @@ export function autoRegisterSession(
   log.info(
     `upserting registered connection for session ${info.id} with baseDirectory=${effectiveBaseDirectory ?? '(none)'}`,
   );
+  log.info(
+    `[bug2-trace] auto-register-sse providerSessionId=${info.id} ` +
+      `connectionId=null parentSessionId=${info.parentID ?? 'null'} ` +
+      `ts=${Date.now()}`,
+  );
   // Phase 4 invariant: SSE is the sole creator of OpenCode rows. Insert with
-  // connection_id = NULL — the MCP transport id is bound later (either by
+  // connection_id = NULL — the MCP transport id is bound later by
   // `autoRegisterDefaultConnection` in mcp-server.ts on MCP initialize, or by
-  // `tryAutoBindSession` below when a pending transport was registered within
-  // AUTO_BIND_WINDOW_MS). A non-null value here would violate the invariant
-  // `connection_id != provider_session_id` for OpenCode rows.
+  // an explicit `register_connection` call from the agent (which always passes
+  // `openCodeSessionId` per the post-Phase-6 contract). A non-null value here
+  // would violate the invariant `connection_id != provider_session_id` for
+  // OpenCode rows.
   upsertRegisteredConnection({
     providerSessionId: info.id,
     providerType: 'opencode',
@@ -207,6 +164,40 @@ export function autoRegisterSession(
       undefined,
       port,
     );
+
+    // Also inject DB-stored skills and instructions so child agents have the
+    // same knowledge context as parent (whose context comes from
+    // register_connection). Skip the network call entirely when there are
+    // no enabled entries to avoid an empty system-message injection.
+    try {
+      const entries = listSkillsAndInstructions().filter((e) => e.enabled);
+      if (entries.length > 0) {
+        const dbContext = buildStartupContextMessage({
+          channelName: info.title ?? `Session ${info.id.slice(0, 8)}`,
+          projectName: 'OpenCode',
+          baseDirectory: effectiveBaseDirectory,
+          openCodeSessionId: info.id,
+          entries,
+        });
+        log.info(
+          `injecting DB skills/instructions context (${entries.length} entries) into child session ${info.id}`,
+        );
+        void injectOpenCodeMessage(
+          info.id,
+          '', // empty user message — content goes in systemMessage
+          undefined,
+          port,
+          undefined,
+          true, // noReply
+          undefined,
+          dbContext,
+        );
+      }
+    } catch (err) {
+      log.warn(
+        `failed to inject DB skills/instructions for child session ${info.id}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   if (options?.scheduleSnapshot !== false) {

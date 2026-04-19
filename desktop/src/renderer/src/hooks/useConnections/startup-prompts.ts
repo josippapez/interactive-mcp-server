@@ -117,11 +117,12 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
       };
 
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(
-          prev,
-          pendingPermission.sessionID,
-          pendingPermission.sessionID,
-        );
+        // Permissions are OpenCode-specific; sessionID IS the providerSessionId,
+        // which is the nodes-map key after Phase 6. Direct lookup avoids the
+        // shared-connectionId ambiguity between OC parent + children.
+        const nodeId = prev.has(pendingPermission.sessionID)
+          ? pendingPermission.sessionID
+          : null;
         if (!nodeId) {
           const buffered =
             startupPermissionBuffer.current.get(pendingPermission.sessionID) ??
@@ -169,11 +170,12 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
       };
 
       setNodes((prev) => {
-        const nodeId = findKeyByConnectionId(
-          prev,
-          pendingQuestion.sessionID,
-          pendingQuestion.sessionID,
-        );
+        // Questions are OpenCode-specific; sessionID IS the providerSessionId,
+        // which is the nodes-map key after Phase 6. Direct lookup avoids the
+        // shared-connectionId ambiguity between OC parent + children.
+        const nodeId = prev.has(pendingQuestion.sessionID)
+          ? pendingQuestion.sessionID
+          : null;
         if (!nodeId) {
           const buffered =
             startupQuestionBuffer.current.get(pendingQuestion.sessionID) ?? [];

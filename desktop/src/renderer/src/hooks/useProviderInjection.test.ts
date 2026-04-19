@@ -27,6 +27,7 @@ function mockNode(overrides: Partial<SessionNode> = {}): SessionNode {
     sessionChannel: null,
     sessionStatuses: [],
     pendingPermissions: [],
+    pendingQuestions: [],
     docContextEnabled: true,
     vcsInfo: null,
     ...overrides,
@@ -145,6 +146,34 @@ describe('findNodeBySessionId', () => {
     const result = findNodeBySessionId(nodes, 'ses_target');
 
     expect(result).toEqual({ nodeKey: 'some-key', node });
+  });
+
+  it('does NOT fall back to connectionId match for OC-backed nodes (prevents cross-channel routing)', () => {
+    // Bug scenario: two OC sessions share the same MCP transport UUID.
+    // Searching by that shared connectionId (which equals neither providerSessionId)
+    // must NOT match either node — otherwise we route the message to whichever
+    // happens to be first in iteration order.
+    const sharedConnectionId = 'conn-shared-uuid';
+    const node1 = mockNode({
+      id: 'ses_one',
+      providerSessionId: 'ses_one',
+      connectionId: sharedConnectionId,
+      isDirectConnection: false,
+    });
+    const node2 = mockNode({
+      id: 'ses_two',
+      providerSessionId: 'ses_two',
+      connectionId: sharedConnectionId,
+      isDirectConnection: false,
+    });
+    const nodes = new Map<string, SessionNode>([
+      ['ses_one', node1],
+      ['ses_two', node2],
+    ]);
+
+    // Searching by the shared connectionId alone returns null.
+    const result = findNodeBySessionId(nodes, sharedConnectionId);
+    expect(result).toEqual({ nodeKey: null, node: null });
   });
 
   it('preserves distinct parent and child OpenCode sessions that share one connectionId', () => {

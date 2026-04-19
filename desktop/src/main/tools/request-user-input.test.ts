@@ -12,10 +12,15 @@ vi.mock('../ipc-prompt', () => ({
   promptUser: vi.fn(),
 }));
 
+vi.mock('../session/resolver', () => ({
+  resolveProviderSessionId: vi.fn(),
+}));
+
 import {
   staleSessionError,
   requireProviderSessionId,
 } from './connection-guard';
+import { resolveProviderSessionId } from '../session/resolver';
 
 type ToolInput = {
   projectName: string;
@@ -62,12 +67,18 @@ const mockSignal = {} as AbortSignal;
 describe('request_user_input tool', () => {
   const mockStaleError = staleSessionError as Mock;
   const mockRequireProviderSessionId = requireProviderSessionId as Mock;
+  const mockResolveProviderSessionId = resolveProviderSessionId as Mock;
 
   beforeEach(() => {
     mockStaleError.mockReset();
     mockRequireProviderSessionId.mockReset();
+    mockResolveProviderSessionId.mockReset();
     mockStaleError.mockReturnValue(null);
     mockRequireProviderSessionId.mockReturnValue(null);
+    // Default: resolver returns whatever explicit ID was passed (or null)
+    mockResolveProviderSessionId.mockImplementation(
+      (_connId: string, explicit?: string | null) => explicit ?? null,
+    );
   });
 
   it('returns MISSING_SESSION_ID error when requireProviderSessionId returns an error', async () => {
@@ -247,6 +258,80 @@ describe('request_user_input tool', () => {
       );
       expect(fileText).toBeTruthy();
       expect(fileText?.text).toContain('hello world');
+    });
+  });
+
+  describe('Bug 2: shared connectionId routing (root vs. subagent)', () => {
+    it('routes to the parent session (oldest) when no openCodeSessionId is passed and connectionId is shared', async () => {
+      mockRequireProviderSessionId.mockReturnValue(null);
+
+      // Simulate the fixed resolver behavior: when no explicit session ID is
+      // passed but multiple sessions share the connectionId, return the
+      // OLDEST (parent) providerSessionId instead of the most recent (child).
+      const PARENT = 'ses_parent_root';
+      const CHILD = 'ses_child_subagent';
+      mockResolveProviderSessionId.mockImplementation(
+        (_connId: string, explicit?: string | null) => {
+          if (explicit) return explicit;
+          // No explicit ID -> fallback returns the parent (oldest), NOT child.
+          return PARENT;
+        },
+      );
+
+      const promptFn = vi.fn().mockResolvedValue({
+        answer: 'parent reply',
+        attachments: [],
+      });
+
+      const handler = getToolHandler('conn-shared', promptFn, false);
+      await handler(
+        {
+          projectName: 'proj',
+          message: 'Root agent question?',
+          baseDirectory: '/repo',
+          // NOTE: deliberately omitting openCodeSessionId to exercise fallback
+        },
+        { signal: mockSignal },
+      );
+
+      expect(promptFn).toHaveBeenCalledTimes(1);
+      const promptArgs = promptFn.mock.calls[0][1];
+      expect(promptArgs.providerSessionId).toBe(PARENT);
+      expect(promptArgs.providerSessionId).not.toBe(CHILD);
+      expect(mockResolveProviderSessionId).toHaveBeenCalledWith(
+        'conn-shared',
+        undefined,
+      );
+    });
+
+    it('routes to the explicit subagent session when openCodeSessionId is passed', async () => {
+      mockRequireProviderSessionId.mockReturnValue(null);
+
+      const CHILD = 'ses_child_subagent';
+      // Resolver default impl already returns explicit when provided.
+      const promptFn = vi.fn().mockResolvedValue({
+        answer: 'child reply',
+        attachments: [],
+      });
+
+      const handler = getToolHandler('conn-shared', promptFn, false);
+      await handler(
+        {
+          projectName: 'proj',
+          message: 'Subagent question?',
+          baseDirectory: '/repo',
+          openCodeSessionId: CHILD,
+        },
+        { signal: mockSignal },
+      );
+
+      expect(promptFn).toHaveBeenCalledTimes(1);
+      const promptArgs = promptFn.mock.calls[0][1];
+      expect(promptArgs.providerSessionId).toBe(CHILD);
+      expect(mockResolveProviderSessionId).toHaveBeenCalledWith(
+        'conn-shared',
+        CHILD,
+      );
     });
   });
 });

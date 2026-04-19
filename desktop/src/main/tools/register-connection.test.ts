@@ -23,7 +23,6 @@ vi.mock('../opencode/session', () => ({
 
 vi.mock('../session/tree-manager', () => ({
   triggerSessionTreeUpdate: vi.fn(),
-  recordPendingConnection: vi.fn(),
   refreshSessionTreeCache: vi.fn(),
 }));
 

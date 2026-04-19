@@ -1,4 +1,4 @@
-import React, { memo, useCallback } from 'react';
+import React, { memo, useCallback, useEffect } from 'react';
 
 interface ImageModalProps {
   image: { src: string; name: string };
@@ -19,6 +19,20 @@ const ImageModal = memo(function ImageModal({
   const handleContentClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
   }, []);
+
+  // Close on Escape — the UI advertises "ESC" in the close button, so wire
+  // the actual keyboard shortcut. Listener is scoped to the lifetime of the
+  // modal; re-runs if onClose identity changes.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
 
   return (
     <div

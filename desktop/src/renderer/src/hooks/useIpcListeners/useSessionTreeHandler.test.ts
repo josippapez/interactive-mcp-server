@@ -24,6 +24,7 @@ function makeSnapshotNode(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
 function makeContext(overrides: Partial<HandlerContext> = {}): HandlerContext {
   return {
     getActiveConnectionId: () => null,
+    getIsIntentionalNullSelection: () => false,
     activateRef: { current: vi.fn() },
     setNodes: vi.fn(),
     selectChannel: vi.fn(),
@@ -87,7 +88,46 @@ describe('useSessionTreeHandler', () => {
       'connection-opened',
     );
     expect(context.activateRef.current).toHaveBeenCalledTimes(1);
-    expect(context.loadChannelHistory).toHaveBeenCalledWith('conn-new');
+    expect(context.loadChannelHistory).toHaveBeenCalledWith('ses_new');
+  });
+
+  it('loads history per providerSessionId for siblings sharing one MCP connectionId (Bug A #5 regression)', () => {
+    let nodes = new Map();
+    const context = makeContext({
+      setNodes: vi.fn(
+        (updater: (prev: Map<string, never>) => Map<string, never>) => {
+          nodes = updater(nodes);
+        },
+      ),
+    });
+
+    useSessionTreeHandler(context);
+    onSessionTreeUpdated?.([
+      makeSnapshotNode({
+        providerSessionId: 'ses_parent',
+        connectionId: 'conn-shared',
+      }),
+      makeSnapshotNode({
+        providerSessionId: 'ses_child_1',
+        connectionId: 'conn-shared',
+        openCodeParentId: 'ses_parent',
+      }),
+      makeSnapshotNode({
+        providerSessionId: 'ses_child_2',
+        connectionId: 'conn-shared',
+        openCodeParentId: 'ses_parent',
+      }),
+    ]);
+
+    const calls = (context.loadChannelHistory as ReturnType<typeof vi.fn>).mock
+      .calls;
+    expect(calls).toHaveLength(3);
+    expect(calls.map((c) => c[0]).sort()).toEqual([
+      'ses_child_1',
+      'ses_child_2',
+      'ses_parent',
+    ]);
+    expect(calls.every((c) => c[0] !== 'conn-shared')).toBe(true);
   });
 
   it('does not auto-select when snapshot only updates an existing session', () => {
@@ -155,6 +195,27 @@ describe('useSessionTreeHandler', () => {
     useSessionTreeHandler(context);
     onSessionTreeUpdated?.([
       makeSnapshotNode({ providerSessionId: 'ses_new' }),
+    ]);
+
+    expect(context.selectChannel).not.toHaveBeenCalled();
+    expect(context.activateRef.current).not.toHaveBeenCalled();
+  });
+
+  it('does not auto-select when the user intentionally cleared the selection (e.g., "+ New Session" idle view)', () => {
+    let nodes = new Map();
+    const context = makeContext({
+      getActiveConnectionId: () => null,
+      getIsIntentionalNullSelection: () => true,
+      setNodes: vi.fn(
+        (updater: (prev: Map<string, never>) => Map<string, never>) => {
+          nodes = updater(nodes);
+        },
+      ),
+    });
+
+    useSessionTreeHandler(context);
+    onSessionTreeUpdated?.([
+      makeSnapshotNode({ providerSessionId: 'ses_new', createdAt: 9999 }),
     ]);
 
     expect(context.selectChannel).not.toHaveBeenCalled();

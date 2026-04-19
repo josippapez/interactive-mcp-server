@@ -1228,7 +1228,7 @@ export function updateConnectionProviderSession(
 ): void;
 ```
 
-Updates the provider session ID on an existing registered connection. Used by the SSE auto-bind logic to attach a just-created OpenCode child session to the MCP connection.
+Updates the provider session ID on an existing registered connection. Historically used by SSE auto-bind logic; that heuristic was removed because agents always pass `openCodeSessionId` per the post-Phase-6 contract. The function remains available for explicit re-binding flows (e.g. `register_connection` re-key).
 
 With the composite PK, this creates a new row with the new session ID and deletes the old row (if it was a temporary connectionId-based row).
 

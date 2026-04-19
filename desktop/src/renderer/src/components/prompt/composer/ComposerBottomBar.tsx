@@ -1,6 +1,8 @@
 import { memo } from 'react';
 import type { SessionStatus } from '../../../types';
 import type { Model } from '../../../hooks/useProviders';
+import AgentChip from '../AgentChip';
+import AgentPopover from '../AgentPopover';
 import ModelChip from '../ModelChip';
 import ModelPopover from '../ModelPopover';
 import VariantSelector from '../VariantSelector';
@@ -23,6 +25,14 @@ type ComposerBottomBarProps = {
   modelId: string | null | undefined;
   onModelSelect: (model: Model) => void;
   onVariantSelect: (variant: string | undefined) => void;
+  // Agent selector props (OpenCode only — sticky in-session)
+  showAgentChip: boolean;
+  selectedAgent: string | null;
+  agentPopoverOpen: boolean;
+  onAgentPopoverToggle: () => void;
+  onAgentPopoverChange: (open: boolean) => void;
+  onAgentSelect: (agent: string | null) => void;
+  agentBaseDirectory: string | undefined;
   // Status props
   isBusy: boolean;
   latestStatus: SessionStatus | null | undefined;
@@ -60,6 +70,13 @@ function ComposerBottomBarComponent({
   modelId,
   onModelSelect,
   onVariantSelect,
+  showAgentChip,
+  selectedAgent,
+  agentPopoverOpen,
+  onAgentPopoverToggle,
+  onAgentPopoverChange,
+  onAgentSelect,
+  agentBaseDirectory,
   isBusy,
   latestStatus,
   connectionId,
@@ -77,7 +94,7 @@ function ComposerBottomBarComponent({
 }: ComposerBottomBarProps): React.ReactElement {
   return (
     <div className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border)]/50">
-      {/* Left side - Model selector + variant */}
+      {/* Left side - Model selector + variant + agent */}
       <div className="flex items-center gap-1.5 shrink-0">
         {showModelSelector && (
           <>
@@ -99,6 +116,14 @@ function ComposerBottomBarComponent({
             )}
           </>
         )}
+        {showAgentChip && (
+          <AgentChip
+            selectedAgent={selectedAgent}
+            isOpen={agentPopoverOpen}
+            onClick={onAgentPopoverToggle}
+            disabled={!enabled}
+          />
+        )}
       </div>
 
       {/* Model popover - positioned above the model chip */}
@@ -110,6 +135,17 @@ function ComposerBottomBarComponent({
         currentModelId={modelId}
         onSelectModel={onModelSelect}
       />
+
+      {/* Agent popover - positioned above the agent chip */}
+      {showAgentChip && (
+        <AgentPopover
+          open={agentPopoverOpen}
+          onOpenChange={onAgentPopoverChange}
+          selectedAgent={selectedAgent}
+          onSelect={onAgentSelect}
+          baseDirectory={agentBaseDirectory}
+        />
+      )}
 
       {/* Center - Status or keyboard hint */}
       <div className="flex-1 flex items-center justify-center min-w-0 overflow-hidden">

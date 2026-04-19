@@ -185,17 +185,23 @@ export function startStartupContextInjection(
     );
 
     void (async () => {
-      // Inject startup context (instructions/skills) as a system message
-      // so it appears in the model's system prompt rather than as a user message.
+      // Inject startup context (instructions/skills) as a `noReply` user
+      // message containing a `<system-reminder>` block. We deliberately do NOT
+      // use OpenCode's `system` field: per `session/llm.ts` the per-call
+      // `system` only persists while the injected message is `lastUser`, so
+      // it disappears the moment the user sends their next real message.
+      // Storing the reminder in the message parts persists it in `messages[]`
+      // and OpenCode replays it on every step via `MessageV2.toModelMessages`.
+      // `noReply: true` keeps the agent from generating a turn for it.
       const injectionResult = await injectOpenCodeMessage(
         options.openCodeSessionId!,
-        '', // Empty user message - content goes in system field
+        options.startupContextMessage, // user message body — `<system-reminder>` block
         undefined,
         options.getOpenCodePort(),
         undefined, // mcpServerPort
-        true, // noReply
+        true, // noReply — context drop, don't trigger an agent reply
         undefined, // modelOverride
-        options.startupContextMessage, // systemMessage - injected into model's system prompt
+        undefined, // systemMessage — intentionally unused; see comment above
       );
 
       if (injectionResult.ok) {

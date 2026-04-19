@@ -30,6 +30,7 @@ type Props = {
     text: string,
     attachments?: Attachment[],
     modelOverride?: ModelOverride,
+    agent?: string,
   ) => void;
   onNoReplyChange: (value: boolean) => void;
   onCommandPaletteChange: (open: boolean) => void;
@@ -132,7 +133,7 @@ export function PromptComposerSection({
         onQueueSubmit(text, attachments);
       }}
       showReplyButton={Boolean(providerSessionId) && isOpenCodeSession}
-      onSubmitWithReply={(text, attachments) => {
+      onSubmitWithReply={(text, attachments, agent) => {
         logComposerSubmit('reply', text, attachments);
         if (dispatchSessionId && onSubmitWithReply) {
           onSubmitWithReply(
@@ -140,6 +141,7 @@ export function PromptComposerSection({
             text,
             attachments,
             currentModelOverride,
+            agent,
           );
         }
       }}

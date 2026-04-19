@@ -261,14 +261,14 @@ interactive `opencode` TUI. Listed for completeness; the desktop app never sees 
 Entry point: `desktop/src/main/opencode/bus-events.ts` opens the SSE stream; the
 dispatcher in `desktop/src/main/session/tree-manager.ts:handleSyncEvent` routes events.
 
-| Versioned event          | Handler action                                                                                                                                                                                              |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `session.created.1`      | Cache session, auto-bind to channel, emit optimistic child, schedule snapshot.                                                                                                                              |
-| `session.updated.1`      | Update cached session record, schedule snapshot.                                                                                                                                                            |
-| `session.deleted.1`      | Remove from cache, schedule snapshot.                                                                                                                                                                       |
-| `message.updated.1`      | Forward to context/token tracking (`context-tracking.ts`) and conversation provider.                                                                                                                        |
-| `message.part.updated.1` | Forward tool part to renderer. **Special case**: if `part.tool === 'task'` and `part.state.metadata.sessionId` is present, hydrate the child subagent session (workaround for missing `session.created.1`). |
-| `message.part.removed.1` | Forward to conversation provider.                                                                                                                                                                           |
+| Versioned event          | Handler action                                                                                                                                                                                                                                      |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.created.1`      | Cache session, emit optimistic child, schedule snapshot. (The legacy connectionId auto-bind heuristic was removed — agents always pass `openCodeSessionId` per the post-Phase-6 contract, so binding happens explicitly via `register_connection`.) |
+| `session.updated.1`      | Update cached session record, schedule snapshot.                                                                                                                                                                                                    |
+| `session.deleted.1`      | Remove from cache, schedule snapshot.                                                                                                                                                                                                               |
+| `message.updated.1`      | Forward to context/token tracking (`context-tracking.ts`) and conversation provider.                                                                                                                                                                |
+| `message.part.updated.1` | Forward tool part to renderer. **Special case**: if `part.tool === 'task'` and `part.state.metadata.sessionId` is present, hydrate the child subagent session (workaround for missing `session.created.1`).                                         |
+| `message.part.removed.1` | Forward to conversation provider.                                                                                                                                                                                                                   |
 
 Non-sync events consumed (forwarded from `bus-event-forwarders.ts`):
 

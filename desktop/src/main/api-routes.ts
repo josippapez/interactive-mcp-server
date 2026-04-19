@@ -105,12 +105,14 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
     res.json({ ok: true });
   });
 
-  // Serve persisted attachment files (images) by filename.
+  // Serve ephemeral attachment files (images) by (sessionKey, filename).
+  // Files live under `os.tmpdir()/interactive-mcp-<sessionKey>/` and are
+  // wiped on OS reboot or when the session is closed.
   // Bound to localhost only (Express server binds to 127.0.0.1) so no
   // external exposure risk.
-  router.get('/attachments/:filename', (req, res) => {
-    const { filename } = req.params;
-    const filePath = resolveAttachmentPath(filename);
+  router.get('/attachments/:sessionKey/:filename', (req, res) => {
+    const { sessionKey, filename } = req.params;
+    const filePath = resolveAttachmentPath(sessionKey, filename);
     if (!filePath) {
       res.status(404).json({ error: 'Attachment not found' });
       return;

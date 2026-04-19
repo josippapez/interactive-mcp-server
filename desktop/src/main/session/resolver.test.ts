@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 vi.mock('../database', () => ({
   getRegisteredConnection: vi.fn(),
   getRegisteredConnectionBySessionId: vi.fn(),
+  getRegisteredConnectionsByConnectionId: vi.fn().mockReturnValue([]),
   upsertRegisteredConnection: vi.fn(),
 }));
 
@@ -19,12 +20,15 @@ import {
 import {
   getRegisteredConnection,
   getRegisteredConnectionBySessionId,
+  getRegisteredConnectionsByConnectionId,
   upsertRegisteredConnection,
 } from '../database';
 import { autoDetectOpenCodeSession } from '../opencode/session';
 
 const mockGetConnection = getRegisteredConnection as Mock;
 const mockGetConnectionBySessionId = getRegisteredConnectionBySessionId as Mock;
+const mockGetConnectionsByConnectionId =
+  getRegisteredConnectionsByConnectionId as Mock;
 const mockUpsert = upsertRegisteredConnection as Mock;
 const mockAutoDetect = autoDetectOpenCodeSession as Mock;
 
@@ -329,5 +333,66 @@ describe('reResolveStaleSession', () => {
     expect(result.resolvedVia).toBe('re-resolved');
     expect(result.providerSessionId).toBe('ses_new');
     expect(result.parentSessionId).toBe('ses_p');
+  });
+});
+
+// ─── resolveProviderSessionId — multi-session same connectionId (Bug 2) ────
+
+describe('resolveProviderSessionId — Bug 2 (multi-session same connectionId)', () => {
+  beforeEach(() => {
+    mockGetConnection.mockReset();
+    mockGetConnectionsByConnectionId.mockReset();
+  });
+
+  it('Priority 1: returns explicit session ID even when DB has multiple candidates', () => {
+    mockGetConnectionsByConnectionId.mockReturnValue([
+      makeConnection({
+        providerSessionId: 'ses_root',
+        createdAt: '2025-01-01T00:00:00Z',
+      }),
+      makeConnection({
+        providerSessionId: 'ses_subagent',
+        createdAt: '2025-01-01T00:00:05Z',
+      }),
+    ]);
+
+    const resolved = resolveProviderSessionId('shared-conn', 'ses_explicit');
+    expect(resolved).toBe('ses_explicit');
+    // Explicit wins — DB lookup not consulted.
+    expect(mockGetConnectionsByConnectionId).not.toHaveBeenCalled();
+  });
+
+  it('Bug 2 fallback: when no explicit ID and multiple sessions share the connectionId, picks the OLDEST (root)', () => {
+    mockGetConnectionsByConnectionId.mockReturnValue([
+      makeConnection({
+        providerSessionId: 'ses_root',
+        createdAt: '2025-01-01T00:00:00Z',
+      }),
+      makeConnection({
+        providerSessionId: 'ses_subagent_a',
+        createdAt: '2025-01-01T00:00:05Z',
+      }),
+      makeConnection({
+        providerSessionId: 'ses_subagent_b',
+        createdAt: '2025-01-01T00:00:10Z',
+      }),
+    ]);
+
+    const resolved = resolveProviderSessionId('shared-conn');
+    expect(resolved).toBe('ses_root');
+  });
+
+  it('returns null when no rows match the connectionId fallback', () => {
+    mockGetConnectionsByConnectionId.mockReturnValue([]);
+    const resolved = resolveProviderSessionId('unknown-conn');
+    expect(resolved).toBeNull();
+  });
+
+  it('returns the only candidate when exactly one row exists for connectionId', () => {
+    mockGetConnectionsByConnectionId.mockReturnValue([
+      makeConnection({ providerSessionId: 'ses_solo' }),
+    ]);
+    const resolved = resolveProviderSessionId('solo-conn');
+    expect(resolved).toBe('ses_solo');
   });
 });

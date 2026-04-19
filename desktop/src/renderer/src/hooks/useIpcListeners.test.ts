@@ -63,11 +63,13 @@ function makeSnapshotNode(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
 // ---------------------------------------------------------------------------
 
 describe('findKeyByConnectionId', () => {
-  it('returns the map key when connectionId matches directly', () => {
+  it('returns the map key when providerSessionId matches an OC-backed node', () => {
     const nodes = new Map([
       ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
     ]);
-    expect(findKeyByConnectionId(nodes, 'uuid-aaa')).toBe('ses_root');
+    expect(findKeyByConnectionId(nodes, 'uuid-aaa', 'ses_root')).toBe(
+      'ses_root',
+    );
   });
 
   it('returns null when no node matches and no providerSessionId hint', () => {
@@ -104,14 +106,17 @@ describe('findKeyByConnectionId', () => {
     expect(findKeyByConnectionId(nodes, 'uuid-shared', 'ses_b')).toBe('ses_b');
   });
 
-  it('falls back to connectionId when providerSessionId is not provided', () => {
-    // When no providerSessionId is provided, fall back to connectionId matching
+  it('returns null for an OpenCode-backed node when only connectionId is provided (prevents cross-channel routing)', () => {
+    // OpenCode-backed nodes (providerSessionId !== null && !isDirectConnection)
+    // refuse connectionId-only matching because multiple OC sessions share the
+    // same MCP transport UUID. Callers MUST pass providerSessionId.
     const nodes = new Map([
       ['ses_a', makeNode('ses_a', 'ses_a', null, 'uuid-match')],
       ['ses_b', makeNode('ses_b', 'ses_b', null, 'auto-ses_b')],
     ]);
-    // No providerSessionId hint - use connectionId matching
-    expect(findKeyByConnectionId(nodes, 'uuid-match')).toBe('ses_a');
+    expect(findKeyByConnectionId(nodes, 'uuid-match')).toBeNull();
+    // With providerSessionId hint, it resolves correctly:
+    expect(findKeyByConnectionId(nodes, 'uuid-match', 'ses_a')).toBe('ses_a');
   });
 
   it('returns null when providerSessionId hint has no corresponding node', () => {
@@ -129,11 +134,11 @@ describe('findKeyByConnectionId', () => {
 // ---------------------------------------------------------------------------
 
 describe('findPromptTargetKey', () => {
-  it('returns the map key when connectionId matches directly', () => {
+  it('returns the map key when providerSessionId hint matches an OC-backed node', () => {
     const nodes = new Map([
       ['ses_root', makeNode('ses_root', 'ses_root', null, 'uuid-aaa')],
     ]);
-    expect(findPromptTargetKey(nodes, 'uuid-aaa')).toBe('ses_root');
+    expect(findPromptTargetKey(nodes, 'uuid-aaa', 'ses_root')).toBe('ses_root');
   });
 
   it('falls back to providerSessionId when connectionId is stale', () => {
@@ -223,10 +228,12 @@ describe('resolveNewlyCreatedSessionNodeId', () => {
       }),
     ];
 
-    expect(resolveNewlyCreatedSessionNodeId(prev, snapshotNodes)).toEqual({
-      sessionId: 'ses_new',
-      hasConnectedChannel: true,
-    });
+    expect(resolveNewlyCreatedSessionNodeId(prev, snapshotNodes)).toMatchObject(
+      {
+        sessionId: 'ses_new',
+        hasConnectedChannel: true,
+      },
+    );
   });
 
   it('returns null when snapshot only contains existing sessions', () => {
@@ -253,9 +260,11 @@ describe('resolveNewlyCreatedSessionNodeId', () => {
       }),
     ];
 
-    expect(resolveNewlyCreatedSessionNodeId(prev, snapshotNodes)).toEqual({
-      sessionId: 'ses_unbound',
-      hasConnectedChannel: false,
-    });
+    expect(resolveNewlyCreatedSessionNodeId(prev, snapshotNodes)).toMatchObject(
+      {
+        sessionId: 'ses_unbound',
+        hasConnectedChannel: false,
+      },
+    );
   });
 });

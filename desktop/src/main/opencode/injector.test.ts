@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import http from 'node:http';
 
-// Mock the attachment-store module so we don't write to the real userData dir
+// Mock the attachment-store module so we don't write to the real tmpdir
 vi.mock('../attachment-store', () => ({
   saveAttachment: vi.fn(() => 'test-uuid.png'),
   attachmentUrl: vi.fn(
-    (filename: string, port: number) =>
-      `http://localhost:${port}/attachments/${filename}`,
+    (sessionKey: string, filename: string, port: number) =>
+      `http://localhost:${port}/attachments/${sessionKey}/${filename}`,
   ),
 }));
 
@@ -198,7 +198,7 @@ describe('injectOpenCodeMessage', () => {
     expect(text).toContain('See image');
     expect(text).toContain('[Image: screenshot.png]');
     expect(text).toContain(
-      `http://localhost:${mcpPort}/attachments/test-uuid.png`,
+      `http://localhost:${mcpPort}/attachments/s1/test-uuid.png`,
     );
   });
 
@@ -326,6 +326,64 @@ describe('injectOpenCodeMessage', () => {
 
     expect(result.ok).toBe(true);
     expect(result.noReply).toBe(false);
+  });
+
+  it('forwards the agent name to prompt_async when provided', async () => {
+    await injectOpenCodeMessage(
+      's1',
+      'use plan agent',
+      undefined,
+      serverPort,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      'plan',
+    );
+
+    const body = JSON.parse(lastRequest!.body);
+    expect(body.agent).toBe('plan');
+  });
+
+  it('omits the agent key when agent is undefined', async () => {
+    await injectOpenCodeMessage('s1', 'no agent', undefined, serverPort);
+
+    const body = JSON.parse(lastRequest!.body);
+    expect(body.agent).toBeUndefined();
+  });
+
+  it('omits the agent key when agent is whitespace-only', async () => {
+    await injectOpenCodeMessage(
+      's1',
+      'whitespace agent',
+      undefined,
+      serverPort,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      '   ',
+    );
+
+    const body = JSON.parse(lastRequest!.body);
+    expect(body.agent).toBeUndefined();
+  });
+
+  it('trims surrounding whitespace from the agent name', async () => {
+    await injectOpenCodeMessage(
+      's1',
+      'trimmed agent',
+      undefined,
+      serverPort,
+      undefined,
+      true,
+      undefined,
+      undefined,
+      '  build  ',
+    );
+
+    const body = JSON.parse(lastRequest!.body);
+    expect(body.agent).toBe('build');
   });
 
   it('URL-encodes the session ID', async () => {

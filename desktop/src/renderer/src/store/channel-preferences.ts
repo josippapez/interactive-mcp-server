@@ -14,6 +14,120 @@
 import { atom, useAtomValue, useSetAtom } from 'jotai';
 
 // -----------------------------------------------------------------------------
+// Stick-to-bottom toggle (per-channel preference)
+// -----------------------------------------------------------------------------
+
+/** Default value for the stick-to-bottom toggle when no preference is stored. */
+export const DEFAULT_STICK_TO_BOTTOM = true;
+
+/** localStorage key for stick-to-bottom preferences. */
+const STICK_TO_BOTTOM_STORAGE_KEY = 'imcp-stick-to-bottom';
+
+/** Read a stick-to-bottom preference from a map, falling back to the default. */
+export function getChannelStickToBottom(
+  map: Map<string, boolean>,
+  channelId: string | null | undefined,
+): boolean {
+  if (!channelId) return DEFAULT_STICK_TO_BOTTOM;
+  const value = map.get(channelId);
+  return value === undefined ? DEFAULT_STICK_TO_BOTTOM : value;
+}
+
+function loadStickToBottomFromStorage(): Map<string, boolean> {
+  const result = new Map<string, boolean>();
+  try {
+    if (
+      typeof globalThis === 'undefined' ||
+      typeof (globalThis as { localStorage?: Storage }).localStorage ===
+        'undefined'
+    ) {
+      return result;
+    }
+    const raw = (globalThis as { localStorage: Storage }).localStorage.getItem(
+      STICK_TO_BOTTOM_STORAGE_KEY,
+    );
+    if (!raw) return result;
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      typeof parsed !== 'object' ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return result;
+    }
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof v === 'boolean') result.set(k, v);
+    }
+  } catch {
+    // ignore corrupt storage
+  }
+  return result;
+}
+
+function saveStickToBottomToStorage(map: Map<string, boolean>): void {
+  try {
+    if (
+      typeof globalThis === 'undefined' ||
+      typeof (globalThis as { localStorage?: Storage }).localStorage ===
+        'undefined'
+    ) {
+      return;
+    }
+    const obj: Record<string, boolean> = {};
+    for (const [k, v] of map) obj[k] = v;
+    (globalThis as { localStorage: Storage }).localStorage.setItem(
+      STICK_TO_BOTTOM_STORAGE_KEY,
+      JSON.stringify(obj),
+    );
+  } catch {
+    // localStorage quota exceeded or unavailable
+  }
+}
+
+/** Map of channelId → stick-to-bottom boolean preference. */
+export const stickToBottomMapAtom = atom<Map<string, boolean>>(
+  loadStickToBottomFromStorage(),
+);
+
+/** Write a per-channel stick-to-bottom preference (persists to localStorage). */
+export const setChannelStickToBottomAtom = atom(
+  null,
+  (get, set, action: { channelId: string; stickToBottom: boolean }) => {
+    const current = get(stickToBottomMapAtom);
+    if (current.get(action.channelId) === action.stickToBottom) return;
+    const next = new Map(current);
+    next.set(action.channelId, action.stickToBottom);
+    set(stickToBottomMapAtom, next);
+    saveStickToBottomToStorage(next);
+  },
+);
+
+/** Derived atom factory: read the current stick-to-bottom value for a channel. */
+export function channelStickToBottomAtom(channelId: string | null | undefined) {
+  return atom((get) =>
+    getChannelStickToBottom(get(stickToBottomMapAtom), channelId),
+  );
+}
+
+/** Hook: read the stick-to-bottom preference for a channel. */
+export function useChannelStickToBottom(
+  channelId: string | null | undefined,
+): boolean {
+  const map = useAtomValue(stickToBottomMapAtom);
+  return getChannelStickToBottom(map, channelId);
+}
+
+/** Hook: write the stick-to-bottom preference for a channel. */
+export function useSetChannelStickToBottom(): (
+  channelId: string,
+  stickToBottom: boolean,
+) => void {
+  const setPref = useSetAtom(setChannelStickToBottomAtom);
+  return (channelId: string, stickToBottom: boolean) =>
+    setPref({ channelId, stickToBottom });
+}
+
+// -----------------------------------------------------------------------------
 // Types
 // -----------------------------------------------------------------------------
 

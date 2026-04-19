@@ -12,6 +12,9 @@ import {
 import { resolveProviderSessionId } from '../session/resolver';
 import { claimContextInjections } from '../database';
 import { saveAttachment, resolveAttachmentPath } from '../attachment-store';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('request-user-input');
 
 export function registerRequestUserInput(
   server: McpServer,
@@ -147,9 +150,18 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
       },
       extra,
     ): Promise<CallToolResult> => {
+      const t0 = Date.now();
       const providerSessionId = resolveProviderSessionId(
         connectionId,
         openCodeSessionId,
+      );
+      log.info(
+        `request_user_input invoked ts=${t0} ` +
+          `connectionId=${connectionId} ` +
+          `openCodeSessionIdParam=${openCodeSessionId ?? 'null'} ` +
+          `resolvedProviderSessionId=${providerSessionId ?? 'null'} ` +
+          `wasFallback=${!openCodeSessionId} ` +
+          `requireSessionId=${requireSessionId}`,
       );
 
       const staleErr = providerSessionId
@@ -225,13 +237,20 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
       content.push({ type: 'text' as const, text: `User replied: ${answer}` });
 
       if (attachments?.length) {
+        const attachmentSessionKey = providerSessionId ?? connectionId;
         for (const att of attachments) {
           if (att.mimeType.startsWith('image/')) {
             // Mirror the CLI package: persist the image to disk and emit a
             // path reference instead of inlining base64. Keeps MCP responses
             // small and lets agents decide whether to read the file.
-            const filename = saveAttachment(att.data, att.mimeType);
-            const absPath = filename ? resolveAttachmentPath(filename) : null;
+            const filename = saveAttachment(
+              attachmentSessionKey,
+              att.data,
+              att.mimeType,
+            );
+            const absPath = filename
+              ? resolveAttachmentPath(attachmentSessionKey, filename)
+              : null;
             if (absPath) {
               content.push({
                 type: 'text' as const,

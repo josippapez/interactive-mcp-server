@@ -182,6 +182,64 @@ describe('mergeSessionTreeSnapshot', () => {
     expect(node.title).toBe('Test Session');
   });
 
+  it("does NOT duplicate a direct-connection node's channelMessages across multiple OC sessions sharing the same connectionId", () => {
+    // Repro: two OC sessions (parent + child subagent) share a single MCP
+    // transport connectionId. A pre-existing direct-connection node (created
+    // before the OC session-tree snapshot arrived) has live channelMessages.
+    // The merge MUST absorb those messages into AT MOST ONE OC node — not
+    // duplicate them into both. Prior bug: both OC nodes ended up with the
+    // same channelMessages array, so messages from one channel showed up in
+    // the chat history view of the sibling channel.
+    const directMessages = [
+      {
+        id: 'msg-leak',
+        kind: 'agent_message' as const,
+        text: 'Originally for parent only',
+        timestamp: new Date(),
+      },
+    ];
+    const prev = new Map<string, SessionNode>([
+      [
+        'conn-shared',
+        makeDirectConnectionNode('conn-shared', 'Claude Code', {
+          channelMessages: directMessages,
+        }),
+      ],
+    ]);
+
+    const snapshot = [
+      makeSnapshot({
+        providerSessionId: 'ses_parent',
+        connectionId: 'conn-shared',
+        channelName: 'Parent Session',
+        hasMcpChannel: true,
+      }),
+      makeSnapshot({
+        providerSessionId: 'ses_child',
+        openCodeParentId: 'ses_parent',
+        connectionId: 'conn-shared',
+        channelName: 'Child Subagent',
+        hasMcpChannel: true,
+      }),
+    ];
+
+    const result = mergeSessionTreeSnapshot(prev, snapshot);
+
+    const parent = result.get('ses_parent')!;
+    const child = result.get('ses_child')!;
+
+    // The direct-connection's messages must NOT bleed into both OC nodes.
+    // Exactly one of (parent, child) may inherit them; the other must start empty.
+    const parentHasLeak = parent.channelMessages.some(
+      (m) => m.id === 'msg-leak',
+    );
+    const childHasLeak = child.channelMessages.some((m) => m.id === 'msg-leak');
+    expect(
+      parentHasLeak && childHasLeak,
+      'channelMessages from a shared connection were duplicated into BOTH OC sessions — this causes cross-channel messages to render in the wrong chat view',
+    ).toBe(false);
+  });
+
   it('preserves multiple pending permissions when absorbing a direct connection', () => {
     const prev = new Map<string, SessionNode>([
       [

@@ -132,6 +132,15 @@ export function getActiveChannelIdSnapshot(): string | null {
 }
 
 /**
+ * Synchronously read whether the current null selection is intentional.
+ * Use this from non-React contexts (IPC handlers, side-effect callbacks)
+ * that need the latest value without re-rendering.
+ */
+export function getIntentionalNullSelectionSnapshot(): boolean {
+  return channelSelectionStore.get(intentionalNullSelectionAtom);
+}
+
+/**
  * Hook to get the full channel selection state (read-only).
  */
 export function useChannelSelectionState(): {

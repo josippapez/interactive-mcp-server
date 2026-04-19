@@ -54,6 +54,29 @@ export function createWindow(
     return { action: 'deny' };
   });
 
+  // Prevent the renderer from navigating away from the app (e.g. when the
+  // user clicks a link that points to a non-app URL such as an attachment
+  // asset served from localhost). Any non-app URL is opened in the user's
+  // default browser instead so the chat view is never replaced — otherwise
+  // there is no "back" UI (titleBarStyle is hiddenInset + autoHideMenuBar).
+  window.webContents.on('will-navigate', (event, url) => {
+    const currentUrl = window.webContents.getURL();
+    // Allow same-document navigations (hash changes, initial load).
+    if (url === currentUrl) return;
+
+    try {
+      const target = new URL(url);
+      const current = new URL(currentUrl);
+      // Allow navigation within the same origin as the loaded app page.
+      if (target.origin === current.origin) return;
+    } catch {
+      // Not a parseable URL — fall through and block.
+    }
+
+    event.preventDefault();
+    shell.openExternal(url);
+  });
+
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     window.loadURL(process.env['ELECTRON_RENDERER_URL']);
   } else {

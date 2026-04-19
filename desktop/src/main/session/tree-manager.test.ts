@@ -71,12 +71,15 @@ const mockFetchAllOpenCodeSessions = fetchAllOpenCodeSessions as Mock;
 // controlled fetch mock that immediately delivers the given events then hangs.
 function makeSseResponse(events: object[]): Response {
   const encoder = new TextEncoder();
-  let idx = 0;
+  let emitted = false;
   const stream = new ReadableStream({
     async pull(controller) {
-      if (idx < events.length) {
-        const frame = `data: ${JSON.stringify(events[idx++])}\n\n`;
-        controller.enqueue(encoder.encode(frame));
+      if (!emitted) {
+        emitted = true;
+        for (const event of events) {
+          const frame = `data: ${JSON.stringify(event)}\n\n`;
+          controller.enqueue(encoder.encode(frame));
+        }
       }
       // Don't close — simulate a hanging connection (realistic SSE)
       await new Promise(() => {}); // never resolves
@@ -257,6 +260,82 @@ describe('session-tree-manager', () => {
           providerSessionId: 'child-ses-001',
         }),
       );
+
+      stopSessionTreeManager();
+      global.fetch = undefined as unknown as typeof fetch;
+    });
+
+    it('applies session.updated.1 title changes when wrapped in the real { payload: { type: "sync", syncEvent } } shape', async () => {
+      mockIsProviderSessionClaimed.mockReturnValue(false);
+
+      const createdEvent = {
+        payload: {
+          type: 'sync',
+          syncEvent: {
+            type: 'session.created.1',
+            id: 'evt-1',
+            seq: 1,
+            aggregateID: 'wrapped-ses-001',
+            data: {
+              sessionID: 'wrapped-ses-001',
+              info: {
+                id: 'wrapped-ses-001',
+                parentID: null,
+                title: 'New session - 2026-04-17T00:00:00.000Z',
+                directory: '/repo',
+                time: { created: 1000, updated: 1000 },
+              },
+            },
+          },
+        },
+      };
+
+      const updatedEvent = {
+        payload: {
+          type: 'sync',
+          syncEvent: {
+            type: 'session.updated.1',
+            id: 'evt-2',
+            seq: 2,
+            aggregateID: 'wrapped-ses-001',
+            data: {
+              sessionID: 'wrapped-ses-001',
+              info: {
+                id: 'wrapped-ses-001',
+                title: 'Fix authentication bug',
+                time: { created: 1000, updated: 2000 },
+              },
+            },
+          },
+        },
+      };
+
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(makeSseResponse([createdEvent, updatedEvent]));
+      const send = vi.fn();
+      const win = {
+        isDestroyed: () => false,
+        webContents: { send },
+      } as unknown as BrowserWindow;
+
+      startManager(win, fetchMock);
+
+      await new Promise((r) => setTimeout(r, 150));
+
+      // The final session-tree-updated snapshot must carry the updated title.
+      const snapshotCalls = send.mock.calls.filter(
+        (call: unknown[]) => call[0] === 'session-tree-updated',
+      );
+      expect(snapshotCalls.length).toBeGreaterThan(0);
+
+      const finalSnapshot = snapshotCalls[snapshotCalls.length - 1]?.[1] as
+        | Array<{ providerSessionId: string; title: string }>
+        | undefined;
+      const node = finalSnapshot?.find(
+        (n) => n.providerSessionId === 'wrapped-ses-001',
+      );
+      expect(node?.title).toBe('Fix authentication bug');
 
       stopSessionTreeManager();
       global.fetch = undefined as unknown as typeof fetch;

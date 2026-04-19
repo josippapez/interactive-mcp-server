@@ -19,6 +19,7 @@
 
 import {
   getRegisteredConnection,
+  getRegisteredConnectionsByConnectionId,
   upsertRegisteredConnection,
   type RegisteredConnection,
 } from '../database';
@@ -248,15 +249,47 @@ export function resolveProviderSessionId(
 ): string | null {
   // Priority 1: Explicit session ID passed by the agent
   if (explicitSessionId) {
-    sessionLog.debug(`resolveProviderSessionId: explicit=${explicitSessionId}`);
+    sessionLog.debug(
+      `resolveProviderSessionId: explicit=${explicitSessionId} connectionId=${connectionId}`,
+    );
     return explicitSessionId;
   }
 
-  // Priority 2: DB lookup by connectionId
-  const rc = getRegisteredConnection(connectionId);
-  if (rc?.providerSessionId) {
-    return rc.providerSessionId;
+  // Priority 2: DB lookup by connectionId.
+  //
+  // Bug 2 fix: When OpenCode shares a single MCP transport across multiple
+  // sessions (root + subagents), the connection_id column will have multiple
+  // matching rows. Pick the OLDEST row (parent/root). Without this, freshly
+  // spawned subagents — whose register_connection most recently rebound the
+  // shared connection_id to themselves — would steal prompts originating from
+  // the root agent's first tool call (when the agent has not yet read its
+  // injected openCodeSessionId system-reminder).
+  const candidates = getRegisteredConnectionsByConnectionId(connectionId);
+  if (candidates.length === 0) {
+    sessionLog.warn(
+      `resolveProviderSessionId: fallback FAILED no rows for connectionId=${connectionId}`,
+    );
+    return null;
   }
-
+  if (candidates.length > 1) {
+    sessionLog.warn(
+      `resolveProviderSessionId: AMBIGUOUS fallback connectionId=${connectionId} ` +
+        `candidates=${candidates.length} ` +
+        `picked=${candidates[0].providerSessionId} (oldest by created_at) ` +
+        `others=[${candidates
+          .slice(1)
+          .map((c) => c.providerSessionId)
+          .join(',')}] ` +
+        `— agent should pass openCodeSessionId explicitly`,
+    );
+  }
+  const picked = candidates[0];
+  if (picked.providerSessionId) {
+    sessionLog.debug(
+      `resolveProviderSessionId: fallback connectionId=${connectionId} ` +
+        `resolved=${picked.providerSessionId} (oldest of ${candidates.length})`,
+    );
+    return picked.providerSessionId;
+  }
   return null;
 }

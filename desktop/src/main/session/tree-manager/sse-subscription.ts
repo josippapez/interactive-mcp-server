@@ -11,7 +11,7 @@ import {
 } from '../../opencode/context-tracking';
 import { DEFAULT_OPENCODE_PORT } from '../../opencode/endpoints';
 import { createLogger } from '../../utils/logger';
-import { autoRegisterSession, tryAutoBindSession } from './auto-register';
+import { autoRegisterSession } from './auto-register';
 import { mapPartType, mapToolStatus } from './part-mapping';
 import { seedCacheFromRest } from './rest-seed';
 import { emitOptimisticChildSession, scheduleSnapshot } from './snapshot';
@@ -19,6 +19,7 @@ import { _sessionCache, _tombstonedSessionIds, state } from './state';
 import { resolveChildSessionIdFromTaskPart } from './task-subagent-detect';
 import {
   SSE_RECONNECT_DELAY_MS,
+  extractSyncEvent,
   type SessionInfo,
   type SyncEventEnvelope,
 } from './types';
@@ -77,14 +78,13 @@ async function hydrateTaskSubagentSession(
     `hydrateTaskSubagentSession: added ${childSessionId} to cache (size=${_sessionCache.size})`,
   );
 
-  // Phase 4: auto-register first so the row exists, then auto-bind the pending
-  // transport (if any) onto the now-existing row via updateConnectionId.
+  // Phase 6 follow-up: auto-register creates the row with connection_id=NULL.
+  // Binding now happens only via explicit `register_connection` calls (which
+  // always carry openCodeSessionId per the agent contract).
   const autoRegisterEnabled = state.getAutoRegisterSubagents?.() ?? true;
   if (autoRegisterEnabled) {
     autoRegisterSession(info, { scheduleSnapshot: false });
   }
-
-  tryAutoBindSession(info);
 
   emitOptimisticChildSession(info);
   scheduleSnapshot();
@@ -95,7 +95,9 @@ async function hydrateTaskSubagentSession(
 // ─── SSE event dispatch ──────────────────────────────────────────────────────
 
 export function handleSyncEvent(envelope: SyncEventEnvelope): void {
-  const { type, data } = envelope.payload;
+  const unwrapped = extractSyncEvent(envelope);
+  if (!unwrapped) return;
+  const { type, data } = unwrapped;
 
   if (type === 'session.created.1') {
     const info = data['info'] as SessionInfo | undefined;
@@ -122,13 +124,11 @@ export function handleSyncEvent(envelope: SyncEventEnvelope): void {
     const autoRegisterEnabled = state.getAutoRegisterSubagents?.() ?? true;
     log.info(`autoRegisterSubagents enabled: ${autoRegisterEnabled}`);
 
-    // Phase 4: auto-register first so the row exists with connection_id=NULL,
-    // then auto-bind the pending transport (if any) onto it.
+    // Phase 6 follow-up: auto-register creates the row with connection_id=NULL.
+    // Binding now happens only via explicit `register_connection` calls.
     if (autoRegisterEnabled) {
       autoRegisterSession(merged, { scheduleSnapshot: false });
     }
-
-    tryAutoBindSession(merged);
 
     emitOptimisticChildSession(merged);
     scheduleSnapshot();
@@ -339,10 +339,10 @@ export async function subscribeToSyncEvents(
 
         try {
           const envelope = JSON.parse(raw) as SyncEventEnvelope;
-          if (envelope?.payload?.type) {
-            const eventType = envelope.payload.type;
-            if (eventType.startsWith('session.')) {
-              log.debug(`SSE event received: ${eventType}`);
+          const unwrapped = extractSyncEvent(envelope);
+          if (unwrapped) {
+            if (unwrapped.type.startsWith('session.')) {
+              log.debug(`SSE event received: ${unwrapped.type}`);
             }
             handleSyncEvent(envelope);
           }

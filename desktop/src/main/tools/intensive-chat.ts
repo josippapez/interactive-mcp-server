@@ -318,13 +318,20 @@ Ask a new question in an active intensive chat session previously started with '
       ];
 
       if (attachments?.length) {
+        const attachmentSessionKey = providerSessionId ?? connectionId;
         for (const att of attachments) {
           if (att.mimeType.startsWith('image/')) {
             // Mirror the CLI package: persist the image to disk and emit a
             // path reference instead of inlining base64. Keeps MCP responses
             // small and lets agents decide whether to read the file.
-            const filename = saveAttachment(att.data, att.mimeType);
-            const absPath = filename ? resolveAttachmentPath(filename) : null;
+            const filename = saveAttachment(
+              attachmentSessionKey,
+              att.data,
+              att.mimeType,
+            );
+            const absPath = filename
+              ? resolveAttachmentPath(attachmentSessionKey, filename)
+              : null;
             if (absPath) {
               content.push({
                 type: 'text' as const,

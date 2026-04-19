@@ -670,6 +670,55 @@ describe('promptKey — openCodeSessionId keying', () => {
     expect(result.answer).toContain('USER_FORCE_TERMINATED');
   });
 
+  it('cancelActivePrompt resolves a prompt when called with providerSessionId (caller has no connectionId)', async () => {
+    // Caller (e.g. removePersistedSession) only knows the providerSessionId.
+    // The PromptData.connectionId is some unrelated MCP transport handle.
+    const win = createMockWindow();
+
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+    const promise = promptUser(
+      win as never,
+      createPromptData({
+        id: 'cancel-by-psid',
+        connectionId: 'mcp-transport-xyz',
+        openCodeSessionId: 'ses_cancel_by_psid',
+      }),
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Cancel using the providerSessionId, not the connectionId
+    cancelActivePrompt('ses_cancel_by_psid');
+
+    const result = await promise;
+    expect(result.answer).toContain('superseded');
+  });
+
+  it('forceTerminateChat resolves a prompt when called with providerSessionId (caller has no connectionId)', async () => {
+    const win = createMockWindow();
+
+    vi.mocked(ipcMain.on).mockImplementation(() => ipcMain);
+
+    const promise = promptUser(
+      win as never,
+      createPromptData({
+        id: 'force-by-psid',
+        connectionId: 'mcp-transport-abc',
+        openCodeSessionId: 'ses_force_by_psid',
+      }),
+    );
+
+    await Promise.resolve();
+    await Promise.resolve();
+
+    forceTerminateChat('ses_force_by_psid');
+
+    const result = await promise;
+    expect(result.answer).toContain('USER_FORCE_TERMINATED');
+  });
+
   it('reconnecting agent with a new connectionId but same openCodeSessionId re-attaches to existing prompt', async () => {
     // The KEY scenario: agent reconnects after transport drop.
     // New MCP connection = new connectionId ('conn-new-transport').

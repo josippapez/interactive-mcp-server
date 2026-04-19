@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Attachment } from '../../types';
+import type { PendingNewSessionAgent } from './pending-agent-assignment';
 
 type CreateSessionModelSelection = {
   providerId: string;
@@ -19,6 +20,13 @@ export function usePromptProjectState(
   const [pendingSessionSelect, setPendingSessionSelect] = useState<
     string | null
   >(null);
+  // Tracks the agent the user picked in `NewSessionInput` for a session that
+  // has been created but not yet resolved to a renderer-side `connectionId`.
+  // Once the session shows up in the connections map, the navigation hook
+  // writes this into `sessionAgentsAtom` so the bottom-bar selector reflects
+  // the user's choice instead of falling back to "default".
+  const [pendingNewSessionAgent, setPendingNewSessionAgent] =
+    useState<PendingNewSessionAgent | null>(null);
 
   useEffect(() => {
     const loadPinnedProjects = async () => {
@@ -51,6 +59,13 @@ export function usePromptProjectState(
 
       if (result.sessionId) {
         setPendingSessionSelect(result.sessionId);
+        const trimmedAgent = agent?.trim();
+        if (trimmedAgent && trimmedAgent.length > 0) {
+          setPendingNewSessionAgent({
+            sessionId: result.sessionId,
+            agent: trimmedAgent,
+          });
+        }
       }
 
       return result;
@@ -84,6 +99,8 @@ export function usePromptProjectState(
     setPendingNewSessionProject,
     pendingSessionSelect,
     setPendingSessionSelect,
+    pendingNewSessionAgent,
+    setPendingNewSessionAgent,
     handleCreateSession,
     handleAddProject,
     handleNavigateToNewSession,

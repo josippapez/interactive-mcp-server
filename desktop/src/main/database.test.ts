@@ -310,7 +310,7 @@ describe('getRegisteredConnection secondary lookup by connection_id', () => {
     expect(result?.providerSessionId).toBe('ses_secondary');
   });
 
-  it('returns the most recently updated row when multiple rows share the same connection_id', () => {
+  it('returns the OLDEST row (parent/root) when multiple rows share the same connection_id (Bug 2 fix)', () => {
     // Parent agent registers first with shared transport
     upsertRegisteredConnection({
       providerSessionId: 'ses_parent',
@@ -331,8 +331,10 @@ describe('getRegisteredConnection secondary lookup by connection_id', () => {
 
     const result = getRegisteredConnection('shared-transport');
     expect(result).not.toBeNull();
-    // Should return the most recently updated row (subagent), not an arbitrary one
-    expect(result?.providerSessionId).toBe('ses_subagent');
+    // Bug 2 fix: prefer the OLDEST row (parent/root) when the connection
+    // is shared. Returning the newest caused first-prompt misrouting from
+    // the root agent to a freshly-spawned subagent.
+    expect(result?.providerSessionId).toBe('ses_parent');
   });
 });
 

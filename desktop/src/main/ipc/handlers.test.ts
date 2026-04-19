@@ -61,10 +61,11 @@ vi.mock('../attachment-store', () => ({
   getAttachmentsDir: vi.fn(() => '/mock/attachments'),
   resolveAttachmentPath: vi.fn(() => null),
   attachmentUrl: vi.fn(
-    (filename: string, port: number) =>
-      `http://localhost:${port}/attachments/${filename}`,
+    (sessionKey: string, filename: string, port: number) =>
+      `http://localhost:${port}/attachments/${sessionKey}/${filename}`,
   ),
   cleanupOldAttachments: vi.fn(() => 0),
+  clearSessionAttachments: vi.fn(),
 }));
 
 vi.mock('../opencode/injector', () => ({
@@ -676,6 +677,8 @@ describe('registerIpcHandlers skill auto-match — inject-opencode-message', () 
       expect.any(Number),
       true,
       undefined,
+      undefined,
+      undefined,
     );
     expect(injectOpenCodeMessage).toHaveBeenCalledWith(
       'oc-ses-1',
@@ -684,6 +687,8 @@ describe('registerIpcHandlers skill auto-match — inject-opencode-message', () 
       expect.any(Number),
       expect.any(Number),
       true,
+      undefined,
+      undefined,
       undefined,
     );
   });
@@ -709,6 +714,73 @@ describe('registerIpcHandlers skill auto-match — inject-opencode-message', () 
       expect.any(Number),
       expect.any(Number),
       true,
+      undefined,
+      undefined,
+      undefined,
+    );
+  });
+
+  it('forwards the per-message agent override through to injectOpenCodeMessage', async () => {
+    mocks.listSkillsAndInstructions.mockReturnValue([]);
+    mocks.matchSkillsForMessage.mockReturnValue([]);
+    mocks.buildSkillSuggestionText.mockReturnValue('');
+    (injectOpenCodeMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+    });
+
+    const handler = getInjectHandle() as unknown as (
+      _event: unknown,
+      data: {
+        openCodeSessionId: string;
+        message: string;
+        agent?: string;
+      },
+    ) => Promise<{ ok: boolean }>;
+    await handler(
+      {},
+      {
+        openCodeSessionId: 'oc-ses-3',
+        message: 'Switch agent for this prompt only',
+        agent: 'self-improve-specialist',
+      },
+    );
+
+    expect(injectOpenCodeMessage).toHaveBeenCalledWith(
+      'oc-ses-3',
+      'Switch agent for this prompt only',
+      undefined,
+      expect.any(Number),
+      expect.any(Number),
+      true,
+      undefined,
+      undefined,
+      'self-improve-specialist',
+    );
+  });
+
+  it('omits the agent positional when no agent override is provided', async () => {
+    mocks.listSkillsAndInstructions.mockReturnValue([]);
+    mocks.matchSkillsForMessage.mockReturnValue([]);
+    mocks.buildSkillSuggestionText.mockReturnValue('');
+    (injectOpenCodeMessage as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+    });
+
+    const handler = getInjectHandle();
+    await handler(
+      {},
+      { openCodeSessionId: 'oc-ses-4', message: 'No agent override' },
+    );
+
+    expect(injectOpenCodeMessage).toHaveBeenCalledWith(
+      'oc-ses-4',
+      'No agent override',
+      undefined,
+      expect.any(Number),
+      expect.any(Number),
+      true,
+      undefined,
+      undefined,
       undefined,
     );
   });
@@ -779,6 +851,47 @@ describe('registerIpcHandlers create-opencode-session model selection', () => {
         modelId: 'claude-opus-4.5',
         variant: 'high',
       },
+      undefined,
+      undefined,
+    );
+  });
+
+  it('forwards the selected agent through the inject path when attachments require injection', async () => {
+    registerHandlersWithBackend('opencode');
+
+    const handler = getRegisteredHandle('create-opencode-session');
+    const result = await handler(
+      {},
+      {
+        initialMessage: 'Plan this refactor',
+        baseDirectory: '/repo/path',
+        agent: 'self-improve-specialist',
+        attachments: [
+          {
+            data: 'console.log("hi")',
+            mimeType: 'text/plain',
+            name: 'snippet.js',
+            size: 17,
+          },
+        ],
+      },
+    );
+
+    expect(result).toEqual({ ok: true, sessionId: 'opencode-session-1' });
+
+    // Inject path is taken because attachments are present. The agent must
+    // still reach OpenCode via injectOpenCodeMessage's `agent` param (9th
+    // positional arg) so the spawned session honours the user selection.
+    expect(injectOpenCodeMessage).toHaveBeenCalledWith(
+      'opencode-session-1',
+      'Plan this refactor',
+      expect.any(Array),
+      4096,
+      3100,
+      false,
+      undefined,
+      undefined,
+      'self-improve-specialist',
     );
   });
 });
@@ -890,6 +1003,7 @@ describe('registerIpcHandlers save-clipboard-attachment', () => {
     const result = (await handler(
       {},
       {
+        sessionKey: 'ses_abc',
         data: 'dGVzdA==',
         mimeType: 'image/png',
       },
@@ -902,7 +1016,9 @@ describe('registerIpcHandlers save-clipboard-attachment', () => {
     expect(result?.filename).toBe('mock-uuid.png');
     expect(result?.absolutePath).toContain('mock-uuid.png');
     // port is 3100 from registerHandlers() settings
-    expect(result?.url).toBe('http://localhost:3100/attachments/mock-uuid.png');
+    expect(result?.url).toBe(
+      'http://localhost:3100/attachments/ses_abc/mock-uuid.png',
+    );
   });
 
   it('returns url:null when MCP server port is not available', async () => {
@@ -931,6 +1047,7 @@ describe('registerIpcHandlers save-clipboard-attachment', () => {
     const result = (await handler(
       {},
       {
+        sessionKey: 'ses_abc',
         data: 'dGVzdA==',
         mimeType: 'image/png',
       },
@@ -948,6 +1065,16 @@ describe('registerIpcHandlers save-clipboard-attachment', () => {
     registerHandlers();
     const handler = getRegisteredHandle('save-clipboard-attachment');
     const result = await handler({}, null);
+    expect(result).toBeNull();
+  });
+
+  it('returns null when sessionKey is missing', async () => {
+    registerHandlers();
+    const handler = getRegisteredHandle('save-clipboard-attachment');
+    const result = await handler(
+      {},
+      { data: 'dGVzdA==', mimeType: 'image/png' },
+    );
     expect(result).toBeNull();
   });
 });

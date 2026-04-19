@@ -669,6 +669,16 @@ export function getAllRegisteredConnections(): RegisteredConnection[] {
 /**
  * Look up a registered connection by transport connectionId (secondary lookup).
  * Searches the `connection_id` column, which is now a nullable non-PK column.
+ *
+ * IMPORTANT (Bug 2 fix): When multiple rows share the same connection_id (which
+ * happens with OpenCode because subagents share their parent's MCP transport),
+ * prefer the OLDEST row (by created_at). The oldest row is the parent/root
+ * session for that connection — most agent prompts that omit `openCodeSessionId`
+ * originate from the root, not from a freshly-spawned subagent. Returning the
+ * newest row caused first-prompt misrouting (Bug 2).
+ *
+ * The proper fix is for callers to always pass `openCodeSessionId` — this
+ * fallback is only a safety net.
  */
 export function getRegisteredConnection(
   connectionId: string,
@@ -677,11 +687,32 @@ export function getRegisteredConnection(
   const results = db.exec(
     `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
      FROM registered_connections WHERE connection_id = ?
-     ORDER BY updated_at DESC, rowid DESC LIMIT 1`,
+     ORDER BY created_at ASC, rowid ASC LIMIT 1`,
     [connectionId],
   );
   if (results.length === 0 || results[0].values.length === 0) return null;
   return mapRowToRegisteredConnection(results[0].values[0]);
+}
+
+/**
+ * Return ALL registered connections sharing a given transport connectionId,
+ * ordered by created_at ascending (oldest = root parent first).
+ *
+ * Used by the resolver to detect ambiguous fallback cases (multiple OpenCode
+ * sessions sharing the same MCP transport because of session-shared clients).
+ */
+export function getRegisteredConnectionsByConnectionId(
+  connectionId: string,
+): RegisteredConnection[] {
+  if (!db) return [];
+  const results = db.exec(
+    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+     FROM registered_connections WHERE connection_id = ?
+     ORDER BY created_at ASC, rowid ASC`,
+    [connectionId],
+  );
+  if (results.length === 0 || results[0].values.length === 0) return [];
+  return results[0].values.map(mapRowToRegisteredConnection);
 }
 
 /**

@@ -36,6 +36,14 @@ export type PromptViewProps = {
     message: string,
     attachments?: Attachment[],
     modelOverride?: ModelOverride,
+    /**
+     * Optional per-message OpenCode agent override (e.g. 'plan',
+     * 'docs-maintainer'). Whitespace-only or empty values fall back to the
+     * session's default agent. The override is sticky in-session: the UI
+     * keeps the picked agent for subsequent prompts in the same channel
+     * until the user changes it or the session/app is reopened.
+     */
+    agent?: string,
   ) => void;
   onClearMessages: (sessionId: string) => void;
   onRemoveSession: (sessionId: string) => Promise<boolean>;

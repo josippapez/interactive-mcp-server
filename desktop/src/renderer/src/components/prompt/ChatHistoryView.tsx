@@ -17,6 +17,10 @@ import ImageModal from './chat/ImageModal';
 import ScrollToBottomButton from './chat/ScrollToBottomButton';
 import VirtualizedMessageList from './chat/VirtualizedMessageList';
 import { useSettings } from '../../store';
+import {
+  useChannelStickToBottom,
+  useSetChannelStickToBottom,
+} from '../../store/channel-preferences';
 
 function normalizeSearchText(value: string): string {
   return value.trim().toLowerCase();
@@ -107,6 +111,19 @@ export default function ChatHistoryView({
   const contentRef = useRef<HTMLDivElement | null>(null);
 
   // ---------------------------------------------------------------------------
+  // Stick-to-bottom toggle (Bug 3) — global preference per channel.
+  // ---------------------------------------------------------------------------
+  const stickToBottomPreference = useChannelStickToBottom(channelId);
+  const setChannelStickToBottom = useSetChannelStickToBottom();
+  const handleStickyChange = useCallback(
+    (next: boolean) => {
+      if (!channelId) return;
+      setChannelStickToBottom(channelId, next);
+    },
+    [channelId, setChannelStickToBottom],
+  );
+
+  // ---------------------------------------------------------------------------
   // Auto-scroll behavior via useAutoScroll hook
   // ---------------------------------------------------------------------------
   const {
@@ -124,6 +141,8 @@ export default function ChatHistoryView({
     working: isBusy,
     threshold: AUTO_SCROLL_THRESHOLD_PX,
     jumpThreshold: AUTO_SCROLL_JUMP_THRESHOLD_PX,
+    stickyPreference: stickToBottomPreference,
+    onStickyChange: handleStickyChange,
   });
 
   // Combine scroll ref with our local ref for virtualization
@@ -309,12 +328,35 @@ export default function ChatHistoryView({
     setExpandedImage(null);
   }, []);
 
-  // Stable callback for scrolling to bottom (smooth for user-triggered).
-  // Both the jump button and the End-key shortcut go through jumpToBottom(),
-  // which force-scrolls AND sets sticky=true so new content re-follows.
-  const handleScrollToBottom = useCallback(() => {
-    jumpToBottom();
-  }, [jumpToBottom]);
+  // Listen for attachment-click events dispatched by MorphdomMarkdown so
+  // attachment links in streamed markdown also open the modal (Bug #4).
+  // The anchor element's click never reaches React because innerHTML +
+  // morphdom bypass the React event system.
+  useEffect(() => {
+    const handleOpenImage = (e: Event) => {
+      const detail = (e as CustomEvent<{ src: string; name: string }>).detail;
+      if (!detail) return;
+      setExpandedImage({ src: detail.src, name: detail.name });
+    };
+    window.addEventListener('interactive-mcp:open-image', handleOpenImage);
+    return () =>
+      window.removeEventListener('interactive-mcp:open-image', handleOpenImage);
+  }, []);
+
+  // Stable callback for the stick-to-bottom toggle. Turning ON re-engages
+  // sticky and jumps to the latest message; turning OFF leaves the scroll
+  // position alone (the persisted atom flips through `handleStickyChange`).
+  const handleToggleStickToBottom = useCallback(
+    (next: boolean) => {
+      if (!channelId) {
+        if (next) jumpToBottom();
+        return;
+      }
+      setChannelStickToBottom(channelId, next);
+      if (next) jumpToBottom();
+    },
+    [channelId, jumpToBottom, setChannelStickToBottom],
+  );
 
   // Keyboard shortcut: End key scrolls to bottom
   useEffect(() => {
@@ -418,11 +460,13 @@ export default function ChatHistoryView({
         <div ref={chatEndRef} />
       </div>
 
-      {/* Scroll to bottom button - shows when user scrolls away from bottom */}
+      {/* Stick-to-bottom toggle (Bug 3) — replaces the old jump button. */}
       <ScrollToBottomButton
-        visible={showJump || !isAtBottom}
+        isAtBottom={isAtBottom}
+        showJump={showJump}
+        stickToBottom={isStickyToBottom}
         unreadCount={unreadCount}
-        onClick={handleScrollToBottom}
+        onToggle={handleToggleStickToBottom}
       />
 
       {/* Expanded image modal */}

@@ -9,6 +9,8 @@ vi.mock('../database', () => ({
   deleteSkillOrInstruction: vi.fn(),
   getRegisteredConnection: vi.fn(() => null),
   getRegisteredConnectionBySessionId: vi.fn(() => null),
+  getRegisteredConnectionsByConnectionId: vi.fn(() => []),
+  getRegisteredConnectionsByProvider: vi.fn(() => []),
 }));
 
 vi.mock('./connection-guard', () => ({
@@ -16,12 +18,18 @@ vi.mock('./connection-guard', () => ({
   requireProviderSessionId: vi.fn(() => null),
 }));
 
+vi.mock('../opencode/injector', () => ({
+  injectOpenCodeMessage: vi.fn().mockResolvedValue({ ok: true }),
+}));
+
 import {
   upsertSkillOrInstruction,
   listSkillsAndInstructions,
   getSkillOrInstructionByName,
   deleteSkillOrInstruction,
+  getRegisteredConnectionsByProvider,
 } from '../database';
+import { injectOpenCodeMessage } from '../opencode/injector';
 
 type ToolInput = {
   action: 'register' | 'list' | 'get' | 'delete';
@@ -52,6 +60,7 @@ function getToolHandler(): ToolHandler {
     server,
     () => mockWindow as never,
     'conn-test',
+    () => 4096,
   );
 
   const toolCall = (server.registerTool as Mock).mock.calls[0];
@@ -63,12 +72,18 @@ describe('manage_skills_and_instructions tool', () => {
   const mockList = listSkillsAndInstructions as Mock;
   const mockGet = getSkillOrInstructionByName as Mock;
   const mockDelete = deleteSkillOrInstruction as Mock;
+  const mockGetByProvider = getRegisteredConnectionsByProvider as Mock;
+  const mockInject = injectOpenCodeMessage as Mock;
 
   beforeEach(() => {
     mockUpsert.mockReset();
     mockList.mockReset();
     mockGet.mockReset();
     mockDelete.mockReset();
+    mockGetByProvider.mockReset();
+    mockInject.mockReset();
+    mockGetByProvider.mockReturnValue([]);
+    mockInject.mockResolvedValue({ ok: true });
   });
 
   it('registers a skill successfully', async () => {
@@ -241,5 +256,161 @@ describe('manage_skills_and_instructions tool', () => {
     expect(result.isError).toBe(true);
     const payload = JSON.parse(result.content[0].text) as { error: string };
     expect(payload.error).toBe('MISSING_NAME');
+  });
+
+  it('broadcasts a skills-changed reminder to opencode sessions on register', async () => {
+    mockGet.mockReturnValue(null); // not pre-existing → action label "registered"
+    mockUpsert.mockReturnValue({
+      id: 1,
+      name: 'new-skill',
+      type: 'skill',
+      description: 'desc',
+      content: 'body',
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-01',
+    });
+    mockGetByProvider.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_aaa',
+        connectionId: null,
+        channelName: 'A',
+        projectName: 'P',
+      },
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_bbb',
+        connectionId: null,
+        channelName: 'B',
+        projectName: 'P',
+      },
+    ]);
+
+    const handler = getToolHandler();
+    await handler({
+      action: 'register',
+      name: 'new-skill',
+      type: 'skill',
+      description: 'desc',
+      content: 'body',
+    });
+
+    // Allow microtasks (fire-and-forget) to settle
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockGetByProvider).toHaveBeenCalledWith('opencode');
+    expect(mockInject).toHaveBeenCalledTimes(2);
+    const sessionIds = mockInject.mock.calls.map((c) => c[0]);
+    expect(sessionIds).toContain('ses_aaa');
+    expect(sessionIds).toContain('ses_bbb');
+    // Reminder MUST land in the user-message slot (arg index 1) as a noReply
+    // message, NOT systemMessage (arg index 7). OpenCode's per-call `system`
+    // only persists while the injected message is `lastUser`; storing the
+    // reminder in the message body persists it in `messages[]` so it is
+    // replayed on every step.
+    const userMsg = mockInject.mock.calls[0][1] as string;
+    expect(userMsg).toContain('<system-reminder>');
+    expect(userMsg).toContain('registered');
+    expect(userMsg).toContain('new-skill');
+    const noReply = mockInject.mock.calls[0][5] as boolean;
+    expect(noReply).toBe(true);
+    const systemMsg = mockInject.mock.calls[0][7] as string | undefined;
+    expect(systemMsg).toBeUndefined();
+  });
+
+  it('uses "updated" action label when register overwrites an existing entry', async () => {
+    mockGet.mockReturnValue({
+      id: 1,
+      name: 'existing',
+      type: 'skill',
+      description: 'old',
+      content: 'old',
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-01',
+    });
+    mockUpsert.mockReturnValue({
+      id: 1,
+      name: 'existing',
+      type: 'skill',
+      description: 'new',
+      content: 'new',
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-02',
+    });
+    mockGetByProvider.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_aaa',
+        connectionId: null,
+        channelName: 'A',
+        projectName: 'P',
+      },
+    ]);
+
+    const handler = getToolHandler();
+    await handler({
+      action: 'register',
+      name: 'existing',
+      type: 'skill',
+      description: 'new',
+      content: 'new',
+    });
+    await new Promise((r) => setImmediate(r));
+
+    const userMsg = mockInject.mock.calls[0][1] as string;
+    expect(userMsg).toContain('updated');
+    expect(userMsg).toContain('existing');
+    expect(mockInject.mock.calls[0][7]).toBeUndefined();
+  });
+
+  it('broadcasts a "deleted" reminder on successful delete', async () => {
+    mockGet.mockReturnValue({
+      id: 1,
+      name: 'gone',
+      type: 'skill',
+      description: 'd',
+      content: 'c',
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-01',
+    });
+    mockDelete.mockReturnValue(true);
+    mockGetByProvider.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_aaa',
+        connectionId: null,
+        channelName: 'A',
+        projectName: 'P',
+      },
+    ]);
+
+    const handler = getToolHandler();
+    await handler({ action: 'delete', name: 'gone' });
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockInject).toHaveBeenCalledTimes(1);
+    const userMsg = mockInject.mock.calls[0][1] as string;
+    expect(userMsg).toContain('deleted');
+    expect(userMsg).toContain('gone');
+    expect(mockInject.mock.calls[0][7]).toBeUndefined();
+  });
+
+  it('does NOT broadcast when delete finds nothing', async () => {
+    mockDelete.mockReturnValue(false);
+    mockGetByProvider.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_aaa',
+        connectionId: null,
+        channelName: 'A',
+        projectName: 'P',
+      },
+    ]);
+
+    const handler = getToolHandler();
+    await handler({ action: 'delete', name: 'nonexistent' });
+    await new Promise((r) => setImmediate(r));
+
+    expect(mockInject).not.toHaveBeenCalled();
   });
 });

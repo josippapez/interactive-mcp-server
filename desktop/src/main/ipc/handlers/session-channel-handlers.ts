@@ -36,21 +36,34 @@ import {
 import { logIpcInfo, withSkillSuggestion } from './shared';
 
 export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
-  // Save a base64 image (e.g. from clipboard) to the attachments directory
+  // Save a base64 image (e.g. from clipboard) to the per-session attachments
+  // directory under os.tmpdir().
   ipcMain.handle(
     'save-clipboard-attachment',
-    (_event, payload: { data: string; mimeType: string }) => {
-      if (!payload || typeof payload.data !== 'string') return null;
+    (
+      _event,
+      payload: { sessionKey: string; data: string; mimeType: string },
+    ) => {
+      if (
+        !payload ||
+        typeof payload.data !== 'string' ||
+        typeof payload.sessionKey !== 'string' ||
+        !payload.sessionKey
+      ) {
+        return null;
+      }
       const filename = saveAttachmentToDisk(
+        payload.sessionKey,
         payload.data,
         payload.mimeType || 'image/png',
       );
       if (!filename) return null;
-      const absolutePath = joinPath(getAttachmentsDir(), filename);
+      const dir = getAttachmentsDir(payload.sessionKey);
+      const absolutePath = dir ? joinPath(dir, filename) : null;
       const { port: mcpServerPort } = deps.getSettings();
       const url =
         typeof mcpServerPort === 'number' && mcpServerPort > 0
-          ? attachmentUrl(filename, mcpServerPort)
+          ? attachmentUrl(payload.sessionKey, filename, mcpServerPort)
           : null;
       return { filename, absolutePath, url };
     },
@@ -114,10 +127,18 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
         attachments?: AttachmentPayload[];
         noReply?: boolean;
         modelOverride?: ModelSelectionPayload;
+        /**
+         * Optional per-message OpenCode agent override (e.g. 'plan',
+         * 'docs-maintainer'). Whitespace-only or empty strings are treated
+         * as "no override" and the OpenCode session keeps its default
+         * agent. The override applies to a single prompt only — it is not
+         * persisted on the session.
+         */
+        agent?: string;
       },
     ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> => {
       logIpcInfo(
-        `[inject-opencode-message] openCodeSessionId=${data.openCodeSessionId} noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0}`,
+        `[inject-opencode-message] openCodeSessionId=${data.openCodeSessionId} noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0} agent=${data.agent ?? '(none)'}`,
       );
       const outbound = withSkillSuggestion(data.message);
       const result = await injectOpenCodeMessage(
@@ -128,6 +149,8 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
         deps.getSettings().port,
         data.noReply ?? true,
         data.modelOverride,
+        undefined,
+        data.agent,
       );
       logIpcInfo(
         `[inject-opencode-message] result ok=${result.ok} error=${result.error ?? 'none'} openCodeSessionId=${data.openCodeSessionId}`,

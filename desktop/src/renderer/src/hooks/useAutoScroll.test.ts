@@ -254,3 +254,42 @@ describe('hook API contract (documentation)', () => {
     expect(true).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// External-preference auto-disengage contract
+// ---------------------------------------------------------------------------
+// When a user manually scrolls away from the bottom while the persisted
+// stick-to-bottom preference is ON, the persisted preference must be flipped
+// OFF too (otherwise switching channels and coming back would silently
+// re-engage the lock the user just opted out of).
+//
+// The hook is wired so that whenever its internal `setSticky(false)` runs,
+// the consumer's `onStickyChange?: (sticky: boolean) => void` callback is
+// invoked. The pure transition `nextStickyStateOnScroll` already encodes the
+// "did the user just scroll away?" decision; the new test below documents that
+// `setSticky(false)` is the single place we hook into for external persistence.
+describe('nextStickyStateOnScroll auto-disengage path', () => {
+  it('flips sticky=false the first time a user scroll moves the view past threshold', () => {
+    // prev=true (sticky ON because external preference said so), user scrolls,
+    // wasAuto=false (genuine user gesture), distance > threshold.
+    expect(
+      nextStickyStateOnScroll({
+        prev: true,
+        distance: 250,
+        threshold: 50,
+        wasAuto: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('does NOT flip when the scroll is programmatic (preserves external preference during animation)', () => {
+    expect(
+      nextStickyStateOnScroll({
+        prev: true,
+        distance: 250,
+        threshold: 50,
+        wasAuto: true,
+      }),
+    ).toBe(true);
+  });
+});

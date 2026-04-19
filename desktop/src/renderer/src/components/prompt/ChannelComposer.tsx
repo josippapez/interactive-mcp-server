@@ -1,4 +1,5 @@
 import { memo, useMemo, useState, useRef, useCallback, useEffect } from 'react';
+import { useAtomValue, useSetAtom } from 'jotai';
 import type { Attachment, SessionStatus } from '../../types';
 import type { Model } from '../../hooks/useProviders';
 import AttachmentPreview from './AttachmentPreview';
@@ -10,6 +11,10 @@ import { useAttachments } from '../../hooks/useAttachments';
 import { ComposerBottomBar } from './composer/ComposerBottomBar';
 import { ImageLightbox } from './composer/ImageLightbox';
 import { resolveCurrentModel } from './model-resolution';
+import {
+  sessionAgentsAtom,
+  setSessionAgentAtom,
+} from '../../store/session-agents';
 
 type Props = {
   enabled: boolean;
@@ -19,8 +24,16 @@ type Props = {
   onSubmit: (text: string, attachments?: Attachment[]) => void;
   /** Show "Send with Reply" button for triggering agent response (OpenCode only) */
   showReplyButton?: boolean;
-  /** Called when "Send with Reply" is clicked (noReply=false) */
-  onSubmitWithReply?: (text: string, attachments?: Attachment[]) => void;
+  /**
+   * Called when "Send with Reply" is clicked (noReply=false).
+   * `agent` is the per-message OpenCode agent override (sticky in-session).
+   * Pass `undefined` to use the session default agent.
+   */
+  onSubmitWithReply?: (
+    text: string,
+    attachments?: Attachment[],
+    agent?: string,
+  ) => void;
   /** Current noReply toggle state (controlled from parent) */
   noReply?: boolean;
   /** Called when noReply toggle changes */
@@ -100,6 +113,27 @@ function ChannelComposer({
     isLoading: modelsLoading,
     isConnected,
   } = useProviders();
+
+  // Per-message agent override (sticky in-session, keyed by connectionId).
+  // In-memory only — clears on app restart and on new sessions.
+  const sessionAgents = useAtomValue(sessionAgentsAtom);
+  const setSessionAgent = useSetAtom(setSessionAgentAtom);
+  const selectedAgent = connectionId
+    ? (sessionAgents.get(connectionId) ?? null)
+    : null;
+  const [agentPopoverOpen, setAgentPopoverOpen] = useState(false);
+
+  const handleAgentSelect = useCallback(
+    (agent: string | null) => {
+      if (!connectionId) return;
+      setSessionAgent({ connectionId, agent });
+    },
+    [connectionId, setSessionAgent],
+  );
+
+  const handleAgentPopoverToggle = useCallback(() => {
+    setAgentPopoverOpen((prev) => !prev);
+  }, []);
 
   // Command palette can be opened externally (Cmd+K) or internally (/)
   const commandPaletteOpen = externalPaletteOpen || internalPaletteOpen;
@@ -222,7 +256,11 @@ function ChannelComposer({
     // If Reply toggle is ON and we have the reply handler, use it
     // Otherwise use the regular submit (noReply mode)
     if (!noReply && onSubmitWithReply) {
-      onSubmitWithReply(text, attachments.length > 0 ? attachments : undefined);
+      onSubmitWithReply(
+        text,
+        attachments.length > 0 ? attachments : undefined,
+        selectedAgent ?? undefined,
+      );
     } else {
       onSubmit(text, attachments.length > 0 ? attachments : undefined);
     }
@@ -238,6 +276,7 @@ function ChannelComposer({
     onSubmitWithReply,
     setAttachments,
     clearSuggestions,
+    selectedAgent,
   ]);
 
   const disabled = useMemo(
@@ -389,6 +428,13 @@ function ChannelComposer({
             modelId={modelId}
             onModelSelect={handleModelSelect}
             onVariantSelect={handleVariantSelect}
+            showAgentChip={Boolean(isOpenCodeSession && connectionId)}
+            selectedAgent={selectedAgent}
+            agentPopoverOpen={agentPopoverOpen}
+            onAgentPopoverToggle={handleAgentPopoverToggle}
+            onAgentPopoverChange={setAgentPopoverOpen}
+            onAgentSelect={handleAgentSelect}
+            agentBaseDirectory={baseDirectory}
             isBusy={isBusy}
             latestStatus={latestStatus}
             connectionId={connectionId}

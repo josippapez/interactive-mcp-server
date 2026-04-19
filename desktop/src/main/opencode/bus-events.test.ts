@@ -121,7 +121,7 @@ describe('opencode-bus-events — permission.asked', () => {
     });
   });
 
-  it('falls back to sessionID when no registered connection matches the sessionID', () => {
+  it('emits null connectionId when no registered MCP connection matches the sessionID (Phase 6 routing fix)', () => {
     const win = makeWindow();
     mocks.getAllRegisteredConnections.mockReturnValue([
       makeRegisteredConnection('conn-abc', 'ses-999'),
@@ -141,7 +141,7 @@ describe('opencode-bus-events — permission.asked', () => {
     handleBusEvent(envelope, win);
 
     expect(mocks.webContentsSend).toHaveBeenCalledWith('permission-asked', {
-      connectionId: 'ses-123',
+      connectionId: null,
       providerSessionId: 'ses-123',
       requestId: 'req-002',
       sessionID: 'ses-123',
@@ -150,6 +150,7 @@ describe('opencode-bus-events — permission.asked', () => {
       always: undefined,
       tool: undefined,
       metadata: undefined,
+      directory: undefined,
     });
   });
 
@@ -405,28 +406,34 @@ describe('opencode-bus-events — question events', () => {
 // ─── session.status passthrough ───────────────────────────────────────────────
 
 describe('opencode-bus-events — session.status', () => {
-  it('emits session-status-update when connectionId is in properties', () => {
+  it('emits opencode-session-status keyed by providerSessionId (not legacy session-status-update)', () => {
     const win = makeWindow();
 
     const envelope = {
       payload: {
         type: 'session.status',
         properties: {
-          connectionId: 'conn-abc',
-          status: 'Working on task...',
-          type: 'working',
+          sessionID: 'ses_abc',
+          status: { type: 'busy' },
         },
       },
     };
 
     handleBusEvent(envelope, win);
 
-    expect(mocks.webContentsSend).toHaveBeenCalledWith(
+    // Phase 6 routing fix: SSE session.status no longer emits the broken
+    // `session-status-update` channel (which had `connectionId: undefined` and
+    // routed messages non-deterministically across sibling channels sharing an
+    // MCP transport). Only the providerSessionId-keyed canonical event fires.
+    expect(mocks.webContentsSend).not.toHaveBeenCalledWith(
       'session-status-update',
+      expect.anything(),
+    );
+    expect(mocks.webContentsSend).toHaveBeenCalledWith(
+      'opencode-session-status',
       {
-        connectionId: 'conn-abc',
-        status: 'Working on task...',
-        type: 'working',
+        sessionID: 'ses_abc',
+        status: 'busy',
       },
     );
   });
@@ -436,9 +443,8 @@ describe('opencode-bus-events — session.status', () => {
       payload: {
         type: 'session.status',
         properties: {
-          connectionId: 'conn-abc',
-          status: 'Idle',
-          type: 'info',
+          sessionID: 'ses_abc',
+          status: { type: 'idle' },
         },
       },
     };

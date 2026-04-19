@@ -213,6 +213,8 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
           mcpServerPort,
           false,
           modelOverride,
+          undefined,
+          data.agent,
         );
 
         if (!injectResult.ok) {
