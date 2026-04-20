@@ -1,13 +1,12 @@
-import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
+import Database, {
+  type Database as BetterSqliteDatabase,
+} from 'better-sqlite3';
 import { app } from 'electron';
 import { join } from 'path';
-import { readFileSync, writeFileSync, existsSync, unlinkSync } from 'fs';
+import { existsSync, unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 
-/** A single SQL column value as returned by sql.js query results. */
-type SqlValue = string | number | Uint8Array | null;
-
-let db: SqlJsDatabase | null = null;
+let db: BetterSqliteDatabase | null = null;
 let dbPath = '';
 
 /**
@@ -90,74 +89,37 @@ export interface RegisteredConnection {
 // ─── Internal helpers ──────────────────────────────────────────────────────
 
 /**
- * Debounced persistence layer.
- *
- * sql.js holds the entire DB in WASM heap memory. Calling `db.export()`
- * allocates a fresh Uint8Array (full DB size) from the WASM heap on every
- * call. A single user action (e.g. sending a message) can trigger 10+ DB
- * writes across IPC handlers and concurrent SSE event handlers. Exporting
- * the full DB on every write causes WASM heap fragmentation/exhaustion and
- * surfaces to the renderer as:
- *
- *   RuntimeError: memory access out of bounds
- *
- * Solution: keep the in-memory DB mutation synchronous (so reads stay
- * consistent), but coalesce disk writes into a single `db.export() +
- * writeFileSync` per debounce window. Callers never await persistence —
- * crash recovery and shutdown flushing are handled explicitly.
+ * Raw DB row shape for `registered_connections`. Field names match the
+ * snake_case column names returned by better-sqlite3.
  */
-const PERSIST_DEBOUNCE_MS = 250;
-let pendingPersistTimer: ReturnType<typeof setTimeout> | null = null;
-let persistDirty = false;
-
-/**
- * Mark the DB dirty and schedule a flush. Returns immediately. If a flush
- * is already scheduled, this is a no-op (the pending flush will pick up
- * the latest state since `db.export()` reads the live DB).
- */
-function persist(): void {
-  if (!db) return;
-  persistDirty = true;
-  if (pendingPersistTimer !== null) return;
-  pendingPersistTimer = setTimeout(() => {
-    pendingPersistTimer = null;
-    flushPersistNow();
-  }, PERSIST_DEBOUNCE_MS);
-  // Do not keep the event loop alive solely for the persist timer —
-  // shutdown (`before-quit`) explicitly calls `flushPersistNow()`.
-  if (typeof pendingPersistTimer === 'object' && pendingPersistTimer !== null) {
-    (pendingPersistTimer as { unref?: () => void }).unref?.();
-  }
+interface RegisteredConnectionRow {
+  provider_type: RegisteredConnection['providerType'];
+  provider_session_id: string;
+  connection_id: string | null;
+  agent_name: string;
+  project_name: string;
+  base_directory: string | null;
+  id_file_path: string;
+  parent_session_id: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-/**
- * Synchronously flush any pending DB writes to disk. Safe to call when
- * there are no pending writes (no-op). Must be called from the main
- * process `before-quit` lifecycle hook and before any test teardown that
- * deletes `dbPath`, otherwise a late-firing debounce timer could re-create
- * the file with stale contents.
- */
-export function flushPersistNow(): void {
-  if (pendingPersistTimer !== null) {
-    clearTimeout(pendingPersistTimer);
-    pendingPersistTimer = null;
-  }
-  if (!db || !persistDirty) {
-    persistDirty = false;
-    return;
-  }
-  const data = db.export();
-  writeFileSync(dbPath, Buffer.from(data));
-  persistDirty = false;
-}
-
-/** Test-only: cancel any pending debounced write without flushing. */
-export function __cancelPendingPersistForTests(): void {
-  if (pendingPersistTimer !== null) {
-    clearTimeout(pendingPersistTimer);
-    pendingPersistTimer = null;
-  }
-  persistDirty = false;
+function mapRowToRegisteredConnection(
+  row: RegisteredConnectionRow,
+): RegisteredConnection {
+  return {
+    providerType: row.provider_type ?? 'standalone',
+    providerSessionId: row.provider_session_id,
+    connectionId: row.connection_id,
+    channelName: row.agent_name,
+    projectName: row.project_name,
+    baseDirectory: row.base_directory,
+    idFilePath: row.id_file_path,
+    parentSessionId: row.parent_session_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
 }
 
 /**
@@ -167,7 +129,7 @@ export function __cancelPendingPersistForTests(): void {
 function createTables(): void {
   if (!db) return;
 
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS conversations (
       id                 INTEGER PRIMARY KEY AUTOINCREMENT,
       prompt_message     TEXT    NOT NULL,
@@ -179,7 +141,7 @@ function createTables(): void {
     )
   `);
 
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS session_channels (
       session_id TEXT     PRIMARY KEY,
       label      TEXT,
@@ -187,7 +149,7 @@ function createTables(): void {
     )
   `);
 
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS session_messages (
       id         INTEGER  PRIMARY KEY AUTOINCREMENT,
       session_id TEXT,
@@ -197,7 +159,7 @@ function createTables(): void {
     )
   `);
 
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS session_channel_history (
       id           INTEGER  PRIMARY KEY AUTOINCREMENT,
       session_id   TEXT     NOT NULL,
@@ -208,7 +170,7 @@ function createTables(): void {
     )
   `);
 
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS skills_and_instructions (
       id          INTEGER PRIMARY KEY AUTOINCREMENT,
       name        TEXT    NOT NULL UNIQUE,
@@ -224,7 +186,7 @@ function createTables(): void {
     )
   `);
 
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS registered_connections (
       provider_type        TEXT     NOT NULL DEFAULT 'standalone' CHECK(provider_type IN ('opencode', 'copilot-cli', 'claude-sdk', 'standalone')),
       provider_session_id  TEXT     NOT NULL,
@@ -245,7 +207,7 @@ function createTables(): void {
   // MCP tool or auto-prepended to request_user_input responses.
   // Keyed on (provider_type, provider_session_id) — the canonical session identity —
   // so injections survive transport reconnects (which mint a new connectionId).
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS pending_context_injections (
       id                  INTEGER  PRIMARY KEY AUTOINCREMENT,
       provider_type       TEXT     NOT NULL DEFAULT 'standalone',
@@ -258,14 +220,14 @@ function createTables(): void {
       created_at          DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
-  db.run(`
+  db.exec(`
     CREATE INDEX IF NOT EXISTS idx_pci_session_delivered
       ON pending_context_injections (provider_type, provider_session_id, delivered)
   `);
 
   // Pinned projects — manually added project folders that appear in sidebar
   // even when no sessions exist for them
-  db.run(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS pinned_projects (
       path        TEXT     PRIMARY KEY,
       name        TEXT     NOT NULL,
@@ -274,54 +236,36 @@ function createTables(): void {
   `);
 }
 
-/**
- * Map a raw SQL row (10 columns) from `registered_connections` to a
- * `RegisteredConnection` object. Column order must match every SELECT that
- * queries this table:
- *   0 provider_type, 1 provider_session_id, 2 connection_id, 3 agent_name,
- *   4 project_name, 5 base_directory, 6 id_file_path, 7 parent_session_id,
- *   8 created_at, 9 updated_at
- */
-function mapRowToRegisteredConnection(row: SqlValue[]): RegisteredConnection {
-  const providerType =
-    (row[0] as RegisteredConnection['providerType']) ?? 'standalone';
-  const providerSessionId = row[1] as string;
-  return {
-    providerType,
-    providerSessionId,
-    connectionId: row[2] as string | null,
-    channelName: row[3] as string,
-    projectName: row[4] as string,
-    baseDirectory: row[5] as string | null,
-    idFilePath: row[6] as string,
-    parentSessionId: row[7] as string | null,
-    createdAt: row[8] as string,
-    updatedAt: row[9] as string,
-  };
-}
-
 // ─── Initialization ────────────────────────────────────────────────────────
 
+/**
+ * Initialize the SQLite database using better-sqlite3 (native bindings).
+ *
+ * Uses WAL journal mode + synchronous=NORMAL for durable, fast writes without
+ * full-file exports. This replaces the previous sql.js (WASM) implementation
+ * which exhibited "RuntimeError: memory access out of bounds" after prolonged
+ * use due to WASM heap fragmentation.
+ *
+ * Kept `async` for API compatibility with existing callers — no await is
+ * actually needed.
+ */
 export async function initDatabase(): Promise<void> {
-  // Cancel any pending debounced flush from a previous DB instance (tests
-  // re-initialize the DB between runs; without this a stale timer could
-  // re-create the just-deleted file with old contents).
-  __cancelPendingPersistForTests();
   dbPath = join(app.getPath('userData'), 'conversations.db');
 
-  const SQL = await initSqlJs();
+  const alreadyExists = existsSync(dbPath);
+  db = new Database(dbPath);
 
-  if (existsSync(dbPath)) {
-    const buffer = readFileSync(dbPath);
-    db = new SQL.Database(buffer);
-  } else {
-    db = new SQL.Database();
-  }
+  // WAL: concurrent readers + single writer, fast commits, no full rewrites.
+  db.pragma('journal_mode = WAL');
+  // NORMAL: fsync on checkpoint only (safe under WAL); ~10x faster than FULL.
+  db.pragma('synchronous = NORMAL');
+  // Enforce foreign keys (defensive — we don't currently use FKs).
+  db.pragma('foreign_keys = ON');
 
   // Check stored schema version against expected version.
   // If they differ (or the DB is brand new with version 0), wipe and recreate.
   const storedVersion = getSchemaVersion();
-  if (storedVersion !== SCHEMA_VERSION) {
+  if (!alreadyExists || storedVersion !== SCHEMA_VERSION) {
     dropAllTables();
     createTables();
     setSchemaVersion(SCHEMA_VERSION);
@@ -329,31 +273,42 @@ export async function initDatabase(): Promise<void> {
     // Schema matches — just ensure tables exist (idempotent).
     createTables();
   }
-
-  // Flush synchronously so a freshly-initialized DB is on disk immediately.
-  // Subsequent writes in the running app use the debounced `persist()`.
-  persistDirty = true;
-  flushPersistNow();
 }
 
 /**
  * Get the internal database reference for modules that need direct SQL access.
  * Returns null if the database is not initialized.
  */
-export function getDbInstance(): SqlJsDatabase | null {
+export function getDbInstance(): BetterSqliteDatabase | null {
   return db;
+}
+
+/**
+ * No-op retained for API compatibility with the previous sql.js implementation.
+ * better-sqlite3 writes synchronously to disk; there is nothing to flush.
+ *
+ * Callers (e.g. `before-quit`) may still invoke this safely.
+ */
+export function flushPersistNow(): void {
+  // No-op under better-sqlite3 — writes are already durable.
+}
+
+/**
+ * Test-only: retained for API compatibility. No-op under better-sqlite3.
+ */
+export function __cancelPendingPersistForTests(): void {
+  // No-op under better-sqlite3.
 }
 
 function getSchemaVersion(): number {
   if (!db) return 0;
-  const results = db.exec('PRAGMA user_version');
-  if (results.length === 0 || results[0].values.length === 0) return 0;
-  return (results[0].values[0][0] as number) ?? 0;
+  const row = db.pragma('user_version', { simple: true }) as number | undefined;
+  return row ?? 0;
 }
 
 function setSchemaVersion(version: number): void {
   if (!db) return;
-  db.run(`PRAGMA user_version = ${version}`);
+  db.pragma(`user_version = ${version}`);
 }
 
 function dropAllTables(): void {
@@ -368,9 +323,10 @@ function dropAllTables(): void {
     'registered_connections',
     'conversations',
     'skills_and_instructions',
+    'pinned_projects',
   ];
   for (const table of tables) {
-    db.run(`DROP TABLE IF EXISTS ${table}`);
+    db.exec(`DROP TABLE IF EXISTS ${table}`);
   }
 }
 
@@ -389,47 +345,49 @@ export function saveConversation(data: {
   }[];
 }): void {
   if (!db) return;
-
-  db.run(
+  db.prepare(
     `INSERT INTO conversations (prompt_message, project_name, user_response, predefined_options, attachments)
      VALUES (?, ?, ?, ?, ?)`,
-    [
-      data.promptMessage,
-      data.projectName,
-      data.userResponse,
-      data.predefinedOptions ? JSON.stringify(data.predefinedOptions) : null,
-      data.attachments?.length ? JSON.stringify(data.attachments) : null,
-    ],
+  ).run(
+    data.promptMessage,
+    data.projectName,
+    data.userResponse,
+    data.predefinedOptions ? JSON.stringify(data.predefinedOptions) : null,
+    data.attachments?.length ? JSON.stringify(data.attachments) : null,
   );
-  persist();
 }
 
 export function getConversationHistory(limit = 100): ConversationRecord[] {
   if (!db) return [];
+  const rows = db
+    .prepare(
+      `SELECT id, prompt_message, project_name, user_response, predefined_options, attachments, created_at
+       FROM conversations ORDER BY created_at DESC LIMIT ?`,
+    )
+    .all(limit) as {
+    id: number;
+    prompt_message: string;
+    project_name: string;
+    user_response: string;
+    predefined_options: string | null;
+    attachments: string | null;
+    created_at: string;
+  }[];
 
-  const results = db.exec(
-    `SELECT id, prompt_message, project_name, user_response, predefined_options, attachments, created_at
-     FROM conversations ORDER BY created_at DESC LIMIT ?`,
-    [limit],
-  );
-
-  if (results.length === 0) return [];
-
-  return results[0].values.map((row) => ({
-    id: row[0] as number,
-    promptMessage: row[1] as string,
-    projectName: row[2] as string,
-    userResponse: row[3] as string,
-    predefinedOptions: row[4] as string | null,
-    attachments: row[5] as string | null,
-    createdAt: row[6] as string,
+  return rows.map((row) => ({
+    id: row.id,
+    promptMessage: row.prompt_message,
+    projectName: row.project_name,
+    userResponse: row.user_response,
+    predefinedOptions: row.predefined_options,
+    attachments: row.attachments,
+    createdAt: row.created_at,
   }));
 }
 
 export function clearHistory(): void {
   if (!db) return;
-  db.run('DELETE FROM conversations');
-  persist();
+  db.exec('DELETE FROM conversations');
 }
 
 // ─── Database reset ────────────────────────────────────────────────────────
@@ -465,10 +423,8 @@ export function resetDatabase(): {
   ];
 
   for (const table of clearedTables) {
-    db.run(`DELETE FROM ${table}`);
+    db.exec(`DELETE FROM ${table}`);
   }
-
-  persist();
 
   return { ok: true, clearedTables, removedIdFiles };
 }
@@ -477,62 +433,66 @@ export function resetDatabase(): {
 
 export function createSessionChannel(sessionId: string, label?: string): void {
   if (!db) return;
-  db.run(
+  db.prepare(
     `INSERT OR REPLACE INTO session_channels (session_id, label) VALUES (?, ?)`,
-    [sessionId, label ?? null],
-  );
-  persist();
+  ).run(sessionId, label ?? null);
 }
 
 export function getUnsentMessages(
   sessionId: string,
 ): { id: number; message: string; createdAt: string }[] {
   if (!db) return [];
-  const results = db.exec(
-    `SELECT id, message, created_at FROM session_messages
-     WHERE session_id = ? AND sent = 0 ORDER BY id ASC`,
-    [sessionId],
-  );
-  if (results.length === 0) return [];
-  return results[0].values.map((row) => ({
-    id: row[0] as number,
-    message: row[1] as string,
-    createdAt: row[2] as string,
+  const rows = db
+    .prepare(
+      `SELECT id, message, created_at FROM session_messages
+       WHERE session_id = ? AND sent = 0 ORDER BY id ASC`,
+    )
+    .all(sessionId) as {
+    id: number;
+    message: string;
+    created_at: string;
+  }[];
+  return rows.map((row) => ({
+    id: row.id,
+    message: row.message,
+    createdAt: row.created_at,
   }));
 }
 
 export function getUnsentCount(sessionId: string): number {
   if (!db) return 0;
-  const results = db.exec(
-    `SELECT COUNT(*) FROM session_messages WHERE session_id = ? AND sent = 0`,
-    [sessionId],
-  );
-  if (results.length === 0) return 0;
-  return (results[0].values[0][0] as number) ?? 0;
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM session_messages WHERE session_id = ? AND sent = 0`,
+    )
+    .get(sessionId) as { c: number } | undefined;
+  return row?.c ?? 0;
 }
 
 export function markMessagesSent(ids: number[]): void {
   if (!db || ids.length === 0) return;
   const placeholders = ids.map(() => '?').join(',');
-  db.run(
+  db.prepare(
     `UPDATE session_messages SET sent = 1 WHERE id IN (${placeholders})`,
-    ids,
-  );
-  persist();
+  ).run(...ids);
 }
 
 export function queueSessionMessage(sessionId: string, message: string): void {
   if (!db) return;
-  db.run(`INSERT INTO session_messages (session_id, message) VALUES (?, ?)`, [
-    sessionId,
-    message,
-  ]);
-  db.run(
-    `INSERT INTO session_channel_history (session_id, message_type, message_text)
-     VALUES (?, 'outbound', ?)`,
-    [sessionId, message],
-  );
-  persist();
+  const tx = db.transaction((sid: string, msg: string) => {
+    db!
+      .prepare(
+        `INSERT INTO session_messages (session_id, message) VALUES (?, ?)`,
+      )
+      .run(sid, msg);
+    db!
+      .prepare(
+        `INSERT INTO session_channel_history (session_id, message_type, message_text)
+         VALUES (?, 'outbound', ?)`,
+      )
+      .run(sid, msg);
+  });
+  tx(sessionId, message);
 }
 
 export function appendSessionChannelMessage(data: {
@@ -547,17 +507,15 @@ export function appendSessionChannelMessage(data: {
   }[];
 }): void {
   if (!db) return;
-  db.run(
+  db.prepare(
     `INSERT INTO session_channel_history (session_id, message_type, message_text, attachments)
      VALUES (?, ?, ?, ?)`,
-    [
-      data.sessionId,
-      data.messageType,
-      data.messageText,
-      data.attachments?.length ? JSON.stringify(data.attachments) : null,
-    ],
+  ).run(
+    data.sessionId,
+    data.messageType,
+    data.messageText,
+    data.attachments?.length ? JSON.stringify(data.attachments) : null,
   );
-  persist();
 }
 
 export function getSessionChannelHistory(
@@ -565,45 +523,53 @@ export function getSessionChannelHistory(
   limit = 500,
 ): SessionChannelMessageRecord[] {
   if (!db) return [];
-  const results = db.exec(
-    `SELECT id, session_id, message_type, message_text, attachments, created_at
-     FROM session_channel_history
-     WHERE session_id = ?
-     ORDER BY id ASC
-     LIMIT ?`,
-    [sessionId, limit],
-  );
-  if (results.length === 0) return [];
-  return results[0].values.map((row) => ({
-    id: row[0] as number,
-    sessionId: row[1] as string,
-    messageType: row[2] as 'question' | 'answer' | 'outbound' | 'agent_message',
-    messageText: row[3] as string,
-    attachments: row[4] as string | null,
-    createdAt: row[5] as string,
+  const rows = db
+    .prepare(
+      `SELECT id, session_id, message_type, message_text, attachments, created_at
+       FROM session_channel_history
+       WHERE session_id = ?
+       ORDER BY id ASC
+       LIMIT ?`,
+    )
+    .all(sessionId, limit) as {
+    id: number;
+    session_id: string;
+    message_type: 'question' | 'answer' | 'outbound' | 'agent_message';
+    message_text: string;
+    attachments: string | null;
+    created_at: string;
+  }[];
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.session_id,
+    messageType: row.message_type,
+    messageText: row.message_text,
+    attachments: row.attachments,
+    createdAt: row.created_at,
   }));
 }
 
 export function clearSessionChannelMessages(sessionId: string): void {
   if (!db) return;
-  db.run(`DELETE FROM session_messages WHERE session_id = ?`, [sessionId]);
-  db.run(`DELETE FROM session_channel_history WHERE session_id = ?`, [
-    sessionId,
-  ]);
-  persist();
+  const tx = db.transaction((sid: string) => {
+    db!.prepare(`DELETE FROM session_messages WHERE session_id = ?`).run(sid);
+    db!
+      .prepare(`DELETE FROM session_channel_history WHERE session_id = ?`)
+      .run(sid);
+  });
+  tx(sessionId);
 }
 
 export function deleteSessionChannel(sessionId: string): void {
   if (!db) return;
-  db.run(`DELETE FROM session_messages WHERE session_id = ?`, [sessionId]);
-  db.run(`DELETE FROM session_channel_history WHERE session_id = ?`, [
-    sessionId,
-  ]);
-  db.run(`DELETE FROM session_channels WHERE session_id = ?`, [sessionId]);
-  // Deletes must be durable across crash/quit — bypass the debounce so a
-  // user-initiated delete is persisted immediately, not ~250 ms later.
-  persistDirty = true;
-  flushPersistNow();
+  const tx = db.transaction((sid: string) => {
+    db!.prepare(`DELETE FROM session_messages WHERE session_id = ?`).run(sid);
+    db!
+      .prepare(`DELETE FROM session_channel_history WHERE session_id = ?`)
+      .run(sid);
+    db!.prepare(`DELETE FROM session_channels WHERE session_id = ?`).run(sid);
+  });
+  tx(sessionId);
 }
 
 export function getActiveSessionChannels(): {
@@ -614,20 +580,27 @@ export function getActiveSessionChannels(): {
   parentSessionId: string | null;
 }[] {
   if (!db) return [];
-  const results = db.exec(
-    `SELECT sc.session_id, sc.label, sc.created_at,
-            rc.provider_session_id, rc.parent_session_id
-     FROM session_channels sc
-     LEFT JOIN registered_connections rc ON rc.provider_session_id = sc.session_id
-     ORDER BY sc.created_at ASC`,
-  );
-  if (results.length === 0) return [];
-  return results[0].values.map((row) => ({
-    sessionId: row[0] as string,
-    label: row[1] as string | null,
-    createdAt: row[2] as string,
-    providerSessionId: (row[3] as string | null) ?? null,
-    parentSessionId: (row[4] as string | null) ?? null,
+  const rows = db
+    .prepare(
+      `SELECT sc.session_id, sc.label, sc.created_at,
+              rc.provider_session_id, rc.parent_session_id
+       FROM session_channels sc
+       LEFT JOIN registered_connections rc ON rc.provider_session_id = sc.session_id
+       ORDER BY sc.created_at ASC`,
+    )
+    .all() as {
+    session_id: string;
+    label: string | null;
+    created_at: string;
+    provider_session_id: string | null;
+    parent_session_id: string | null;
+  }[];
+  return rows.map((row) => ({
+    sessionId: row.session_id,
+    label: row.label,
+    createdAt: row.created_at,
+    providerSessionId: row.provider_session_id ?? null,
+    parentSessionId: row.parent_session_id ?? null,
   }));
 }
 
@@ -683,11 +656,8 @@ export function upsertRegisteredConnection(data: {
 
   // No-op short-circuit: if an identical row already exists, skip both the
   // SQL UPDATE and the ID-file rewrite. The 4s session-tree poller calls this
-  // for every OpenCode session on every tick, which — without this guard —
-  // fires `db.run` + `persist()` (full-DB `db.export()`) + `writeFileSync`
-  // every 4 seconds per session, even when nothing changed. Over time this
-  // fragments the sql.js WASM heap and produces a renderer-visible
-  // "RuntimeError: memory access out of bounds" crash on the next IPC call.
+  // for every OpenCode session on every tick; without this guard it would
+  // churn the DB and filesystem every 4 seconds per session for no reason.
   //
   // `baseDirectory === undefined` means "leave the stored value alone"
   // (mirrors the `COALESCE(excluded.base_directory, base_directory)` in the
@@ -736,7 +706,7 @@ export function upsertRegisteredConnection(data: {
   }
 
   if (db) {
-    db.run(
+    db.prepare(
       `INSERT INTO registered_connections
          (provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
@@ -748,18 +718,16 @@ export function upsertRegisteredConnection(data: {
          id_file_path = excluded.id_file_path,
          parent_session_id = excluded.parent_session_id,
          updated_at = CURRENT_TIMESTAMP`,
-      [
-        providerType,
-        providerSessionId,
-        data.connectionId ?? null,
-        data.channelName,
-        data.projectName,
-        data.baseDirectory ?? null,
-        idFilePath,
-        data.parentSessionId ?? null,
-      ],
+    ).run(
+      providerType,
+      providerSessionId,
+      data.connectionId ?? null,
+      data.channelName,
+      data.projectName,
+      data.baseDirectory ?? null,
+      idFilePath,
+      data.parentSessionId ?? null,
     );
-    persist();
   }
 
   return idFilePath;
@@ -768,12 +736,13 @@ export function upsertRegisteredConnection(data: {
 /** Return all registered connections (used by the session-tree poller). */
 export function getAllRegisteredConnections(): RegisteredConnection[] {
   if (!db) return [];
-  const results = db.exec(
-    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections ORDER BY created_at ASC`,
-  );
-  if (results.length === 0) return [];
-  return results[0].values.map(mapRowToRegisteredConnection);
+  const rows = db
+    .prepare(
+      `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+       FROM registered_connections ORDER BY created_at ASC`,
+    )
+    .all() as RegisteredConnectionRow[];
+  return rows.map(mapRowToRegisteredConnection);
 }
 
 /**
@@ -794,14 +763,15 @@ export function getRegisteredConnection(
   connectionId: string,
 ): RegisteredConnection | null {
   if (!db) return null;
-  const results = db.exec(
-    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections WHERE connection_id = ?
-     ORDER BY created_at ASC, rowid ASC LIMIT 1`,
-    [connectionId],
-  );
-  if (results.length === 0 || results[0].values.length === 0) return null;
-  return mapRowToRegisteredConnection(results[0].values[0]);
+  const row = db
+    .prepare(
+      `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+       FROM registered_connections WHERE connection_id = ?
+       ORDER BY created_at ASC, rowid ASC LIMIT 1`,
+    )
+    .get(connectionId) as RegisteredConnectionRow | undefined;
+  if (!row) return null;
+  return mapRowToRegisteredConnection(row);
 }
 
 /**
@@ -815,14 +785,14 @@ export function getRegisteredConnectionsByConnectionId(
   connectionId: string,
 ): RegisteredConnection[] {
   if (!db) return [];
-  const results = db.exec(
-    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections WHERE connection_id = ?
-     ORDER BY created_at ASC, rowid ASC`,
-    [connectionId],
-  );
-  if (results.length === 0 || results[0].values.length === 0) return [];
-  return results[0].values.map(mapRowToRegisteredConnection);
+  const rows = db
+    .prepare(
+      `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+       FROM registered_connections WHERE connection_id = ?
+       ORDER BY created_at ASC, rowid ASC`,
+    )
+    .all(connectionId) as RegisteredConnectionRow[];
+  return rows.map(mapRowToRegisteredConnection);
 }
 
 /**
@@ -834,13 +804,16 @@ export function getRegisteredConnectionBySessionId(
   providerType: RegisteredConnection['providerType'] = 'opencode',
 ): RegisteredConnection | null {
   if (!db) return null;
-  const results = db.exec(
-    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
-    [providerType, providerSessionId],
-  );
-  if (results.length === 0 || results[0].values.length === 0) return null;
-  return mapRowToRegisteredConnection(results[0].values[0]);
+  const row = db
+    .prepare(
+      `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+       FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
+    )
+    .get(providerType, providerSessionId) as
+    | RegisteredConnectionRow
+    | undefined;
+  if (!row) return null;
+  return mapRowToRegisteredConnection(row);
 }
 
 /**
@@ -853,13 +826,11 @@ export function updateConnectionId(
   providerType: RegisteredConnection['providerType'] = 'opencode',
 ): void {
   if (!db) return;
-  db.run(
+  db.prepare(
     `UPDATE registered_connections
      SET connection_id = ?, updated_at = CURRENT_TIMESTAMP
      WHERE provider_type = ? AND provider_session_id = ?`,
-    [connectionId, providerType, providerSessionId],
-  );
-  persist();
+  ).run(connectionId, providerType, providerSessionId);
 }
 
 /** Look up a registered connection by channel name. */
@@ -867,14 +838,15 @@ export function getRegisteredConnectionByName(
   channelName: string,
 ): RegisteredConnection | null {
   if (!db) return null;
-  const results = db.exec(
-    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections WHERE agent_name = ?
-     ORDER BY updated_at DESC LIMIT 1`,
-    [channelName],
-  );
-  if (results.length === 0 || results[0].values.length === 0) return null;
-  return mapRowToRegisteredConnection(results[0].values[0]);
+  const row = db
+    .prepare(
+      `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+       FROM registered_connections WHERE agent_name = ?
+       ORDER BY updated_at DESC LIMIT 1`,
+    )
+    .get(channelName) as RegisteredConnectionRow | undefined;
+  if (!row) return null;
+  return mapRowToRegisteredConnection(row);
 }
 
 /**
@@ -886,13 +858,14 @@ export function isProviderSessionClaimed(
   providerType: RegisteredConnection['providerType'] = 'opencode',
 ): boolean {
   if (!db) return false;
-  const results = db.exec(
-    `SELECT 1 FROM registered_connections
-     WHERE provider_type = ? AND provider_session_id = ?
-     LIMIT 1`,
-    [providerType, providerSessionId],
-  );
-  return results.length > 0 && results[0].values.length > 0;
+  const row = db
+    .prepare(
+      `SELECT 1 as present FROM registered_connections
+       WHERE provider_type = ? AND provider_session_id = ?
+       LIMIT 1`,
+    )
+    .get(providerType, providerSessionId) as { present: number } | undefined;
+  return row !== undefined;
 }
 
 /**
@@ -903,13 +876,13 @@ export function getRegisteredConnectionsByProvider(
   providerType: RegisteredConnection['providerType'],
 ): RegisteredConnection[] {
   if (!db) return [];
-  const results = db.exec(
-    `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
-     FROM registered_connections WHERE provider_type = ? ORDER BY created_at ASC`,
-    [providerType],
-  );
-  if (results.length === 0) return [];
-  return results[0].values.map(mapRowToRegisteredConnection);
+  const rows = db
+    .prepare(
+      `SELECT provider_type, provider_session_id, connection_id, agent_name, project_name, base_directory, id_file_path, parent_session_id, created_at, updated_at
+       FROM registered_connections WHERE provider_type = ? ORDER BY created_at ASC`,
+    )
+    .all(providerType) as RegisteredConnectionRow[];
+  return rows.map(mapRowToRegisteredConnection);
 }
 
 /**
@@ -938,10 +911,9 @@ export function updateConnectionProviderSession(
     existing.providerSessionId !== newProviderSessionId
   ) {
     // Delete old row
-    db.run(
+    db.prepare(
       `DELETE FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
-      [existing.providerType, existing.providerSessionId],
-    );
+    ).run(existing.providerType, existing.providerSessionId);
 
     // Insert new row with the correct composite key
     upsertRegisteredConnection({
@@ -955,13 +927,11 @@ export function updateConnectionProviderSession(
     });
   } else {
     // Same composite key, just update the row
-    db.run(
+    db.prepare(
       `UPDATE registered_connections
        SET updated_at = CURRENT_TIMESTAMP
        WHERE provider_type = ? AND provider_session_id = ?`,
-      [newProviderType, newProviderSessionId],
-    );
-    persist();
+    ).run(newProviderType, newProviderSessionId);
   }
 }
 
@@ -979,13 +949,11 @@ export function updateConnectionBaseDirectory(
   providerType: RegisteredConnection['providerType'] = 'opencode',
 ): void {
   if (!db) return;
-  db.run(
+  db.prepare(
     `UPDATE registered_connections
      SET base_directory = ?, updated_at = CURRENT_TIMESTAMP
      WHERE provider_type = ? AND provider_session_id = ?`,
-    [baseDirectory, providerType, providerSessionId],
-  );
-  persist();
+  ).run(baseDirectory, providerType, providerSessionId);
 }
 
 /**
@@ -1011,45 +979,50 @@ export function deleteRegisteredConnection(
       // file may already be gone
     }
   }
-  db.run(
+  db.prepare(
     `DELETE FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
-    [providerType, providerSessionId],
-  );
-  // Deletes must be durable across crash/quit — bypass the debounce so a
-  // user-initiated delete is persisted immediately, not ~250 ms later.
-  persistDirty = true;
-  flushPersistNow();
+  ).run(providerType, providerSessionId);
 }
 
 // ─── Skills & Instructions ─────────────────────────────────────────────────
 
-/**
- * Map a raw SQL row from `skills_and_instructions` to a `SkillOrInstruction`.
- * Column order: 0 id, 1 name, 2 type, 3 description, 4 content,
- *               5 category, 6 tags, 7 enabled, 8 is_builtin, 9 created_at, 10 updated_at
- */
-function mapRowToSkillOrInstruction(row: SqlValue[]): SkillOrInstruction {
-  const tagsRaw = row[6] as string | null;
+interface SkillOrInstructionRow {
+  id: number;
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+  category: string | null;
+  tags: string | null;
+  enabled: number;
+  is_builtin: number;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapRowToSkillOrInstruction(
+  row: SkillOrInstructionRow,
+): SkillOrInstruction {
   let tags: string[] | null = null;
-  if (tagsRaw) {
+  if (row.tags) {
     try {
-      tags = JSON.parse(tagsRaw) as string[];
+      tags = JSON.parse(row.tags) as string[];
     } catch {
       tags = null;
     }
   }
   return {
-    id: row[0] as number,
-    name: row[1] as string,
-    type: row[2] as 'skill' | 'instruction',
-    description: row[3] as string,
-    content: row[4] as string,
-    category: row[5] as string | null,
+    id: row.id,
+    name: row.name,
+    type: row.type,
+    description: row.description,
+    content: row.content,
+    category: row.category,
     tags,
-    enabled: (row[7] as number) === 1,
-    isBuiltin: (row[8] as number) === 1,
-    createdAt: row[9] as string,
-    updatedAt: row[10] as string,
+    enabled: row.enabled === 1,
+    isBuiltin: row.is_builtin === 1,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }
 
@@ -1064,7 +1037,7 @@ export function upsertSkillOrInstruction(data: {
 }): SkillOrInstruction | null {
   if (!db) return null;
   const tagsJson = data.tags ? JSON.stringify(data.tags) : null;
-  db.run(
+  db.prepare(
     `INSERT INTO skills_and_instructions (name, type, description, content, category, tags)
      VALUES (?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET
@@ -1074,16 +1047,14 @@ export function upsertSkillOrInstruction(data: {
        category = excluded.category,
        tags = excluded.tags,
        updated_at = CURRENT_TIMESTAMP`,
-    [
-      data.name,
-      data.type,
-      data.description,
-      data.content,
-      data.category ?? null,
-      tagsJson,
-    ],
+  ).run(
+    data.name,
+    data.type,
+    data.description,
+    data.content,
+    data.category ?? null,
+    tagsJson,
   );
-  persist();
   return getSkillOrInstructionByName(data.name);
 }
 
@@ -1111,9 +1082,8 @@ export function listSkillsAndInstructions(
   const query = `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
      FROM skills_and_instructions ${whereClause} ORDER BY name ASC`;
 
-  const results = db.exec(query, params);
-  if (results.length === 0) return [];
-  return results[0].values.map(mapRowToSkillOrInstruction);
+  const rows = db.prepare(query).all(...params) as SkillOrInstructionRow[];
+  return rows.map(mapRowToSkillOrInstruction);
 }
 
 /** Get a single skill or instruction by name. */
@@ -1121,28 +1091,23 @@ export function getSkillOrInstructionByName(
   name: string,
 ): SkillOrInstruction | null {
   if (!db) return null;
-  const results = db.exec(
-    `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
-     FROM skills_and_instructions WHERE name = ?`,
-    [name],
-  );
-  if (results.length === 0 || results[0].values.length === 0) return null;
-  return mapRowToSkillOrInstruction(results[0].values[0]);
+  const row = db
+    .prepare(
+      `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
+       FROM skills_and_instructions WHERE name = ?`,
+    )
+    .get(name) as SkillOrInstructionRow | undefined;
+  if (!row) return null;
+  return mapRowToSkillOrInstruction(row);
 }
 
 /** Delete a skill or instruction by name. Returns true if a row was deleted. */
 export function deleteSkillOrInstruction(name: string): boolean {
   if (!db) return false;
-  const before = db.exec(
-    `SELECT COUNT(*) FROM skills_and_instructions WHERE name = ?`,
-    [name],
-  );
-  const existed = before.length > 0 && (before[0].values[0][0] as number) > 0;
-  if (existed) {
-    db.run(`DELETE FROM skills_and_instructions WHERE name = ?`, [name]);
-    persist();
-  }
-  return existed;
+  const info = db
+    .prepare(`DELETE FROM skills_and_instructions WHERE name = ?`)
+    .run(name);
+  return info.changes > 0;
 }
 
 /** Toggle the enabled status of a skill or instruction. Returns the updated record or null. */
@@ -1151,13 +1116,11 @@ export function toggleSkillOrInstructionEnabled(
   enabled: boolean,
 ): SkillOrInstruction | null {
   if (!db) return null;
-  db.run(
+  db.prepare(
     `UPDATE skills_and_instructions
      SET enabled = ?, updated_at = CURRENT_TIMESTAMP
      WHERE name = ?`,
-    [enabled ? 1 : 0, name],
-  );
-  persist();
+  ).run(enabled ? 1 : 0, name);
   return getSkillOrInstructionByName(name);
 }
 
@@ -1182,18 +1145,16 @@ export function duplicateSkillOrInstruction(
     copyName = `${name}-copy-${suffix}`;
   }
 
-  db.run(
+  db.prepare(
     `INSERT INTO skills_and_instructions (name, type, description, content, enabled)
      VALUES (?, ?, ?, ?, ?)`,
-    [
-      copyName,
-      original.type,
-      original.description,
-      original.content,
-      original.enabled ? 1 : 0,
-    ],
+  ).run(
+    copyName,
+    original.type,
+    original.description,
+    original.content,
+    original.enabled ? 1 : 0,
   );
-  persist();
   return getSkillOrInstructionByName(copyName);
 }
 
@@ -1213,35 +1174,31 @@ export function seedBuiltinTemplates(
 ): number {
   if (!db) return 0;
 
+  const existsStmt = db.prepare(
+    `SELECT 1 as present FROM skills_and_instructions WHERE name = ?`,
+  );
+  const insertStmt = db.prepare(
+    `INSERT INTO skills_and_instructions (name, type, description, content, category, is_builtin, enabled)
+     VALUES (?, ?, ?, ?, ?, 1, 1)`,
+  );
+
   let insertedCount = 0;
   for (const template of templates) {
-    // Check if template already exists
-    const existing = db.exec(
-      `SELECT 1 FROM skills_and_instructions WHERE name = ?`,
-      [template.name],
-    );
-    if (existing.length > 0 && existing[0].values.length > 0) {
-      continue; // Skip existing template
-    }
+    const existing = existsStmt.get(template.name) as
+      | { present: number }
+      | undefined;
+    if (existing) continue;
 
-    // Insert the built-in template
-    db.run(
-      `INSERT INTO skills_and_instructions (name, type, description, content, category, is_builtin, enabled)
-       VALUES (?, ?, ?, ?, ?, 1, 1)`,
-      [
-        template.name,
-        template.type,
-        template.description,
-        template.content,
-        template.category,
-      ],
+    insertStmt.run(
+      template.name,
+      template.type,
+      template.description,
+      template.content,
+      template.category,
     );
     insertedCount++;
   }
 
-  if (insertedCount > 0) {
-    persist();
-  }
   return insertedCount;
 }
 
@@ -1262,48 +1219,44 @@ export function resetBuiltinTemplates(
 ): number {
   if (!db) return 0;
 
+  const existsStmt = db.prepare(
+    `SELECT 1 as present FROM skills_and_instructions WHERE name = ?`,
+  );
+  const updateStmt = db.prepare(
+    `UPDATE skills_and_instructions
+     SET type = ?, description = ?, content = ?, category = ?, is_builtin = 1, enabled = 1, updated_at = CURRENT_TIMESTAMP
+     WHERE name = ?`,
+  );
+  const insertStmt = db.prepare(
+    `INSERT INTO skills_and_instructions (name, type, description, content, category, is_builtin, enabled)
+     VALUES (?, ?, ?, ?, ?, 1, 1)`,
+  );
+
   let resetCount = 0;
   for (const template of templates) {
-    // Check if template already exists
-    const existing = db.exec(
-      `SELECT 1 FROM skills_and_instructions WHERE name = ?`,
-      [template.name],
-    );
-
-    if (existing.length > 0 && existing[0].values.length > 0) {
-      // Update existing template to reset it
-      db.run(
-        `UPDATE skills_and_instructions
-         SET type = ?, description = ?, content = ?, category = ?, is_builtin = 1, enabled = 1, updated_at = CURRENT_TIMESTAMP
-         WHERE name = ?`,
-        [
-          template.type,
-          template.description,
-          template.content,
-          template.category,
-          template.name,
-        ],
+    const existing = existsStmt.get(template.name) as
+      | { present: number }
+      | undefined;
+    if (existing) {
+      updateStmt.run(
+        template.type,
+        template.description,
+        template.content,
+        template.category,
+        template.name,
       );
     } else {
-      // Insert missing built-in template
-      db.run(
-        `INSERT INTO skills_and_instructions (name, type, description, content, category, is_builtin, enabled)
-         VALUES (?, ?, ?, ?, ?, 1, 1)`,
-        [
-          template.name,
-          template.type,
-          template.description,
-          template.content,
-          template.category,
-        ],
+      insertStmt.run(
+        template.name,
+        template.type,
+        template.description,
+        template.content,
+        template.category,
       );
     }
     resetCount++;
   }
 
-  if (resetCount > 0) {
-    persist();
-  }
   return resetCount;
 }
 
@@ -1315,13 +1268,13 @@ export function getMissingBuiltinCount(templateNames: string[]): number {
   if (!db || templateNames.length === 0) return 0;
 
   const placeholders = templateNames.map(() => '?').join(',');
-  const results = db.exec(
-    `SELECT COUNT(*) FROM skills_and_instructions WHERE name IN (${placeholders})`,
-    templateNames,
-  );
+  const row = db
+    .prepare(
+      `SELECT COUNT(*) as c FROM skills_and_instructions WHERE name IN (${placeholders})`,
+    )
+    .get(...templateNames) as { c: number } | undefined;
 
-  const existingCount =
-    results.length > 0 ? (results[0].values[0][0] as number) : 0;
+  const existingCount = row?.c ?? 0;
   return templateNames.length - existingCount;
 }
 
@@ -1349,54 +1302,76 @@ export function upsertContextInjection(
   replaceKey?: string,
 ): void {
   if (!db) return;
-  if (replaceKey) {
-    db.run(
-      `DELETE FROM pending_context_injections
-       WHERE provider_type = ? AND provider_session_id = ? AND replace_key = ? AND delivered = 0`,
-      [providerType, providerSessionId, replaceKey],
-    );
-  }
-  db.run(
-    `INSERT INTO pending_context_injections (provider_type, provider_session_id, source, replace_key, payload)
-     VALUES (?, ?, ?, ?, ?)`,
-    [providerType, providerSessionId, source, replaceKey ?? null, payload],
-  );
-  persist();
+  const tx = db.transaction(() => {
+    if (replaceKey) {
+      db!
+        .prepare(
+          `DELETE FROM pending_context_injections
+           WHERE provider_type = ? AND provider_session_id = ? AND replace_key = ? AND delivered = 0`,
+        )
+        .run(providerType, providerSessionId, replaceKey);
+    }
+    db!
+      .prepare(
+        `INSERT INTO pending_context_injections (provider_type, provider_session_id, source, replace_key, payload)
+         VALUES (?, ?, ?, ?, ?)`,
+      )
+      .run(
+        providerType,
+        providerSessionId,
+        source,
+        replaceKey ?? null,
+        payload,
+      );
+  });
+  tx();
 }
 
 /**
  * Atomically claim and return all undelivered injections for a provider session.
- * Marks them as delivered immediately. Safe in single-threaded Node.js/sql.js.
+ * Marks them as delivered immediately. Safe in single-threaded Node.js.
  */
 export function claimContextInjections(
   providerSessionId: string,
   providerType: RegisteredConnection['providerType'],
 ): ContextInjection[] {
   if (!db) return [];
-  const results = db.exec(
+  const selectStmt = db.prepare(
     `SELECT id, source, payload, created_at
      FROM pending_context_injections
      WHERE provider_type = ? AND provider_session_id = ? AND delivered = 0
      ORDER BY id ASC`,
-    [providerType, providerSessionId],
   );
-  if (results.length === 0 || results[0].values.length === 0) return [];
 
-  const items: ContextInjection[] = results[0].values.map((row) => ({
-    id: row[0] as number,
-    source: row[1] as string,
-    payload: row[2] as string,
-    createdAt: row[3] as string,
-  }));
+  const tx = db.transaction(
+    (pType: RegisteredConnection['providerType'], pSid: string) => {
+      const rows = selectStmt.all(pType, pSid) as {
+        id: number;
+        source: string;
+        payload: string;
+        created_at: string;
+      }[];
+      if (rows.length === 0) return [] as ContextInjection[];
 
-  const ids = items.map((item) => item.id);
-  const placeholders = ids.map(() => '?').join(',');
-  db.run(
-    `UPDATE pending_context_injections SET delivered = 1 WHERE id IN (${placeholders})`,
-    ids,
+      const items: ContextInjection[] = rows.map((row) => ({
+        id: row.id,
+        source: row.source,
+        payload: row.payload,
+        createdAt: row.created_at,
+      }));
+
+      const ids = items.map((item) => item.id);
+      const placeholders = ids.map(() => '?').join(',');
+      db!
+        .prepare(
+          `UPDATE pending_context_injections SET delivered = 1 WHERE id IN (${placeholders})`,
+        )
+        .run(...ids);
+      return items;
+    },
   );
-  persist();
-  return items;
+
+  return tx(providerType, providerSessionId);
 }
 
 /** Remove all context injections (delivered or not) for a provider session. */
@@ -1405,11 +1380,9 @@ export function deleteContextInjectionsForSession(
   providerType: RegisteredConnection['providerType'],
 ): void {
   if (!db) return;
-  db.run(
+  db.prepare(
     `DELETE FROM pending_context_injections WHERE provider_type = ? AND provider_session_id = ?`,
-    [providerType, providerSessionId],
-  );
-  persist();
+  ).run(providerType, providerSessionId);
 }
 
 // ─── Pinned Projects ───────────────────────────────────────────────────────
@@ -1423,14 +1396,15 @@ export interface PinnedProject {
 /** Get all pinned projects. */
 export function getPinnedProjects(): PinnedProject[] {
   if (!db) return [];
-  const results = db.exec(
-    `SELECT path, name, created_at FROM pinned_projects ORDER BY created_at DESC`,
-  );
-  if (results.length === 0) return [];
-  return results[0].values.map((row) => ({
-    path: row[0] as string,
-    name: row[1] as string,
-    createdAt: row[2] as string,
+  const rows = db
+    .prepare(
+      `SELECT path, name, created_at FROM pinned_projects ORDER BY created_at DESC`,
+    )
+    .all() as { path: string; name: string; created_at: string }[];
+  return rows.map((row) => ({
+    path: row.path,
+    name: row.name,
+    createdAt: row.created_at,
   }));
 }
 
@@ -1438,12 +1412,12 @@ export function getPinnedProjects(): PinnedProject[] {
 export function addPinnedProject(path: string, name: string): boolean {
   if (!db) return false;
   try {
-    db.run(`INSERT OR IGNORE INTO pinned_projects (path, name) VALUES (?, ?)`, [
-      path,
-      name,
-    ]);
-    persist();
-    return true;
+    const info = db
+      .prepare(
+        `INSERT OR IGNORE INTO pinned_projects (path, name) VALUES (?, ?)`,
+      )
+      .run(path, name);
+    return info.changes > 0;
   } catch {
     return false;
   }
@@ -1452,17 +1426,15 @@ export function addPinnedProject(path: string, name: string): boolean {
 /** Remove a pinned project by path. */
 export function removePinnedProject(path: string): boolean {
   if (!db) return false;
-  db.run(`DELETE FROM pinned_projects WHERE path = ?`, [path]);
-  persist();
+  db.prepare(`DELETE FROM pinned_projects WHERE path = ?`).run(path);
   return true;
 }
 
 /** Check if a project path is pinned. */
 export function isPinnedProject(path: string): boolean {
   if (!db) return false;
-  const results = db.exec(
-    `SELECT 1 FROM pinned_projects WHERE path = ? LIMIT 1`,
-    [path],
-  );
-  return results.length > 0 && results[0].values.length > 0;
+  const row = db
+    .prepare(`SELECT 1 as present FROM pinned_projects WHERE path = ? LIMIT 1`)
+    .get(path) as { present: number } | undefined;
+  return row !== undefined;
 }

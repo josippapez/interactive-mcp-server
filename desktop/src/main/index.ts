@@ -5,11 +5,7 @@ import {
   startMcpServer,
   stopMcpServer,
 } from './mcp-server';
-import {
-  flushPersistNow,
-  initDatabase,
-  seedBuiltinTemplates,
-} from './database';
+import { initDatabase, seedBuiltinTemplates } from './database';
 import { defaultSettings, loadSettings, type AppSettings } from './settings';
 import { createWindow } from './window';
 import { createTray } from './tray';
@@ -63,7 +59,8 @@ app.whenReady().then(async () => {
 
   // Database init is required here because many IPC handlers (sidebar,
   // templates, session history) read from the DB immediately on renderer
-  // load. sql.js init is fast (<50ms typical).
+  // load. better-sqlite3 init is fast (<10ms typical) and writes are
+  // synchronous to the WAL-enabled SQLite file on disk.
   await initDatabase();
 
   // Settings are required to pass `startHidden` to createWindow.
@@ -272,13 +269,8 @@ app.on('before-quit', (event) => {
   });
   stopMcpServer();
 
-  // Flush any pending debounced DB writes synchronously so we never lose
-  // state on shutdown. No-op if nothing is dirty.
-  try {
-    flushPersistNow();
-  } catch (err) {
-    console.error('[main] flushPersistNow on before-quit failed:', err);
-  }
+  // With better-sqlite3, all writes are synchronous to WAL-journaled disk,
+  // so there is no pending buffer to flush on shutdown.
 
   // Async cleanup: defer the real quit until the embedding worker has
   // fully terminated. Re-entrancy guard ensures we only kick this off once;

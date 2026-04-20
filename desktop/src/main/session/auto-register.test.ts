@@ -57,13 +57,15 @@ function sseAutoRegisterOpenCodeSession(info: {
 function countInvariantViolations(): number {
   const db = getDbInstance();
   expect(db).not.toBeNull();
-  const results = db!.exec(
-    `SELECT COUNT(*) FROM registered_connections
-     WHERE provider_type = 'opencode'
-       AND connection_id IS NOT NULL
-       AND connection_id = provider_session_id`,
-  );
-  return Number(results[0]?.values[0]?.[0] ?? 0);
+  const row = db!
+    .prepare(
+      `SELECT COUNT(*) as count FROM registered_connections
+       WHERE provider_type = 'opencode'
+         AND connection_id IS NOT NULL
+         AND connection_id = provider_session_id`,
+    )
+    .get() as { count: number } | undefined;
+  return Number(row?.count ?? 0);
 }
 
 describe('Phase 4 — SSE auto-register invariant', () => {

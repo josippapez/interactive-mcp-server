@@ -104,8 +104,24 @@ export function searchGlobal(
   return { sessions, messages };
 }
 
-/** A single SQL column value as returned by sql.js query results. */
-type SqlValue = string | number | Uint8Array | null;
+// ─── Row shapes returned by better-sqlite3 ────────────────────────────────
+
+interface SessionSearchRow {
+  session_id: string;
+  channel_name: string;
+  project_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+interface MessageSearchRow {
+  id: number;
+  session_id: string;
+  session_name: string | null;
+  message_type: MessageSearchResult['messageType'];
+  message_text: string;
+  created_at: string;
+}
 
 /**
  * Search sessions by channel name or project name.
@@ -121,36 +137,39 @@ function searchSessions(
 
   // Join session_channels with registered_connections to get full metadata
   // Order by most recent first (created_at DESC)
-  const results = db.exec(
-    `SELECT 
-       sc.session_id,
-       COALESCE(rc.agent_name, sc.label, sc.session_id) as channel_name,
-       COALESCE(rc.project_name, '') as project_name,
-       sc.created_at,
-       COALESCE(rc.updated_at, sc.created_at) as updated_at
-     FROM session_channels sc
-     LEFT JOIN registered_connections rc ON rc.provider_session_id = sc.session_id
-     WHERE (
-       sc.label LIKE ? COLLATE NOCASE
-       OR sc.session_id LIKE ? COLLATE NOCASE
-       OR rc.agent_name LIKE ? COLLATE NOCASE
-       OR rc.project_name LIKE ? COLLATE NOCASE
-     )
-     ORDER BY COALESCE(rc.updated_at, sc.created_at) DESC
-     LIMIT ?`,
-    [searchPattern, searchPattern, searchPattern, searchPattern, limit],
-  );
+  const rows = db
+    .prepare(
+      `SELECT 
+         sc.session_id,
+         COALESCE(rc.agent_name, sc.label, sc.session_id) as channel_name,
+         COALESCE(rc.project_name, '') as project_name,
+         sc.created_at,
+         COALESCE(rc.updated_at, sc.created_at) as updated_at
+       FROM session_channels sc
+       LEFT JOIN registered_connections rc ON rc.provider_session_id = sc.session_id
+       WHERE (
+         sc.label LIKE ? COLLATE NOCASE
+         OR sc.session_id LIKE ? COLLATE NOCASE
+         OR rc.agent_name LIKE ? COLLATE NOCASE
+         OR rc.project_name LIKE ? COLLATE NOCASE
+       )
+       ORDER BY COALESCE(rc.updated_at, sc.created_at) DESC
+       LIMIT ?`,
+    )
+    .all(
+      searchPattern,
+      searchPattern,
+      searchPattern,
+      searchPattern,
+      limit,
+    ) as SessionSearchRow[];
 
-  if (results.length === 0 || results[0].values.length === 0) {
-    return [];
-  }
-
-  return results[0].values.map((row: SqlValue[]) => ({
-    sessionId: row[0] as string,
-    channelName: row[1] as string,
-    projectName: row[2] as string,
-    createdAt: row[3] as string,
-    updatedAt: row[4] as string,
+  return rows.map((row) => ({
+    sessionId: row.session_id,
+    channelName: row.channel_name,
+    projectName: row.project_name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   }));
 }
 
@@ -168,37 +187,31 @@ function searchMessages(
 
   // Join with session_channels to get session name
   // Also join with registered_connections for better channel names
-  const results = db.exec(
-    `SELECT 
-       sch.id,
-       sch.session_id,
-       COALESCE(rc.agent_name, sc.label, sch.session_id) as session_name,
-       sch.message_type,
-       sch.message_text,
-       sch.created_at
-     FROM session_channel_history sch
-     LEFT JOIN session_channels sc ON sc.session_id = sch.session_id
-     LEFT JOIN registered_connections rc ON rc.provider_session_id = sch.session_id
-     WHERE sch.message_text LIKE ? COLLATE NOCASE
-     ORDER BY sch.created_at DESC
-     LIMIT ?`,
-    [searchPattern, limit],
-  );
+  const rows = db
+    .prepare(
+      `SELECT 
+         sch.id,
+         sch.session_id,
+         COALESCE(rc.agent_name, sc.label, sch.session_id) as session_name,
+         sch.message_type,
+         sch.message_text,
+         sch.created_at
+       FROM session_channel_history sch
+       LEFT JOIN session_channels sc ON sc.session_id = sch.session_id
+       LEFT JOIN registered_connections rc ON rc.provider_session_id = sch.session_id
+       WHERE sch.message_text LIKE ? COLLATE NOCASE
+       ORDER BY sch.created_at DESC
+       LIMIT ?`,
+    )
+    .all(searchPattern, limit) as MessageSearchRow[];
 
-  if (results.length === 0 || results[0].values.length === 0) {
-    return [];
-  }
-
-  return results[0].values.map((row: SqlValue[]) => {
-    const messageText = row[4] as string;
-    return {
-      id: row[0] as number,
-      sessionId: row[1] as string,
-      sessionName: (row[2] as string) || (row[1] as string),
-      messageType: row[3] as MessageSearchResult['messageType'],
-      messageText,
-      snippet: createSnippet(messageText, query),
-      createdAt: row[5] as string,
-    };
-  });
+  return rows.map((row) => ({
+    id: row.id,
+    sessionId: row.session_id,
+    sessionName: row.session_name || row.session_id,
+    messageType: row.message_type,
+    messageText: row.message_text,
+    snippet: createSnippet(row.message_text, query),
+    createdAt: row.created_at,
+  }));
 }
