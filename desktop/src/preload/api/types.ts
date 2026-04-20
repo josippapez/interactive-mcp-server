@@ -131,6 +131,15 @@ export type SkillOrInstructionRecord = {
   isBuiltin: boolean;
   createdAt: string;
   updatedAt: string;
+  folderId: number | null;
+  scope: 'global' | 'session-scoped';
+};
+
+export type FolderRecord = {
+  id: number;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type AgentDefinition = {

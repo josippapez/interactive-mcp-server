@@ -104,22 +104,34 @@ export function useIpcListeners({
       appendMessage,
     };
 
-    // Register all handler groups
-    registerSessionTreeHandler(context);
-    registerConnectionHandlers(context);
-    registerPromptHandlers(context);
-    registerStatusHandlers(context);
-    registerPermissionHandlers(context);
-    registerQuestionHandlers(context);
-    registerSessionChannelHandlers(context);
+    // Register all handler groups; collect disposers so we can clean up on
+    // unmount or when effect dependencies change.
+    const disposers: Array<() => void> = [
+      registerSessionTreeHandler(context),
+      registerConnectionHandlers(context),
+      registerPromptHandlers(context),
+      registerStatusHandlers(context),
+      registerPermissionHandlers(context),
+      registerQuestionHandlers(context),
+      registerSessionChannelHandlers(context),
+    ];
 
     // Request the current session tree snapshot from the main process.
     // This ensures we get the initial state even if the main process emitted
     // the snapshot before our IPC listeners were registered.
     void window.api.refreshSessionTree?.();
 
-    // No cleanup needed — app-lifetime registrations.
-    // listenersRegistered guard prevents double-registration in StrictMode.
+    // listenersRegistered guard prevents double-registration in StrictMode;
+    // disposers run on unmount to detach listeners cleanly. The guard is
+    // reset in the cleanup so that if the effect re-runs (e.g. after
+    // dependency changes) listeners can be re-registered rather than left
+    // permanently detached.
+    return () => {
+      for (const dispose of disposers) {
+        dispose();
+      }
+      listenersRegistered.current = false;
+    };
   }, [
     getActiveConnectionId,
     getIsIntentionalNullSelection,

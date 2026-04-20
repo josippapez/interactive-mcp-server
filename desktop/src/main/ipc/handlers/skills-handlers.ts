@@ -10,11 +10,27 @@ import {
   duplicateSkillOrInstruction,
   resetBuiltinTemplates,
   getMissingBuiltinCount,
+  listFolders,
+  createFolder,
+  renameFolder,
+  deleteFolder,
+  setEntryFolder,
+  setEntryScope,
+  listSessionScopedEntryNames,
+  setSessionScopedEntries,
+  listSessionMutedEntryNames,
+  setSessionMutedEntries,
+  type RegisteredConnection,
+  type SkillScope,
 } from '../../database';
 import {
   BUILTIN_TEMPLATES,
   getBuiltinTemplateNames,
 } from '../../builtin-templates';
+import {
+  broadcastSkillsChanged,
+  broadcastSessionScopeChanged,
+} from '../../tools/skills-broadcast';
 import { IpcHandlerDeps } from './types';
 
 export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
@@ -29,11 +45,20 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
         content: string;
         category?: string | null;
         tags?: string[] | null;
+        folderId?: number | null;
+        scope?: SkillScope;
       },
     ) => {
+      const existing = getSkillOrInstructionByName(data.name);
       const result = upsertSkillOrInstruction(data);
       if (result) {
         deps.getMainWindow()?.webContents.send('skills-updated');
+        broadcastSkillsChanged(
+          existing ? 'updated' : 'registered',
+          data.type,
+          data.name,
+          deps.getSettings().openCodePort,
+        );
       }
       return result;
     },
@@ -60,9 +85,18 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
   });
 
   ipcMain.handle('delete-skill-or-instruction', (_event, name: string) => {
+    const existing = getSkillOrInstructionByName(name);
     const deleted = deleteSkillOrInstruction(name);
     if (deleted) {
       deps.getMainWindow()?.webContents.send('skills-updated');
+      if (existing) {
+        broadcastSkillsChanged(
+          'deleted',
+          existing.type,
+          existing.name,
+          deps.getSettings().openCodePort,
+        );
+      }
     }
     return deleted;
   });
@@ -73,6 +107,12 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
       const result = toggleSkillOrInstructionEnabled(data.name, data.enabled);
       if (result) {
         deps.getMainWindow()?.webContents.send('skills-updated');
+        broadcastSkillsChanged(
+          'updated',
+          result.type,
+          result.name,
+          deps.getSettings().openCodePort,
+        );
       }
       return result;
     },
@@ -188,6 +228,168 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
       writeFileSync(result.filePath, entry.content, 'utf-8');
       return { saved: true, filePath: result.filePath };
+    },
+  );
+
+  // ─── Folders ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle('list-folders', () => {
+    return listFolders();
+  });
+
+  ipcMain.handle('create-folder', (_event, name: string) => {
+    const folder = createFolder(name);
+    if (folder) {
+      deps.getMainWindow()?.webContents.send('skills-updated');
+    }
+    return folder;
+  });
+
+  ipcMain.handle(
+    'rename-folder',
+    (_event, data: { id: number; name: string }) => {
+      const folder = renameFolder(data.id, data.name);
+      if (folder) {
+        deps.getMainWindow()?.webContents.send('skills-updated');
+      }
+      return folder;
+    },
+  );
+
+  ipcMain.handle('delete-folder', (_event, id: number) => {
+    const deleted = deleteFolder(id);
+    if (deleted) {
+      deps.getMainWindow()?.webContents.send('skills-updated');
+    }
+    return deleted;
+  });
+
+  // ─── Entry folder/scope setters ───────────────────────────────────────────
+
+  ipcMain.handle(
+    'set-entry-folder',
+    (_event, data: { name: string; folderId: number | null }) => {
+      const result = setEntryFolder(data.name, data.folderId);
+      if (result) {
+        deps.getMainWindow()?.webContents.send('skills-updated');
+      }
+      return result;
+    },
+  );
+
+  ipcMain.handle(
+    'set-entry-scope',
+    (_event, data: { name: string; scope: SkillScope }) => {
+      const result = setEntryScope(data.name, data.scope);
+      if (result) {
+        deps.getMainWindow()?.webContents.send('skills-updated');
+        const entry = getSkillOrInstructionByName(data.name);
+        if (entry) {
+          broadcastSkillsChanged(
+            'updated',
+            entry.type,
+            entry.name,
+            deps.getSettings().openCodePort,
+          );
+        }
+      }
+      return result;
+    },
+  );
+
+  // ─── Session-scoped opt-ins ───────────────────────────────────────────────
+
+  ipcMain.handle(
+    'list-session-scoped-entries',
+    (
+      _event,
+      data: { providerType: string; providerSessionId: string },
+    ): string[] => {
+      return listSessionScopedEntryNames(
+        data.providerType as RegisteredConnection['providerType'],
+        data.providerSessionId,
+      );
+    },
+  );
+
+  ipcMain.handle(
+    'set-session-scoped-entries',
+    (
+      _event,
+      data: {
+        providerType: string;
+        providerSessionId: string;
+        entryNames: string[];
+      },
+    ): boolean => {
+      const providerType =
+        data.providerType as RegisteredConnection['providerType'];
+      const prev = new Set(
+        listSessionScopedEntryNames(providerType, data.providerSessionId),
+      );
+      const next = new Set(data.entryNames);
+      setSessionScopedEntries(
+        providerType,
+        data.providerSessionId,
+        data.entryNames,
+      );
+
+      // Compute diff for the reminder broadcast
+      const addedNames = [...next].filter((n) => !prev.has(n));
+      const removedNames = [...prev].filter((n) => !next.has(n));
+      if (addedNames.length > 0 || removedNames.length > 0) {
+        const added = addedNames
+          .map((name) => getSkillOrInstructionByName(name))
+          .filter((e): e is NonNullable<typeof e> => e != null)
+          .map((e) => ({ name: e.name, type: e.type }));
+        const removed = removedNames
+          .map((name) => getSkillOrInstructionByName(name))
+          .filter((e): e is NonNullable<typeof e> => e != null)
+          .map((e) => ({ name: e.name, type: e.type }));
+        broadcastSessionScopeChanged(
+          providerType,
+          data.providerSessionId,
+          { added, removed },
+          deps.getSettings().openCodePort,
+        );
+      }
+      return true;
+    },
+  );
+
+  // ─── Session-muted entries (per-session mute list for global entries) ────
+
+  ipcMain.handle(
+    'list-session-muted-entries',
+    (
+      _event,
+      data: { providerType: string; providerSessionId: string },
+    ): string[] => {
+      return listSessionMutedEntryNames(
+        data.providerType as RegisteredConnection['providerType'],
+        data.providerSessionId,
+      );
+    },
+  );
+
+  ipcMain.handle(
+    'set-session-muted-entries',
+    (
+      _event,
+      data: {
+        providerType: string;
+        providerSessionId: string;
+        entryNames: string[];
+      },
+    ): boolean => {
+      const providerType =
+        data.providerType as RegisteredConnection['providerType'];
+      setSessionMutedEntries(
+        providerType,
+        data.providerSessionId,
+        data.entryNames,
+      );
+      return true;
     },
   );
 }

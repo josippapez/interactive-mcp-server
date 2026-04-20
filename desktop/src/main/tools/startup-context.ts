@@ -28,6 +28,19 @@ export interface StartupContextParams {
   baseDirectory?: string;
   openCodeSessionId?: string;
   entries: SkillOrInstruction[];
+  /**
+   * Names of session-scoped entries the current session has opted into.
+   * Entries with `scope === 'session-scoped'` are only included if their name
+   * appears here. Entries with `scope === 'global'` are always included (when
+   * enabled). Defaults to empty (no session-scoped entries injected).
+   */
+  sessionOptInNames?: readonly string[];
+  /**
+   * Names of global entries the current session has muted. Entries with
+   * `scope === 'global'` whose name appears here are excluded from this
+   * session's injection. Defaults to empty (no globals muted).
+   */
+  sessionMutedNames?: readonly string[];
 }
 
 export function buildStartupContextMessage(
@@ -39,7 +52,11 @@ export function buildStartupContextMessage(
     baseDirectory,
     openCodeSessionId,
     entries,
+    sessionOptInNames,
+    sessionMutedNames,
   } = params;
+  const optIn = new Set(sessionOptInNames ?? []);
+  const muted = new Set(sessionMutedNames ?? []);
 
   const locationLine = baseDirectory
     ? `- Base directory: ${baseDirectory}`
@@ -67,8 +84,15 @@ export function buildStartupContextMessage(
     '- Parallel subagents should use unique agent names to avoid sidebar name collisions.',
   );
 
-  // Filter to only enabled entries
-  const enabled = entries.filter((e) => e.enabled);
+  // Filter to only enabled entries that are either:
+  // - scope='global' AND not muted for this session, OR
+  // - scope='session-scoped' AND explicitly opted into for this session.
+  const enabled = entries.filter(
+    (e) =>
+      e.enabled &&
+      ((e.scope === 'global' && !muted.has(e.name)) ||
+        (e.scope === 'session-scoped' && optIn.has(e.name))),
+  );
   const skills = enabled.filter((e) => e.type === 'skill');
   const instructions = enabled.filter((e) => e.type === 'instruction');
 
@@ -141,4 +165,53 @@ export function buildSkillsChangedReminder(
       : 'Updated instruction content will be re-injected on the next session bootstrap.',
     '</system-reminder>',
   ].join('\n');
+}
+
+// ─── Session-scope change reminder ──────────────────────────────────────────
+
+export interface SessionScopeChangedReminderParams {
+  /** Entry names newly added to this session's opt-in set. */
+  added: readonly { name: string; type: 'skill' | 'instruction' }[];
+  /** Entry names removed from this session's opt-in set. */
+  removed: readonly { name: string; type: 'skill' | 'instruction' }[];
+}
+
+/**
+ * Build a `<system-reminder>` notice describing the diff between the previous
+ * and current session-scoped opt-in selection. Sent only to the affected
+ * session when the user toggles entries in the inline composer selector.
+ *
+ * The reminder does NOT re-inject full content — it points agents at
+ * `manage_skills_and_instructions list` / `get` for on-demand retrieval, the
+ * same pattern as `buildSkillsChangedReminder`.
+ */
+export function buildSessionScopeChangedReminder(
+  params: SessionScopeChangedReminderParams,
+): string {
+  const { added, removed } = params;
+  const lines: string[] = ['<system-reminder>'];
+  lines.push(
+    'Session-scoped skills/instructions selection changed for this session.',
+  );
+
+  if (added.length > 0) {
+    lines.push('Added (now active for this session):');
+    for (const e of added) {
+      lines.push(`- ${e.type}: ${e.name}`);
+    }
+  }
+
+  if (removed.length > 0) {
+    lines.push('Removed (no longer active for this session):');
+    for (const e of removed) {
+      lines.push(`- ${e.type}: ${e.name}`);
+    }
+  }
+
+  lines.push(
+    'The full current list is available via the manage_skills_and_instructions tool with action "list".',
+    'Use action "get" with a skill name to fetch its full content on demand.',
+    '</system-reminder>',
+  );
+  return lines.join('\n');
 }

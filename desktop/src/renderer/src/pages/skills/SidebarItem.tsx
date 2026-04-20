@@ -62,6 +62,14 @@ export const SidebarItem = memo(function SidebarItem({
               Off
             </span>
           )}
+          {entry.scope === 'session-scoped' && (
+            <span
+              className="px-1 py-0.5 text-[8px] rounded bg-[var(--color-user)]/15 text-[var(--color-user)]"
+              title="Session-scoped — only injected into channels that opt in"
+            >
+              Scoped
+            </span>
+          )}
         </span>
         <div className="flex items-center gap-1">
           {/* Toggle switch */}

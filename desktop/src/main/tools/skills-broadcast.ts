@@ -14,7 +14,20 @@
  *   with a parent — we only inject once per session).
  */
 
-import type { RegisteredConnection } from '../database';
+import {
+  getRegisteredConnectionsByProvider,
+  type RegisteredConnection,
+} from '../database';
+import { injectOpenCodeMessage } from '../opencode/injector';
+import { createLogger } from '../utils/logger';
+import {
+  buildSkillsChangedReminder,
+  buildSessionScopeChangedReminder,
+  type SkillsChangeAction,
+  type SessionScopeChangedReminderParams,
+} from './startup-context';
+
+const broadcastLog = createLogger('skills-broadcast');
 
 export interface ReminderTarget {
   providerSessionId: string;
@@ -33,4 +46,80 @@ export function pickReminderTargets(
     targets.push({ providerSessionId: c.providerSessionId });
   }
   return targets;
+}
+
+/**
+ * Fire-and-forget broadcast of a `<system-reminder>` to every active OpenCode
+ * session. Errors are logged but never thrown — UI mutations must not be
+ * blocked by injection failures.
+ */
+export function broadcastSkillsChanged(
+  action: SkillsChangeAction,
+  type: 'skill' | 'instruction',
+  name: string,
+  port: number,
+): void {
+  try {
+    const connections = getRegisteredConnectionsByProvider('opencode');
+    const targets = pickReminderTargets(connections);
+    if (targets.length === 0) return;
+    const reminder = buildSkillsChangedReminder({ action, type, name });
+    for (const target of targets) {
+      void injectOpenCodeMessage(
+        target.providerSessionId,
+        reminder,
+        undefined,
+        port,
+        undefined,
+        true, // noReply
+        undefined,
+        undefined,
+      ).catch((err) => {
+        broadcastLog.warn(
+          `failed to inject skills-changed reminder into session ${target.providerSessionId}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      });
+    }
+  } catch (err) {
+    broadcastLog.warn(
+      `broadcastSkillsChanged failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+}
+
+/**
+ * Fire-and-forget broadcast of a session-scope-changed `<system-reminder>` to
+ * a single OpenCode session. Used when the user toggles session-scoped opt-ins
+ * in the inline composer selector.
+ */
+export function broadcastSessionScopeChanged(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+  diff: SessionScopeChangedReminderParams,
+  port: number,
+): void {
+  if (providerType !== 'opencode') return;
+  if (!providerSessionId) return;
+  if (diff.added.length === 0 && diff.removed.length === 0) return;
+  try {
+    const reminder = buildSessionScopeChangedReminder(diff);
+    void injectOpenCodeMessage(
+      providerSessionId,
+      reminder,
+      undefined,
+      port,
+      undefined,
+      true, // noReply
+      undefined,
+      undefined,
+    ).catch((err) => {
+      broadcastLog.warn(
+        `failed to inject session-scope-changed reminder into session ${providerSessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    });
+  } catch (err) {
+    broadcastLog.warn(
+      `broadcastSessionScopeChanged failed: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 }

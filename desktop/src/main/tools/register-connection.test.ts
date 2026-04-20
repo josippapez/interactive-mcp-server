@@ -14,6 +14,7 @@ vi.mock('../database', () => ({
   upsertRegisteredConnection: vi.fn(),
   createSessionChannel: vi.fn(),
   listSkillsAndInstructions: vi.fn().mockReturnValue([]),
+  listSessionScopedEntryNames: vi.fn().mockReturnValue([]),
   getRegisteredConnection: vi.fn().mockReturnValue(null),
 }));
 

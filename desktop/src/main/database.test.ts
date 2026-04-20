@@ -20,6 +20,25 @@ import {
   listSkillsAndInstructions,
   getSkillOrInstructionByName,
   deleteSkillOrInstruction,
+  createFolder,
+  listFolders,
+  getFolderById,
+  getFolderByName,
+  renameFolder,
+  deleteFolder,
+  setEntryFolder,
+  setEntryScope,
+  addSessionScopedEntry,
+  removeSessionScopedEntry,
+  setSessionScopedEntries,
+  listSessionScopedEntryNames,
+  deleteSessionScopedEntriesForSession,
+  addSessionMutedEntry,
+  removeSessionMutedEntry,
+  setSessionMutedEntries,
+  listSessionMutedEntryNames,
+  deleteSessionMutedEntriesForSession,
+  deleteRegisteredConnection,
 } from './database';
 
 const TEST_DB_PATH = join(app.getPath('userData'), 'conversations.db');
@@ -520,5 +539,329 @@ describe('deleteSkillOrInstruction', () => {
 
     const result = getSkillOrInstructionByName('to-delete');
     expect(result).toBeNull();
+  });
+});
+
+describe('folders CRUD', () => {
+  beforeEach(freshDb);
+
+  it('creates, lists, and retrieves a folder by id and name', () => {
+    const folder = createFolder('Workflows');
+    expect(folder).not.toBeNull();
+    expect(folder?.name).toBe('Workflows');
+
+    const all = listFolders();
+    expect(all).toHaveLength(1);
+    expect(all[0].name).toBe('Workflows');
+
+    expect(getFolderById(folder!.id)?.name).toBe('Workflows');
+    expect(getFolderByName('Workflows')?.id).toBe(folder!.id);
+  });
+
+  it('returns null when creating a folder with a duplicate name', () => {
+    createFolder('dup');
+    const second = createFolder('dup');
+    expect(second).toBeNull();
+    expect(listFolders()).toHaveLength(1);
+  });
+
+  it('rejects empty or whitespace-only folder names', () => {
+    expect(createFolder('')).toBeNull();
+    expect(createFolder('   ')).toBeNull();
+    expect(listFolders()).toHaveLength(0);
+  });
+
+  it('renames a folder and preserves its id', () => {
+    const created = createFolder('old')!;
+    const renamed = renameFolder(created.id, 'new');
+    expect(renamed?.id).toBe(created.id);
+    expect(renamed?.name).toBe('new');
+    expect(getFolderByName('old')).toBeNull();
+    expect(getFolderByName('new')?.id).toBe(created.id);
+  });
+
+  it('refuses to rename into a colliding name', () => {
+    const a = createFolder('a')!;
+    createFolder('b');
+    expect(renameFolder(a.id, 'b')).toBeNull();
+    expect(getFolderByName('a')?.id).toBe(a.id);
+  });
+
+  it('deleting a folder nullifies folder_id on entries but keeps them', () => {
+    const folder = createFolder('temp')!;
+    upsertSkillOrInstruction({
+      name: 'entry',
+      type: 'skill',
+      description: 'x',
+      content: '#',
+      folderId: folder.id,
+    });
+    expect(getSkillOrInstructionByName('entry')?.folderId).toBe(folder.id);
+
+    const ok = deleteFolder(folder.id);
+    expect(ok).toBe(true);
+    const after = getSkillOrInstructionByName('entry');
+    expect(after).not.toBeNull();
+    expect(after?.folderId).toBeNull();
+  });
+});
+
+describe('entry folder and scope setters', () => {
+  beforeEach(freshDb);
+
+  it('defaults new entries to scope=global and folderId=null', () => {
+    upsertSkillOrInstruction({
+      name: 'plain',
+      type: 'skill',
+      description: 'x',
+      content: '#',
+    });
+    const entry = getSkillOrInstructionByName('plain');
+    expect(entry?.scope).toBe('global');
+    expect(entry?.folderId).toBeNull();
+  });
+
+  it('setEntryFolder moves an entry into a folder and back to null', () => {
+    const folder = createFolder('F')!;
+    upsertSkillOrInstruction({
+      name: 'e',
+      type: 'skill',
+      description: 'x',
+      content: '#',
+    });
+    expect(setEntryFolder('e', folder.id)).toBe(true);
+    expect(getSkillOrInstructionByName('e')?.folderId).toBe(folder.id);
+    expect(setEntryFolder('e', null)).toBe(true);
+    expect(getSkillOrInstructionByName('e')?.folderId).toBeNull();
+  });
+
+  it('setEntryFolder returns false for unknown folder or entry', () => {
+    upsertSkillOrInstruction({
+      name: 'e',
+      type: 'skill',
+      description: 'x',
+      content: '#',
+    });
+    expect(setEntryFolder('e', 9999)).toBe(false);
+    expect(setEntryFolder('ghost', null)).toBe(false);
+  });
+
+  it('setEntryScope flips global <-> session-scoped', () => {
+    upsertSkillOrInstruction({
+      name: 'e',
+      type: 'skill',
+      description: 'x',
+      content: '#',
+    });
+    expect(setEntryScope('e', 'session-scoped')).toBe(true);
+    expect(getSkillOrInstructionByName('e')?.scope).toBe('session-scoped');
+    expect(setEntryScope('e', 'global')).toBe(true);
+    expect(getSkillOrInstructionByName('e')?.scope).toBe('global');
+  });
+
+  it('upsert preserves existing folder/scope on update when not provided', () => {
+    const folder = createFolder('F')!;
+    upsertSkillOrInstruction({
+      name: 'e',
+      type: 'skill',
+      description: 'x',
+      content: '#',
+      folderId: folder.id,
+      scope: 'session-scoped',
+    });
+    // Re-upsert without folderId/scope — should NOT reset them.
+    upsertSkillOrInstruction({
+      name: 'e',
+      type: 'skill',
+      description: 'updated desc',
+      content: '#',
+    });
+    const after = getSkillOrInstructionByName('e');
+    expect(after?.description).toBe('updated desc');
+    expect(after?.folderId).toBe(folder.id);
+    expect(after?.scope).toBe('session-scoped');
+  });
+});
+
+describe('session-scoped entry opt-in', () => {
+  beforeEach(freshDb);
+
+  it('lists empty when no opt-ins exist', () => {
+    expect(listSessionScopedEntryNames('opencode', 'ses_a')).toEqual([]);
+  });
+
+  it('add + remove single opt-ins', () => {
+    addSessionScopedEntry('opencode', 'ses_a', 'skill-1');
+    addSessionScopedEntry('opencode', 'ses_a', 'skill-2');
+    expect(listSessionScopedEntryNames('opencode', 'ses_a')).toEqual([
+      'skill-1',
+      'skill-2',
+    ]);
+    // Idempotent:
+    addSessionScopedEntry('opencode', 'ses_a', 'skill-1');
+    expect(listSessionScopedEntryNames('opencode', 'ses_a')).toEqual([
+      'skill-1',
+      'skill-2',
+    ]);
+    removeSessionScopedEntry('opencode', 'ses_a', 'skill-1');
+    expect(listSessionScopedEntryNames('opencode', 'ses_a')).toEqual([
+      'skill-2',
+    ]);
+  });
+
+  it('setSessionScopedEntries replaces the whole set', () => {
+    addSessionScopedEntry('opencode', 'ses_a', 'old-1');
+    addSessionScopedEntry('opencode', 'ses_a', 'old-2');
+    setSessionScopedEntries('opencode', 'ses_a', ['new-1', 'new-2', 'new-3']);
+    expect(listSessionScopedEntryNames('opencode', 'ses_a')).toEqual([
+      'new-1',
+      'new-2',
+      'new-3',
+    ]);
+  });
+
+  it('isolates opt-ins by (providerType, providerSessionId)', () => {
+    addSessionScopedEntry('opencode', 'ses_a', 'x');
+    addSessionScopedEntry('opencode', 'ses_b', 'y');
+    addSessionScopedEntry('copilot-cli', 'ses_a', 'z');
+    expect(listSessionScopedEntryNames('opencode', 'ses_a')).toEqual(['x']);
+    expect(listSessionScopedEntryNames('opencode', 'ses_b')).toEqual(['y']);
+    expect(listSessionScopedEntryNames('copilot-cli', 'ses_a')).toEqual(['z']);
+  });
+
+  it('deleteSessionScopedEntriesForSession removes only matching rows', () => {
+    addSessionScopedEntry('opencode', 'ses_a', 'x');
+    addSessionScopedEntry('opencode', 'ses_b', 'y');
+    deleteSessionScopedEntriesForSession('opencode', 'ses_a');
+    expect(listSessionScopedEntryNames('opencode', 'ses_a')).toEqual([]);
+    expect(listSessionScopedEntryNames('opencode', 'ses_b')).toEqual(['y']);
+  });
+
+  it('deleteRegisteredConnection cascades to session_scoped_entries', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_del',
+      providerType: 'opencode',
+      channelName: 'x',
+      projectName: 'p',
+    });
+    addSessionScopedEntry('opencode', 'ses_del', 'skill-a');
+    addSessionScopedEntry('opencode', 'ses_del', 'skill-b');
+    expect(listSessionScopedEntryNames('opencode', 'ses_del')).toHaveLength(2);
+    deleteRegisteredConnection('ses_del', 'opencode');
+    expect(listSessionScopedEntryNames('opencode', 'ses_del')).toEqual([]);
+  });
+});
+
+describe('session-muted entry list', () => {
+  beforeEach(async () => {
+    await freshDb();
+  });
+
+  it('listSessionMutedEntryNames returns empty for a new session', () => {
+    expect(listSessionMutedEntryNames('opencode', 'ses_a')).toEqual([]);
+  });
+
+  it('addSessionMutedEntry appends names (sorted)', () => {
+    addSessionMutedEntry('opencode', 'ses_a', 'skill-2');
+    addSessionMutedEntry('opencode', 'ses_a', 'skill-1');
+    expect(listSessionMutedEntryNames('opencode', 'ses_a')).toEqual([
+      'skill-1',
+      'skill-2',
+    ]);
+  });
+
+  it('addSessionMutedEntry is idempotent', () => {
+    addSessionMutedEntry('opencode', 'ses_a', 'skill-1');
+    addSessionMutedEntry('opencode', 'ses_a', 'skill-1');
+    expect(listSessionMutedEntryNames('opencode', 'ses_a')).toEqual([
+      'skill-1',
+    ]);
+  });
+
+  it('removeSessionMutedEntry removes a single name', () => {
+    addSessionMutedEntry('opencode', 'ses_a', 'skill-1');
+    addSessionMutedEntry('opencode', 'ses_a', 'skill-2');
+    removeSessionMutedEntry('opencode', 'ses_a', 'skill-1');
+    expect(listSessionMutedEntryNames('opencode', 'ses_a')).toEqual([
+      'skill-2',
+    ]);
+  });
+
+  it('setSessionMutedEntries replaces the whole set', () => {
+    addSessionMutedEntry('opencode', 'ses_a', 'old-1');
+    addSessionMutedEntry('opencode', 'ses_a', 'old-2');
+    setSessionMutedEntries('opencode', 'ses_a', ['new-1', 'new-2']);
+    expect(listSessionMutedEntryNames('opencode', 'ses_a')).toEqual([
+      'new-1',
+      'new-2',
+    ]);
+  });
+
+  it('mute lists are scoped by (providerType, providerSessionId)', () => {
+    addSessionMutedEntry('opencode', 'ses_a', 'x');
+    addSessionMutedEntry('opencode', 'ses_b', 'y');
+    addSessionMutedEntry('copilot-cli', 'ses_a', 'z');
+    expect(listSessionMutedEntryNames('opencode', 'ses_a')).toEqual(['x']);
+    expect(listSessionMutedEntryNames('opencode', 'ses_b')).toEqual(['y']);
+    expect(listSessionMutedEntryNames('copilot-cli', 'ses_a')).toEqual(['z']);
+  });
+
+  it('deleteSessionMutedEntriesForSession removes only matching rows', () => {
+    addSessionMutedEntry('opencode', 'ses_a', 'x');
+    addSessionMutedEntry('opencode', 'ses_b', 'y');
+    deleteSessionMutedEntriesForSession('opencode', 'ses_a');
+    expect(listSessionMutedEntryNames('opencode', 'ses_a')).toEqual([]);
+    expect(listSessionMutedEntryNames('opencode', 'ses_b')).toEqual(['y']);
+  });
+
+  it('deleteRegisteredConnection cascades to session_muted_entries', () => {
+    upsertRegisteredConnection({
+      providerSessionId: 'ses_del',
+      providerType: 'opencode',
+      channelName: 'x',
+      projectName: 'p',
+    });
+    addSessionMutedEntry('opencode', 'ses_del', 'skill-a');
+    addSessionMutedEntry('opencode', 'ses_del', 'skill-b');
+    expect(listSessionMutedEntryNames('opencode', 'ses_del')).toHaveLength(2);
+    deleteRegisteredConnection('ses_del', 'opencode');
+    expect(listSessionMutedEntryNames('opencode', 'ses_del')).toEqual([]);
+  });
+});
+
+describe('schema migration preserves user skills/instructions', () => {
+  it('restores entries with scope=global and folderId=null after a version bump wipe', async () => {
+    await freshDb();
+    upsertSkillOrInstruction({
+      name: 'kept',
+      type: 'skill',
+      description: 'd',
+      content: 'c',
+      category: 'cat',
+      tags: ['t1'],
+    });
+    // Sanity check before simulated wipe.
+    const before = getSkillOrInstructionByName('kept');
+    expect(before).not.toBeNull();
+
+    // Simulate a downgrade of user_version so the next init re-runs the
+    // preserve + wipe + restore path.
+    const { getDbInstance } = await import('./database');
+    const inst = getDbInstance();
+    expect(inst).not.toBeNull();
+    inst!.exec('PRAGMA user_version = 0');
+
+    // better-sqlite3 writes synchronously to disk (WAL mode) — no explicit
+    // export step is needed before re-init.
+
+    await initDatabase();
+
+    const after = getSkillOrInstructionByName('kept');
+    expect(after).not.toBeNull();
+    expect(after?.description).toBe('d');
+    expect(after?.content).toBe('c');
+    expect(after?.tags).toEqual(['t1']);
+    expect(after?.folderId).toBeNull();
+    expect(after?.scope).toBe('global');
   });
 });

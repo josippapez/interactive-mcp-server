@@ -113,10 +113,10 @@ export function useVcsInfo(enabled: boolean = true): UseVcsInfoResult {
       }
     };
 
-    window.api.onOpenCodeVcsUpdated?.(handler);
+    const dispose = window.api.onOpenCodeVcsUpdated?.(handler);
 
     return () => {
-      // Cleanup handled by preload
+      dispose?.();
     };
   }, [enabled]);
 

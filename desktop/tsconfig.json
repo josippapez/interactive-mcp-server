@@ -10,6 +10,7 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "declaration": true,
-    "composite": true
+    "composite": true,
+    "jsx": "react-jsx"
   }
 }

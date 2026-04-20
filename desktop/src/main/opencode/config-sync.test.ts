@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs';
 
@@ -283,5 +284,4 @@ describe('opencode-config-sync', () => {
       'http://localhost:4200/mcp',
     );
   });
-
 });

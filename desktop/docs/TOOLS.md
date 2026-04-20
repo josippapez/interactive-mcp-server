@@ -646,6 +646,8 @@ const result = await mcp.callTool('poll_context_injections', {
 
 **Description:** Manage skills and instructions stored in the Interactive MCP Desktop app. Skills and instructions are persistent knowledge entries that are automatically injected into every new agent session on `register_connection`, making the MCP server self-documenting. Use this tool to register, list, retrieve, or delete skills and instructions.
 
+> See [`SKILLS-INSTRUCTIONS-INJECTION.md`](./SKILLS-INSTRUCTIONS-INJECTION.md) for the end-to-end injection pipeline (message shape, triggers, de-duplication, and post-CRUD broadcast behavior).
+
 > **Important notes:**
 >
 > - Skills and instructions are persisted across app restarts — they are stored in the local SQLite database.

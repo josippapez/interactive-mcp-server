@@ -1,4 +1,5 @@
 import ChannelComposer from '../../components/prompt/ChannelComposer';
+import { SessionScopedSkillsPanel } from '../../components/prompt/SessionScopedSkillsPanel';
 import type { ModelOverride } from '../../hooks/useProviderInjection';
 import type { Model } from '../../hooks/useProviders';
 import type { Attachment, SessionStatus } from '../../types';
@@ -123,44 +124,50 @@ export function PromptComposerSection({
   }
 
   return (
-    <ChannelComposer
-      enabled={enabled}
-      submitLabel="Queue"
-      baseDirectory={queueBaseDirectory}
-      placeholder="Message the agent… (/ for commands, ⌘+Enter to queue, ↵ to trigger reply)"
-      onSubmit={(text, attachments) => {
-        logComposerSubmit('queue', text, attachments);
-        onQueueSubmit(text, attachments);
-      }}
-      showReplyButton={Boolean(providerSessionId) && isOpenCodeSession}
-      onSubmitWithReply={(text, attachments, agent) => {
-        logComposerSubmit('reply', text, attachments);
-        if (dispatchSessionId && onSubmitWithReply) {
-          onSubmitWithReply(
-            dispatchSessionId,
-            text,
-            attachments,
-            currentModelOverride,
-            agent,
-          );
-        }
-      }}
-      noReply={noReply}
-      onNoReplyChange={onNoReplyChange}
-      sessionId={providerSessionId}
-      commandPaletteOpen={commandPaletteOpen}
-      onCommandPaletteChange={onCommandPaletteChange}
-      modelId={modelId ?? undefined}
-      providerId={providerId ?? undefined}
-      variant={variant}
-      onModelSelect={onModelSelect}
-      isOpenCodeSession={isOpenCodeSession}
-      latestStatus={latestStatus}
-      connectionId={connectionId}
-      onDismissStatus={onDismissStatus}
-      isBusy={isBusy}
-      docContextEnabled={docContextEnabled}
-      onToggleDocContext={onToggleDocContext}
-    />
+    <>
+      <SessionScopedSkillsPanel
+        providerType={isOpenCodeSession ? 'opencode' : null}
+        providerSessionId={providerSessionId}
+      />
+      <ChannelComposer
+        enabled={enabled}
+        submitLabel="Queue"
+        baseDirectory={queueBaseDirectory}
+        placeholder="Message the agent… (/ for commands, ⌘+Enter to queue, ↵ to trigger reply)"
+        onSubmit={(text, attachments) => {
+          logComposerSubmit('queue', text, attachments);
+          onQueueSubmit(text, attachments);
+        }}
+        showReplyButton={Boolean(providerSessionId) && isOpenCodeSession}
+        onSubmitWithReply={(text, attachments, agent) => {
+          logComposerSubmit('reply', text, attachments);
+          if (dispatchSessionId && onSubmitWithReply) {
+            onSubmitWithReply(
+              dispatchSessionId,
+              text,
+              attachments,
+              currentModelOverride,
+              agent,
+            );
+          }
+        }}
+        noReply={noReply}
+        onNoReplyChange={onNoReplyChange}
+        sessionId={providerSessionId}
+        commandPaletteOpen={commandPaletteOpen}
+        onCommandPaletteChange={onCommandPaletteChange}
+        modelId={modelId ?? undefined}
+        providerId={providerId ?? undefined}
+        variant={variant}
+        onModelSelect={onModelSelect}
+        isOpenCodeSession={isOpenCodeSession}
+        latestStatus={latestStatus}
+        connectionId={connectionId}
+        onDismissStatus={onDismissStatus}
+        isBusy={isBusy}
+        docContextEnabled={docContextEnabled}
+        onToggleDocContext={onToggleDocContext}
+      />
+    </>
   );
 }

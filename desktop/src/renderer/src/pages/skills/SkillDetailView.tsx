@@ -1,28 +1,36 @@
-import type { SkillOrInstruction } from './skills-types';
+import type { Folder, SkillOrInstruction, SkillScope } from './skills-types';
 
 type SkillDetailViewProps = {
   selected: SkillOrInstruction;
+  folders: Folder[];
   singleExportStatus: string | null;
   onToggleEnabled: (name: string, currentEnabled: boolean) => void;
   onExportSingle: (name: string) => void;
   onDuplicate: (name: string) => void;
   onEdit: () => void;
   onDelete: (name: string) => void;
+  onChangeScope: (name: string, scope: SkillScope) => void;
+  onChangeFolder: (name: string, folderId: number | null) => void;
 };
 
 export function SkillDetailView({
   selected,
+  folders,
   singleExportStatus,
   onToggleEnabled,
   onExportSingle,
   onDuplicate,
   onEdit,
   onDelete,
+  onChangeScope,
+  onChangeFolder,
 }: SkillDetailViewProps): React.ReactElement {
+  const currentFolder = folders.find((f) => f.id === selected.folderId);
+
   return (
     <div className="max-w-2xl space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex items-start justify-between gap-3">
         <h3 className="text-base font-medium text-[var(--color-text)]">
           {selected.name}
         </h3>
@@ -84,6 +92,46 @@ export function SkillDetailView({
               Delete
             </button>
           </div>
+
+          {/* Quick scope + folder controls */}
+          <div className="flex gap-2 items-center">
+            <label className="flex items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
+              <span>Scope</span>
+              <select
+                value={selected.scope}
+                onChange={(e) =>
+                  onChangeScope(selected.name, e.target.value as SkillScope)
+                }
+                className="bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-1.5 py-0.5 text-[10px] text-[var(--color-text)]"
+              >
+                <option value="global">Global</option>
+                <option value="session-scoped">Session-scoped</option>
+              </select>
+            </label>
+            <label className="flex items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
+              <span>Folder</span>
+              <select
+                value={
+                  selected.folderId === null ? '' : String(selected.folderId)
+                }
+                onChange={(e) =>
+                  onChangeFolder(
+                    selected.name,
+                    e.target.value === '' ? null : Number(e.target.value),
+                  )
+                }
+                className="bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-1.5 py-0.5 text-[10px] text-[var(--color-text)]"
+              >
+                <option value="">(Unfiled)</option>
+                {folders.map((folder) => (
+                  <option key={folder.id} value={String(folder.id)}>
+                    {folder.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
           {singleExportStatus && (
             <span className="text-[10px] text-[var(--color-text-faint)]">
               {singleExportStatus}
@@ -104,6 +152,25 @@ export function SkillDetailView({
           >
             {selected.type}
           </span>
+          <span
+            className={`px-1.5 py-0.5 text-[10px] rounded-sm border ${
+              selected.scope === 'session-scoped'
+                ? 'border-[var(--color-user)]/30 text-[var(--color-user)] bg-[var(--color-user)]/10'
+                : 'border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-surface)]'
+            }`}
+            title={
+              selected.scope === 'session-scoped'
+                ? 'Only injected into channels that opt in'
+                : 'Always injected into agent sessions'
+            }
+          >
+            {selected.scope === 'session-scoped' ? 'Session-scoped' : 'Global'}
+          </span>
+          {currentFolder && (
+            <span className="px-1.5 py-0.5 text-[10px] rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-surface)]">
+              📁 {currentFolder.name}
+            </span>
+          )}
           {selected.category && (
             <span className="px-1.5 py-0.5 text-[10px] rounded-sm border border-[var(--color-tool)]/30 text-[var(--color-tool)] bg-[var(--color-tool)]/10">
               {selected.category}

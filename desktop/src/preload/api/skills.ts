@@ -1,5 +1,5 @@
 import { ipcRenderer } from 'electron';
-import type { SkillOrInstructionRecord } from './types';
+import type { FolderRecord, SkillOrInstructionRecord } from './types';
 
 export function createSkillsApi() {
   return {
@@ -11,6 +11,8 @@ export function createSkillsApi() {
       content: string;
       category?: string | null;
       tags?: string[] | null;
+      folderId?: number | null;
+      scope?: 'global' | 'session-scoped';
     }): Promise<SkillOrInstructionRecord | null> =>
       ipcRenderer.invoke('upsert-skill-or-instruction', data),
     listSkillsAndInstructions: (
@@ -53,5 +55,67 @@ export function createSkillsApi() {
       name: string,
     ): Promise<{ saved: boolean; filePath?: string }> =>
       ipcRenderer.invoke('export-single-skill', name),
+
+    // Folders
+    listFolders: (): Promise<FolderRecord[]> =>
+      ipcRenderer.invoke('list-folders'),
+    createFolder: (name: string): Promise<FolderRecord | null> =>
+      ipcRenderer.invoke('create-folder', name),
+    renameFolder: (id: number, name: string): Promise<FolderRecord | null> =>
+      ipcRenderer.invoke('rename-folder', { id, name }),
+    deleteFolder: (id: number): Promise<boolean> =>
+      ipcRenderer.invoke('delete-folder', id),
+
+    // Entry folder/scope setters
+    setEntryFolder: (
+      name: string,
+      folderId: number | null,
+    ): Promise<SkillOrInstructionRecord | null> =>
+      ipcRenderer.invoke('set-entry-folder', { name, folderId }),
+    setEntryScope: (
+      name: string,
+      scope: 'global' | 'session-scoped',
+    ): Promise<SkillOrInstructionRecord | null> =>
+      ipcRenderer.invoke('set-entry-scope', { name, scope }),
+
+    // Session-scoped opt-ins
+    listSessionScopedEntries: (
+      providerType: string,
+      providerSessionId: string,
+    ): Promise<string[]> =>
+      ipcRenderer.invoke('list-session-scoped-entries', {
+        providerType,
+        providerSessionId,
+      }),
+    setSessionScopedEntries: (
+      providerType: string,
+      providerSessionId: string,
+      entryNames: string[],
+    ): Promise<boolean> =>
+      ipcRenderer.invoke('set-session-scoped-entries', {
+        providerType,
+        providerSessionId,
+        entryNames,
+      }),
+
+    // Session-muted entries (per-session mute list for global entries)
+    listSessionMutedEntries: (
+      providerType: string,
+      providerSessionId: string,
+    ): Promise<string[]> =>
+      ipcRenderer.invoke('list-session-muted-entries', {
+        providerType,
+        providerSessionId,
+      }),
+    setSessionMutedEntries: (
+      providerType: string,
+      providerSessionId: string,
+      entryNames: string[],
+    ): Promise<boolean> =>
+      ipcRenderer.invoke('set-session-muted-entries', {
+        providerType,
+        providerSessionId,
+        entryNames,
+      }),
   };
 }

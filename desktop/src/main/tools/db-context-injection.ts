@@ -31,6 +31,8 @@
 import type { BrowserWindow } from 'electron';
 import {
   listSkillsAndInstructions,
+  listSessionScopedEntryNames,
+  listSessionMutedEntryNames,
   type SkillOrInstruction,
 } from '../database';
 import { startStartupContextInjection } from './register-connection-background';
@@ -87,6 +89,14 @@ export interface MaybeInjectOptions {
   getOpenCodePort: () => number;
   /** Override hooks for tests. */
   _listEntries?: () => SkillOrInstruction[];
+  _listSessionOptIns?: (
+    providerType: string,
+    providerSessionId: string,
+  ) => string[];
+  _listSessionMutes?: (
+    providerType: string,
+    providerSessionId: string,
+  ) => string[];
   _buildMessage?: (p: StartupContextParams) => string;
   _startInjection?: typeof startStartupContextInjection;
 }
@@ -101,6 +111,8 @@ export function maybeInjectDbContextOnConnect(
   options: MaybeInjectOptions,
 ): void {
   const list = options._listEntries ?? listSkillsAndInstructions;
+  const listOptIns = options._listSessionOptIns ?? listSessionScopedEntryNames;
+  const listMutes = options._listSessionMutes ?? listSessionMutedEntryNames;
   const build = options._buildMessage ?? buildStartupContextMessage;
   const start = options._startInjection ?? startStartupContextInjection;
 
@@ -114,10 +126,39 @@ export function maybeInjectDbContextOnConnect(
     return;
   }
 
+  // Resolve session-scoped opt-ins and session-muted globals.
+  // - Global-scope entries are injected unless muted for this session.
+  // - Session-scoped entries are only injected if the session opted in.
+  let sessionOptInNames: string[] = [];
+  let sessionMutedNames: string[] = [];
+  if (options.openCodeSessionId) {
+    try {
+      sessionOptInNames = listOptIns('opencode', options.openCodeSessionId);
+    } catch (err) {
+      log.warn(
+        `failed to list session-scoped opt-ins for session ${options.openCodeSessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    try {
+      sessionMutedNames = listMutes('opencode', options.openCodeSessionId);
+    } catch (err) {
+      log.warn(
+        `failed to list session-muted globals for session ${options.openCodeSessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+  const optInSet = new Set(sessionOptInNames);
+  const mutedSet = new Set(sessionMutedNames);
+  const effective = enabled.filter(
+    (e) =>
+      (e.scope === 'global' && !mutedSet.has(e.name)) ||
+      (e.scope === 'session-scoped' && optInSet.has(e.name)),
+  );
+
   const decision = decideShouldInjectDbContext({
     openCodeSessionId: options.openCodeSessionId,
     alreadyInjected: injectedSessionIds,
-    enabledEntryCount: enabled.length,
+    enabledEntryCount: effective.length,
   });
 
   if (!decision.shouldInject) {
@@ -130,6 +171,10 @@ export function maybeInjectDbContextOnConnect(
   const sessionId = options.openCodeSessionId as string;
   injectedSessionIds.add(sessionId);
 
+  log.info(
+    `injecting DB context (${effective.length} of ${enabled.length} entries; ${sessionOptInNames.length} opt-ins, ${sessionMutedNames.length} mutes) into session ${sessionId} on auto-register`,
+  );
+
   let message: string;
   try {
     message = build({
@@ -138,6 +183,8 @@ export function maybeInjectDbContextOnConnect(
       baseDirectory: options.baseDirectory ?? undefined,
       openCodeSessionId: sessionId,
       entries: enabled,
+      sessionOptInNames,
+      sessionMutedNames,
     });
   } catch (err) {
     injectedSessionIds.delete(sessionId);
@@ -146,10 +193,6 @@ export function maybeInjectDbContextOnConnect(
     );
     return;
   }
-
-  log.info(
-    `injecting DB context (${enabled.length} entries) into session ${sessionId} on auto-register`,
-  );
 
   try {
     start({
@@ -168,6 +211,20 @@ export function maybeInjectDbContextOnConnect(
       `failed to start DB context injection for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
+}
+
+/**
+ * Mark a session as having received DB context injection. Used by callers
+ * that perform their own injection (e.g. the SSE tree-manager auto-register
+ * path) to participate in the shared per-process dedupe set and prevent
+ * `maybeInjectDbContextOnConnect` from injecting again when the MCP transport
+ * later binds to the same session.
+ */
+export function markDbContextInjected(openCodeSessionId: string): void {
+  if (!openCodeSessionId) {
+    return;
+  }
+  injectedSessionIds.add(openCodeSessionId);
 }
 
 /** Test-only: reset the dedupe set. */

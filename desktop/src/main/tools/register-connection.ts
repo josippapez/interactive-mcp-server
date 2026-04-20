@@ -6,6 +6,7 @@ import { getBackendAdapter } from '../backend-adapter';
 import {
   createSessionChannel,
   listSkillsAndInstructions,
+  listSessionScopedEntryNames,
   upsertRegisteredConnection,
   type RegisteredConnection,
 } from '../database';
@@ -202,12 +203,17 @@ export function registerConnectionTool(
         );
       }
 
+      const sessionOptInNames = openCodeSessionId
+        ? listSessionScopedEntryNames('opencode', openCodeSessionId)
+        : [];
+
       const startupContextMessage = buildStartupContextMessage({
         channelName,
         projectName,
         baseDirectory,
         openCodeSessionId: openCodeSessionId ?? undefined,
         entries: listSkillsAndInstructions(),
+        sessionOptInNames,
       });
 
       startStartupContextInjection({

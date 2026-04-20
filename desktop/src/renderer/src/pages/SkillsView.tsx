@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import {
+  type Folder,
   type SkillOrInstruction,
+  type SkillScope,
   type TabType,
   PREDEFINED_CATEGORIES,
 } from './skills/skills-types';
@@ -13,13 +15,14 @@ import { SkillEditorHeader } from './skills/SkillEditorHeader';
 
 export default function SkillsView(): React.ReactElement {
   const [entries, setEntries] = useState<SkillOrInstruction[]>([]);
+  const [folders, setFolders] = useState<Folder[]>([]);
   const [tab, setTab] = useState<TabType>('all');
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState<SkillOrInstruction | null>(null);
   const [isEditing, setIsEditing] = useState(false);
   const [isCreating, setIsCreating] = useState(false);
 
-  // Category filter for sidebar
+  // Sidebar filters
   const [categoryFilter, setCategoryFilter] = useState<string>('');
 
   // Form state
@@ -29,6 +32,8 @@ export default function SkillsView(): React.ReactElement {
   const [formContent, setFormContent] = useState('');
   const [formCategory, setFormCategory] = useState('');
   const [formTags, setFormTags] = useState('');
+  const [formFolderId, setFormFolderId] = useState<number | null>(null);
+  const [formScope, setFormScope] = useState<SkillScope>('global');
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   // Delete modal
@@ -60,28 +65,48 @@ export default function SkillsView(): React.ReactElement {
     setEntries(result);
   }, [categoryFilter]);
 
+  const loadFolders = useCallback(async () => {
+    const result = await window.api.listFolders();
+    setFolders(result);
+  }, []);
+
   useEffect(() => {
     void loadEntries();
   }, [loadEntries]);
 
+  useEffect(() => {
+    void loadFolders();
+  }, [loadFolders]);
+
   // Listen for live updates from the main process (when agents register skills via tool)
   useEffect(() => {
-    window.api.onSkillsUpdated(() => {
+    const dispose = window.api.onSkillsUpdated(() => {
       void loadEntries();
+      void loadFolders();
     });
-  }, [loadEntries]);
+    return dispose;
+  }, [loadEntries, loadFolders]);
 
-  const handleSelect = useCallback((entry: SkillOrInstruction) => {
-    setSelected(entry);
-    setIsEditing(false);
-    setIsCreating(false);
+  const resetFormFromEntry = useCallback((entry: SkillOrInstruction) => {
     setFormName(entry.name);
     setFormType(entry.type);
     setFormDescription(entry.description);
     setFormContent(entry.content);
     setFormCategory(entry.category ?? '');
     setFormTags(entry.tags?.join(', ') ?? '');
+    setFormFolderId(entry.folderId);
+    setFormScope(entry.scope);
   }, []);
+
+  const handleSelect = useCallback(
+    (entry: SkillOrInstruction) => {
+      setSelected(entry);
+      setIsEditing(false);
+      setIsCreating(false);
+      resetFormFromEntry(entry);
+    },
+    [resetFormFromEntry],
+  );
 
   const handleCreate = useCallback(() => {
     setSelected(null);
@@ -93,6 +118,8 @@ export default function SkillsView(): React.ReactElement {
     setFormContent('');
     setFormCategory('');
     setFormTags('');
+    setFormFolderId(null);
+    setFormScope('global');
   }, [tab]);
 
   const handleEdit = useCallback(() => {
@@ -106,15 +133,10 @@ export default function SkillsView(): React.ReactElement {
       return;
     }
     if (selected) {
-      setFormName(selected.name);
-      setFormType(selected.type);
-      setFormDescription(selected.description);
-      setFormContent(selected.content);
-      setFormCategory(selected.category ?? '');
-      setFormTags(selected.tags?.join(', ') ?? '');
+      resetFormFromEntry(selected);
     }
     setIsEditing(false);
-  }, [isCreating, selected]);
+  }, [isCreating, selected, resetFormFromEntry]);
 
   const handleSave = useCallback(async () => {
     if (!formName.trim() || !formDescription.trim() || !formContent.trim()) {
@@ -141,6 +163,8 @@ export default function SkillsView(): React.ReactElement {
       content: formContent.trim(),
       category: formCategory.trim() || null,
       tags: parsedTags.length > 0 ? parsedTags : null,
+      folderId: formFolderId,
+      scope: formScope,
     });
 
     if (result) {
@@ -163,6 +187,8 @@ export default function SkillsView(): React.ReactElement {
     formContent,
     formCategory,
     formTags,
+    formFolderId,
+    formScope,
     isCreating,
     loadEntries,
   ]);
@@ -182,7 +208,6 @@ export default function SkillsView(): React.ReactElement {
     async (name: string, currentEnabled: boolean) => {
       await window.api.toggleSkillOrInstructionEnabled(name, !currentEnabled);
       await loadEntries();
-      // Update selected if it's the one being toggled
       if (selected?.name === name) {
         setSelected((prev) =>
           prev ? { ...prev, enabled: !currentEnabled } : null,
@@ -197,19 +222,62 @@ export default function SkillsView(): React.ReactElement {
       const duplicated = await window.api.duplicateSkillOrInstruction(name);
       if (duplicated) {
         await loadEntries();
-        // Select the duplicated entry and open in edit mode
         setSelected(duplicated);
         setIsEditing(true);
         setIsCreating(false);
-        setFormName(duplicated.name);
-        setFormType(duplicated.type);
-        setFormDescription(duplicated.description);
-        setFormContent(duplicated.content);
-        setFormCategory(duplicated.category ?? '');
-        setFormTags(duplicated.tags?.join(', ') ?? '');
+        resetFormFromEntry(duplicated);
       }
     },
-    [loadEntries],
+    [loadEntries, resetFormFromEntry],
+  );
+
+  const handleChangeScope = useCallback(
+    async (name: string, scope: SkillScope) => {
+      const updated = await window.api.setEntryScope(name, scope);
+      if (updated) {
+        await loadEntries();
+        if (selected?.name === name) setSelected(updated);
+      }
+    },
+    [loadEntries, selected?.name],
+  );
+
+  const handleChangeFolder = useCallback(
+    async (name: string, folderId: number | null) => {
+      const updated = await window.api.setEntryFolder(name, folderId);
+      if (updated) {
+        await loadEntries();
+        if (selected?.name === name) setSelected(updated);
+      }
+    },
+    [loadEntries, selected?.name],
+  );
+
+  const handleCreateFolder = useCallback(
+    async (name: string) => {
+      const created = await window.api.createFolder(name);
+      if (created) await loadFolders();
+    },
+    [loadFolders],
+  );
+
+  const handleRenameFolder = useCallback(
+    async (id: number, name: string) => {
+      const renamed = await window.api.renameFolder(id, name);
+      if (renamed) await loadFolders();
+    },
+    [loadFolders],
+  );
+
+  const handleDeleteFolder = useCallback(
+    async (id: number) => {
+      const ok = await window.api.deleteFolder(id);
+      if (ok) {
+        await loadFolders();
+        await loadEntries();
+      }
+    },
+    [loadFolders, loadEntries],
   );
 
   useEffect(() => {
@@ -269,19 +337,18 @@ export default function SkillsView(): React.ReactElement {
     for (const e of entries) {
       if (e.category) cats.add(e.category);
     }
-    // Merge with predefined categories
     for (const c of PREDEFINED_CATEGORIES) {
       cats.add(c);
     }
     return Array.from(cats).sort();
   }, [entries]);
 
+  // Folder counts (unfiltered so sidebar shows true totals)
   // Derive the visible list from tab + search query + category filter
   const visibleEntries = useMemo(() => {
     const q = search.trim().toLowerCase();
     return entries.filter((e) => {
       if (tab !== 'all' && e.type !== tab) return false;
-      // categoryFilter is applied via API, but double-check here for safety
       if (categoryFilter && e.category !== categoryFilter) return false;
       if (!q) return true;
       return (
@@ -292,24 +359,38 @@ export default function SkillsView(): React.ReactElement {
     });
   }, [entries, tab, search, categoryFilter]);
 
-  const skills = useMemo(
-    () => visibleEntries.filter((e) => e.type === 'skill'),
-    [visibleEntries],
-  );
-  const instructions = useMemo(
-    () => visibleEntries.filter((e) => e.type === 'instruction'),
+  const unfiledEntries = useMemo(
+    () => visibleEntries.filter((e) => e.folderId === null),
     [visibleEntries],
   );
 
-  // Tab counts (unfiltered by search so badges show totals)
-  const allCount = entries.length;
+  const entriesByFolder = useMemo(() => {
+    const map: Record<number, SkillOrInstruction[]> = {};
+    for (const e of visibleEntries) {
+      if (e.folderId !== null) {
+        (map[e.folderId] ??= []).push(e);
+      }
+    }
+    return map;
+  }, [visibleEntries]);
+
+  const hasActiveFilters = Boolean(search.trim() || categoryFilter);
+
+  // Tab counts (reflect current category filter but not search)
+  const scopedForTabCounts = useMemo(() => {
+    return entries.filter((e) => {
+      if (categoryFilter && e.category !== categoryFilter) return false;
+      return true;
+    });
+  }, [entries, categoryFilter]);
+  const allCount = scopedForTabCounts.length;
   const skillCount = useMemo(
-    () => entries.filter((e) => e.type === 'skill').length,
-    [entries],
+    () => scopedForTabCounts.filter((e) => e.type === 'skill').length,
+    [scopedForTabCounts],
   );
   const instructionCount = useMemo(
-    () => entries.filter((e) => e.type === 'instruction').length,
-    [entries],
+    () => scopedForTabCounts.filter((e) => e.type === 'instruction').length,
+    [scopedForTabCounts],
   );
 
   return (
@@ -322,9 +403,8 @@ export default function SkillsView(): React.ReactElement {
         categoryFilter={categoryFilter}
         setCategoryFilter={setCategoryFilter}
         availableCategories={availableCategories}
-        visibleEntries={visibleEntries}
-        skills={skills}
-        instructions={instructions}
+        unfiledEntries={unfiledEntries}
+        entriesByFolder={entriesByFolder}
         allCount={allCount}
         skillCount={skillCount}
         instructionCount={instructionCount}
@@ -335,6 +415,14 @@ export default function SkillsView(): React.ReactElement {
         onSelect={handleSelect}
         onDelete={(name) => setDeleteTarget(name)}
         onToggleEnabled={handleToggleEnabled}
+        folders={folders}
+        onCreateFolder={handleCreateFolder}
+        onRenameFolder={handleRenameFolder}
+        onDeleteFolder={handleDeleteFolder}
+        onMoveEntry={(name, folderId) =>
+          void handleChangeFolder(name, folderId)
+        }
+        hasActiveFilters={hasActiveFilters}
       />
 
       {/* Main content area */}
@@ -369,6 +457,11 @@ export default function SkillsView(): React.ReactElement {
                 setFormDescription={setFormDescription}
                 formContent={formContent}
                 setFormContent={setFormContent}
+                formFolderId={formFolderId}
+                setFormFolderId={setFormFolderId}
+                formScope={formScope}
+                setFormScope={setFormScope}
+                folders={folders}
                 availableCategories={availableCategories}
                 saveStatus={saveStatus}
                 onSave={() => void handleSave()}
@@ -378,12 +471,19 @@ export default function SkillsView(): React.ReactElement {
               selected && (
                 <SkillDetailView
                   selected={selected}
+                  folders={folders}
                   singleExportStatus={singleExportStatus}
                   onToggleEnabled={handleToggleEnabled}
                   onExportSingle={(name) => void handleExportSingle(name)}
                   onDuplicate={(name) => void handleDuplicate(name)}
                   onEdit={handleEdit}
                   onDelete={(name) => setDeleteTarget(name)}
+                  onChangeScope={(name, scope) =>
+                    void handleChangeScope(name, scope)
+                  }
+                  onChangeFolder={(name, folderId) =>
+                    void handleChangeFolder(name, folderId)
+                  }
                 />
               )
             )}

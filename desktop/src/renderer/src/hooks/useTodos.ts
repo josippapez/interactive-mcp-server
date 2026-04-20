@@ -113,12 +113,10 @@ export function useTodos(sessionId: string | null): UseTodosResult {
       }
     };
 
-    window.api.onTodosUpdated?.(handler);
+    const dispose = window.api.onTodosUpdated?.(handler);
 
     return () => {
-      // Clean up listener on unmount
-      // Note: The preload removes all listeners when setting up new ones,
-      // so we don't need explicit cleanup here
+      dispose?.();
     };
   }, []);
 
@@ -146,10 +144,10 @@ export function useTodos(sessionId: string | null): UseTodosResult {
       }
     };
 
-    window.api.onOpenCodeTodoUpdated?.(handler);
+    const dispose = window.api.onOpenCodeTodoUpdated?.(handler);
 
     return () => {
-      // Cleanup handled by preload
+      dispose?.();
     };
   }, []);
 

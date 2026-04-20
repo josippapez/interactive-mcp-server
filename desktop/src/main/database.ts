@@ -15,9 +15,17 @@ let dbPath = '';
  * dropped and recreated from scratch. This eliminates all incremental
  * migration code.
  */
-const SCHEMA_VERSION = 11;
+const SCHEMA_VERSION = 13;
 
 // ─── Public interfaces ─────────────────────────────────────────────────────
+
+/**
+ * Scope controls how a skill or instruction is injected into an agent session.
+ * - 'global': injected into every newly registered session (current default behavior).
+ * - 'session-scoped': injected only into sessions that have explicitly opted in
+ *   via the `session_scoped_entries` table (per-channel selection UI).
+ */
+export type SkillScope = 'global' | 'session-scoped';
 
 export interface SkillOrInstruction {
   id: number;
@@ -29,6 +37,23 @@ export interface SkillOrInstruction {
   tags: string[] | null;
   enabled: boolean;
   isBuiltin: boolean;
+  createdAt: string;
+  updatedAt: string;
+  /**
+   * Optional folder the entry is organised under. Purely organisational —
+   * folders are flat (no nesting) and have no effect on injection behavior.
+   */
+  folderId: number | null;
+  scope: SkillScope;
+}
+
+/**
+ * Flat organisational folder for skills and instructions. Folders are
+ * purely for UI grouping — they do not affect injection logic.
+ */
+export interface Folder {
+  id: number;
+  name: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -182,8 +207,56 @@ function createTables(): void {
       enabled     INTEGER NOT NULL DEFAULT 1,
       is_builtin  INTEGER NOT NULL DEFAULT 0,
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+      updated_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
+      folder_id   INTEGER,
+      scope       TEXT    NOT NULL DEFAULT 'global' CHECK(scope IN ('global', 'session-scoped'))
     )
+  `);
+
+  // Flat organisational folders for skills/instructions.
+  // Purely for UI grouping — no effect on injection behavior.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS folders (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT    NOT NULL UNIQUE,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  // Per-session opt-in list for scope='session-scoped' entries.
+  // A row here means "this channel has opted into this entry."
+  // Keyed on (providerType, providerSessionId) to survive transport reconnects.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_scoped_entries (
+      provider_type       TEXT     NOT NULL,
+      provider_session_id TEXT     NOT NULL,
+      entry_name          TEXT     NOT NULL,
+      created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (provider_type, provider_session_id, entry_name)
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sse_entry_name
+      ON session_scoped_entries (entry_name)
+  `);
+
+  // Per-session mute list for scope='global' entries.
+  // A row here means "this channel has muted this global entry" — i.e. do
+  // NOT inject it for this specific session, even though it's global.
+  // Keyed on (providerType, providerSessionId) to survive transport reconnects.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS session_muted_entries (
+      provider_type       TEXT     NOT NULL,
+      provider_session_id TEXT     NOT NULL,
+      entry_name          TEXT     NOT NULL,
+      created_at          DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (provider_type, provider_session_id, entry_name)
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_sme_entry_name
+      ON session_muted_entries (entry_name)
   `);
 
   db.exec(`
@@ -264,10 +337,14 @@ export async function initDatabase(): Promise<void> {
 
   // Check stored schema version against expected version.
   // If they differ (or the DB is brand new with version 0), wipe and recreate.
+  // User-authored skills/instructions are preserved across the wipe and
+  // restored with scope='global', folder_id=NULL.
   const storedVersion = getSchemaVersion();
-  if (!alreadyExists || storedVersion !== SCHEMA_VERSION) {
+  if (storedVersion !== SCHEMA_VERSION) {
+    const preservedSkills = preserveSkillsAndInstructions();
     dropAllTables();
     createTables();
+    restoreSkillsAndInstructions(preservedSkills);
     setSchemaVersion(SCHEMA_VERSION);
   } else {
     // Schema matches — just ensure tables exist (idempotent).
@@ -316,6 +393,8 @@ function dropAllTables(): void {
   // Order matters: drop dependents first to avoid FK issues (though we don't
   // use FK constraints, this keeps the intent clear).
   const tables = [
+    'session_scoped_entries',
+    'session_muted_entries',
     'pending_context_injections',
     'session_messages',
     'session_channel_history',
@@ -324,9 +403,100 @@ function dropAllTables(): void {
     'conversations',
     'skills_and_instructions',
     'pinned_projects',
+    'folders',
   ];
   for (const table of tables) {
     db.exec(`DROP TABLE IF EXISTS ${table}`);
+  }
+}
+
+/**
+ * Snapshot of skill/instruction rows that should survive a schema-version
+ * bump. Captures the raw column values we want to re-insert verbatim
+ * (minus folder/scope, which default to the safe "global, unfiled" state
+ * on restore).
+ */
+interface PreservedSkillRow {
+  name: string;
+  type: 'skill' | 'instruction';
+  description: string;
+  content: string;
+  category: string | null;
+  tags: string | null;
+  enabled: number;
+  isBuiltin: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Read all rows from `skills_and_instructions` before the schema wipe.
+ * Returns an empty array if the table doesn't exist yet (fresh DB) or any
+ * read error occurs — the wipe is still safe to proceed.
+ */
+function preserveSkillsAndInstructions(): PreservedSkillRow[] {
+  if (!db) return [];
+  try {
+    const rows = db
+      .prepare(
+        `SELECT name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
+         FROM skills_and_instructions`,
+      )
+      .all() as Array<{
+      name: string;
+      type: 'skill' | 'instruction';
+      description: string;
+      content: string;
+      category: string | null;
+      tags: string | null;
+      enabled: number | null;
+      is_builtin: number | null;
+      created_at: string;
+      updated_at: string;
+    }>;
+    return rows.map((row) => ({
+      name: row.name,
+      type: row.type,
+      description: row.description,
+      content: row.content,
+      category: row.category,
+      tags: row.tags,
+      enabled: row.enabled ?? 1,
+      isBuiltin: row.is_builtin ?? 0,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }));
+  } catch {
+    // Table doesn't exist (fresh DB) — nothing to preserve.
+    return [];
+  }
+}
+
+/**
+ * Re-insert preserved skill/instruction rows after `createTables()`. New
+ * `folder_id` defaults to NULL and `scope` to 'global' so existing content
+ * behaves exactly as before the migration.
+ */
+function restoreSkillsAndInstructions(rows: PreservedSkillRow[]): void {
+  if (!db || rows.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO skills_and_instructions
+       (name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at, folder_id, scope)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'global')`,
+  );
+  for (const r of rows) {
+    stmt.run(
+      r.name,
+      r.type,
+      r.description,
+      r.content,
+      r.category,
+      r.tags,
+      r.enabled,
+      r.isBuiltin,
+      r.createdAt,
+      r.updatedAt,
+    );
   }
 }
 
@@ -414,12 +584,15 @@ export function resetDatabase(): {
   }
 
   const clearedTables = [
+    'session_scoped_entries',
+    'session_muted_entries',
     'session_messages',
     'session_channel_history',
     'session_channels',
     'registered_connections',
     'conversations',
     'skills_and_instructions',
+    'folders',
   ];
 
   for (const table of clearedTables) {
@@ -979,9 +1152,24 @@ export function deleteRegisteredConnection(
       // file may already be gone
     }
   }
-  db.prepare(
-    `DELETE FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
-  ).run(providerType, providerSessionId);
+  const txn = db.transaction((pt: string, psid: string) => {
+    db!
+      .prepare(
+        `DELETE FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
+      )
+      .run(pt, psid);
+    db!
+      .prepare(
+        `DELETE FROM session_scoped_entries WHERE provider_type = ? AND provider_session_id = ?`,
+      )
+      .run(pt, psid);
+    db!
+      .prepare(
+        `DELETE FROM session_muted_entries WHERE provider_type = ? AND provider_session_id = ?`,
+      )
+      .run(pt, psid);
+  });
+  txn(providerType, providerSessionId);
 }
 
 // ─── Skills & Instructions ─────────────────────────────────────────────────
@@ -998,6 +1186,8 @@ interface SkillOrInstructionRow {
   is_builtin: number;
   created_at: string;
   updated_at: string;
+  folder_id: number | null;
+  scope: string | null;
 }
 
 function mapRowToSkillOrInstruction(
@@ -1011,6 +1201,9 @@ function mapRowToSkillOrInstruction(
       tags = null;
     }
   }
+  const scopeRaw = row.scope ?? 'global';
+  const scope: SkillScope =
+    scopeRaw === 'session-scoped' ? 'session-scoped' : 'global';
   return {
     id: row.id,
     name: row.name,
@@ -1023,10 +1216,20 @@ function mapRowToSkillOrInstruction(
     isBuiltin: row.is_builtin === 1,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    folderId: row.folder_id ?? null,
+    scope,
   };
 }
 
-/** Upsert a skill or instruction. If a record with the same name exists, it is updated. */
+/**
+ * Upsert a skill or instruction. If a record with the same name exists, it is updated.
+ *
+ * `folderId` and `scope` are optional:
+ * - On INSERT, omitting them uses the column defaults (`folder_id=NULL`,
+ *   `scope='global'`).
+ * - On UPDATE (name conflict), they are only overwritten when explicitly
+ *   provided — passing `undefined` keeps the existing folder/scope intact.
+ */
 export function upsertSkillOrInstruction(data: {
   name: string;
   type: 'skill' | 'instruction';
@@ -1034,18 +1237,30 @@ export function upsertSkillOrInstruction(data: {
   content: string;
   category?: string | null;
   tags?: string[] | null;
+  folderId?: number | null;
+  scope?: SkillScope;
 }): SkillOrInstruction | null {
   if (!db) return null;
   const tagsJson = data.tags ? JSON.stringify(data.tags) : null;
+  const folderIdValue = data.folderId === undefined ? null : data.folderId;
+  const scopeValue: SkillScope = data.scope ?? 'global';
+  const hasExplicitFolder = data.folderId !== undefined;
+  const hasExplicitScope = data.scope !== undefined;
+  const updateFolderClause = hasExplicitFolder
+    ? 'folder_id = excluded.folder_id,'
+    : '';
+  const updateScopeClause = hasExplicitScope ? 'scope = excluded.scope,' : '';
   db.prepare(
-    `INSERT INTO skills_and_instructions (name, type, description, content, category, tags)
-     VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO skills_and_instructions (name, type, description, content, category, tags, folder_id, scope)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(name) DO UPDATE SET
        type = excluded.type,
        description = excluded.description,
        content = excluded.content,
        category = excluded.category,
        tags = excluded.tags,
+       ${updateFolderClause}
+       ${updateScopeClause}
        updated_at = CURRENT_TIMESTAMP`,
   ).run(
     data.name,
@@ -1054,6 +1269,8 @@ export function upsertSkillOrInstruction(data: {
     data.content,
     data.category ?? null,
     tagsJson,
+    folderIdValue,
+    scopeValue,
   );
   return getSkillOrInstructionByName(data.name);
 }
@@ -1079,7 +1296,7 @@ export function listSkillsAndInstructions(
 
   const whereClause =
     conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-  const query = `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
+  const query = `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at, folder_id, scope
      FROM skills_and_instructions ${whereClause} ORDER BY name ASC`;
 
   const rows = db.prepare(query).all(...params) as SkillOrInstructionRow[];
@@ -1093,7 +1310,7 @@ export function getSkillOrInstructionByName(
   if (!db) return null;
   const row = db
     .prepare(
-      `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at
+      `SELECT id, name, type, description, content, category, tags, enabled, is_builtin, created_at, updated_at, folder_id, scope
        FROM skills_and_instructions WHERE name = ?`,
     )
     .get(name) as SkillOrInstructionRow | undefined;
@@ -1437,4 +1654,336 @@ export function isPinnedProject(path: string): boolean {
     .prepare(`SELECT 1 as present FROM pinned_projects WHERE path = ? LIMIT 1`)
     .get(path) as { present: number } | undefined;
   return row !== undefined;
+}
+
+// ─── Folders ───────────────────────────────────────────────────────────────
+
+interface FolderRow {
+  id: number;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapRowToFolder(row: FolderRow): Folder {
+  return {
+    id: row.id,
+    name: row.name,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+/** List all folders, ordered by name ascending. */
+export function listFolders(): Folder[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(
+      `SELECT id, name, created_at, updated_at FROM folders ORDER BY name ASC`,
+    )
+    .all() as FolderRow[];
+  return rows.map(mapRowToFolder);
+}
+
+/** Get a single folder by id. Returns null if not found. */
+export function getFolderById(id: number): Folder | null {
+  if (!db) return null;
+  const row = db
+    .prepare(
+      `SELECT id, name, created_at, updated_at FROM folders WHERE id = ?`,
+    )
+    .get(id) as FolderRow | undefined;
+  if (!row) return null;
+  return mapRowToFolder(row);
+}
+
+/** Get a single folder by name. Returns null if not found. */
+export function getFolderByName(name: string): Folder | null {
+  if (!db) return null;
+  const row = db
+    .prepare(
+      `SELECT id, name, created_at, updated_at FROM folders WHERE name = ?`,
+    )
+    .get(name) as FolderRow | undefined;
+  if (!row) return null;
+  return mapRowToFolder(row);
+}
+
+/**
+ * Create a folder. Returns the new folder, or null if a folder with the
+ * same name already exists (UNIQUE constraint).
+ */
+export function createFolder(name: string): Folder | null {
+  if (!db) return null;
+  const trimmed = name.trim();
+  if (trimmed === '') return null;
+  if (getFolderByName(trimmed) !== null) return null;
+  db.prepare(`INSERT INTO folders (name) VALUES (?)`).run(trimmed);
+  return getFolderByName(trimmed);
+}
+
+/**
+ * Rename a folder. Returns the updated folder, or null if the folder
+ * doesn't exist or the new name collides with another folder.
+ */
+export function renameFolder(id: number, newName: string): Folder | null {
+  if (!db) return null;
+  const trimmed = newName.trim();
+  if (trimmed === '') return null;
+  const existing = getFolderById(id);
+  if (!existing) return null;
+  const collision = getFolderByName(trimmed);
+  if (collision && collision.id !== id) return null;
+  db.prepare(
+    `UPDATE folders SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+  ).run(trimmed, id);
+  return getFolderById(id);
+}
+
+/**
+ * Delete a folder. Any skills/instructions referencing this folder have
+ * their `folder_id` nullified (moved to the "Unfiled" root). Entries
+ * themselves are NOT deleted. Returns true when a folder row was deleted.
+ */
+export function deleteFolder(id: number): boolean {
+  if (!db) return false;
+  const existing = getFolderById(id);
+  if (!existing) return false;
+  const txn = db.transaction((folderId: number) => {
+    db!
+      .prepare(
+        `UPDATE skills_and_instructions SET folder_id = NULL WHERE folder_id = ?`,
+      )
+      .run(folderId);
+    db!.prepare(`DELETE FROM folders WHERE id = ?`).run(folderId);
+  });
+  txn(id);
+  return true;
+}
+
+// ─── Skill/Instruction folder + scope setters ──────────────────────────────
+
+/**
+ * Assign an entry to a folder (or move to "Unfiled" with folderId=null).
+ * Returns true when the entry exists and was updated. If `folderId` is
+ * non-null and the folder does not exist, returns false (no change).
+ */
+export function setEntryFolder(
+  entryName: string,
+  folderId: number | null,
+): boolean {
+  if (!db) return false;
+  if (folderId !== null && getFolderById(folderId) === null) return false;
+  const existing = getSkillOrInstructionByName(entryName);
+  if (!existing) return false;
+  db.prepare(
+    `UPDATE skills_and_instructions
+     SET folder_id = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE name = ?`,
+  ).run(folderId, entryName);
+  return true;
+}
+
+/**
+ * Set the injection scope for an entry. 'global' means the entry is
+ * injected into every newly registered session. 'session-scoped' means
+ * it is injected only into sessions that have opted in via
+ * `addSessionScopedEntry` / `setSessionScopedEntries`.
+ */
+export function setEntryScope(entryName: string, scope: SkillScope): boolean {
+  if (!db) return false;
+  const existing = getSkillOrInstructionByName(entryName);
+  if (!existing) return false;
+  db.prepare(
+    `UPDATE skills_and_instructions
+     SET scope = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE name = ?`,
+  ).run(scope, entryName);
+  return true;
+}
+
+// ─── Session-scoped entry opt-in ───────────────────────────────────────────
+
+/**
+ * Return the entry names that a given session has opted into for
+ * session-scoped injection. Does NOT filter by the entry's current scope
+ * — callers should cross-reference `listSkillsAndInstructions()` if they
+ * need only entries that are still marked 'session-scoped'.
+ */
+export function listSessionScopedEntryNames(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+): string[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(
+      `SELECT entry_name FROM session_scoped_entries
+       WHERE provider_type = ? AND provider_session_id = ?
+       ORDER BY entry_name ASC`,
+    )
+    .all(providerType, providerSessionId) as Array<{ entry_name: string }>;
+  return rows.map((row) => row.entry_name);
+}
+
+/**
+ * Replace the full opt-in set for a session. Any prior opt-ins not in
+ * `entryNames` are removed; new names are inserted. Names that don't
+ * correspond to any existing entry are still recorded (useful when the
+ * entry is created later) — callers may validate upstream if desired.
+ */
+export function setSessionScopedEntries(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+  entryNames: string[],
+): void {
+  if (!db) return;
+  const txn = db.transaction((pt: string, psid: string, names: string[]) => {
+    db!
+      .prepare(
+        `DELETE FROM session_scoped_entries
+         WHERE provider_type = ? AND provider_session_id = ?`,
+      )
+      .run(pt, psid);
+    const insert = db!.prepare(
+      `INSERT OR IGNORE INTO session_scoped_entries (provider_type, provider_session_id, entry_name)
+       VALUES (?, ?, ?)`,
+    );
+    for (const name of names) {
+      insert.run(pt, psid, name);
+    }
+  });
+  txn(providerType, providerSessionId, entryNames);
+}
+
+/** Add a single opt-in. Idempotent. */
+export function addSessionScopedEntry(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+  entryName: string,
+): void {
+  if (!db) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO session_scoped_entries (provider_type, provider_session_id, entry_name)
+     VALUES (?, ?, ?)`,
+  ).run(providerType, providerSessionId, entryName);
+}
+
+/** Remove a single opt-in. No-op if not present. */
+export function removeSessionScopedEntry(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+  entryName: string,
+): void {
+  if (!db) return;
+  db.prepare(
+    `DELETE FROM session_scoped_entries
+     WHERE provider_type = ? AND provider_session_id = ? AND entry_name = ?`,
+  ).run(providerType, providerSessionId, entryName);
+}
+
+/**
+ * Remove all session-scoped opt-ins for a provider session. Call this
+ * from any path that deletes the session/channel to avoid orphan rows.
+ */
+export function deleteSessionScopedEntriesForSession(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+): void {
+  if (!db) return;
+  db.prepare(
+    `DELETE FROM session_scoped_entries
+     WHERE provider_type = ? AND provider_session_id = ?`,
+  ).run(providerType, providerSessionId);
+}
+
+// ─── Session-muted entry list (per-session mute for global entries) ────────
+
+/**
+ * Return the entry names that a given session has muted — i.e. global
+ * entries the user does NOT want injected into this specific session.
+ * Does NOT filter by the entry's current scope; callers should cross-
+ * reference `listSkillsAndInstructions()` when relevant.
+ */
+export function listSessionMutedEntryNames(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+): string[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(
+      `SELECT entry_name FROM session_muted_entries
+       WHERE provider_type = ? AND provider_session_id = ?
+       ORDER BY entry_name ASC`,
+    )
+    .all(providerType, providerSessionId) as Array<{ entry_name: string }>;
+  return rows.map((row) => row.entry_name);
+}
+
+/**
+ * Replace the full mute set for a session. Any prior mutes not in
+ * `entryNames` are removed; new names are inserted.
+ */
+export function setSessionMutedEntries(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+  entryNames: string[],
+): void {
+  if (!db) return;
+  const txn = db.transaction((pt: string, psid: string, names: string[]) => {
+    db!
+      .prepare(
+        `DELETE FROM session_muted_entries
+         WHERE provider_type = ? AND provider_session_id = ?`,
+      )
+      .run(pt, psid);
+    const insert = db!.prepare(
+      `INSERT OR IGNORE INTO session_muted_entries (provider_type, provider_session_id, entry_name)
+       VALUES (?, ?, ?)`,
+    );
+    for (const name of names) {
+      insert.run(pt, psid, name);
+    }
+  });
+  txn(providerType, providerSessionId, entryNames);
+}
+
+/** Add a single mute. Idempotent. */
+export function addSessionMutedEntry(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+  entryName: string,
+): void {
+  if (!db) return;
+  db.prepare(
+    `INSERT OR IGNORE INTO session_muted_entries (provider_type, provider_session_id, entry_name)
+     VALUES (?, ?, ?)`,
+  ).run(providerType, providerSessionId, entryName);
+}
+
+/** Remove a single mute. No-op if not present. */
+export function removeSessionMutedEntry(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+  entryName: string,
+): void {
+  if (!db) return;
+  db.prepare(
+    `DELETE FROM session_muted_entries
+     WHERE provider_type = ? AND provider_session_id = ? AND entry_name = ?`,
+  ).run(providerType, providerSessionId, entryName);
+}
+
+/**
+ * Remove all session mutes for a provider session. Call from any path
+ * that deletes the session/channel to avoid orphan rows.
+ */
+export function deleteSessionMutedEntriesForSession(
+  providerType: RegisteredConnection['providerType'],
+  providerSessionId: string,
+): void {
+  if (!db) return;
+  db.prepare(
+    `DELETE FROM session_muted_entries
+     WHERE provider_type = ? AND provider_session_id = ?`,
+  ).run(providerType, providerSessionId);
 }

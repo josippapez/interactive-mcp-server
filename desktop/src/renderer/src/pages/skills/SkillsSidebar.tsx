@@ -1,5 +1,5 @@
-import type { SkillOrInstruction, TabType } from './skills-types';
-import { SidebarItem } from './SidebarItem';
+import type { Folder, SkillOrInstruction, TabType } from './skills-types';
+import { SkillsTree } from './SkillsTree';
 import { Input } from '@/components/ui/input';
 
 type SkillsSidebarProps = {
@@ -10,9 +10,8 @@ type SkillsSidebarProps = {
   categoryFilter: string;
   setCategoryFilter: (category: string) => void;
   availableCategories: string[];
-  visibleEntries: SkillOrInstruction[];
-  skills: SkillOrInstruction[];
-  instructions: SkillOrInstruction[];
+  unfiledEntries: SkillOrInstruction[];
+  entriesByFolder: Record<number, SkillOrInstruction[]>;
   allCount: number;
   skillCount: number;
   instructionCount: number;
@@ -23,6 +22,13 @@ type SkillsSidebarProps = {
   onSelect: (entry: SkillOrInstruction) => void;
   onDelete: (name: string) => void;
   onToggleEnabled: (name: string, currentEnabled: boolean) => void;
+  // Folders
+  folders: Folder[];
+  onCreateFolder: (name: string) => Promise<void>;
+  onRenameFolder: (id: number, name: string) => Promise<void>;
+  onDeleteFolder: (id: number) => Promise<void>;
+  onMoveEntry: (name: string, folderId: number | null) => void;
+  hasActiveFilters: boolean;
 };
 
 export function SkillsSidebar({
@@ -33,9 +39,8 @@ export function SkillsSidebar({
   categoryFilter,
   setCategoryFilter,
   availableCategories,
-  visibleEntries,
-  skills,
-  instructions,
+  unfiledEntries,
+  entriesByFolder,
   allCount,
   skillCount,
   instructionCount,
@@ -46,6 +51,12 @@ export function SkillsSidebar({
   onSelect,
   onDelete,
   onToggleEnabled,
+  folders,
+  onCreateFolder,
+  onRenameFolder,
+  onDeleteFolder,
+  onMoveEntry,
+  hasActiveFilters,
 }: SkillsSidebarProps): React.ReactElement {
   return (
     <aside className="w-64 border-r border-[var(--color-border)] flex flex-col shrink-0">
@@ -127,7 +138,9 @@ export function SkillsSidebar({
         <Input
           type="search"
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setSearch(e.target.value)
+          }
           placeholder="Search…"
           className="h-7 px-2 py-1 text-xs"
         />
@@ -139,57 +152,25 @@ export function SkillsSidebar({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto">
-        {visibleEntries.length === 0 ? (
-          <div className="p-3 text-xs text-[var(--color-text-faint)]">
-            {search || categoryFilter
-              ? `No matches${search ? ` for "${search}"` : ''}${categoryFilter ? ` in category "${categoryFilter}"` : ''}.`
-              : 'No entries yet. Click "+ New" to create one, or use the manage_skills_and_instructions tool from an agent.'}
-          </div>
-        ) : (
-          <>
-            {(tab === 'all' || tab === 'skill') && skills.length > 0 && (
-              <div>
-                {tab === 'all' && (
-                  <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
-                    Skills ({skills.length})
-                  </div>
-                )}
-                {skills.map((entry) => (
-                  <SidebarItem
-                    key={entry.id}
-                    entry={entry}
-                    isSelected={selected?.id === entry.id}
-                    onSelect={onSelect}
-                    onDelete={onDelete}
-                    onToggleEnabled={onToggleEnabled}
-                  />
-                ))}
-              </div>
-            )}
-            {(tab === 'all' || tab === 'instruction') &&
-              instructions.length > 0 && (
-                <div>
-                  {tab === 'all' && (
-                    <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-[var(--color-text-faint)]">
-                      Instructions ({instructions.length})
-                    </div>
-                  )}
-                  {instructions.map((entry) => (
-                    <SidebarItem
-                      key={entry.id}
-                      entry={entry}
-                      isSelected={selected?.id === entry.id}
-                      onSelect={onSelect}
-                      onDelete={onDelete}
-                      onToggleEnabled={onToggleEnabled}
-                    />
-                  ))}
-                </div>
-              )}
-          </>
-        )}
-      </div>
+      {/* Tree: unfiled at root, folders with nested children */}
+      <SkillsTree
+        folders={folders}
+        unfiledEntries={unfiledEntries}
+        entriesByFolder={entriesByFolder}
+        selected={selected}
+        onSelect={onSelect}
+        onDelete={onDelete}
+        onToggleEnabled={onToggleEnabled}
+        onCreateFolder={onCreateFolder}
+        onRenameFolder={onRenameFolder}
+        onDeleteFolder={onDeleteFolder}
+        onMoveEntry={onMoveEntry}
+        emptyLabel={
+          hasActiveFilters
+            ? 'No matches.'
+            : 'No entries yet. Click "+ New" to create one, or use the manage_skills_and_instructions tool from an agent.'
+        }
+      />
     </aside>
   );
 }

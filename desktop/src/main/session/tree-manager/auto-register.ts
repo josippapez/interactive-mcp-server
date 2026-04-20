@@ -18,10 +18,12 @@
 import {
   getRegisteredConnectionBySessionId,
   isProviderSessionClaimed,
+  listSessionScopedEntryNames,
   listSkillsAndInstructions,
   upsertRegisteredConnection,
 } from '../../database';
 import { injectOpenCodeMessage } from '../../opencode/injector';
+import { markDbContextInjected } from '../../tools/db-context-injection';
 import { buildStartupContextMessage } from '../../tools/startup-context';
 import { createLogger } from '../../utils/logger';
 import { _sessionCache, _tombstonedSessionIds, state } from './state';
@@ -168,30 +170,51 @@ export function autoRegisterSession(
     // Also inject DB-stored skills and instructions so child agents have the
     // same knowledge context as parent (whose context comes from
     // register_connection). Skip the network call entirely when there are
-    // no enabled entries to avoid an empty system-message injection.
+    // no enabled entries to avoid an empty user-message injection.
+    //
+    // The reminder is delivered in the user-message BODY (arg 2) with
+    // `noReply: true`, NOT in the `systemMessage` slot (arg 8). Per
+    // OpenCode's `session/llm.ts`, the per-call `system` only persists while
+    // the injected row is `lastUser`, so a `systemMessage` delivery would
+    // evaporate on the session's first real user prompt. Body delivery
+    // persists in `messages[]` and is replayed every step via
+    // `MessageV2.toModelMessages`.
     try {
       const entries = listSkillsAndInstructions().filter((e) => e.enabled);
-      if (entries.length > 0) {
+      const sessionOptInNames = listSessionScopedEntryNames(
+        'opencode',
+        info.id,
+      );
+      const optInSet = new Set(sessionOptInNames);
+      const effective = entries.filter(
+        (e) => e.scope === 'global' || optInSet.has(e.name),
+      );
+      if (effective.length > 0) {
         const dbContext = buildStartupContextMessage({
           channelName: info.title ?? `Session ${info.id.slice(0, 8)}`,
           projectName: 'OpenCode',
           baseDirectory: effectiveBaseDirectory,
           openCodeSessionId: info.id,
           entries,
+          sessionOptInNames,
         });
         log.info(
-          `injecting DB skills/instructions context (${entries.length} entries) into child session ${info.id}`,
+          `injecting DB skills/instructions context (${effective.length} of ${entries.length} entries; ${sessionOptInNames.length} session opt-ins) into child session ${info.id}`,
         );
         void injectOpenCodeMessage(
           info.id,
-          '', // empty user message — content goes in systemMessage
+          dbContext, // user message body — `<system-reminder>` block
           undefined,
           port,
           undefined,
           true, // noReply
           undefined,
-          dbContext,
+          undefined, // systemMessage — intentionally unused, see comment above
         );
+        // Participate in the shared per-process dedupe so the MCP
+        // auto-register path (`maybeInjectDbContextOnConnect`) does not
+        // inject the same bootstrap again when the transport binds later.
+        markDbContextInjected(info.id);
       }
     } catch (err) {
       log.warn(

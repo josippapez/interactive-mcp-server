@@ -1,5 +1,6 @@
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import type { Folder, SkillScope } from './skills-types';
 
 type SkillEditorProps = {
   isCreating: boolean;
@@ -15,6 +16,11 @@ type SkillEditorProps = {
   setFormDescription: (description: string) => void;
   formContent: string;
   setFormContent: (content: string) => void;
+  formFolderId: number | null;
+  setFormFolderId: (id: number | null) => void;
+  formScope: SkillScope;
+  setFormScope: (scope: SkillScope) => void;
+  folders: Folder[];
   availableCategories: string[];
   saveStatus: string | null;
   onSave: () => void;
@@ -35,6 +41,11 @@ export function SkillEditor({
   setFormDescription,
   formContent,
   setFormContent,
+  formFolderId,
+  setFormFolderId,
+  formScope,
+  setFormScope,
+  folders,
   availableCategories,
   saveStatus,
   onSave,
@@ -51,7 +62,9 @@ export function SkillEditor({
         <Input
           type="text"
           value={formName}
-          onChange={(e) => setFormName(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setFormName(e.target.value)
+          }
           placeholder="e.g. code-review, typescript-rules"
           disabled={isEditing}
         />
@@ -62,19 +75,59 @@ export function SkillEditor({
         )}
       </div>
 
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+            Type
+          </label>
+          <select
+            value={formType}
+            onChange={(e) =>
+              setFormType(e.target.value as 'skill' | 'instruction')
+            }
+            className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
+          >
+            <option value="skill">Skill</option>
+            <option value="instruction">Instruction</option>
+          </select>
+        </div>
+
+        <div>
+          <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+            Scope
+          </label>
+          <select
+            value={formScope}
+            onChange={(e) => setFormScope(e.target.value as SkillScope)}
+            className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
+          >
+            <option value="global">Global (always injected)</option>
+            <option value="session-scoped">
+              Session-scoped (opt-in per channel)
+            </option>
+          </select>
+        </div>
+      </div>
+
       <div>
         <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-          Type
+          Folder
         </label>
         <select
-          value={formType}
+          value={formFolderId === null ? '' : String(formFolderId)}
           onChange={(e) =>
-            setFormType(e.target.value as 'skill' | 'instruction')
+            setFormFolderId(
+              e.target.value === '' ? null : Number(e.target.value),
+            )
           }
-          className="w-40 bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
+          className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
         >
-          <option value="skill">Skill</option>
-          <option value="instruction">Instruction</option>
+          <option value="">(Unfiled)</option>
+          {folders.map((folder) => (
+            <option key={folder.id} value={String(folder.id)}>
+              {folder.name}
+            </option>
+          ))}
         </select>
       </div>
 
@@ -86,7 +139,9 @@ export function SkillEditor({
           type="text"
           list="category-options"
           value={formCategory}
-          onChange={(e) => setFormCategory(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setFormCategory(e.target.value)
+          }
           placeholder="Select or type a category"
         />
         <datalist id="category-options">
@@ -103,7 +158,9 @@ export function SkillEditor({
         <Input
           type="text"
           value={formTags}
-          onChange={(e) => setFormTags(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setFormTags(e.target.value)
+          }
           placeholder="Comma-separated tags, e.g. react, typescript, testing"
         />
       </div>
@@ -115,7 +172,9 @@ export function SkillEditor({
         <Input
           type="text"
           value={formDescription}
-          onChange={(e) => setFormDescription(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setFormDescription(e.target.value)
+          }
           placeholder="Short summary of what this does"
         />
       </div>
@@ -126,7 +185,9 @@ export function SkillEditor({
         </label>
         <Textarea
           value={formContent}
-          onChange={(e) => setFormContent(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+            setFormContent(e.target.value)
+          }
           placeholder="Full content body — supports Markdown"
           rows={16}
         />

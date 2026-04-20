@@ -19,6 +19,8 @@ function makeSkill(
     isBuiltin: false,
     createdAt: '2025-01-01',
     updatedAt: '2025-01-01',
+    folderId: null,
+    scope: 'global',
   };
 }
 
@@ -39,6 +41,8 @@ function makeInstruction(
     isBuiltin: false,
     createdAt: '2025-01-01',
     updatedAt: '2025-01-01',
+    folderId: null,
+    scope: 'global',
   };
 }
 
@@ -352,5 +356,206 @@ describe('buildSkillsChangedReminder', () => {
     });
     // The reminder is a small notice, not a full re-injection
     expect(text.length).toBeLessThan(500);
+  });
+});
+
+// ── Scope filtering ─────────────────────────────────────────────────────────
+
+describe('buildStartupContextMessage scope filtering', () => {
+  function makeScoped(
+    name: string,
+    scope: 'global' | 'session-scoped',
+    type: 'skill' | 'instruction' = 'skill',
+  ): SkillOrInstruction {
+    return {
+      id: Math.floor(Math.random() * 1000),
+      name,
+      type,
+      description: `${name} description`,
+      content: `${name} content`,
+      category: null,
+      tags: null,
+      enabled: true,
+      isBuiltin: false,
+      createdAt: '2025-01-01',
+      updatedAt: '2025-01-01',
+      folderId: null,
+      scope,
+    };
+  }
+
+  it('includes all global-scope entries by default', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [
+        makeScoped('g1', 'global'),
+        makeScoped('g2', 'global', 'instruction'),
+      ],
+    });
+    expect(text).toContain('g1');
+    expect(text).toContain('g2');
+  });
+
+  it('excludes session-scoped entries when no opt-in list provided', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [makeScoped('g1', 'global'), makeScoped('s1', 'session-scoped')],
+    });
+    expect(text).toContain('g1');
+    expect(text).not.toContain('s1');
+  });
+
+  it('excludes session-scoped entries not present in the opt-in list', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [
+        makeScoped('s1', 'session-scoped'),
+        makeScoped('s2', 'session-scoped'),
+      ],
+      sessionOptInNames: ['s1'],
+    });
+    expect(text).toContain('s1');
+    expect(text).not.toContain('s2');
+  });
+
+  it('includes session-scoped entries present in the opt-in list', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [
+        makeScoped('g1', 'global'),
+        makeScoped('s1', 'session-scoped'),
+        makeScoped('s2', 'session-scoped', 'instruction'),
+      ],
+      sessionOptInNames: ['s1', 's2'],
+    });
+    expect(text).toContain('g1');
+    expect(text).toContain('s1');
+    expect(text).toContain('s2');
+  });
+
+  it('opt-in list for unknown names does not promote them', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [makeScoped('g1', 'global')],
+      sessionOptInNames: ['does-not-exist'],
+    });
+    expect(text).toContain('g1');
+    expect(text).not.toContain('does-not-exist');
+  });
+
+  it('still respects the enabled flag even for opted-in session-scoped entries', () => {
+    const disabled = makeScoped('s1', 'session-scoped');
+    disabled.enabled = false;
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [disabled],
+      sessionOptInNames: ['s1'],
+    });
+    expect(text).not.toContain('s1');
+  });
+
+  it('excludes muted global entries for the session', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [makeScoped('g1', 'global'), makeScoped('g2', 'global')],
+      sessionMutedNames: ['g1'],
+    });
+    expect(text).not.toContain('g1');
+    expect(text).toContain('g2');
+  });
+
+  it('empty mute list leaves all globals visible', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [makeScoped('g1', 'global')],
+      sessionMutedNames: [],
+    });
+    expect(text).toContain('g1');
+  });
+
+  it('muting does not affect opted-in session-scoped entries of same name', () => {
+    const text = buildStartupContextMessage({
+      channelName: 'A',
+      projectName: 'p',
+      entries: [makeScoped('x', 'session-scoped')],
+      sessionOptInNames: ['x'],
+      sessionMutedNames: ['x'],
+    });
+    // Mute only filters globals; a session-scoped opt-in with the same name
+    // is still injected because the mute set is scope-specific.
+    expect(text).toContain('x');
+  });
+});
+
+// ── Session-scope change reminder ───────────────────────────────────────────
+
+import { buildSessionScopeChangedReminder } from './startup-context';
+
+describe('buildSessionScopeChangedReminder', () => {
+  it('emits a <system-reminder> block', () => {
+    const text = buildSessionScopeChangedReminder({
+      added: [{ name: 'foo', type: 'skill' }],
+      removed: [],
+    });
+    expect(text).toContain('<system-reminder>');
+    expect(text).toContain('</system-reminder>');
+  });
+
+  it('lists added entries', () => {
+    const text = buildSessionScopeChangedReminder({
+      added: [
+        { name: 'alpha', type: 'skill' },
+        { name: 'beta', type: 'instruction' },
+      ],
+      removed: [],
+    });
+    expect(text).toContain('Added');
+    expect(text).toContain('skill: alpha');
+    expect(text).toContain('instruction: beta');
+  });
+
+  it('lists removed entries', () => {
+    const text = buildSessionScopeChangedReminder({
+      added: [],
+      removed: [{ name: 'gamma', type: 'skill' }],
+    });
+    expect(text).toContain('Removed');
+    expect(text).toContain('skill: gamma');
+  });
+
+  it('handles both added and removed in one reminder', () => {
+    const text = buildSessionScopeChangedReminder({
+      added: [{ name: 'new', type: 'skill' }],
+      removed: [{ name: 'old', type: 'instruction' }],
+    });
+    expect(text).toContain('Added');
+    expect(text).toContain('Removed');
+    expect(text).toContain('new');
+    expect(text).toContain('old');
+  });
+
+  it('points agents at manage_skills_and_instructions list for the current state', () => {
+    const text = buildSessionScopeChangedReminder({
+      added: [{ name: 'x', type: 'skill' }],
+      removed: [],
+    });
+    expect(text).toContain('manage_skills_and_instructions');
+    expect(text).toContain('list');
+  });
+
+  it('does not inline content — it is a small diff notice', () => {
+    const text = buildSessionScopeChangedReminder({
+      added: [{ name: 'x', type: 'skill' }],
+      removed: [{ name: 'y', type: 'instruction' }],
+    });
+    expect(text.length).toBeLessThan(600);
   });
 });

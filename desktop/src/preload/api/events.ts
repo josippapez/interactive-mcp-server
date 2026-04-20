@@ -10,13 +10,29 @@ import type {
 export function createEventsApi() {
   return {
     // Prompt events
-    onPromptRequest: (callback: (data: PromptRequest) => void) => {
-      ipcRenderer.removeAllListeners('prompt-request');
-      ipcRenderer.on('prompt-request', (_event, data) => callback(data));
+    onPromptRequest: (
+      callback: (data: PromptRequest) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: PromptRequest,
+      ) => callback(data);
+      ipcRenderer.on('prompt-request', handler);
+      return () => {
+        ipcRenderer.removeListener('prompt-request', handler);
+      };
     },
-    onPromptClear: (callback: (data: PromptClearData) => void) => {
-      ipcRenderer.removeAllListeners('prompt-clear');
-      ipcRenderer.on('prompt-clear', (_event, data) => callback(data));
+    onPromptClear: (
+      callback: (data: PromptClearData) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: PromptClearData,
+      ) => callback(data);
+      ipcRenderer.on('prompt-clear', handler);
+      return () => {
+        ipcRenderer.removeListener('prompt-clear', handler);
+      };
     },
 
     // Intensive chat lifecycle
@@ -27,9 +43,20 @@ export function createEventsApi() {
         connectionId: string;
         providerSessionId?: string | null;
       }) => void,
-    ) => {
-      ipcRenderer.removeAllListeners('intensive-chat-start');
-      ipcRenderer.on('intensive-chat-start', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          title: string;
+          connectionId: string;
+          providerSessionId?: string | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('intensive-chat-start', handler);
+      return () => {
+        ipcRenderer.removeListener('intensive-chat-start', handler);
+      };
     },
     onIntensiveChatStop: (
       callback: (data: {
@@ -37,25 +64,47 @@ export function createEventsApi() {
         connectionId: string;
         providerSessionId?: string | null;
       }) => void,
-    ) => {
-      ipcRenderer.removeAllListeners('intensive-chat-stop');
-      ipcRenderer.on('intensive-chat-stop', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          connectionId: string;
+          providerSessionId?: string | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('intensive-chat-stop', handler);
+      return () => {
+        ipcRenderer.removeListener('intensive-chat-stop', handler);
+      };
     },
 
     // Session tree — full snapshot of all OpenCode sessions + direct connections.
     // Emitted every ~2 s by session-tree-manager and immediately after
     // register_connection or session removal.
-    onSessionTreeUpdated: (callback: (nodes: SessionTreeNode[]) => void) => {
-      ipcRenderer.removeAllListeners('session-tree-updated');
-      ipcRenderer.on('session-tree-updated', (_event, data) => callback(data));
+    onSessionTreeUpdated: (
+      callback: (nodes: SessionTreeNode[]) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: SessionTreeNode[],
+      ) => callback(data);
+      ipcRenderer.on('session-tree-updated', handler);
+      return () => {
+        ipcRenderer.removeListener('session-tree-updated', handler);
+      };
     },
     onOptimisticSessionNodeCreated: (
       callback: (node: SessionTreeNode) => void,
-    ) => {
-      ipcRenderer.removeAllListeners('session-node-created-optimistic');
-      ipcRenderer.on('session-node-created-optimistic', (_event, data) =>
-        callback(data),
-      );
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: SessionTreeNode,
+      ) => callback(data);
+      ipcRenderer.on('session-node-created-optimistic', handler);
+      return () => {
+        ipcRenderer.removeListener('session-node-created-optimistic', handler);
+      };
     },
 
     // Direct-connection lifecycle — fired when an MCP agent connects/disconnects
@@ -69,15 +118,37 @@ export function createEventsApi() {
         label?: string;
         providerType?: 'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone';
       }) => void,
-    ) => {
-      ipcRenderer.removeAllListeners('connection-opened');
-      ipcRenderer.on('connection-opened', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          connectionId: string;
+          name: string;
+          sessionId?: string;
+          label?: string;
+          providerType?:
+            | 'opencode'
+            | 'copilot-cli'
+            | 'claude-sdk'
+            | 'standalone';
+        },
+      ) => callback(data);
+      ipcRenderer.on('connection-opened', handler);
+      return () => {
+        ipcRenderer.removeListener('connection-opened', handler);
+      };
     },
     onConnectionClosed: (
       callback: (data: { connectionId: string }) => void,
-    ) => {
-      ipcRenderer.removeAllListeners('connection-closed');
-      ipcRenderer.on('connection-closed', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { connectionId: string },
+      ) => callback(data);
+      ipcRenderer.on('connection-closed', handler);
+      return () => {
+        ipcRenderer.removeListener('connection-closed', handler);
+      };
     },
     onChannelLabelUpdated: (
       callback: (data: {
@@ -85,9 +156,19 @@ export function createEventsApi() {
         name: string;
         providerSessionId?: string | null;
       }) => void,
-    ) => {
-      ipcRenderer.removeAllListeners('channel-label-updated');
-      ipcRenderer.on('channel-label-updated', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          connectionId: string;
+          name: string;
+          providerSessionId?: string | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('channel-label-updated', handler);
+      return () => {
+        ipcRenderer.removeListener('channel-label-updated', handler);
+      };
     },
 
     // Settings changes
@@ -106,37 +187,59 @@ export function createEventsApi() {
         message: string;
         providerSessionId?: string | null;
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('agent-message');
-      ipcRenderer.on('agent-message', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          connectionId: string;
+          message: string;
+          providerSessionId?: string | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('agent-message', handler);
+      return () => {
+        ipcRenderer.removeListener('agent-message', handler);
+      };
     },
 
     // Fired when POST /api/sessions creates a new channel
     onSessionChannelCreated: (
       callback: (data: { sessionId: string; label?: string }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('session-channel-created');
-      ipcRenderer.on('session-channel-created', (_event, data) =>
-        callback(data),
-      );
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string; label?: string },
+      ) => callback(data);
+      ipcRenderer.on('session-channel-created', handler);
+      return () => {
+        ipcRenderer.removeListener('session-channel-created', handler);
+      };
     },
 
     // Fired when DELETE /api/sessions/:sessionId cleans up a channel
     onSessionChannelDeleted: (
       callback: (data: { sessionId: string }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('session-channel-deleted');
-      ipcRenderer.on('session-channel-deleted', (_event, data) =>
-        callback(data),
-      );
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string },
+      ) => callback(data);
+      ipcRenderer.on('session-channel-deleted', handler);
+      return () => {
+        ipcRenderer.removeListener('session-channel-deleted', handler);
+      };
     },
     onSessionChannelMessagesCleared: (
       callback: (data: { sessionId: string }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('session-channel-messages-cleared');
-      ipcRenderer.on('session-channel-messages-cleared', (_event, data) =>
-        callback(data),
-      );
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { sessionId: string },
+      ) => callback(data);
+      ipcRenderer.on('session-channel-messages-cleared', handler);
+      return () => {
+        ipcRenderer.removeListener('session-channel-messages-cleared', handler);
+      };
     },
 
     onDatabaseReset: (
@@ -145,9 +248,19 @@ export function createEventsApi() {
         clearedTables: string[];
         removedIdFiles: number;
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('database-reset');
-      ipcRenderer.on('database-reset', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          ok: boolean;
+          clearedTables: string[];
+          removedIdFiles: number;
+        },
+      ) => callback(data);
+      ipcRenderer.on('database-reset', handler);
+      return () => {
+        ipcRenderer.removeListener('database-reset', handler);
+      };
     },
 
     // Agent-pushed status updates
@@ -158,9 +271,20 @@ export function createEventsApi() {
         type: string;
         providerSessionId?: string | null;
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('session-status-update');
-      ipcRenderer.on('session-status-update', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          connectionId: string;
+          status: string;
+          type: string;
+          providerSessionId?: string | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('session-status-update', handler);
+      return () => {
+        ipcRenderer.removeListener('session-status-update', handler);
+      };
     },
 
     // Permission events from OpenCode bus
@@ -177,9 +301,26 @@ export function createEventsApi() {
         metadata?: Record<string, unknown>;
         providerSessionId?: string | null;
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('permission-asked');
-      ipcRenderer.on('permission-asked', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          connectionId: string;
+          requestId: string;
+          sessionID: string;
+          directory?: string;
+          permission: string;
+          patterns?: string[];
+          always?: string[];
+          tool?: { messageID: string; callID: string };
+          metadata?: Record<string, unknown>;
+          providerSessionId?: string | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('permission-asked', handler);
+      return () => {
+        ipcRenderer.removeListener('permission-asked', handler);
+      };
     },
 
     onPermissionReplied: (
@@ -188,9 +329,19 @@ export function createEventsApi() {
         requestID: string;
         reply: 'once' | 'always' | 'reject';
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('permission-replied');
-      ipcRenderer.on('permission-replied', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionID: string;
+          requestID: string;
+          reply: 'once' | 'always' | 'reject';
+        },
+      ) => callback(data);
+      ipcRenderer.on('permission-replied', handler);
+      return () => {
+        ipcRenderer.removeListener('permission-replied', handler);
+      };
     },
 
     onQuestionAsked: (
@@ -200,9 +351,18 @@ export function createEventsApi() {
           providerSessionId?: string | null;
         },
       ) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('question-asked');
-      ipcRenderer.on('question-asked', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: PendingQuestionRequest & {
+          connectionId: string;
+          providerSessionId?: string | null;
+        },
+      ) => callback(data);
+      ipcRenderer.on('question-asked', handler);
+      return () => {
+        ipcRenderer.removeListener('question-asked', handler);
+      };
     },
 
     onQuestionCleared: (
@@ -212,14 +372,28 @@ export function createEventsApi() {
         answer?: string;
         rejected?: boolean;
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('question-cleared');
-      ipcRenderer.on('question-cleared', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          requestId: string;
+          sessionID: string;
+          answer?: string;
+          rejected?: boolean;
+        },
+      ) => callback(data);
+      ipcRenderer.on('question-cleared', handler);
+      return () => {
+        ipcRenderer.removeListener('question-cleared', handler);
+      };
     },
 
-    onSkillsUpdated: (callback: () => void): void => {
-      ipcRenderer.removeAllListeners('skills-updated');
-      ipcRenderer.on('skills-updated', () => callback());
+    onSkillsUpdated: (callback: () => void): (() => void) => {
+      const handler = () => callback();
+      ipcRenderer.on('skills-updated', handler);
+      return () => {
+        ipcRenderer.removeListener('skills-updated', handler);
+      };
     },
 
     // Listen for todo updates (emitted by the main process when todos change)
@@ -232,9 +406,22 @@ export function createEventsApi() {
           priority: 'high' | 'medium' | 'low';
         }[];
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('todos-updated');
-      ipcRenderer.on('todos-updated', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionId: string;
+          todos: {
+            content: string;
+            status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+            priority: 'high' | 'medium' | 'low';
+          }[];
+        },
+      ) => callback(data);
+      ipcRenderer.on('todos-updated', handler);
+      return () => {
+        ipcRenderer.removeListener('todos-updated', handler);
+      };
     },
 
     // ─── SSE Event Listeners (real-time updates from OpenCode) ─────────────────
@@ -253,9 +440,23 @@ export function createEventsApi() {
           priority: string;
         }[];
       }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('opencode-todo-updated');
-      ipcRenderer.on('opencode-todo-updated', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: {
+          sessionID: string;
+          todos: {
+            id: string;
+            content: string;
+            status: string;
+            priority: string;
+          }[];
+        },
+      ) => callback(data);
+      ipcRenderer.on('opencode-todo-updated', handler);
+      return () => {
+        ipcRenderer.removeListener('opencode-todo-updated', handler);
+      };
     },
 
     /**
@@ -264,9 +465,15 @@ export function createEventsApi() {
      */
     onOpenCodeVcsUpdated: (
       callback: (data: { branch: string | null }) => void,
-    ): void => {
-      ipcRenderer.removeAllListeners('opencode-vcs-updated');
-      ipcRenderer.on('opencode-vcs-updated', (_event, data) => callback(data));
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { branch: string | null },
+      ) => callback(data);
+      ipcRenderer.on('opencode-vcs-updated', handler);
+      return () => {
+        ipcRenderer.removeListener('opencode-vcs-updated', handler);
+      };
     },
 
     /**
