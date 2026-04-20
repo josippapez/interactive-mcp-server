@@ -11,6 +11,7 @@
  * dependents (e.g. `markup` → `javascript` → `jsx` → `typescript` → `tsx`).
  */
 import { PrismLight } from 'react-syntax-highlighter';
+import type { ReactNode } from 'react';
 
 // Base / structural
 import markup from 'react-syntax-highlighter/dist/esm/languages/prism/markup';
@@ -107,6 +108,25 @@ PrismLight.registerLanguage('ts', typescript);
 PrismLight.registerLanguage('js', javascript);
 
 export const SyntaxHighlighter = PrismLight;
+
+/**
+ * Passthrough tag for use as `PreTag` / `CodeTag` in SyntaxHighlighter.
+ *
+ * `react-syntax-highlighter` always forwards a `style` prop to `PreTag` and
+ * `CodeTag`. Passing `React.Fragment` directly triggers a React warning:
+ *   "Invalid prop `style` supplied to `React.Fragment`."
+ * This component accepts and ignores the `style` prop (since we render
+ * rows via the custom `renderer`), so highlighting behavior is unchanged
+ * but React stays quiet.
+ */
+export function PassthroughTag({
+  children,
+}: {
+  children?: ReactNode;
+  style?: unknown;
+}): ReactNode {
+  return children;
+}
 
 export {
   oneDark,

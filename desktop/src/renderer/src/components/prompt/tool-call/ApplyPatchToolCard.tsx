@@ -1,6 +1,11 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
 import { createElement } from 'react-syntax-highlighter';
-import { SyntaxHighlighter, oneDark, oneLight } from '@/lib/syntax-highlighter';
+import {
+  SyntaxHighlighter,
+  oneDark,
+  oneLight,
+  PassthroughTag,
+} from '@/lib/syntax-highlighter';
 import type { ToolCallInfo } from '../../../types/unified-message';
 import { useTheme } from '../../../ThemeContext';
 
@@ -538,8 +543,8 @@ const FileDiffBody = memo(function FileDiffBody({
             language={language}
             style={style}
             wrapLines
-            PreTag={React.Fragment}
-            CodeTag={React.Fragment}
+            PreTag={PassthroughTag}
+            CodeTag={PassthroughTag}
             customStyle={{ margin: 0, padding: 0, background: 'transparent' }}
             renderer={({
               rows,

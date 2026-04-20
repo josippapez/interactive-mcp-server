@@ -89,10 +89,75 @@ export interface RegisteredConnection {
 
 // ─── Internal helpers ──────────────────────────────────────────────────────
 
+/**
+ * Debounced persistence layer.
+ *
+ * sql.js holds the entire DB in WASM heap memory. Calling `db.export()`
+ * allocates a fresh Uint8Array (full DB size) from the WASM heap on every
+ * call. A single user action (e.g. sending a message) can trigger 10+ DB
+ * writes across IPC handlers and concurrent SSE event handlers. Exporting
+ * the full DB on every write causes WASM heap fragmentation/exhaustion and
+ * surfaces to the renderer as:
+ *
+ *   RuntimeError: memory access out of bounds
+ *
+ * Solution: keep the in-memory DB mutation synchronous (so reads stay
+ * consistent), but coalesce disk writes into a single `db.export() +
+ * writeFileSync` per debounce window. Callers never await persistence —
+ * crash recovery and shutdown flushing are handled explicitly.
+ */
+const PERSIST_DEBOUNCE_MS = 250;
+let pendingPersistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistDirty = false;
+
+/**
+ * Mark the DB dirty and schedule a flush. Returns immediately. If a flush
+ * is already scheduled, this is a no-op (the pending flush will pick up
+ * the latest state since `db.export()` reads the live DB).
+ */
 function persist(): void {
   if (!db) return;
+  persistDirty = true;
+  if (pendingPersistTimer !== null) return;
+  pendingPersistTimer = setTimeout(() => {
+    pendingPersistTimer = null;
+    flushPersistNow();
+  }, PERSIST_DEBOUNCE_MS);
+  // Do not keep the event loop alive solely for the persist timer —
+  // shutdown (`before-quit`) explicitly calls `flushPersistNow()`.
+  if (typeof pendingPersistTimer === 'object' && pendingPersistTimer !== null) {
+    (pendingPersistTimer as { unref?: () => void }).unref?.();
+  }
+}
+
+/**
+ * Synchronously flush any pending DB writes to disk. Safe to call when
+ * there are no pending writes (no-op). Must be called from the main
+ * process `before-quit` lifecycle hook and before any test teardown that
+ * deletes `dbPath`, otherwise a late-firing debounce timer could re-create
+ * the file with stale contents.
+ */
+export function flushPersistNow(): void {
+  if (pendingPersistTimer !== null) {
+    clearTimeout(pendingPersistTimer);
+    pendingPersistTimer = null;
+  }
+  if (!db || !persistDirty) {
+    persistDirty = false;
+    return;
+  }
   const data = db.export();
   writeFileSync(dbPath, Buffer.from(data));
+  persistDirty = false;
+}
+
+/** Test-only: cancel any pending debounced write without flushing. */
+export function __cancelPendingPersistForTests(): void {
+  if (pendingPersistTimer !== null) {
+    clearTimeout(pendingPersistTimer);
+    pendingPersistTimer = null;
+  }
+  persistDirty = false;
 }
 
 /**
@@ -238,6 +303,10 @@ function mapRowToRegisteredConnection(row: SqlValue[]): RegisteredConnection {
 // ─── Initialization ────────────────────────────────────────────────────────
 
 export async function initDatabase(): Promise<void> {
+  // Cancel any pending debounced flush from a previous DB instance (tests
+  // re-initialize the DB between runs; without this a stale timer could
+  // re-create the just-deleted file with old contents).
+  __cancelPendingPersistForTests();
   dbPath = join(app.getPath('userData'), 'conversations.db');
 
   const SQL = await initSqlJs();
@@ -261,7 +330,10 @@ export async function initDatabase(): Promise<void> {
     createTables();
   }
 
-  persist();
+  // Flush synchronously so a freshly-initialized DB is on disk immediately.
+  // Subsequent writes in the running app use the debounced `persist()`.
+  persistDirty = true;
+  flushPersistNow();
 }
 
 /**
@@ -528,7 +600,10 @@ export function deleteSessionChannel(sessionId: string): void {
     sessionId,
   ]);
   db.run(`DELETE FROM session_channels WHERE session_id = ?`, [sessionId]);
-  persist();
+  // Deletes must be durable across crash/quit — bypass the debounce so a
+  // user-initiated delete is persisted immediately, not ~250 ms later.
+  persistDirty = true;
+  flushPersistNow();
 }
 
 export function getActiveSessionChannels(): {
@@ -605,6 +680,41 @@ export function upsertRegisteredConnection(data: {
     providerSessionId,
     providerType,
   );
+
+  // No-op short-circuit: if an identical row already exists, skip both the
+  // SQL UPDATE and the ID-file rewrite. The 4s session-tree poller calls this
+  // for every OpenCode session on every tick, which — without this guard —
+  // fires `db.run` + `persist()` (full-DB `db.export()`) + `writeFileSync`
+  // every 4 seconds per session, even when nothing changed. Over time this
+  // fragments the sql.js WASM heap and produces a renderer-visible
+  // "RuntimeError: memory access out of bounds" crash on the next IPC call.
+  //
+  // `baseDirectory === undefined` means "leave the stored value alone"
+  // (mirrors the `COALESCE(excluded.base_directory, base_directory)` in the
+  // UPSERT below), so it matches any existing value.
+  if (db) {
+    const existing = getRegisteredConnectionBySessionId(
+      providerSessionId,
+      providerType,
+    );
+    if (existing) {
+      const incomingConnectionId = data.connectionId ?? null;
+      const incomingParentSessionId = data.parentSessionId ?? null;
+      const baseDirUnchanged =
+        data.baseDirectory === undefined ||
+        existing.baseDirectory === data.baseDirectory;
+      const unchanged =
+        existing.connectionId === incomingConnectionId &&
+        existing.channelName === data.channelName &&
+        existing.projectName === data.projectName &&
+        existing.parentSessionId === incomingParentSessionId &&
+        existing.idFilePath === idFilePath &&
+        baseDirUnchanged;
+      if (unchanged) {
+        return idFilePath;
+      }
+    }
+  }
 
   // Write ID file so agents can read their connectionId back on restart
   try {
@@ -905,7 +1015,10 @@ export function deleteRegisteredConnection(
     `DELETE FROM registered_connections WHERE provider_type = ? AND provider_session_id = ?`,
     [providerType, providerSessionId],
   );
-  persist();
+  // Deletes must be durable across crash/quit — bypass the debounce so a
+  // user-initiated delete is persisted immediately, not ~250 ms later.
+  persistDirty = true;
+  flushPersistNow();
 }
 
 // ─── Skills & Instructions ─────────────────────────────────────────────────

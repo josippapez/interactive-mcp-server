@@ -1,6 +1,11 @@
 import React, { memo, useMemo } from 'react';
 import { createElement } from 'react-syntax-highlighter';
-import { SyntaxHighlighter, oneDark, oneLight } from '@/lib/syntax-highlighter';
+import {
+  SyntaxHighlighter,
+  oneDark,
+  oneLight,
+  PassthroughTag,
+} from '@/lib/syntax-highlighter';
 import { useTheme } from '../../ThemeContext';
 import {
   isEditToolCall,
@@ -274,8 +279,8 @@ const DiffView = memo(function DiffView({
             language={diffData.language}
             style={style}
             wrapLines
-            PreTag={React.Fragment}
-            CodeTag={React.Fragment}
+            PreTag={PassthroughTag}
+            CodeTag={PassthroughTag}
             customStyle={{ margin: 0, padding: 0, background: 'transparent' }}
             renderer={({
               rows,

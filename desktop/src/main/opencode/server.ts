@@ -95,16 +95,37 @@ export function startOpenCodeServer(port: number): void {
 
 /**
  * Gracefully stop the managed opencode serve process.
+ *
+ * Sends SIGTERM first; if the child hasn't exited within
+ * `SIGKILL_GRACE_MS`, escalates to SIGKILL. This prevents the Electron
+ * app from hanging on quit when OpenCode ignores or slow-walks SIGTERM.
  */
+const SIGKILL_GRACE_MS = 500;
 export function stopOpenCodeServer(): void {
   if (!child) return;
 
   console.log('[opencode-server] Stopping opencode serve...');
+  const dying = child;
   try {
-    child.kill('SIGTERM');
+    dying.kill('SIGTERM');
   } catch {
     // process may already be dead
   }
+
+  // Escalate to SIGKILL if the child is still alive after the grace period.
+  // Using `unref` so this timer itself does not keep the event loop alive.
+  const killTimer = setTimeout(() => {
+    if (dying.exitCode === null && dying.signalCode === null) {
+      console.warn('[opencode-server] SIGTERM grace expired; sending SIGKILL.');
+      try {
+        dying.kill('SIGKILL');
+      } catch {
+        // already dead
+      }
+    }
+  }, SIGKILL_GRACE_MS);
+  (killTimer as unknown as { unref?: () => void }).unref?.();
+
   child = null;
   managedPort = null;
 }
@@ -215,7 +236,9 @@ function buildAugmentedEnv(): NodeJS.ProcessEnv {
     // fnm - Fast Node Manager
     if (home) {
       additionalPaths.push(`${home}/.fnm/current/bin`);
-      additionalPaths.push(`${home}/Library/Application Support/fnm/current/bin`);
+      additionalPaths.push(
+        `${home}/Library/Application Support/fnm/current/bin`,
+      );
     }
 
     // volta

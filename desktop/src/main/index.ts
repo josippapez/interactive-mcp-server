@@ -1,7 +1,15 @@
 import { app, BrowserWindow, Tray } from 'electron';
 import { electronApp, optimizer } from '@electron-toolkit/utils';
-import { startMcpServer, stopMcpServer } from './mcp-server';
-import { initDatabase, seedBuiltinTemplates } from './database';
+import {
+  softRestartMcpServer,
+  startMcpServer,
+  stopMcpServer,
+} from './mcp-server';
+import {
+  flushPersistNow,
+  initDatabase,
+  seedBuiltinTemplates,
+} from './database';
 import { defaultSettings, loadSettings, type AppSettings } from './settings';
 import { createWindow } from './window';
 import { createTray } from './tray';
@@ -253,7 +261,24 @@ app.on('before-quit', (event) => {
   stopBusEventSubscription();
   stopConversationProviders();
   stopOpenCodeServer();
+
+  // Cancel any active MCP prompts BEFORE stopping the HTTP server so that
+  // per-prompt `diagInterval`s and SSE keepalive timers do not keep the
+  // Node.js event loop alive (which would prevent Electron from quitting
+  // and leave the icon in the taskbar). Fire-and-forget: the async work
+  // resolves quickly and we do not need to block shutdown on it.
+  void softRestartMcpServer().catch((err) => {
+    console.error('[main] softRestartMcpServer on before-quit failed:', err);
+  });
   stopMcpServer();
+
+  // Flush any pending debounced DB writes synchronously so we never lose
+  // state on shutdown. No-op if nothing is dirty.
+  try {
+    flushPersistNow();
+  } catch (err) {
+    console.error('[main] flushPersistNow on before-quit failed:', err);
+  }
 
   // Async cleanup: defer the real quit until the embedding worker has
   // fully terminated. Re-entrancy guard ensures we only kick this off once;
