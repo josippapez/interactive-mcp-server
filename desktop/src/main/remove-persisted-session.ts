@@ -1,22 +1,25 @@
-import type { BrowserWindow } from 'electron';
 import { clearSessionAttachments } from './attachment-store';
+import { emitToRenderer } from './utility/backend/renderer-emit';
 
 export interface RemovePersistedSessionDeps {
-  getWindow: () => BrowserWindow | null;
   getOpenCodePort: () => number;
   forceTerminateChat: (connectionId: string) => void;
   closeSessionByConnectionId: (connectionId: string) => Promise<boolean>;
-  deleteSessionChannel: (sessionId: string) => void;
+  deleteSessionChannel: (sessionId: string) => void | Promise<void>;
   /**
    * Delete the registered connection record.
    * Parameter is the providerSessionId (PK after Phase 2 schema change).
    */
-  deleteRegisteredConnection: (providerSessionId: string) => void;
-  markSessionDeleted: (providerSessionId: string) => void;
-  triggerSessionTreeUpdate: (
-    getWindow: () => BrowserWindow | null,
-    getOpenCodePort: () => number,
+  deleteRegisteredConnection: (
+    providerSessionId: string,
   ) => void | Promise<void>;
+  markSessionDeleted: (providerSessionId: string) => void | Promise<void>;
+  /**
+   * Invalidate the session tree so the renderer pulls a fresh snapshot on its
+   * own schedule. Replaces the old `triggerSessionTreeUpdate` direct-push to
+   * avoid IPC storms.
+   */
+  invalidate: () => void | Promise<void>;
   /**
    * Look up the registered connection record for a given connectionId.
    * Used to resolve the provider session ID before the record is deleted,
@@ -25,12 +28,16 @@ export interface RemovePersistedSessionDeps {
    */
   getRegisteredConnection: (
     connectionId: string,
-  ) => { providerSessionId: string } | null | undefined;
+  ) =>
+    | { providerSessionId: string }
+    | null
+    | undefined
+    | Promise<{ providerSessionId: string } | null | undefined>;
   /**
    * Mark a provider session ID as tombstoned so the session-tree poller
    * excludes it from all subsequent snapshots.
    */
-  tombstoneOpenCodeSession: (providerSessionId: string) => void;
+  tombstoneOpenCodeSession: (providerSessionId: string) => void | Promise<void>;
 }
 
 /**
@@ -58,7 +65,7 @@ export async function removePersistedSession(
   //   2. sessionId itself — for sessions that were never registered (or whose
   //      channel has already been cleaned up).  In that path the caller passes
   //      the providerSessionId directly as the sessionId.
-  const rc = deps.getRegisteredConnection(sessionId);
+  const rc = await deps.getRegisteredConnection(sessionId);
   const providerSessionId: string = rc?.providerSessionId ?? sessionId;
 
   deps.forceTerminateChat(sessionId);
@@ -75,9 +82,9 @@ export async function removePersistedSession(
   }
 
   // Always clean up DB state — even if the transport close failed.
-  deps.deleteSessionChannel(sessionId);
-  deps.deleteRegisteredConnection(providerSessionId);
-  deps.markSessionDeleted(providerSessionId);
+  await deps.deleteSessionChannel(sessionId);
+  await deps.deleteRegisteredConnection(providerSessionId);
+  await deps.markSessionDeleted(providerSessionId);
 
   // Remove any ephemeral attachment files for this session. Both the
   // providerSessionId (OpenCode) and the connectionId (non-OpenCode) may have
@@ -91,15 +98,15 @@ export async function removePersistedSession(
   // the just-deleted node while the OpenCode session itself still lives.
   // Also tombstones all descendant sessions (children of children, etc.) so
   // the entire subtree disappears from the sidebar.
-  deps.tombstoneOpenCodeSession(providerSessionId);
+  await deps.tombstoneOpenCodeSession(providerSessionId);
 
-  void deps.triggerSessionTreeUpdate(deps.getWindow, deps.getOpenCodePort);
+  void deps.invalidate();
 
   // Always notify the renderer so the UI clears the session.
-  deps.getWindow()?.webContents.send('connection-closed', {
+  emitToRenderer('connection-closed', {
     connectionId: sessionId,
   });
-  deps.getWindow()?.webContents.send('session-channel-deleted', { sessionId });
+  emitToRenderer('session-channel-deleted', { sessionId });
 
   return closeOk;
 }

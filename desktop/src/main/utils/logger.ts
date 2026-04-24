@@ -10,18 +10,24 @@
  *
  * Auto-rotates on startup: deletes log files older than 7 days.
  *
- * Uses `appendFileSync` for crash-safe writes — every log line is flushed
- * to disk immediately so nothing is lost on unexpected exits.
+ * Writes are queued and appended asynchronously via `fs.promises.appendFile`
+ * on a single-writer chain. This keeps the Electron main-process event loop
+ * (and IPC dispatch) unblocked during bursty logging, e.g. the 16 ms
+ * streaming flush timer. Queue is bounded — oldest entries are dropped
+ * (with a single `console.warn`) if the queue exceeds {@link MAX_QUEUE_LEN}.
+ * Call {@link flushLogger} on app shutdown to drain pending writes.
  *
  * Usage:
- *   import { initLogger, createLogger } from './utils/logger';
+ *   import { initLogger, createLogger, flushLogger } from './utils/logger';
  *   initLogger(app.getPath('logs'));     // call once at app startup
  *   const log = createLogger('mcp');
  *   log.info('server started on port 3100');
+ *   // on app quit:
+ *   await flushLogger();
  */
 
 import {
-  appendFileSync,
+  promises as fsp,
   mkdirSync,
   readdirSync,
   unlinkSync,
@@ -61,6 +67,29 @@ const MAX_LOG_AGE_DAYS = 7;
 /** Pattern matching dated log file names: app-YYYY-MM-DD.log */
 const LOG_FILE_PATTERN = /^app-(\d{4}-\d{2}-\d{2})\.log$/;
 
+/**
+ * Bounded queue capacity. When exceeded, the oldest pending line is
+ * dropped (single console.warn emitted). Chosen large enough that only
+ * truly pathological bursts can overflow — normal streaming settles
+ * within a few ms per batch.
+ */
+const MAX_QUEUE_LEN = 1000;
+
+/** Pending log lines waiting to be written. FIFO. */
+const _pendingLines: string[] = [];
+
+/**
+ * Single-writer serialization chain. Every append is appended to this
+ * chain so writes are strictly serial and ordered.
+ */
+let _writeChain: Promise<void> = Promise.resolve();
+
+/** Set when the queue has overflowed at least once since the last drain. */
+let _droppedSinceLastDrainWarned = false;
+
+/** Number of lines currently being flushed (so tests can assert idleness). */
+let _flushing = false;
+
 // ─── Internal helpers ─────────────────────────────────────────────────────────
 
 function todayDateString(): string {
@@ -81,16 +110,72 @@ function formatLine(
 }
 
 /**
- * Write a log line synchronously to the current log file.
- * Silently ignores errors to avoid crashing the app.
+ * Drain the pending-lines queue into a single appendFile call. Chained
+ * onto `_writeChain` so writes are strictly ordered with respect to each
+ * other across callers.
+ *
+ * Called implicitly after every `enqueueLine`; re-entrant calls are
+ * coalesced by the chain semantics (a draining call that finds the
+ * queue empty is a cheap no-op).
+ */
+function scheduleDrain(): void {
+  if (_flushing) return;
+  _flushing = true;
+  _writeChain = _writeChain.then(async () => {
+    // Snapshot and clear the queue atomically (single-threaded JS).
+    if (_pendingLines.length === 0 || !_activeLogFilePath) {
+      _flushing = false;
+      return;
+    }
+    const batch = _pendingLines.splice(0, _pendingLines.length).join('');
+    const target = _activeLogFilePath;
+    _flushing = false;
+    try {
+      await fsp.appendFile(target, batch);
+    } catch {
+      // Swallow — logging must never crash the app. Next write will try
+      // again with a fresh queue; no retry/backoff for the dropped batch.
+    }
+  });
+  // If more lines were added while the above microtask was running,
+  // schedule another drain at the end of the chain to pick them up.
+  void _writeChain.then(() => {
+    if (_pendingLines.length > 0 && _activeLogFilePath) {
+      scheduleDrain();
+    }
+  });
+}
+
+/**
+ * Enqueue a formatted line for async append. Drops the oldest pending
+ * line when the queue is full (with a single console.warn per overflow
+ * episode).
+ */
+function enqueueLine(line: string): void {
+  if (_pendingLines.length >= MAX_QUEUE_LEN) {
+    _pendingLines.shift();
+    if (!_droppedSinceLastDrainWarned) {
+      _droppedSinceLastDrainWarned = true;
+
+      console.warn(
+        `[logger] queue exceeded ${MAX_QUEUE_LEN} pending lines — dropping oldest`,
+      );
+    }
+  } else if (_pendingLines.length === 0) {
+    // New non-full batch — allow the next overflow to warn again.
+    _droppedSinceLastDrainWarned = false;
+  }
+  _pendingLines.push(line);
+  scheduleDrain();
+}
+
+/**
+ * Queue a log line for async append to the current log file. No-op when
+ * the logger has not been initialized.
  */
 function writeLine(level: LogLevel, category: string, message: string): void {
   if (!_activeLogFilePath) return;
-  try {
-    appendFileSync(_activeLogFilePath, formatLine(level, category, message));
-  } catch {
-    // Swallow write errors — logging must never crash the app.
-  }
+  enqueueLine(formatLine(level, category, message));
 }
 
 /**
@@ -128,7 +213,7 @@ function rotateOldLogs(logDir: string): void {
  * Initialize the logger with a specific log directory.
  *
  * Creates the directory if it doesn't exist, rotates old logs, and sets
- * up the log file path for synchronous writes.
+ * up the log file path for async writes.
  *
  * In production, call this once at app startup with `app.getPath('logs')`.
  * In tests, pass a temporary directory.
@@ -162,13 +247,34 @@ export function initLogger(logDir: string): void {
 }
 
 /**
- * Stop accepting new log writes.
+ * Stop accepting new log writes and drain any pending ones.
  *
- * With `appendFileSync`, all writes are already flushed, so this just
- * clears the active path to prevent further writes. `getLogPath()` still
- * returns the last known path. Safe to call multiple times.
+ * Resolves when the queue has been fully flushed (or dropped on error).
+ * Safe to call multiple times; on second invocation the queue is already
+ * empty so it resolves immediately.
+ */
+export async function flushLogger(): Promise<void> {
+  // Capture the current chain tail; any writes enqueued after this call
+  // would extend the chain, but we only guarantee draining what was
+  // already queued when flushLogger was called.
+  const chain = _writeChain;
+  await chain;
+  // If additional drains were chained during the await (e.g. re-entrant
+  // logs), wait one more tick so the recursive scheduleDrain completes.
+  if (_pendingLines.length > 0 && _activeLogFilePath) {
+    await _writeChain;
+  }
+}
+
+/**
+ * Stop accepting new log writes. Drains any pending writes best-effort
+ * via {@link flushLogger} before clearing the active path. `getLogPath()`
+ * still returns the last known path. Safe to call multiple times.
  */
 export function shutdownLogger(): void {
+  // Fire-and-forget drain so we don't block the caller; callers that
+  // need a deterministic flush should await {@link flushLogger} first.
+  void flushLogger();
   _activeLogFilePath = null;
 }
 
@@ -205,4 +311,8 @@ export function createLogger(category: string): Logger {
 export function _resetForTest(): void {
   _activeLogFilePath = null;
   _lastKnownLogFilePath = null;
+  _pendingLines.length = 0;
+  _writeChain = Promise.resolve();
+  _droppedSinceLastDrainWarned = false;
+  _flushing = false;
 }

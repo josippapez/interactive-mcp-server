@@ -1,38 +1,50 @@
 import { ipcMain } from 'electron';
-import { softRestartMcpServer, restartMcpServer } from '../../mcp-server';
-import { autoDetectOpenCodeSessionId } from '../../opencode/session';
-import { registerMcpAcrossReachablePorts } from '../../opencode/mcp-register';
-import { syncRemoteConfig } from '../../opencode/config-sync';
+import {
+  softRestartMcpServer,
+  restartMcpServer,
+} from '../../utility/mcp-server-client';
+import { autoDetectOpenCodeSessionId } from '../../utility/opencode-client';
+import { registerMcpAcrossReachablePorts } from '../../utility/opencode-client';
+import { syncRemoteConfig } from '../../utility/opencode-client';
 import {
   readGlobalConfig,
   readProjectConfig,
   writeGlobalConfig,
   writeProjectConfig,
-} from '../../opencode/config-io';
-import { resolveSession, reResolveStaleSession } from '../../session/resolver';
+} from '../../utility/opencode-client';
+import {
+  resolveSession,
+  reResolveStaleSession,
+} from '../../utility/session-client';
 import { IpcHandlerDeps } from './types';
 import { logIpcInfo } from './shared';
 import { errorMessage } from '../../utils/errors';
 
 export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
   // Manually trigger MCP registration + config sync into OpenCode
-  ipcMain.handle('sync-opencode-config', async () => {
-    const settings = deps.getSettings();
-    logIpcInfo(`sync-opencode-config: backend=${settings.agentBackend}`);
-    if (settings.agentBackend !== 'opencode') {
-      return 'skipped: agentBackend is not opencode';
-    }
-    const regResult = await registerMcpAcrossReachablePorts({
-      appPort: settings.port,
-      openCodePort: settings.openCodePort,
-      promptTimeoutSeconds: settings.promptTimeoutSeconds,
-    });
-    const syncResult = syncRemoteConfig(
-      settings.port,
-      settings.promptTimeoutSeconds,
-    );
-    return `register=${regResult.status}, config=${syncResult}`;
-  });
+  ipcMain.handle(
+    'sync-opencode-config',
+    async (_event, baseDirectory?: string) => {
+      const settings = deps.getSettings();
+      logIpcInfo(
+        `sync-opencode-config: backend=${settings.agentBackend} baseDirectory=${baseDirectory ?? '<none>'}`,
+      );
+      if (settings.agentBackend !== 'opencode') {
+        return 'skipped: agentBackend is not opencode';
+      }
+      const regResult = await registerMcpAcrossReachablePorts({
+        appPort: settings.port,
+        openCodePort: settings.openCodePort,
+        promptTimeoutSeconds: settings.promptTimeoutSeconds,
+        baseDirectory,
+      });
+      const syncResult = syncRemoteConfig(
+        settings.port,
+        settings.promptTimeoutSeconds,
+      );
+      return `register=${regResult.status}, config=${syncResult}`;
+    },
+  );
 
   // ─── OpenCode config file IO ────────────────────────────────────────────────
   // Read/write the global and per-project OpenCode config files from the UI.

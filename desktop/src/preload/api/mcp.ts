@@ -118,24 +118,39 @@ export function createMcpApi() {
 
     /**
      * Fetch all available slash commands from OpenCode.
+     *
+     * @param baseDirectory Optional project directory to scope the command
+     *   lookup. Pass the active session's baseDirectory so project-local
+     *   commands resolve correctly.
      */
-    fetchCommands: (): Promise<
+    fetchCommands: (
+      baseDirectory?: string,
+    ): Promise<
       | {
           name: string;
           description: string;
           args: { name: string; description: string; required?: boolean }[];
         }[]
       | null
-    > => ipcRenderer.invoke('fetch-commands'),
+    > => ipcRenderer.invoke('fetch-commands', baseDirectory),
 
     /**
      * Execute a slash command in an OpenCode session.
+     *
+     * @param baseDirectory Optional project directory to scope the command
+     *   execution (for project-local commands).
      */
     executeCommand: (
       sessionId: string,
       commandName: string,
       args?: Record<string, string>,
+      baseDirectory?: string,
     ): Promise<{ ok: boolean; error?: string }> =>
-      ipcRenderer.invoke('execute-command', { sessionId, commandName, args }),
+      ipcRenderer.invoke('execute-command', {
+        sessionId,
+        commandName,
+        args,
+        baseDirectory,
+      }),
   };
 }

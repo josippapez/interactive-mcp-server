@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
+import { useEffect } from 'react';
+import { useConversationSelector } from '../store/conversation-store';
 import { useSetSessionBaseModel } from '../store/session-models';
 
 type SessionModelState = {
@@ -7,108 +8,58 @@ type SessionModelState = {
 };
 
 /**
- * Hook to fetch the model ID for an OpenCode session.
+ * Hook exposing the model id + provider id for an OpenCode session.
  *
- * This fetches the model ID once when the session becomes active,
- * extracting it from the most recent assistant message. The model ID
- * doesn't change during a session, so we don't need to poll.
+ * Derives the value from the live conversation store by scanning the
+ * messages array for the most recent assistant message that has a
+ * `modelId` attached. The store is kept current by the single
+ * `conversation-batch` pipeline (`useConversation` on the same session
+ * mounts the IPC listener and performs the REST seed).
  *
- * @param providerSessionId - The OpenCode session ID (null to disable)
- * @param isOpenCodeSession - Whether this is an OpenCode session
+ * The previous orphan `onConversationMessageEvent` IPC subscription and
+ * the per-session modelId REST fetch have been removed — the store is
+ * already the single source of truth for conversation messages.
  */
 export function useSessionModelId(
   providerSessionId: string | null,
   isOpenCodeSession: boolean,
 ): SessionModelState {
   const setSessionBaseModel = useSetSessionBaseModel();
-  const [state, setState] = useState<SessionModelState>({
-    modelId: null,
-    providerId: null,
-  });
-  const fetchedSessionRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    // Skip if not an OpenCode session or no session ID
-    if (!isOpenCodeSession || !providerSessionId) {
-      setState({ modelId: null, providerId: null });
-      fetchedSessionRef.current = null;
-      return;
-    }
-
-    // Skip if we already fetched for this session
-    if (fetchedSessionRef.current === providerSessionId) {
-      return;
-    }
-
-    let cancelled = false;
-
-    const fetchModelId = async () => {
-      try {
-        // Check if conversation provider is available
-        const available = await window.api.isConversationAvailable();
-        if (!available || cancelled) return;
-
-        // Fetch just a few messages to get the model ID
-        const messages = await window.api.fetchConversationMessages(
-          providerSessionId,
-          10, // Only need a few to find an assistant message
-        );
-
-        if (cancelled) return;
-
-        // Find the most recent assistant message with a modelId
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const msg = messages[i];
-          if (msg.role === 'assistant' && msg.modelId) {
-            setSessionBaseModel(
-              providerSessionId,
-              msg.modelId,
-              msg.providerId ?? null,
-            );
-            setState({
-              modelId: msg.modelId,
-              providerId: msg.providerId ?? null,
-            });
-            fetchedSessionRef.current = providerSessionId;
-            return;
-          }
-        }
-
-        // No model ID found yet - mark as fetched but null
-        // We'll try again via SSE events when new messages arrive
-        fetchedSessionRef.current = providerSessionId;
-      } catch (err) {
-        console.warn('[useSessionModelId] Error fetching model ID:', err);
+  const state = useConversationSelector<SessionModelState>(
+    (store) => {
+      if (!isOpenCodeSession || !providerSessionId) {
+        return { modelId: null, providerId: null };
       }
-    };
+      const messages = store.messages[providerSessionId];
+      if (!messages) return { modelId: null, providerId: null };
 
-    void fetchModelId();
+      for (let i = messages.length - 1; i >= 0; i -= 1) {
+        const msg = messages[i];
+        if (msg.role === 'assistant' && msg.modelId) {
+          return {
+            modelId: msg.modelId,
+            providerId: msg.providerId ?? null,
+          };
+        }
+      }
+      return { modelId: null, providerId: null };
+    },
+    (a, b) => a.modelId === b.modelId && a.providerId === b.providerId,
+  );
 
-    // Listen for new messages that might contain the model ID
-    const handleMessageEvent = (data: {
-      type: 'message.created' | 'message.updated' | 'message.completed';
-      sessionId: string;
-    }) => {
-      if (data.sessionId !== providerSessionId) return;
-      if (fetchedSessionRef.current === providerSessionId && state.modelId)
-        return;
-
-      // Re-fetch to get the model ID from the new message
-      void fetchModelId();
-    };
-
-    const cleanupMessageEvent =
-      window.api.onConversationMessageEvent(handleMessageEvent);
-
-    return () => {
-      cancelled = true;
-      cleanupMessageEvent();
-    };
+  // Side-effect: push the resolved model id into the per-session model
+  // store so the composer's model picker reflects it. Runs in an effect
+  // so it doesn't fire during render.
+  useEffect(() => {
+    if (!providerSessionId || !isOpenCodeSession || !state.modelId) return;
+    setSessionBaseModel(providerSessionId, state.modelId, state.providerId);
   }, [
     providerSessionId,
     isOpenCodeSession,
-    setSessionBaseModel,
     state.modelId,
+    state.providerId,
+    setSessionBaseModel,
   ]);
 
   return state;

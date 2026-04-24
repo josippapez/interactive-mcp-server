@@ -253,18 +253,20 @@ Package releases are handled by **GitHub Actions** in `.github/workflows/publish
 
 When interacting with this MCP server (e.g., as an LLM client), please adhere to the following principles to ensure clarity and reduce unexpected changes:
 
-- **Prioritize Interaction:** Utilize the provided MCP tools (`request_user_input`, `start_intensive_chat`, etc.) frequently to engage with the user.
+- **Prioritize Interaction:** Utilize the provided MCP tools (`request_user_input`, `start_intensive_chat`, etc.) frequently to engage with the user when they are available and working.
 - **Seek Clarification:** If requirements, instructions, or context are unclear, **always** ask clarifying questions before proceeding. Do not make assumptions.
 - **Confirm Actions:** Before performing significant actions (like modifying files, running complex commands, or making architectural decisions), confirm the plan with the user.
 - **Provide Options:** Whenever possible, present the user with predefined options through the MCP tools to facilitate quick decisions.
+- **Fallback When Interactive Fails:** If the user explicitly says interactive prompting does not work, or those tools are unavailable/failing, use the built-in questions tool instead of plain-text prompting until interactive tools work again.
 
 You can provide these instructions to an LLM client like this:
 
 ```markdown
 # Interaction
 
-- Please use the interactive MCP tools
-- Please provide options to interactive MCP if possible
+- Please use the interactive MCP tools when they work
+- If interactive prompting does not work, you may use the built-in questions tool instead of plain text
+- Please provide options when the active question tool supports them
 
 # Reduce Unexpected Changes
 

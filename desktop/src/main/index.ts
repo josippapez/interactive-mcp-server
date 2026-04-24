@@ -4,35 +4,45 @@ import {
   softRestartMcpServer,
   startMcpServer,
   stopMcpServer,
-} from './mcp-server';
-import { initDatabase, seedBuiltinTemplates } from './database';
+} from './utility/mcp-server-client';
+import { initDatabase, seedBuiltinTemplates } from './utility/db-client';
 import { defaultSettings, loadSettings, type AppSettings } from './settings';
 import { createWindow } from './window';
 import { createTray } from './tray';
 import { registerIpcHandlers } from './ipc/handlers';
 import {
-  startSessionTreeManager,
-  stopSessionTreeManager,
-  replayPendingSessionTreeSnapshot,
-} from './session/tree-manager';
+  startSessionTreeService,
+  stopSessionTreeService,
+} from './utility/session-client';
+import { reconcileSessionConnections } from './utility/session-client';
 import {
-  startBusEventSubscription,
-  stopBusEventSubscription,
-} from './opencode/bus-events';
-import { reconcileSessionConnections } from './session/reconnect';
-import { startOpenCodeServer, stopOpenCodeServer } from './opencode/server';
-import { syncRemoteConfig } from './opencode/config-sync';
+  startOpenCodeServer,
+  stopOpenCodeServer,
+} from './utility/opencode-server-client';
+import { syncRemoteConfig } from './utility/opencode-client';
+import { checkOpenCodeHealth } from './opencode/health';
+import {
+  fetchProvidersInfo,
+  refreshProvidersInfo,
+  registerMcpWithRetry,
+} from './utility/opencode-client';
 import { detectClaudeSdkRuntime } from './claude-sdk-runtime';
-import { registerMcpWithRetry } from './opencode/mcp-register';
 import { BUILTIN_TEMPLATES } from './builtin-templates';
-import { initLogger, createLogger } from './utils/logger';
-import {
-  initializeConversationProviders,
-  stopConversationProviders,
-  registerConversationHandlers,
-  updateConversationPort,
-} from './conversation';
-import { shutdown as shutdownDocIndexer } from './docs/indexer';
+import { initLogger, createLogger, flushLogger } from './utils/logger';
+import { getUtilitySupervisor } from './utility/supervisor';
+
+// In development, expose CDP on a configurable port so external tools
+// (chrome-devtools-mcp, electron-mcp-server, React DevTools, etc.) can attach
+// to the renderer. Override with ELECTRON_DEBUG_PORT to avoid collisions
+// (e.g. Chrome's default 9222). Must be set before app.whenReady();
+// no-op in packaged builds.
+//
+// Note: electron-mcp-server hardcodes 9222, so keep the default at 9222
+// and only override via env when needed.
+if (!app.isPackaged) {
+  const debugPort = process.env.ELECTRON_DEBUG_PORT ?? '9222';
+  app.commandLine.appendSwitch('remote-debugging-port', debugPort);
+}
 
 let mainWindow: BrowserWindow | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -40,8 +50,148 @@ let tray: Tray | null = null;
 let isQuitting = false;
 let currentSettings: AppSettings = defaultSettings;
 
+/**
+ * Interval (ms) between periodic background refreshes of the providers-info
+ * cache. Keeps the renderer hydrated even when users leave the app open for
+ * long periods between opening new sessions. 5 minutes is a reasonable
+ * balance between freshness (connect/disconnect showing up eventually) and
+ * not hammering OpenCode needlessly.
+ */
+const PROVIDERS_REFRESH_INTERVAL_MS = 5 * 60_000;
+let providersRefreshTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Supervisor interval (ms) for the background health watchdog. Probes the
+ * in-process OpenCode server and auto-restarts it after a streak of
+ * failures. Kept conservative — the renderer's own health poll already
+ * surfaces transient outages to the user UI; this is a backstop for
+ * genuinely wedged listeners.
+ */
+const OPENCODE_SUPERVISOR_INTERVAL_MS = 15_000;
+/** Failures in a row before the supervisor triggers a restart. */
+const OPENCODE_SUPERVISOR_MAX_FAILURES = 3;
+/** Guard so overlapping restarts never run concurrently. */
+let openCodeRestartInFlight = false;
+/** Running count of consecutive failures for the supervisor. */
+let openCodeConsecutiveFailures = 0;
+let openCodeSupervisorTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Poll `checkOpenCodeHealth` until the server responds healthy or the
+ * ~30-second budget expires. Resolves `true` on success, `false` on timeout.
+ *
+ * Used during cold-start to gate session-tree and provider warmup so we do
+ * not race OpenCode's HTTP listener coming up.
+ */
+async function waitForOpenCodeHealthy(
+  getPort: () => number,
+  opts: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<boolean> {
+  const intervalMs = opts.intervalMs ?? 500;
+  const timeoutMs = opts.timeoutMs ?? 30_000;
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    // Cold-start DB + workspace init can easily exceed the default 5s
+    // per-attempt timeout on slow disks. Give each probe the full remaining
+    // budget up to 10s so we don't count a slow-but-alive server as "down".
+    const perAttempt = Math.min(10_000, Math.max(1_000, deadline - Date.now()));
+    const health = await checkOpenCodeHealth(getPort(), perAttempt);
+    if (health.healthy) return true;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  return false;
+}
+
+/**
+ * Start the background supervisor that auto-restarts the in-process
+ * OpenCode server when it stops responding to health probes.
+ *
+ * Rationale: `Server.listen()` runs in the same Node process as Electron
+ * main, so a stuck listener cannot be recovered by the OS. The supervisor
+ * is the failsafe — it probes every {@link OPENCODE_SUPERVISOR_INTERVAL_MS}
+ * and forces a stop/start cycle after
+ * {@link OPENCODE_SUPERVISOR_MAX_FAILURES} consecutive failures.
+ *
+ * Idempotent: calling `start` twice is a no-op after the first call.
+ */
+function startOpenCodeSupervisor(
+  getPort: () => number,
+  shouldRun: () => boolean,
+  appLog: ReturnType<typeof createLogger>,
+): void {
+  if (openCodeSupervisorTimer) return;
+
+  openCodeSupervisorTimer = setInterval(() => {
+    if (isQuitting) return;
+    if (!shouldRun()) return;
+    if (openCodeRestartInFlight) return;
+
+    void (async () => {
+      const health = await checkOpenCodeHealth(getPort(), 5_000);
+      if (health.healthy) {
+        if (openCodeConsecutiveFailures > 0) {
+          appLog.info(
+            `[supervisor] OpenCode recovered after ${openCodeConsecutiveFailures} failure(s)`,
+          );
+        }
+        openCodeConsecutiveFailures = 0;
+        return;
+      }
+
+      openCodeConsecutiveFailures += 1;
+      appLog.warn(
+        `[supervisor] OpenCode health probe failed (${openCodeConsecutiveFailures}/${OPENCODE_SUPERVISOR_MAX_FAILURES}): ${
+          health.error ?? 'unknown error'
+        }`,
+      );
+
+      if (openCodeConsecutiveFailures < OPENCODE_SUPERVISOR_MAX_FAILURES) {
+        return;
+      }
+
+      openCodeRestartInFlight = true;
+      try {
+        appLog.error(
+          `[supervisor] OpenCode unresponsive — restarting in-process server`,
+        );
+        try {
+          await stopOpenCodeServer();
+        } catch (err) {
+          appLog.warn(
+            `[supervisor] stopOpenCodeServer during restart: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        try {
+          await startOpenCodeServer(getPort());
+        } catch (err) {
+          appLog.error(
+            `[supervisor] startOpenCodeServer during restart failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+          );
+        }
+        // Reset regardless — the next probe cycle will decide if we're
+        // healthy again. Clearing here prevents a thrash loop.
+        openCodeConsecutiveFailures = 0;
+      } finally {
+        openCodeRestartInFlight = false;
+      }
+    })();
+  }, OPENCODE_SUPERVISOR_INTERVAL_MS);
+}
+
+function stopOpenCodeSupervisor(): void {
+  if (openCodeSupervisorTimer) {
+    clearInterval(openCodeSupervisorTimer);
+    openCodeSupervisorTimer = null;
+  }
+}
+
 app.whenReady().then(async () => {
-  electronApp.setAppUserModelId('com.interactive-mcp.desktop');
+  electronApp.setAppUserModelId('com.rawwee.eden');
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window);
@@ -72,17 +222,27 @@ app.whenReady().then(async () => {
     getMainWindow: () => mainWindow,
     getSettings: () => currentSettings,
     setSettings: (settings: AppSettings) => {
-      // Track if OpenCode port changed for conversation provider update
-      const portChanged =
-        settings.openCodePort !== currentSettings.openCodePort;
       currentSettings = settings;
-      // Update conversation provider port if it changed
-      if (portChanged) {
-        updateConversationPort(settings.openCodePort);
+      // Push new settings snapshot to the backend utility so the event-stream
+      // pump sees `allowedPermissions`, `allowedReadFolders`, and
+      // `autoRegisterSubagents` without re-reading electron-store.
+      try {
+        getUtilitySupervisor().emitSettingsUpdate({
+          allowedPermissions: settings.allowedPermissions ?? [],
+          allowedReadFolders: settings.allowedReadFolders ?? [],
+          autoRegisterSubagents: settings.autoRegisterSubagents ?? true,
+          openCodePort: settings.openCodePort,
+          promptTimeoutSeconds: settings.promptTimeoutSeconds,
+          soundEnabled: settings.soundEnabled,
+          docIndexingEnabled: settings.docIndexingEnabled,
+          agentBackend: settings.agentBackend,
+          mcpPort: settings.port,
+        });
+      } catch {
+        // Supervisor may not be started yet — non-fatal.
       }
     },
   });
-  registerConversationHandlers();
 
   // =====================================================================
   // Create window + tray as early as possible so the user sees UI fast.
@@ -92,7 +252,12 @@ app.whenReady().then(async () => {
   mainWindow = createWindow(() => isQuitting, {
     startHidden: openedAtLogin,
   });
-  replayPendingSessionTreeSnapshot(() => mainWindow);
+
+  // providers-info pushes from the utility process are relayed to the
+  // renderer automatically by the `to-renderer` bridge handler in the
+  // utility supervisor (see `utility/supervisor.ts`). No main-side wiring
+  // needed here.
+
   tray = createTray(
     () => mainWindow,
     () => {
@@ -119,35 +284,61 @@ app.whenReady().then(async () => {
   // =====================================================================
 
   const runDeferredInit = async () => {
-    // Set login item settings (may fail in development or without proper signing)
+    // Phase 1 of backend-utility-process extraction: spawn the utility child
+    // ASAP so we pay startup cost in parallel with MCP + OpenCode boot. At
+    // this point it only handles `ping` — no subsystems have moved yet.
+    // See docs/BACKEND-UTILITY-PROCESS-PLAN.md.
     try {
-      app.setLoginItemSettings({
-        openAtLogin: currentSettings.launchAtLogin,
-        openAsHidden: currentSettings.launchAtLogin,
-      });
-    } catch {
-      // Login item registration requires app signing on macOS
-      // Silently ignore in development
+      const supervisor = getUtilitySupervisor();
+      supervisor.setMainWindow(() => mainWindow);
+      await supervisor.start();
+      // Prove transport with a ping — will be removed once real calls exist.
+      const reply = await supervisor
+        .getBridge()
+        .request<{ ok: boolean; echo: unknown; at: number }>('ping', {
+          from: 'main',
+          at: Date.now(),
+        });
+      appLog.info(`[utility] ping round-trip ok=${reply.ok} at=${reply.at}`);
+    } catch (err) {
+      appLog.error(
+        `[utility] supervisor failed to start: ${
+          err instanceof Error ? err.message : String(err)
+        }`,
+      );
+      // Phase 1 is non-fatal — continue booting normal paths even if the
+      // utility is unavailable. Real coupling arrives in Phase 2+.
+    }
+
+    // Set login item settings in packaged (signed) builds only.
+    //
+    // In unsigned dev builds macOS refuses the call and logs the failure
+    // natively (`platform_util_mac.mm:260: Operation not permitted`) BEFORE
+    // control returns to JS, so a try/catch around it does not suppress the
+    // noise. Guarding on `app.isPackaged` is the only way to keep the dev
+    // console clean.
+    if (app.isPackaged) {
+      try {
+        app.setLoginItemSettings({
+          openAtLogin: currentSettings.launchAtLogin,
+          openAsHidden: currentSettings.launchAtLogin,
+        });
+      } catch {
+        // Still defensive — some unsigned packaged configs can throw instead
+        // of just logging. We don't want startup to fail over launch-at-login.
+      }
     }
 
     // Seed built-in templates on first launch (only inserts if not already present)
-    const seededCount = seedBuiltinTemplates(BUILTIN_TEMPLATES);
+    const seededCount = await seedBuiltinTemplates(BUILTIN_TEMPLATES);
     if (seededCount > 0) {
       console.log(
         `[builtin-templates] Seeded ${seededCount} built-in templates`,
       );
     }
 
-    // Start MCP server (pass getter so it always has the current window)
-    await startMcpServer(
-      currentSettings.port,
-      () => mainWindow,
-      () => currentSettings.soundEnabled,
-      () => currentSettings.promptTimeoutSeconds * 1000,
-      () => currentSettings.openCodePort,
-      () => currentSettings.docIndexingEnabled,
-      () => currentSettings.agentBackend,
-    );
+    // Start MCP server (utility reads settings via settings-mirror)
+    await startMcpServer();
 
     const isOpenCodeBackend = currentSettings.agentBackend === 'opencode';
     if (isOpenCodeBackend) {
@@ -164,27 +355,98 @@ app.whenReady().then(async () => {
 
       // Auto-start OpenCode serve before session probing/reconcile so cold-start
       // startup does not waste time probing a dead instance first.
+      //
+      // `startOpenCodeServer` is now async (in-process Server.listen()). We
+      // still fire-and-forget the promise because the cold-start health-probe
+      // below handles the race against consumers that need a live HTTP port.
       if (currentSettings.autoStartOpenCode) {
-        startOpenCodeServer(currentSettings.openCodePort);
+        void startOpenCodeServer(currentSettings.openCodePort).catch(
+          (err: unknown) => {
+            appLog.error(
+              `[startup] OpenCode in-process start failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
+          },
+        );
       }
 
-      // Start session-tree sync (replaces old poller)
-      startSessionTreeManager(
-        () => mainWindow,
-        () => currentSettings.openCodePort,
-        () => currentSettings.autoRegisterSubagents,
+      // Start session-tree service (pull-on-invalidation model).
+      void startSessionTreeService(currentSettings.openCodePort);
+
+      // Cold-start readiness probe. `startOpenCodeServer` is fire-and-forget,
+      // so the HTTP server may still be coming up when we fire the initial
+      // provider fetch. Poll `checkOpenCodeHealth` every 500ms for up to 30s,
+      // and once healthy, warm the main-side providers cache so the first
+      // renderer IPC after mount returns instantly instead of racing boot.
+      // (The session tree is pulled on-demand by the renderer — no warmup.)
+      void waitForOpenCodeHealthy(() => currentSettings.openCodePort).then(
+        async (healthy) => {
+          if (!healthy) {
+            appLog.warn(
+              '[startup] OpenCode did not become healthy within 30s — skipping cold-start warmup',
+            );
+            return;
+          }
+          await fetchProvidersInfo(currentSettings.openCodePort).catch(
+            (err: unknown) => {
+              appLog.warn(
+                `[startup] providers warmup failed: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            },
+          );
+
+          // Start the periodic providers-info refresh now that OpenCode is
+          // known healthy. This keeps the renderer cache warm across long
+          // idle periods so opening a new-session form never hits a cold
+          // main-side cache. Idempotent — clear any prior timer first.
+          if (providersRefreshTimer) clearInterval(providersRefreshTimer);
+          providersRefreshTimer = setInterval(() => {
+            void refreshProvidersInfo(currentSettings.openCodePort).catch(
+              (err: unknown) => {
+                appLog.warn(
+                  `[providers-refresh] periodic refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+                );
+              },
+            );
+          }, PROVIDERS_REFRESH_INTERVAL_MS);
+
+          // Kick off the health supervisor now that we've confirmed at
+          // least one successful probe. Only supervises when the user has
+          // auto-start enabled — otherwise they're running OpenCode
+          // externally and we must not interfere with its lifecycle.
+          startOpenCodeSupervisor(
+            () => currentSettings.openCodePort,
+            () => currentSettings.autoStartOpenCode,
+            appLog,
+          );
+        },
       );
 
-      // Subscribe to the OpenCode global-event bus (session.status, permission.*)
-      startBusEventSubscription(
-        () => mainWindow,
-        () => currentSettings.openCodePort,
-        () => currentSettings,
-      );
+      // Start the conversation event stream (SSE → coalescer → batched
+      // IPC dispatch) inside the backend utility process. Main forwards
+      // `to-renderer` envelopes from the bridge to the focused window;
+      // see `utility/supervisor.ts`.
+      try {
+        await getUtilitySupervisor()
+          .getBridge()
+          .request<{ ok: boolean; error?: string }>('start-event-stream', {
+            openCodePort: currentSettings.openCodePort,
+          });
+      } catch (err) {
+        appLog.error(
+          `[utility] start-event-stream failed: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
 
-      // Reconcile persisted connections with live OpenCode sessions
+      // Reconcile persisted connections with live OpenCode sessions.
+      // At startup no folder is selected yet (renderer drives selection),
+      // so this is a no-op until the renderer calls set-selected-folder.
       const reconResult = await reconcileSessionConnections(
         currentSettings.openCodePort,
+        null,
       );
       console.log(
         `[session-reconnect] matched=${reconResult.matched} cleaned=${reconResult.cleaned} total=${reconResult.total}`,
@@ -203,12 +465,6 @@ app.whenReady().then(async () => {
         console.log(
           `[startup-register] status=${result.status}${result.error ? ` error=${result.error}` : ''}`,
         );
-      });
-
-      // Initialize conversation providers for mirroring OpenCode conversations
-      initializeConversationProviders({
-        getMainWindow: () => mainWindow,
-        getOpenCodePort: () => currentSettings.openCodePort,
       });
     } else if (currentSettings.agentBackend === 'claude_sdk') {
       const claudeRuntime = await detectClaudeSdkRuntime();
@@ -254,17 +510,51 @@ let quitCleanupStarted = false;
 app.on('before-quit', (event) => {
   // Synchronous cleanup is safe to call every time (idempotent).
   isQuitting = true;
-  stopSessionTreeManager();
-  stopBusEventSubscription();
-  stopConversationProviders();
-  stopOpenCodeServer();
+  void stopSessionTreeService();
+  // Ask the backend utility to stop the event stream. Fire-and-forget —
+  // the supervisor's own before-quit hook will kill the child anyway.
+  try {
+    void getUtilitySupervisor()
+      .getBridge()
+      .request('stop-event-stream')
+      .catch(() => {
+        // Non-fatal during shutdown; child may have exited already.
+      });
+  } catch {
+    // Supervisor not started yet — nothing to stop.
+  }
+  stopOpenCodeSupervisor();
+  // stopOpenCodeServer is async now (in-process listener.stop()); fire-and-forget
+  // since before-quit can't await and the OS will force-kill us if we linger.
+  void stopOpenCodeServer().catch((err: unknown) => {
+    console.warn(
+      `[before-quit] stopOpenCodeServer failed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+  });
+
+  if (providersRefreshTimer) {
+    clearInterval(providersRefreshTimer);
+    providersRefreshTimer = null;
+  }
+
+  // Layer D (stale-status fix): no-op for sidebar `sessionStatuses`.
+  //
+  // Renderer `sessionStatuses` is pure in-memory React state in
+  // `useConnections`. It is never written to sqlite, electron-store, or
+  // any persisted Jotai atom — verified by `grep -rn sessionStatuses src/`.
+  // Closing the renderer drops the state on its own, so there is nothing
+  // to clear here on shutdown. The startup grace-window gate in
+  // `useStatusHandlers` (Layer A) is what prevents stale "green dot"
+  // statuses from reappearing on the next launch.
 
   // Cancel any active MCP prompts BEFORE stopping the HTTP server so that
   // per-prompt `diagInterval`s and SSE keepalive timers do not keep the
   // Node.js event loop alive (which would prevent Electron from quitting
   // and leave the icon in the taskbar). Fire-and-forget: the async work
   // resolves quickly and we do not need to block shutdown on it.
-  void softRestartMcpServer().catch((err) => {
+  void softRestartMcpServer().catch((err: unknown) => {
     console.error('[main] softRestartMcpServer on before-quit failed:', err);
   });
   stopMcpServer();
@@ -272,20 +562,18 @@ app.on('before-quit', (event) => {
   // With better-sqlite3, all writes are synchronous to WAL-journaled disk,
   // so there is no pending buffer to flush on shutdown.
 
-  // Async cleanup: defer the real quit until the embedding worker has
-  // fully terminated. Re-entrancy guard ensures we only kick this off once;
-  // the second before-quit (after app.quit()) falls through cleanly.
+  // Async cleanup: flush logs before quitting. Re-entrancy guard ensures
+  // we only kick this off once; the second before-quit (after app.quit())
+  // falls through cleanly.
   if (quitCleanupStarted) return;
   quitCleanupStarted = true;
   event.preventDefault();
 
-  void shutdownDocIndexer()
-    .catch((err) => {
-      console.error('[main] doc indexer shutdown failed:', err);
-    })
-    .finally(() => {
-      app.quit();
-    });
+  // Drain any pending log writes before we let the process exit.
+  // Best-effort: flushLogger swallows I/O errors internally.
+  void flushLogger().finally(() => {
+    app.quit();
+  });
 });
 
 // Export for IPC access

@@ -3,6 +3,7 @@ import { useProviders } from '../../hooks/useProviders';
 import { useProviderAuthMethods } from '../../hooks/useProviderAuthMethods';
 import { ProviderAuthButton } from '../auth';
 import { Button } from '../ui/button';
+import { ProviderIcon } from '../ProviderIcon';
 
 interface ProviderAuthSectionProps {
   /** Whether OpenCode backend is enabled. */
@@ -120,12 +121,14 @@ export default function ProviderAuthSection({
                 {connectedProviders.map((provider) => (
                   <div
                     key={provider.id}
-                    className="flex items-center justify-between px-3 py-2.5 rounded-md border border-green-500/20 bg-green-500/5"
+                    className="flex items-center justify-between px-3 py-2.5 rounded-md border border-[var(--border-success)] bg-[var(--surface-success)]"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-lg shrink-0">
-                        {getProviderIcon(provider.id)}
-                      </span>
+                      <ProviderIcon
+                        id={provider.id}
+                        size={18}
+                        className="shrink-0"
+                      />
                       <div className="min-w-0">
                         <span className="text-sm font-medium text-[var(--color-text)] block truncate">
                           {provider.name}
@@ -136,7 +139,7 @@ export default function ProviderAuthSection({
                         </span>
                       </div>
                     </div>
-                    <span className="flex items-center gap-1 text-xs text-green-500 shrink-0">
+                    <span className="flex items-center gap-1 text-xs text-[var(--text-on-success)] shrink-0">
                       <svg
                         className="h-3.5 w-3.5"
                         fill="currentColor"
@@ -169,9 +172,11 @@ export default function ProviderAuthSection({
                     className="flex items-center justify-between px-3 py-2.5 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]"
                   >
                     <div className="flex items-center gap-3 min-w-0">
-                      <span className="text-lg shrink-0">
-                        {getProviderIcon(provider.id)}
-                      </span>
+                      <ProviderIcon
+                        id={provider.id}
+                        size={18}
+                        className="shrink-0"
+                      />
                       <div className="min-w-0">
                         <span className="text-sm font-medium text-[var(--color-text)] block truncate">
                           {provider.name}
@@ -212,9 +217,7 @@ export default function ProviderAuthSection({
                     className="flex items-center justify-between px-3 py-2 rounded-md border border-[var(--color-border)] bg-[var(--color-surface)]/50"
                   >
                     <div className="flex items-center gap-2">
-                      <span className="text-sm">
-                        {getProviderIcon(provider.id)}
-                      </span>
+                      <ProviderIcon id={provider.id} size={14} />
                       <span className="text-xs text-[var(--color-text-muted)]">
                         {provider.name}
                       </span>
@@ -235,28 +238,7 @@ export default function ProviderAuthSection({
 }
 
 /**
- * Get an icon/emoji for a provider based on its ID.
+ * Provider icons are rendered via <ProviderIcon /> (see ../ProviderIcon.tsx).
+ * The prior `getProviderIcon(id)` helper that returned an emoji was removed in
+ * Wave 3 (GAP_REPORT §8.1 win #2).
  */
-function getProviderIcon(providerId: string): string {
-  const icons: Record<string, string> = {
-    anthropic: '🅰️',
-    openai: '🤖',
-    google: '🔮',
-    gemini: '💎',
-    amazon: '📦',
-    bedrock: '🪨',
-    azure: '☁️',
-    'azure-openai': '☁️',
-    groq: '⚡',
-    mistral: '🌬️',
-    cohere: '🔗',
-    ollama: '🦙',
-    local: '💻',
-    custom: '⚙️',
-    copilot: '🐙',
-    'github-copilot': '🐙',
-    openrouter: '🔀',
-    xai: '✖️',
-  };
-  return icons[providerId.toLowerCase()] ?? '🔌';
-}

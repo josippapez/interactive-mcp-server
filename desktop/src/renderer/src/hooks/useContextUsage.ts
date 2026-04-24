@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-const CONTEXT_USAGE_REFRESH_INTERVAL_MS = 3000;
+import {
+  seedContextUsageForSession,
+  useConversationSelector,
+} from '../store/conversation-store';
 
 /** Context/token usage for a session. */
 export interface ContextUsage {
@@ -32,27 +34,54 @@ interface UseContextUsageResult {
   refresh: () => Promise<void>;
 }
 
+const COMPACTION_RESET_MS = 2000;
+
 /**
- * Hook to track context/token usage for an OpenCode session.
+ * Hook exposing the context/token usage for an OpenCode session.
  *
- * Subscribes to real-time SSE events for usage updates and compaction events.
- * Provides a `compact()` function to trigger manual compaction.
+ * Live updates arrive via the `context.usage` event on the single
+ * `conversation-batch` IPC pipeline (emitted by the main-side bridge
+ * every time an assistant `message.updated` carries token data).
  *
- * @param sessionId - OpenCode session ID (null to disable)
- * @param enabled - Whether to enable tracking (default: true)
+ * On mount we perform a one-shot REST seed via `getContextUsage` so the
+ * UI has a snapshot before the first live event arrives.
+ *
+ * Compaction is a two-phase operation:
+ *   1. Local `compactionStatus` tracks the in-flight RPC phase
+ *      (`idle` → `compacting` → `success`/`error`).
+ *   2. A server-side `session.compaction-done` event replays through the
+ *      store and resets the usage slice to the post-compaction baseline,
+ *      and we bump `compactionStatus` back to `success` before idling.
+ *
+ * The previous 3-second poll and the orphan `onContextUsageUpdated` /
+ * `onSessionCompacted` IPC subscriptions have been removed (C5 merge).
  */
 export function useContextUsage(
   sessionId: string | null,
   enabled = true,
 ): UseContextUsageResult {
-  const [usage, setUsage] = useState<ContextUsage | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [compactionStatus, setCompactionStatus] =
     useState<CompactionStatus>('idle');
   const [compactionError, setCompactionError] = useState<string | null>(null);
-  const resolvedSessionIdRef = useRef<string | null>(null);
+  const [resolvedId, setResolvedId] = useState<string | null>(null);
+  const resolvedIdRef = useRef<string | null>(null);
+  resolvedIdRef.current = resolvedId;
 
-  const resolvedSessionId = useCallback(async (): Promise<string | null> => {
+  const storeUsage = useConversationSelector((state) =>
+    resolvedId ? state.contextUsage[resolvedId] : undefined,
+  );
+
+  const usage: ContextUsage | null = storeUsage
+    ? { ...storeUsage, updatedAt: Date.now() }
+    : null;
+
+  /**
+   * Resolve a raw `sessionId` to a canonical `ses_*` provider-session id.
+   * Values already prefixed with `ses_` are returned as-is. Anything else
+   * is run through the main-side `resolveSession` RPC.
+   */
+  const resolveSessionId = useCallback(async (): Promise<string | null> => {
     if (!sessionId || !enabled) return null;
 
     if (sessionId.startsWith('ses_')) {
@@ -74,41 +103,43 @@ export function useContextUsage(
     return null;
   }, [enabled, sessionId]);
 
-  // Fetch initial usage data
   const refresh = useCallback(async () => {
-    if (!enabled) {
-      setUsage(null);
-      return;
-    }
+    if (!enabled) return;
 
-    const targetSessionId = await resolvedSessionId();
+    const targetSessionId = await resolveSessionId();
     if (!targetSessionId) {
-      resolvedSessionIdRef.current = null;
-      setUsage(null);
+      setResolvedId(null);
       return;
     }
 
-    resolvedSessionIdRef.current = targetSessionId;
-
+    setResolvedId(targetSessionId);
     setIsLoading(true);
     try {
       const result = await window.api.getContextUsage(targetSessionId);
       if (result) {
-        resolvedSessionIdRef.current = result.sessionId;
-        setUsage(result);
+        // Feed the REST snapshot into the store so UI + live events share
+        // the same slice.
+        seedContextUsageForSession(targetSessionId, {
+          sessionId: targetSessionId,
+          totalTokens: result.totalTokens,
+          contextLimit: result.contextLimit,
+          usableLimit: result.usableLimit,
+          usagePercent: result.usagePercent,
+          isNearOverflow: result.isNearOverflow,
+          isOverflow: result.isOverflow,
+        });
       }
     } catch (err) {
       console.warn('[useContextUsage] Failed to fetch usage:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [enabled, resolvedSessionId]);
+  }, [enabled, resolveSessionId]);
 
-  // Trigger compaction
   const compact = useCallback(async () => {
     if (compactionStatus === 'compacting') return;
 
-    const targetSessionId = await resolvedSessionId();
+    const targetSessionId = await resolveSessionId();
     if (!targetSessionId) {
       setCompactionStatus('error');
       setCompactionError('No OpenCode session available for compaction');
@@ -125,8 +156,7 @@ export function useContextUsage(
 
       if (result.ok) {
         setCompactionStatus('success');
-        // Reset to idle after 2s
-        setTimeout(() => setCompactionStatus('idle'), 2000);
+        setTimeout(() => setCompactionStatus('idle'), COMPACTION_RESET_MS);
       } else {
         setCompactionStatus('error');
         setCompactionError(result.error ?? 'Compaction failed');
@@ -137,77 +167,11 @@ export function useContextUsage(
         err instanceof Error ? err.message : 'Compaction failed',
       );
     }
-  }, [compactionStatus, resolvedSessionId]);
+  }, [compactionStatus, resolveSessionId]);
 
-  // Fetch on mount and when session changes
   useEffect(() => {
     void refresh();
   }, [refresh]);
-
-  // Keep context usage recalculating from the OpenCode source of truth even
-  // when no new push event arrives. This matches the "keeps recalculating"
-  // behavior more closely and fixes sessions getting stuck after the first read.
-  useEffect(() => {
-    if (!sessionId || !enabled) return;
-
-    const interval = setInterval(() => {
-      void refresh();
-    }, CONTEXT_USAGE_REFRESH_INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, [enabled, refresh, sessionId]);
-
-  // Subscribe to real-time usage updates
-  useEffect(() => {
-    if (!sessionId || !enabled) return;
-
-    const handleUsageUpdate = (data: {
-      sessionId: string;
-      totalTokens: number;
-      contextLimit: number;
-      usableLimit: number;
-      usagePercent: number;
-      isNearOverflow: boolean;
-      isOverflow: boolean;
-    }) => {
-      const targetSessionId = resolvedSessionIdRef.current;
-      if (targetSessionId && data.sessionId !== targetSessionId) return;
-
-      setUsage({
-        sessionId: data.sessionId,
-        totalTokens: data.totalTokens,
-        contextLimit: data.contextLimit,
-        usableLimit: data.usableLimit,
-        usagePercent: data.usagePercent,
-        isNearOverflow: data.isNearOverflow,
-        isOverflow: data.isOverflow,
-        updatedAt: Date.now(),
-      });
-    };
-
-    const handleCompacted = (data: {
-      sessionId: string;
-      beforeTokens: number;
-      afterTokens: number;
-    }) => {
-      const targetSessionId = resolvedSessionIdRef.current;
-      if (targetSessionId && data.sessionId !== targetSessionId) return;
-
-      // Compaction completed successfully
-      setCompactionStatus('success');
-      void refresh();
-      setTimeout(() => setCompactionStatus('idle'), 2000);
-    };
-
-    const cleanupUsage = window.api.onContextUsageUpdated(handleUsageUpdate);
-    const cleanupCompacted = window.api.onSessionCompacted(handleCompacted);
-
-    // Cleanup the compaction listener when effect re-runs
-    return () => {
-      cleanupUsage();
-      cleanupCompacted();
-    };
-  }, [sessionId, enabled, refresh]);
 
   return {
     usage,

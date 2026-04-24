@@ -126,7 +126,7 @@ This is the full-removal endpoint for a persisted session. Its intended semantic
 2. Remove the matching `registered_connections` row and its ID file.
 3. Mark the connection as deleted in the stale-connection guard so later tool calls on that `connectionId` return a re-register error instead of silently failing.
 4. Emit renderer events so the UI removes the channel immediately.
-5. Trigger a fresh `session-tree-updated` snapshot so OpenCode tree state and the renderer sidebar reconcile immediately.
+5. Fire a `session-tree-invalidated` signal so the renderer pulls a fresh tree and the OpenCode tree state and the sidebar reconcile immediately.
 
 If a live MCP session still exists for that `connectionId`, the removal path must also close it so the persisted and in-memory states stay aligned.
 
@@ -138,13 +138,13 @@ All IPC events travel from the **main process to the renderer** via `webContents
 
 ### Events emitted by the session channel system
 
-| Event                              | Payload                          | Trigger                                                                                      |
-| ---------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------- |
-| `session-channel-created`          | `{ sessionId, label? }`          | `POST /api/sessions` or new MCP connection initialization                                    |
-| `session-channel-deleted`          | `{ sessionId }`                  | `transport.onclose`, `DELETE /mcp`, or `DELETE /api/sessions/:sessionId`                     |
-| `session-channel-messages-cleared` | `{ sessionId }`                  | `window.api.clearSessionChannelMessages(sessionId)` called from renderer                     |
-| `session-status-update`            | `{ connectionId, status, type }` | `push_session_status` MCP tool invoked by the agent                                          |
-| `session-tree-updated`             | `SessionTreeNode[]`              | Session-tree manager poll (~2 s), or immediately after `register_connection`/session removal |
+| Event                              | Payload                          | Trigger                                                                                                                                                          |
+| ---------------------------------- | -------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session-channel-created`          | `{ sessionId, label? }`          | `POST /api/sessions` or new MCP connection initialization                                                                                                        |
+| `session-channel-deleted`          | `{ sessionId }`                  | `transport.onclose`, `DELETE /mcp`, or `DELETE /api/sessions/:sessionId`                                                                                         |
+| `session-channel-messages-cleared` | `{ sessionId }`                  | `window.api.clearSessionChannelMessages(sessionId)` called from renderer                                                                                         |
+| `session-status-update`            | `{ connectionId, status, type }` | `push_session_status` MCP tool invoked by the agent                                                                                                              |
+| `session-tree-invalidated`         | _(none — payload-free)_          | Session-tree service (SSE events, `register_connection`, session removal, folder change). Renderer pulls the tree via `window.api.getSessionTree()` in response. |
 
 > `session-channel-created` is also sent as part of the standard `connection-opened` IPC flow. See [MCP-SERVER.md](./MCP-SERVER.md#ipc-events-sent-to-renderer) for the full connection event reference.
 
@@ -211,10 +211,10 @@ Startup state is reconciled from three sources:
 The startup sequence is:
 
 1. The main process starts the session-tree manager.
-2. The main process runs `reconcileSessionConnections(openCodePort)` once.
+2. The main process runs `reconcileSessionConnections(openCodePort, null)` once at startup. With `null`, this is a **no-op** — reconciliation is deferred until the renderer selects a folder and the `set-selected-folder` IPC handler re-invokes reconcile scoped to the chosen `baseDirectory`. See [`ARCHITECTURE.md — Per-folder session scoping`](./ARCHITECTURE.md#per-folder-session-scoping).
 3. Any `registered_connections` row whose `openCodeSessionId` no longer exists is removed as stale.
-4. `seedCacheFromRest` seeds the session tree from the OpenCode REST API. When `autoRegisterSubagents` is `true`, `autoRegisterSession(info)` is called for each seeded session, ensuring all live OpenCode sessions appear as sidebar channels even before any agent calls `register_connection`. Sessions already present in `registered_connections` are not duplicated.
-5. The session-tree manager emits a full `session-tree-updated` snapshot built from live OpenCode sessions merged with remaining `registered_connections` rows.
+4. `seedCacheFromRest` seeds the session tree from the OpenCode REST API, scoped to the currently selected folder (no-op when no folder is selected). When `autoRegisterSubagents` is `true`, `autoRegisterSession(info)` is called for each seeded session, ensuring live OpenCode sessions within the selected folder appear as sidebar channels even before any agent calls `register_connection`. Sessions already present in `registered_connections` are not duplicated.
+5. The session-tree service fires a `session-tree-invalidated` signal; the renderer pulls via `window.api.getSessionTree()` and receives a flat snapshot built from live OpenCode sessions merged with remaining `registered_connections` rows.
 6. The renderer merges that snapshot into its `SessionNode` map, keyed by `openCodeSessionId ?? connectionId`.
 7. For any node that claims a `connectionId`, the renderer loads `getSessionChannelHistory(connectionId)` once and preserves that runtime state across later snapshots.
 
@@ -303,11 +303,11 @@ When a subagent is spawned via OpenCode's Task tool and calls `register_connecti
 
 A `parentSessionId` on connection A links it as a child of connection B when B's `openCodeSessionId` matches A's `parentSessionId`. Connections with no matching parent are shown at the top level.
 
-#### Session-tree manager
+#### Session-tree service
 
-The main process runs a `session-tree-manager` that polls the OpenCode API every ~2 seconds. It queries all active sessions, builds a depth-annotated tree, and merges the results with `registered_connections` from SQLite. On each poll, it emits a full `session-tree-updated` IPC snapshot to the renderer containing a flat array of `SessionTreeNode` objects (see [`IPC-API.md — Session Tree`](./IPC-API.md#session-tree) for the full type).
+The main process runs a `session-tree-service` (`desktop/src/main/session/session-tree-service.ts`) that subscribes to the OpenCode SSE stream and follows a **pull-on-invalidation model**. It holds no cache — OpenCode REST and the local SQLite DB are the sources of truth. On every relevant SSE event (via `session/sse-handlers.ts`), it fires a payload-free `session-tree-invalidated` IPC event (bursts coalesced to ~20 Hz). The renderer then calls `window.api.getSessionTree()` to pull a fresh tree: `fetchSessionTree` calls `fetchSessionsForDirectory(port, baseDirectory)` **scoped to the currently selected project folder**, builds a depth-annotated tree from the scoped results, merges them with `registered_connections` from SQLite, and returns a flat array of `SessionTreeNode` objects (see [`IPC-API.md — Session Tree`](./IPC-API.md#session-tree) for the full type). Pulls return an empty array when no folder is selected. Folder selection is driven by the renderer via the `setSelectedFolder` IPC call — see [`ARCHITECTURE.md — Per-folder session scoping`](./ARCHITECTURE.md#per-folder-session-scoping).
 
-The renderer uses `session-tree-updated` to build the parent-child sidebar hierarchy.
+The renderer uses the pulled tree to build the parent-child sidebar hierarchy.
 
 ##### Auto-registration (all sessions)
 
@@ -350,7 +350,7 @@ Agent                        MCP Server (main)              SQLite              
   │   or seedCacheFromRest)        │                            │                       │
   │                                │── autoRegisterSession() ──>│ INSERT registered_    │
   │                                │                            │  connections (auto-*) │
-  │                                │─────── session-tree-updated IPC ──────────────────>│ (placeholder tab)
+  │                                │─────── session-tree-invalidated IPC ──────────────>│ (renderer pulls via getSessionTree → placeholder tab)
   │                                │                            │                       │
   │── POST /mcp (initialize) ─────>│                            │                       │
   │                                │── createSessionChannel() ─>│ INSERT session_channels│
@@ -388,7 +388,7 @@ Agent                        MCP Server (main)              SQLite              
 
 > The top section of the diagram (auto-registration) shows what happens when `autoRegisterSubagents` is `true` and a session is detected before it connects via MCP. The session appears as a placeholder tab in the sidebar immediately. When the agent subsequently opens an MCP connection, the placeholder transitions to a real channel tab. If the agent calls `register_connection`, the placeholder is replaced with the custom channel name provided.
 
-> Current renderer behavior does not preserve a separate restored-tab state after explicit deletion. `session-channel-deleted` removes the owning node immediately; later `session-tree-updated` snapshots determine what remains visible.
+> Current renderer behavior does not preserve a separate restored-tab state after explicit deletion. `session-channel-deleted` removes the owning node immediately; later `session-tree-invalidated` pulls determine what remains visible.
 
 ---
 

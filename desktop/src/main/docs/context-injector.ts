@@ -5,10 +5,10 @@
  * 1. Discovering documentation files in a repository.
  * 2. Building a manifest of doc paths + titles.
  * 3. Injecting the manifest into an OpenCode session via noReply.
- * 4. Providing hybrid keyword + semantic search for on-demand queries.
+ * 4. Providing keyword search for on-demand queries.
  */
 
-import type { BrowserWindow } from 'electron';
+import { emitToRenderer } from '../utility/backend/renderer-emit';
 import {
   existsSync,
   readdirSync,
@@ -17,19 +17,37 @@ import {
   type Dirent,
 } from 'node:fs';
 import { join, relative } from 'node:path';
-import {
-  buildFullCache,
-  DOC_MAX_FILE_SIZE,
-  extractTitle,
-  findSemantic,
-  isReady,
-  SEMANTIC_THRESHOLD,
-  SEMANTIC_WEIGHT,
-  warmUp,
-} from './indexer';
-import { injectOpenCodeMessage } from '../opencode/injector';
+import { injectOpenCodeMessage } from '../utility/backend/injector';
+import { DiscoverDocsCache, LRUFileCache } from './context-injector-cache';
 
 // ── Configuration ───────────────────────────────────────────────────────────
+
+const DOC_MAX_FILE_SIZE = 512 * 1024;
+
+/** Hard cap on number of files scanned by `searchDocs` per call. */
+const SEARCH_DOCS_FILE_CAP = 500;
+
+/** TTL for the discoverDocs() cache (60s — see context-injector-cache.ts). */
+const DISCOVER_DOCS_TTL_MS = 60_000;
+
+/** Capacity of the LRU file-content cache used by searchDocs(). */
+const FILE_CONTENT_CACHE_CAPACITY = 200;
+
+// Module-level caches. Process-lifetime; cleared on app restart.
+const discoverDocsCache = new DiscoverDocsCache<DocFile[]>({
+  ttlMs: DISCOVER_DOCS_TTL_MS,
+});
+const fileContentCache = new LRUFileCache({
+  capacity: FILE_CONTENT_CACHE_CAPACITY,
+});
+
+/**
+ * Extract the first H1 heading from markdown content.
+ */
+function extractTitle(content: string): string | null {
+  const match = content.match(/^#\s+(.+)/m);
+  return match ? match[1].trim() : null;
+}
 
 const SKIP_DIRS = new Set([
   '.git',
@@ -182,6 +200,9 @@ export interface DocFile {
  * - .agents/skills/: SKILL.md files
  */
 export function discoverDocs(baseDirectory: string): DocFile[] {
+  const cached = discoverDocsCache.get(baseDirectory);
+  if (cached) return cached;
+
   const files: string[] = [];
 
   // docs/ directory
@@ -243,10 +264,12 @@ export function discoverDocs(baseDirectory: string): DocFile[] {
 
   // Deduplicate and convert to DocFile format
   const unique = Array.from(new Set(files));
-  return unique.map((absPath) => ({
+  const docFiles = unique.map((absPath) => ({
     absPath,
     relPath: relative(baseDirectory, absPath),
   }));
+  discoverDocsCache.set(baseDirectory, docFiles);
+  return docFiles;
 }
 
 // ── Manifest building ───────────────────────────────────────────────────────
@@ -312,7 +335,7 @@ function formatManifest(
   return lines.join('\n');
 }
 
-// ── Search (hybrid keyword + semantic) ──────────────────────────────────────
+// ── Search (keyword-only) ───────────────────────────────────────────────────
 
 export interface DocSearchResult {
   path: string;
@@ -399,7 +422,7 @@ const DIR_TOKEN_MAP = [
 ];
 
 /**
- * Hybrid keyword + semantic doc search.
+ * Keyword doc search.
  * Returns ranked results with paths, scores, and snippets.
  */
 export async function searchDocs(
@@ -414,10 +437,17 @@ export async function searchDocs(
   if (tokens.length === 0) return [];
 
   const docFiles = discoverDocs(baseDirectory);
+  if (docFiles.length > SEARCH_DOCS_FILE_CAP) {
+    console.warn(
+      `[doc-context] searchDocs: ${docFiles.length} files exceed cap of ` +
+        `${SEARCH_DOCS_FILE_CAP}; scanning only the first ${SEARCH_DOCS_FILE_CAP}`,
+    );
+  }
+  const scannable = docFiles.slice(0, SEARCH_DOCS_FILE_CAP);
   const results: DocSearchResult[] = [];
 
-  // Phase 1: Keyword scoring
-  for (const { absPath, relPath } of docFiles) {
+  // Keyword scoring
+  for (const { absPath, relPath } of scannable) {
     let fileStat: ReturnType<typeof statSync>;
     try {
       fileStat = statSync(absPath);
@@ -426,11 +456,17 @@ export async function searchDocs(
     }
     if (!fileStat.isFile() || fileStat.size > DOC_MAX_FILE_SIZE) continue;
 
-    let content: string;
-    try {
-      content = readFileSync(absPath, 'utf8');
-    } catch {
-      continue;
+    // Cache file content keyed by absPath + mtime so unchanged files are
+    // not re-read across calls within a session.
+    const cacheKey = LRUFileCache.keyFor(absPath, fileStat.mtimeMs);
+    let content = fileContentCache.get(cacheKey);
+    if (content === undefined) {
+      try {
+        content = readFileSync(absPath, 'utf8');
+      } catch {
+        continue;
+      }
+      fileContentCache.set(cacheKey, content);
     }
 
     const lowerContent = content.toLowerCase();
@@ -483,37 +519,7 @@ export async function searchDocs(
     results.push({ path: relPath, score, lineNumber, snippet });
   }
 
-  // Phase 2: Semantic augmentation (if worker is ready)
-  if (isReady()) {
-    const semanticHits = await findSemantic(
-      trimmedQuery,
-      docFiles,
-      baseDirectory,
-      limit * 2,
-    );
-    const resultMap = new Map(results.map((r) => [r.path, r]));
-
-    for (const hit of semanticHits) {
-      if (hit.score > SEMANTIC_THRESHOLD) {
-        const semanticScore = Math.round(hit.score * SEMANTIC_WEIGHT);
-        const existing = resultMap.get(hit.path);
-        if (existing) {
-          existing.score += semanticScore;
-        } else {
-          const newResult: DocSearchResult = {
-            path: hit.path,
-            score: semanticScore,
-            lineNumber: 0,
-            snippet: `(semantic match, similarity: ${hit.score.toFixed(2)})`,
-          };
-          results.push(newResult);
-          resultMap.set(hit.path, newResult);
-        }
-      }
-    }
-  }
-
-  // Phase 3: Sort and limit
+  // Sort and limit
   results.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
   return results.slice(0, limit);
 }
@@ -561,7 +567,6 @@ export function formatSearchResults(
  * 1. Discovers docs in the repo.
  * 2. Builds a manifest of paths + titles.
  * 3. Injects the manifest via noReply into the OpenCode session.
- * 4. Kicks off background semantic indexing.
  *
  * This function is intentionally fire-and-forget — it should not delay
  * the register_connection response.
@@ -571,11 +576,10 @@ export async function initDocContext(
   openCodeSessionId: string,
   openCodePort: number,
   connectionId?: string,
-  getWindow?: () => BrowserWindow | null,
 ): Promise<void> {
   const sendStatus = (status: string, type: string = 'info'): void => {
-    if (connectionId && getWindow) {
-      getWindow()?.webContents.send('session-status-update', {
+    if (connectionId) {
+      emitToRenderer('session-status-update', {
         connectionId,
         status,
         type,
@@ -623,18 +627,6 @@ export async function initDocContext(
         'success',
       );
     }
-
-    // 4. Warm up the embedding worker and start background indexing
-    warmUp();
-    // Run cache build in background without blocking
-    setImmediate(() => {
-      buildFullCache(docFiles, baseDirectory).catch((err: unknown) => {
-        console.error(
-          '[doc-context] background cache build failed:',
-          err instanceof Error ? err.message : err,
-        );
-      });
-    });
   } catch (err) {
     console.error(
       '[doc-context] initDocContext failed:',

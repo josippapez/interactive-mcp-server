@@ -19,6 +19,7 @@ import { TooltipProvider } from './components/ui/tooltip';
 import { useConnections } from './hooks/useConnections';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useSettingsSync } from './store';
+import { useProvidersBootstrap } from './store/providers';
 import { useSessionGraphSelector } from './store/session-graph';
 
 type Tab = 'prompt' | 'skills' | 'settings';
@@ -28,6 +29,11 @@ export default function App(): React.ReactElement {
   const [activeTab, setActiveTab] = useState<Tab>('prompt');
   const { settings } = useSettingsSync();
   const compactMode = settings.compactMode;
+
+  // Eagerly hydrate providers/models at app mount so the new-session form
+  // never shows an empty list on cold-start. Also subscribes to main's
+  // `providers-info:updated` push events for live refresh.
+  useProvidersBootstrap();
 
   const switchToPrompt = useCallback(() => setActiveTab('prompt'), []);
 
@@ -247,7 +253,7 @@ function TabButton({
       onClick={onClick}
       className={`relative rounded-xl px-3.5 py-1.5 text-xs font-medium transition-all ${
         active
-          ? 'bg-[var(--color-agent)]/12 text-[var(--color-agent)] shadow-sm ring-1 ring-[var(--color-agent)]/15'
+          ? 'bg-[var(--color-agent)]/12 text-[var(--color-agent)] shadow-xs-border-select'
           : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)]/70 hover:text-[var(--color-text)]'
       }`}
     >

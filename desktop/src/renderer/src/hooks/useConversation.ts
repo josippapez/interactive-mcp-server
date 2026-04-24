@@ -1,237 +1,242 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import type { ConversationMessage } from '../../../preload/index';
-import { mergeConversationMessages } from './conversation-merge';
-import { createDeltaBatcher } from './delta-batcher';
-import { createReconcileScheduler } from './useConversation-fetch';
+/**
+ * useConversation — live conversation state for a given session.
+ *
+ * Wiring:
+ *   - On mount, performs a REST seed via `window.api.sessions.fetchConversationMessages`
+ *     to populate historical messages/parts for the session. The seed
+ *     runs once per (sessionId, connectionId) pair.
+ *   - Subscribes to the main-process event stream via
+ *     `window.api.events.onConversationBatch` and dispatches each batch
+ *     to the global `conversationStore` (see `store/conversation-store.ts`).
+ *   - Returns a selector-backed view containing `{messages, parts, status}`
+ *     for the active session, memoized so identity is stable across
+ *     unrelated batch dispatches.
+ *
+ * Design notes:
+ *   - The IPC listener is attached once per mount (StrictMode-safe via
+ *     effect cleanup). All hook instances share the same store, so
+ *     multiple `useConversation` calls do not create duplicate listeners
+ *     — we use a module-level ref count.
+ *   - `status` defaults to `'idle'` when the session has no recorded
+ *     status yet.
+ *   - Messages + parts are joined into a single `messages` array with
+ *     inlined `parts` at selector time — this is the shape
+ *     `ChatHistoryView`/`mergeMessages` already expects. Join cost is
+ *     O(messages + totalParts) per render, offset by stable refs when
+ *     nothing changed for that session.
+ */
+
+import { useEffect, useRef, useState } from 'react';
+import type { ConversationMessage } from '../../../preload/api/types';
 import {
-  createCompactedHandler,
-  createMessageEventHandler,
-  createPartDeltaHandler,
-  createPartEventHandler,
-} from './useConversation-handlers';
+  applyBatch,
+  conversationStore,
+  seedMessages,
+  useConversationSelector,
+} from '../store/conversation-store';
+import type { ConversationSessionStatus } from '../store/conversation-reducer';
 import {
-  applyMessagesWithSessionCache,
-  FALLBACK_POLL_INTERVAL_MS,
-  getCachedMessages,
-  SSE_RENDER_PACE_MS,
-  shouldReconcileMessageEvent,
-} from './useConversation-pacing';
+  NULL_SNAPSHOT,
+  clearSnapshotCache,
+  selectSession,
+  snapshotsEqual,
+} from './useConversation.helpers';
+
+// ─── Singleton IPC subscription ──────────────────────────────────────────────
 
 /**
- * Upper bound on messages fetched per reconcile call. Raised from 100 so
- * long-running sessions don't lose older messages when the user navigates
- * away and back. Merge-by-id below additionally preserves anything already
- * in memory that falls outside this window.
+ * We want exactly one `onConversationBatch` listener for the whole
+ * renderer process, regardless of how many components call
+ * `useConversation`. Ref-count mounts so we attach/detach at the
+ * boundaries only.
  */
-const MESSAGE_FETCH_LIMIT = 1000;
+let ipcRefCount = 0;
+let ipcUnsubscribe: (() => void) | null = null;
 
-type UseConversationResult = {
-  /** All conversation messages for this session */
+function retainIpcListener(): void {
+  ipcRefCount += 1;
+  if (ipcRefCount !== 1) return;
+  const api = window.api;
+  if (!api?.onConversationBatch) return;
+  ipcUnsubscribe = api.onConversationBatch((batch) => {
+    applyBatch(batch);
+    // After applying the batch, check if any `session.compacted` event
+    // was in it. The reducer clears the message slice for that session
+    // (OpenCode rewrites history in place during compaction), so we
+    // must evict it from the seed dedupe cache and refetch fresh
+    // messages from the server. Without this, the channel appears
+    // empty because live `message.updated` replays alone do not
+    // restore preserved pre-compaction messages.
+    for (const ev of batch.events) {
+      if (ev.type === 'session.compacted') {
+        seededSessions.delete(ev.sessionId);
+        void seedOnce(ev.sessionId);
+      }
+    }
+  });
+}
+
+function releaseIpcListener(): void {
+  ipcRefCount -= 1;
+  if (ipcRefCount > 0) return;
+  ipcUnsubscribe?.();
+  ipcUnsubscribe = null;
+}
+
+// ─── REST seed deduplication ─────────────────────────────────────────────────
+
+const SEED_LIMIT = 50;
+
+/**
+ * Track which sessions have been seeded to avoid redundant REST fetches
+ * on remount or hook re-run. The server is the source of truth; once
+ * seeded, live events keep the store current.
+ */
+const seededSessions = new Set<string>();
+
+async function seedOnce(sessionId: string): Promise<void> {
+  if (seededSessions.has(sessionId)) return;
+
+  // Fast path: if the store already has messages for this session (e.g.,
+  // we just streamed live events before any consumer mounted, or we're
+  // re-entering the session after a rapid switch), skip the network
+  // fetch entirely. This also prevents the seed-vs-live-batch clobber
+  // race described in docs/STREAMING-REWRITE-PLAN.md.
+  const existing = conversationStore.state.messages[sessionId];
+  if (existing && existing.length > 0) {
+    seededSessions.add(sessionId);
+    return;
+  }
+
+  seededSessions.add(sessionId);
+  try {
+    const api = window.api;
+    if (!api?.fetchConversationMessages) return;
+    const messages = await api.fetchConversationMessages(sessionId, {
+      limit: SEED_LIMIT,
+    });
+    if (messages.length > 0) seedMessages(sessionId, messages);
+  } catch {
+    // Best-effort seed — if it fails the live stream will still fill in
+    // whatever the user is actively doing.
+    seededSessions.delete(sessionId); // allow retry on next mount
+  }
+}
+
+// ─── Selector (join messages + parts) ────────────────────────────────────────
+
+const EMPTY_MESSAGES: ConversationMessage[] = [];
+
+// ─── Hook ────────────────────────────────────────────────────────────────────
+
+export type UseConversationResult = {
   messages: ConversationMessage[];
-  /** Whether initial fetch is in progress */
-  isLoading: boolean;
-  /** Error message if fetch failed */
-  error: string | null;
-  /** Manually refresh messages */
-  refresh: () => Promise<void>;
-  /** Whether the conversation provider is available */
-  isAvailable: boolean;
+  status: ConversationSessionStatus;
+  isStreaming: boolean;
+  isSeeding: boolean;
 };
 
+const EMPTY_RESULT: UseConversationResult = {
+  messages: EMPTY_MESSAGES,
+  status: 'idle',
+  isStreaming: false,
+  isSeeding: false,
+};
+
+/**
+ * Subscribe to live conversation state for a single session.
+ *
+ * Pass `null` / `undefined` when no session is active — the hook becomes
+ * a no-op and returns `EMPTY_RESULT`. This lets callers conditionally
+ * render the chat view without an `if` around the hook call.
+ */
 export function useConversation(
-  providerSessionId: string | null,
-  enabled = true,
+  sessionId: string | null | undefined,
 ): UseConversationResult {
-  const [messages, setMessages] = useState<ConversationMessage[]>(() => {
-    if (providerSessionId && enabled) {
-      return getCachedMessages(providerSessionId);
-    }
-    return [];
+  const retainedRef = useRef(false);
+  const [isSeeding, setIsSeeding] = useState<boolean>(() => {
+    if (!sessionId) return false;
+    // Don't show seeding state if the store already has data OR we've
+    // already seeded this session previously (avoids a flash of skeleton
+    // when switching back to a session mid-session).
+    if (seededSessions.has(sessionId)) return false;
+    const existing = conversationStore.state.messages[sessionId];
+    return !(existing && existing.length > 0);
   });
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isAvailable, setIsAvailable] = useState(false);
 
-  const setMessagesAndCache = useCallback(
-    (
-      update:
-        | ConversationMessage[]
-        | ((prev: ConversationMessage[]) => ConversationMessage[]),
-    ) => {
-      setMessages((prev) =>
-        applyMessagesWithSessionCache(prev, update, providerSessionId),
-      );
-    },
-    [providerSessionId],
-  );
-
-  const currentSessionRef = useRef<string | null>(null);
-  const lastSseEventRef = useRef<number>(0);
-  const lastDeltaAtRef = useRef<number>(0);
-  const reconcileTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const lastMessageEventRef = useRef<{
-    key: string;
-    timestamp: number;
-  } | null>(null);
-
-  const scheduleReconcileFetchRef = useRef<
-    ((delayMs: number, flush: () => void) => void) | null
-  >(null);
-
-  const clearReconcileTimer = useCallback(() => {
-    if (!reconcileTimerRef.current) return;
-    clearTimeout(reconcileTimerRef.current);
-    reconcileTimerRef.current = null;
-  }, []);
-
-  const fetchMessages = useCallback(async () => {
-    if (!providerSessionId || !enabled) {
-      setMessagesAndCache([]);
+  useEffect(() => {
+    if (!sessionId) {
+      setIsSeeding(false);
       return;
     }
 
-    currentSessionRef.current = providerSessionId;
+    retainIpcListener();
+    retainedRef.current = true;
 
-    const cached = getCachedMessages(providerSessionId);
-    if (cached && cached.length > 0) {
-      setMessagesAndCache(cached);
-    }
+    // Only flip to seeding if we truly need to fetch. Otherwise skip
+    // straight to ready so the consumer doesn't render a skeleton over
+    // existing data.
+    const existing = conversationStore.state.messages[sessionId];
+    const needsFetch =
+      !seededSessions.has(sessionId) && !(existing && existing.length > 0);
+    setIsSeeding(needsFetch);
 
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const available = await window.api.isConversationAvailable();
-      setIsAvailable(available);
-
-      if (!available) {
-        setMessagesAndCache([]);
-        setIsLoading(false);
-        return;
-      }
-
-      const fetched = await window.api.fetchConversationMessages(
-        providerSessionId,
-        MESSAGE_FETCH_LIMIT,
-      );
-
-      // Only update if this is still the current session
-      if (currentSessionRef.current === providerSessionId) {
-        setMessagesAndCache((prev) => mergeConversationMessages(prev, fetched));
-      }
-    } catch (err) {
-      if (currentSessionRef.current === providerSessionId) {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      if (currentSessionRef.current === providerSessionId) {
-        setIsLoading(false);
-      }
-    }
-  }, [providerSessionId, enabled, setMessagesAndCache]);
-
-  const scheduleReconcileFetch = useCallback(
-    createReconcileScheduler(
-      clearReconcileTimer,
-      (timer) => {
-        reconcileTimerRef.current = timer;
-      },
-      fetchMessages,
-    ),
-    [clearReconcileTimer, fetchMessages],
-  );
-
-  scheduleReconcileFetchRef.current = scheduleReconcileFetch;
-
-  useEffect(() => {
-    if (providerSessionId && enabled) {
-      const cached = getCachedMessages(providerSessionId);
-      if (cached.length > 0) {
-        setMessagesAndCache(cached);
-      }
-    }
-    void fetchMessages();
-  }, [fetchMessages, providerSessionId, enabled, setMessagesAndCache]);
-
-  useEffect(() => {
-    if (!providerSessionId || !enabled) return;
-
-    const batcher = createDeltaBatcher(setMessagesAndCache, {
-      paceMs: SSE_RENDER_PACE_MS,
+    void seedOnce(sessionId).finally(() => {
+      setIsSeeding(false);
     });
-
-    const handleMessageEvent = createMessageEventHandler({
-      providerSessionId,
-      lastSseEventRef,
-      lastDeltaAtRef,
-      lastMessageEventRef,
-      clearReconcileTimer,
-      batcher,
-      fetchMessages,
-      setMessagesAndCache,
-      scheduleReconcileFetch: (delayMs, flush) =>
-        scheduleReconcileFetchRef.current?.(delayMs, flush),
-    });
-    const handlePartEvent = createPartEventHandler({
-      providerSessionId,
-      lastSseEventRef,
-      batcher,
-      setMessagesAndCache,
-    });
-    const handlePartDelta = createPartDeltaHandler({
-      providerSessionId,
-      lastSseEventRef,
-      lastDeltaAtRef,
-      batcher,
-    });
-    const handleCompacted = createCompactedHandler({
-      providerSessionId,
-      lastSseEventRef,
-      clearReconcileTimer,
-      batcher,
-      fetchMessages,
-    });
-
-    const cleanupMessageEvent =
-      window.api.onConversationMessageEvent(handleMessageEvent);
-    const cleanupPartEvent =
-      window.api.onConversationPartEvent(handlePartEvent);
-    const cleanupPartDelta =
-      window.api.onConversationPartDelta(handlePartDelta);
-    const cleanupCompacted = window.api.onSessionCompacted(handleCompacted);
 
     return () => {
-      clearReconcileTimer();
-      batcher.dispose();
-      cleanupMessageEvent();
-      cleanupPartEvent();
-      cleanupPartDelta();
-      cleanupCompacted();
+      if (!retainedRef.current) return;
+      retainedRef.current = false;
+      releaseIpcListener();
     };
-  }, [providerSessionId, enabled, fetchMessages, setMessagesAndCache]);
+  }, [sessionId]);
 
-  useEffect(() => {
-    if (!providerSessionId || !enabled || !isAvailable) return;
+  const snapshot = useConversationSelector(
+    (state) => (sessionId ? selectSession(state, sessionId) : NULL_SNAPSHOT),
+    snapshotsEqual,
+  );
 
-    const interval = setInterval(() => {
-      const timeSinceLastSse = Date.now() - lastSseEventRef.current;
-      if (timeSinceLastSse > FALLBACK_POLL_INTERVAL_MS) {
-        void fetchMessages();
-      }
-    }, FALLBACK_POLL_INTERVAL_MS);
-
-    return () => clearInterval(interval);
-  }, [providerSessionId, enabled, isAvailable, fetchMessages]);
+  if (!sessionId) return EMPTY_RESULT;
 
   return {
-    messages,
-    isLoading,
-    error,
-    refresh: fetchMessages,
-    isAvailable,
+    messages: snapshot.messages,
+    status: snapshot.status,
+    isStreaming: snapshot.status === 'streaming',
+    isSeeding: isSeeding && snapshot.messages.length === 0,
   };
 }
 
-export const __useConversationTestUtils = {
-  shouldReconcileMessageEvent,
-};
+/**
+ * Force-reset the seed cache, e.g., on logout or connection change so
+ * the next `useConversation(id)` refetches from REST.
+ */
+export function resetConversationSeedCache(): void {
+  seededSessions.clear();
+  conversationStore.setState((prev) => {
+    // Preserve lastSeq (don't re-replay duplicates from main) but drop
+    // cached messages/parts/status and auxiliary slices.
+    if (
+      Object.keys(prev.messages).length === 0 &&
+      Object.keys(prev.parts).length === 0 &&
+      Object.keys(prev.status).length === 0 &&
+      Object.keys(prev.todos).length === 0 &&
+      Object.keys(prev.contextUsage).length === 0 &&
+      prev.vcsBranch === null &&
+      prev.lastFileEdit === null
+    ) {
+      return prev;
+    }
+    return {
+      messages: {},
+      parts: {},
+      status: {},
+      todos: {},
+      contextUsage: {},
+      vcsBranch: null,
+      lastFileEdit: null,
+      lastSeq: prev.lastSeq,
+    };
+  });
+  clearSnapshotCache();
+}

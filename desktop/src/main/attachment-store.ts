@@ -12,7 +12,7 @@
  */
 
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { basename, join } from 'path';
 import {
   mkdirSync,
   writeFileSync,
@@ -78,6 +78,30 @@ export function saveAttachment(
     const filename = `${randomUUID()}.${ext}`;
     const filePath = join(dir, filename);
     writeFileSync(filePath, Buffer.from(base64Data, 'base64'));
+    return filename;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Save attachment content to disk under its original filename (prefixed with a
+ * UUID for uniqueness). Supports either utf-8 text or base64-encoded content.
+ */
+export function saveNamedAttachment(
+  sessionKey: string,
+  originalName: string,
+  data: string,
+  encoding: BufferEncoding = 'utf8',
+): string | null {
+  try {
+    const dir = ensureSessionDir(sessionKey);
+    if (!dir) return null;
+
+    const safeName = basename(originalName || 'attachment.bin');
+    const filename = `${randomUUID()}-${safeName}`;
+    const filePath = join(dir, filename);
+    writeFileSync(filePath, Buffer.from(data, encoding));
     return filename;
   } catch {
     return null;

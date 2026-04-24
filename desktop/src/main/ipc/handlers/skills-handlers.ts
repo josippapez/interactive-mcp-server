@@ -16,13 +16,15 @@ import {
   deleteFolder,
   setEntryFolder,
   setEntryScope,
+  setEntryInjectionMode,
   listSessionScopedEntryNames,
   setSessionScopedEntries,
   listSessionMutedEntryNames,
   setSessionMutedEntries,
+  type InstructionDeliveryMode,
   type RegisteredConnection,
   type SkillScope,
-} from '../../database';
+} from '../../utility/db-client';
 import {
   BUILTIN_TEMPLATES,
   getBuiltinTemplateNames,
@@ -30,13 +32,13 @@ import {
 import {
   broadcastSkillsChanged,
   broadcastSessionScopeChanged,
-} from '../../tools/skills-broadcast';
+} from '../../utility/backend/tools/skills-broadcast';
 import { IpcHandlerDeps } from './types';
 
 export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'upsert-skill-or-instruction',
-    (
+    async (
       _event,
       data: {
         name: string;
@@ -47,10 +49,11 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
         tags?: string[] | null;
         folderId?: number | null;
         scope?: SkillScope;
+        injectionMode?: InstructionDeliveryMode;
       },
     ) => {
-      const existing = getSkillOrInstructionByName(data.name);
-      const result = upsertSkillOrInstruction(data);
+      const existing = await getSkillOrInstructionByName(data.name);
+      const result = await upsertSkillOrInstruction(data);
       if (result) {
         deps.getMainWindow()?.webContents.send('skills-updated');
         broadcastSkillsChanged(
@@ -58,6 +61,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
           data.type,
           data.name,
           deps.getSettings().openCodePort,
+          result.type === 'instruction' ? result.deliveryMode : undefined,
         );
       }
       return result;
@@ -66,7 +70,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'list-skills-and-instructions',
-    (
+    async (
       _event,
       params?: {
         filterType?: 'skill' | 'instruction';
@@ -80,31 +84,38 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
     },
   );
 
-  ipcMain.handle('get-skill-or-instruction', (_event, name: string) => {
+  ipcMain.handle('get-skill-or-instruction', async (_event, name: string) => {
     return getSkillOrInstructionByName(name);
   });
 
-  ipcMain.handle('delete-skill-or-instruction', (_event, name: string) => {
-    const existing = getSkillOrInstructionByName(name);
-    const deleted = deleteSkillOrInstruction(name);
-    if (deleted) {
-      deps.getMainWindow()?.webContents.send('skills-updated');
-      if (existing) {
-        broadcastSkillsChanged(
-          'deleted',
-          existing.type,
-          existing.name,
-          deps.getSettings().openCodePort,
-        );
+  ipcMain.handle(
+    'delete-skill-or-instruction',
+    async (_event, name: string) => {
+      const existing = await getSkillOrInstructionByName(name);
+      const deleted = await deleteSkillOrInstruction(name);
+      if (deleted) {
+        deps.getMainWindow()?.webContents.send('skills-updated');
+        if (existing) {
+          broadcastSkillsChanged(
+            'deleted',
+            existing.type,
+            existing.name,
+            deps.getSettings().openCodePort,
+            existing.type === 'instruction' ? existing.deliveryMode : undefined,
+          );
+        }
       }
-    }
-    return deleted;
-  });
+      return deleted;
+    },
+  );
 
   ipcMain.handle(
     'toggle-skill-or-instruction-enabled',
-    (_event, data: { name: string; enabled: boolean }) => {
-      const result = toggleSkillOrInstructionEnabled(data.name, data.enabled);
+    async (_event, data: { name: string; enabled: boolean }) => {
+      const result = await toggleSkillOrInstructionEnabled(
+        data.name,
+        data.enabled,
+      );
       if (result) {
         deps.getMainWindow()?.webContents.send('skills-updated');
         broadcastSkillsChanged(
@@ -112,24 +123,28 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
           result.type,
           result.name,
           deps.getSettings().openCodePort,
+          result.type === 'instruction' ? result.deliveryMode : undefined,
         );
       }
       return result;
     },
   );
 
-  ipcMain.handle('duplicate-skill-or-instruction', (_event, name: string) => {
-    const result = duplicateSkillOrInstruction(name);
-    if (result) {
-      deps.getMainWindow()?.webContents.send('skills-updated');
-    }
-    return result;
-  });
+  ipcMain.handle(
+    'duplicate-skill-or-instruction',
+    async (_event, name: string) => {
+      const result = await duplicateSkillOrInstruction(name);
+      if (result) {
+        deps.getMainWindow()?.webContents.send('skills-updated');
+      }
+      return result;
+    },
+  );
 
   ipcMain.handle(
     'reset-builtin-templates',
-    (): { resetCount: number; templateNames: string[] } => {
-      const resetCount = resetBuiltinTemplates(BUILTIN_TEMPLATES);
+    async (): Promise<{ resetCount: number; templateNames: string[] }> => {
+      const resetCount = await resetBuiltinTemplates(BUILTIN_TEMPLATES);
       if (resetCount > 0) {
         deps.getMainWindow()?.webContents.send('skills-updated');
       }
@@ -142,9 +157,9 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'get-missing-builtin-count',
-    (): { missingCount: number; totalBuiltins: number } => {
+    async (): Promise<{ missingCount: number; totalBuiltins: number }> => {
       const templateNames = getBuiltinTemplateNames();
-      const missingCount = getMissingBuiltinCount(templateNames);
+      const missingCount = await getMissingBuiltinCount(templateNames);
       return {
         missingCount,
         totalBuiltins: templateNames.length,
@@ -165,7 +180,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
       });
       if (result.canceled || !result.filePath) return { saved: false };
 
-      const entries = listSkillsAndInstructions();
+      const entries = await listSkillsAndInstructions();
       const skills = entries.filter((e) => e.type === 'skill');
       const instructions = entries.filter((e) => e.type === 'instruction');
 
@@ -216,7 +231,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
       const win = deps.getMainWindow();
       if (!win) return { saved: false };
 
-      const entry = getSkillOrInstructionByName(name);
+      const entry = await getSkillOrInstructionByName(name);
       if (!entry) return { saved: false };
 
       const result = await dialog.showSaveDialog(win, {
@@ -233,12 +248,12 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   // ─── Folders ──────────────────────────────────────────────────────────────
 
-  ipcMain.handle('list-folders', () => {
+  ipcMain.handle('list-folders', async () => {
     return listFolders();
   });
 
-  ipcMain.handle('create-folder', (_event, name: string) => {
-    const folder = createFolder(name);
+  ipcMain.handle('create-folder', async (_event, name: string) => {
+    const folder = await createFolder(name);
     if (folder) {
       deps.getMainWindow()?.webContents.send('skills-updated');
     }
@@ -247,8 +262,8 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'rename-folder',
-    (_event, data: { id: number; name: string }) => {
-      const folder = renameFolder(data.id, data.name);
+    async (_event, data: { id: number; name: string }) => {
+      const folder = await renameFolder(data.id, data.name);
       if (folder) {
         deps.getMainWindow()?.webContents.send('skills-updated');
       }
@@ -256,8 +271,8 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
     },
   );
 
-  ipcMain.handle('delete-folder', (_event, id: number) => {
-    const deleted = deleteFolder(id);
+  ipcMain.handle('delete-folder', async (_event, id: number) => {
+    const deleted = await deleteFolder(id);
     if (deleted) {
       deps.getMainWindow()?.webContents.send('skills-updated');
     }
@@ -268,8 +283,8 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'set-entry-folder',
-    (_event, data: { name: string; folderId: number | null }) => {
-      const result = setEntryFolder(data.name, data.folderId);
+    async (_event, data: { name: string; folderId: number | null }) => {
+      const result = await setEntryFolder(data.name, data.folderId);
       if (result) {
         deps.getMainWindow()?.webContents.send('skills-updated');
       }
@@ -279,19 +294,41 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'set-entry-scope',
-    (_event, data: { name: string; scope: SkillScope }) => {
-      const result = setEntryScope(data.name, data.scope);
+    async (_event, data: { name: string; scope: SkillScope }) => {
+      const result = await setEntryScope(data.name, data.scope);
       if (result) {
         deps.getMainWindow()?.webContents.send('skills-updated');
-        const entry = getSkillOrInstructionByName(data.name);
+        const entry = await getSkillOrInstructionByName(data.name);
         if (entry) {
           broadcastSkillsChanged(
             'updated',
             entry.type,
             entry.name,
             deps.getSettings().openCodePort,
+            entry.type === 'instruction' ? entry.deliveryMode : undefined,
           );
         }
+      }
+      return result;
+    },
+  );
+
+  ipcMain.handle(
+    'set-entry-injection-mode',
+    async (
+      _event,
+      data: { name: string; injectionMode: InstructionDeliveryMode },
+    ) => {
+      const result = await setEntryInjectionMode(data.name, data.injectionMode);
+      if (result) {
+        deps.getMainWindow()?.webContents.send('skills-updated');
+        broadcastSkillsChanged(
+          'updated',
+          result.type,
+          result.name,
+          deps.getSettings().openCodePort,
+          result.deliveryMode,
+        );
       }
       return result;
     },
@@ -301,10 +338,10 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'list-session-scoped-entries',
-    (
+    async (
       _event,
       data: { providerType: string; providerSessionId: string },
-    ): string[] => {
+    ): Promise<string[]> => {
       return listSessionScopedEntryNames(
         data.providerType as RegisteredConnection['providerType'],
         data.providerSessionId,
@@ -314,21 +351,21 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'set-session-scoped-entries',
-    (
+    async (
       _event,
       data: {
         providerType: string;
         providerSessionId: string;
         entryNames: string[];
       },
-    ): boolean => {
+    ): Promise<boolean> => {
       const providerType =
         data.providerType as RegisteredConnection['providerType'];
       const prev = new Set(
-        listSessionScopedEntryNames(providerType, data.providerSessionId),
+        await listSessionScopedEntryNames(providerType, data.providerSessionId),
       );
       const next = new Set(data.entryNames);
-      setSessionScopedEntries(
+      await setSessionScopedEntries(
         providerType,
         data.providerSessionId,
         data.entryNames,
@@ -338,12 +375,18 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
       const addedNames = [...next].filter((n) => !prev.has(n));
       const removedNames = [...prev].filter((n) => !next.has(n));
       if (addedNames.length > 0 || removedNames.length > 0) {
-        const added = addedNames
-          .map((name) => getSkillOrInstructionByName(name))
+        const addedEntries = await Promise.all(
+          addedNames.map((name) => getSkillOrInstructionByName(name as string)),
+        );
+        const added = addedEntries
           .filter((e): e is NonNullable<typeof e> => e != null)
           .map((e) => ({ name: e.name, type: e.type }));
-        const removed = removedNames
-          .map((name) => getSkillOrInstructionByName(name))
+        const removedEntries = await Promise.all(
+          removedNames.map((name) =>
+            getSkillOrInstructionByName(name as string),
+          ),
+        );
+        const removed = removedEntries
           .filter((e): e is NonNullable<typeof e> => e != null)
           .map((e) => ({ name: e.name, type: e.type }));
         broadcastSessionScopeChanged(
@@ -361,10 +404,10 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'list-session-muted-entries',
-    (
+    async (
       _event,
       data: { providerType: string; providerSessionId: string },
-    ): string[] => {
+    ): Promise<string[]> => {
       return listSessionMutedEntryNames(
         data.providerType as RegisteredConnection['providerType'],
         data.providerSessionId,
@@ -374,17 +417,17 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'set-session-muted-entries',
-    (
+    async (
       _event,
       data: {
         providerType: string;
         providerSessionId: string;
         entryNames: string[];
       },
-    ): boolean => {
+    ): Promise<boolean> => {
       const providerType =
         data.providerType as RegisteredConnection['providerType'];
-      setSessionMutedEntries(
+      await setSessionMutedEntries(
         providerType,
         data.providerSessionId,
         data.entryNames,

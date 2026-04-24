@@ -1,13 +1,18 @@
 import React, { memo, useEffect, useMemo, useState } from 'react';
-import { createElement } from 'react-syntax-highlighter';
-import {
-  SyntaxHighlighter,
-  oneDark,
-  oneLight,
-  PassthroughTag,
-} from '@/lib/syntax-highlighter';
 import type { ToolCallInfo } from '../../../types/unified-message';
-import { useTheme } from '../../../ThemeContext';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../../ui/collapsible';
+import {
+  DIFF_MAX_LINES,
+  SideBySideDiffGrid,
+  inferLanguage,
+  pairGenericDiffLines,
+} from '../DiffView';
+import { DiffChanges, ToolDurationBadge, splitPath } from './ToolCallShared';
+import { pruneDiffWrapState, toggleDiffWrapState } from './diff-wrap-state';
 
 type PatchAction = 'add' | 'update' | 'delete' | 'move';
 type PatchLineType = 'context' | 'addition' | 'removal';
@@ -18,10 +23,6 @@ type PatchLine = {
   oldLineNumber: number | null;
   newLineNumber: number | null;
 };
-
-// react-syntax-highlighter passes each code line to the `renderer` prop as
-// a hast-like node. We treat it opaquely and let `createElement` render it.
-type HastRow = Parameters<typeof createElement>[0]['node'];
 
 export type ApplyPatchFileDiff = {
   id: string;
@@ -41,65 +42,10 @@ type BuildFileDraft = {
   rawLines: string[];
 };
 
-const ACTION_STYLES: Record<PatchAction, string> = {
-  add: 'text-[var(--color-success)] bg-[var(--color-success)]/10 border-[var(--color-success)]/25',
-  update:
-    'text-[var(--color-tool)] bg-[var(--color-tool)]/10 border-[var(--color-tool)]/25',
-  delete:
-    'text-[var(--color-error)] bg-[var(--color-error)]/10 border-[var(--color-error)]/25',
-  move: 'text-[var(--color-agent)] bg-[var(--color-agent)]/10 border-[var(--color-agent)]/25',
-};
-
-const ACTION_LABELS: Record<PatchAction, string> = {
-  add: 'Created',
-  update: 'Modified',
-  delete: 'Deleted',
-  move: 'Moved',
-};
-
-const SIDE_BY_SIDE_MIN_WIDTH = 760;
-
-function getLanguageFromPath(filePath: string): string {
-  const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
-  const langMap: Record<string, string> = {
-    ts: 'typescript',
-    tsx: 'tsx',
-    js: 'javascript',
-    jsx: 'jsx',
-    py: 'python',
-    rb: 'ruby',
-    rs: 'rust',
-    go: 'go',
-    java: 'java',
-    kt: 'kotlin',
-    swift: 'swift',
-    c: 'c',
-    cpp: 'cpp',
-    h: 'c',
-    hpp: 'cpp',
-    cs: 'csharp',
-    php: 'php',
-    html: 'html',
-    css: 'css',
-    scss: 'scss',
-    less: 'less',
-    json: 'json',
-    yaml: 'yaml',
-    yml: 'yaml',
-    xml: 'xml',
-    md: 'markdown',
-    sql: 'sql',
-    sh: 'bash',
-    bash: 'bash',
-    zsh: 'bash',
-    dockerfile: 'docker',
-    makefile: 'makefile',
-    toml: 'toml',
-    ini: 'ini',
-    env: 'bash',
-  };
-  return langMap[ext] || 'text';
-}
+// The assembled patch lines are rendered as a side-by-side diff via
+// `SideBySideDiffGrid`, which tokenizes each side with Shiki in the
+// inferred source language (TS, JS, Python, etc.) — not the generic
+// `diff` grammar — so keywords, strings, and comments get real colors.
 
 function getStringField(
   input: Record<string, unknown> | undefined,
@@ -307,378 +253,149 @@ export function parseApplyPatchFileDiffs(
   return files;
 }
 
-function groupLinesForSideBySide(
-  lines: PatchLine[],
-): Array<{ left: PatchLine | null; right: PatchLine | null }> {
-  const grouped: Array<{ left: PatchLine | null; right: PatchLine | null }> =
-    [];
+// Rebuild a unified-diff-style source string that shiki's `diff` grammar
+// understands. We emit `+`, `-`, or ` ` as the leading character for each
+// line so shiki colors additions/removals/context appropriately.
+// NOTE: Deprecated — retained only in case a future consumer needs a
+// flat unified-diff string. The active renderer uses `SideBySideDiffGrid`.
 
-  let i = 0;
-  while (i < lines.length) {
-    const line = lines[i];
-
-    if (line.type === 'context') {
-      grouped.push({ left: line, right: line });
-      i += 1;
-      continue;
-    }
-
-    if (line.type === 'removal') {
-      const removals: PatchLine[] = [];
-      while (i < lines.length && lines[i].type === 'removal') {
-        removals.push(lines[i]);
-        i += 1;
-      }
-
-      const additions: PatchLine[] = [];
-      while (i < lines.length && lines[i].type === 'addition') {
-        additions.push(lines[i]);
-        i += 1;
-      }
-
-      const maxCount = Math.max(removals.length, additions.length);
-      for (let j = 0; j < maxCount; j += 1) {
-        grouped.push({
-          left: removals[j] ?? null,
-          right: additions[j] ?? null,
-        });
-      }
-      continue;
-    }
-
-    grouped.push({ left: null, right: line });
-    i += 1;
-  }
-
-  return grouped;
-}
-
-const DecoratedPatchRow = memo(function DecoratedPatchRow({
-  line,
-  highlightedContent,
-}: {
-  line: PatchLine;
-  highlightedContent: React.ReactNode;
-}): React.ReactElement {
-  const backgroundClass =
-    line.type === 'addition'
-      ? 'bg-[var(--color-success)]/10'
-      : line.type === 'removal'
-        ? 'bg-[var(--color-error)]/10'
-        : '';
-
-  const sign =
-    line.type === 'addition' ? '+' : line.type === 'removal' ? '-' : ' ';
-
-  const signColorClass =
-    line.type === 'addition'
-      ? 'text-[var(--color-success)]'
-      : line.type === 'removal'
-        ? 'text-[var(--color-error)]'
-        : 'text-[var(--color-text-faint)]';
-
-  const lineNumberClass =
-    line.type === 'addition'
-      ? 'text-[var(--color-success)]/75'
-      : line.type === 'removal'
-        ? 'text-[var(--color-error)]/75'
-        : 'text-[var(--color-text-faint)]';
-
-  return (
-    <div
-      className={`grid grid-cols-[52px_52px_18px_minmax(0,1fr)] text-[10px] font-mono leading-snug ${backgroundClass}`}
-    >
-      <span className={`select-none px-1 text-right ${lineNumberClass}`}>
-        {line.oldLineNumber ?? ''}
-      </span>
-      <span className={`select-none px-1 text-right ${lineNumberClass}`}>
-        {line.newLineNumber ?? ''}
-      </span>
-      <span className={`select-none text-center ${signColorClass}`}>
-        {sign}
-      </span>
-      <span
-        className="min-w-0 px-1.5 whitespace-pre-wrap break-words"
-        style={{ fontSize: '10px', lineHeight: 1.4 }}
-      >
-        {highlightedContent}
-      </span>
-    </div>
-  );
-});
-
-const DecoratedSideBySidePatchRow = memo(function DecoratedSideBySidePatchRow({
-  left,
-  right,
-  leftHighlighted,
-  rightHighlighted,
-}: {
-  left: PatchLine | null;
-  right: PatchLine | null;
-  leftHighlighted: React.ReactNode | null;
-  rightHighlighted: React.ReactNode | null;
-}): React.ReactElement {
-  const leftBg = left?.type === 'removal' ? 'bg-[var(--color-error)]/10' : '';
-  const rightBg =
-    right?.type === 'addition' ? 'bg-[var(--color-success)]/10' : '';
-
-  return (
-    <div className="grid grid-cols-2 text-[10px] font-mono leading-snug min-w-[860px]">
-      <div
-        className={`grid grid-cols-[48px_18px_minmax(0,1fr)] border-r border-[var(--color-border)]/60 ${leftBg}`}
-      >
-        <span className="px-1 text-right text-[var(--color-text-faint)] select-none">
-          {left?.oldLineNumber ?? ''}
-        </span>
-        <span
-          className={`text-center select-none ${left?.type === 'removal' ? 'text-[var(--color-error)]' : 'text-[var(--color-text-faint)]'}`}
-        >
-          {left?.type === 'removal' ? '-' : ' '}
-        </span>
-        {left ? (
-          <span
-            className="min-w-0 px-1.5 whitespace-pre-wrap break-words"
-            style={{ fontSize: '10px', lineHeight: 1.4 }}
-          >
-            {leftHighlighted}
-          </span>
-        ) : (
-          <span className="px-1.5 text-[var(--color-text-faint)]"> </span>
-        )}
-      </div>
-
-      <div className={`grid grid-cols-[48px_18px_minmax(0,1fr)] ${rightBg}`}>
-        <span className="px-1 text-right text-[var(--color-text-faint)] select-none">
-          {right?.newLineNumber ?? ''}
-        </span>
-        <span
-          className={`text-center select-none ${right?.type === 'addition' ? 'text-[var(--color-success)]' : 'text-[var(--color-text-faint)]'}`}
-        >
-          {right?.type === 'addition' ? '+' : ' '}
-        </span>
-        {right ? (
-          <span
-            className="min-w-0 px-1.5 whitespace-pre-wrap break-words"
-            style={{ fontSize: '10px', lineHeight: 1.4 }}
-          >
-            {rightHighlighted}
-          </span>
-        ) : (
-          <span className="px-1.5 text-[var(--color-text-faint)]"> </span>
-        )}
-      </div>
-    </div>
-  );
-});
-
+/**
+ * Render the side-by-side diff for a single file within an apply_patch
+ * result. Tokenized per-side in the file's inferred source language so
+ * keywords/strings/comments get real syntax colors instead of the
+ * generic `diff` grammar (which only tints +/- characters).
+ */
 const FileDiffBody = memo(function FileDiffBody({
   file,
+  wrapLines,
+  onToggleWrap,
 }: {
   file: ApplyPatchFileDiff;
+  wrapLines: boolean;
+  onToggleWrap: () => void;
 }): React.ReactElement {
-  const { theme } = useTheme();
-  const isDark = theme === 'dark';
-  const language = useMemo(
-    () => getLanguageFromPath(file.filePath),
-    [file.filePath],
-  );
-  const sideBySideLines = useMemo(
-    () => groupLinesForSideBySide(file.lines),
+  const extension = file.filePath.split('.').pop() ?? '';
+  const language = useMemo(() => inferLanguage(file.filePath), [file.filePath]);
+  const paired = useMemo(
+    () => pairGenericDiffLines(file.lines, DIFF_MAX_LINES),
     [file.lines],
   );
-  const [useSideBySide, setUseSideBySide] = useState(false);
-
-  const containerRef = React.useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-
-    const observer = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setUseSideBySide(entry.contentRect.width >= SIDE_BY_SIDE_MIN_WIDTH);
-      }
-    });
-
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, []);
-
-  // Concatenate all line contents so Prism tokenizes the file in one pass via
-  // the SyntaxHighlighter's custom `renderer` prop. Empty lines are replaced
-  // with a single space to prevent the tokenizer from collapsing them.
-  const source = useMemo(
-    () =>
-      file.lines
-        .map((line) => (line.content.length > 0 ? line.content : ' '))
-        .join('\n'),
-    [file.lines],
-  );
-
-  // Populated by the <SyntaxHighlighter renderer={...}> below. We reference
-  // the same Map from both unified and side-by-side renderers so the single
-  // tokenization pass serves whichever layout is active.
-  const highlightedByLine = useMemo(
-    () => new Map<PatchLine, React.ReactNode>(),
-    // Rebuild map when line identities change. file.lines is stable per
-    // parsed patch (memoized upstream), so the dependency is cheap.
-    [file.lines],
-  );
-
-  const style = isDark ? oneDark : oneLight;
 
   return (
-    <div
-      ref={containerRef}
-      className="border-t border-[var(--color-border)]/60 bg-[var(--color-background)]/70"
-    >
-      <div className="flex items-center justify-between px-2 py-0.5 text-[9px] uppercase tracking-wide text-[var(--color-text-faint)] bg-[var(--color-surface)]/40 border-b border-[var(--color-border)]/40">
-        <span>{useSideBySide ? 'Side-by-side diff' : 'Unified diff'}</span>
-        <span className="font-mono">{language}</span>
-      </div>
-
-      <div className="max-h-64 overflow-auto" data-scrollable="true">
-        {file.lines.length > 0 ? (
-          <SyntaxHighlighter
-            language={language}
-            style={style}
-            wrapLines
-            PreTag={PassthroughTag}
-            CodeTag={PassthroughTag}
-            customStyle={{ margin: 0, padding: 0, background: 'transparent' }}
-            renderer={({
-              rows,
-              stylesheet,
-              useInlineStyles,
-            }: {
-              rows: HastRow[];
-              stylesheet: Record<string, React.CSSProperties>;
-              useInlineStyles: boolean;
-            }) => {
-              // Pair each tokenized row with its PatchLine object by array
-              // index so both unified and side-by-side renderers can look up
-              // pre-highlighted content without re-tokenizing.
-              highlightedByLine.clear();
-              rows.forEach((row, idx) => {
-                const line = file.lines[idx];
-                if (!line) return;
-                highlightedByLine.set(
-                  line,
-                  createElement({
-                    node: row,
-                    stylesheet,
-                    useInlineStyles,
-                    key: `code-${idx}`,
-                  }),
-                );
-              });
-
-              if (useSideBySide) {
-                return (
-                  <div>
-                    {sideBySideLines.map((pair, idx) => (
-                      <DecoratedSideBySidePatchRow
-                        key={`${file.id}-sbs-${idx}`}
-                        left={pair.left}
-                        right={pair.right}
-                        leftHighlighted={
-                          pair.left
-                            ? (highlightedByLine.get(pair.left) ?? null)
-                            : null
-                        }
-                        rightHighlighted={
-                          pair.right
-                            ? (highlightedByLine.get(pair.right) ?? null)
-                            : null
-                        }
-                      />
-                    ))}
-                  </div>
-                );
-              }
-
-              return (
-                <div>
-                  <div className="grid grid-cols-[52px_52px_18px_minmax(0,1fr)] text-[9px] uppercase tracking-wide text-[var(--color-text-faint)] bg-[var(--color-surface)]/30 border-b border-[var(--color-border)]/40">
-                    <span className="px-1 py-0.5 text-right">Old</span>
-                    <span className="px-1 py-0.5 text-right">New</span>
-                    <span className="px-1 py-0.5 text-center"> </span>
-                    <span className="px-1 py-0.5">Content</span>
-                  </div>
-                  {file.lines.map((line, idx) => (
-                    <DecoratedPatchRow
-                      key={`${file.id}-${line.type}-${line.oldLineNumber ?? 'n'}-${line.newLineNumber ?? 'n'}-${idx}`}
-                      line={line}
-                      highlightedContent={
-                        highlightedByLine.get(line) ?? line.content
-                      }
-                    />
-                  ))}
-                </div>
-              );
-            }}
-          >
-            {source}
-          </SyntaxHighlighter>
-        ) : (
-          <div className="px-2 py-2 text-[10px] font-mono text-[var(--color-text-faint)]">
-            No diff hunks available.
+    <div>
+      <div
+        data-component="diff-view"
+        data-variant="side-by-side"
+        data-embedded="header-only"
+      >
+        <div data-slot="diff-header">
+          <span data-slot="diff-filepath" title={file.filePath}>
+            {file.filePath}
+          </span>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              aria-pressed={wrapLines}
+              onClick={onToggleWrap}
+              className={`rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wide transition-colors ${
+                wrapLines
+                  ? 'border-[var(--color-agent)]/40 bg-[var(--color-agent)]/12 text-[var(--color-agent)]'
+                  : 'border-[var(--border-weaker-base)] text-[var(--text-weaker)] hover:bg-[var(--background-base)]'
+              }`}
+            >
+              Wrap lines
+            </button>
+            {extension && (
+              <span className="font-mono text-[var(--text-weaker)]">
+                {extension}
+              </span>
+            )}
           </div>
-        )}
+        </div>
       </div>
+
+      {file.lines.length > 0 && paired.rows.length > 0 ? (
+        <SideBySideDiffGrid
+          rows={paired.rows}
+          language={language}
+          wrapLines={wrapLines}
+        />
+      ) : (
+        <div className="px-2 py-2 text-[10px] font-mono text-[var(--text-weaker)]">
+          No diff hunks available.
+        </div>
+      )}
+
+      {paired.truncated && (
+        <div
+          data-component="diff-view"
+          data-variant="side-by-side"
+          data-embedded="footer-only"
+        >
+          <div data-slot="diff-hunk-separator" className="font-mono text-[9px]">
+            <span data-slot="diff-hunk-gutter">…</span>
+            <span className="px-2 py-1 text-[var(--text-weaker)]">
+              Showing first {DIFF_MAX_LINES} of {paired.totalRows} diff rows.
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 });
 
+/**
+ * One accordion item in a multi-file apply_patch result. Emits the
+ * `apply-patch-item` / `apply-patch-trigger` slots so the sticky-header
+ * CSS (main.css 977-1022) takes effect. Directory is RTL-truncated.
+ */
 const FileDiffAccordionItem = memo(function FileDiffAccordionItem({
   file,
   expanded,
   onToggle,
+  wrapLines,
+  onToggleWrap,
 }: {
   file: ApplyPatchFileDiff;
   expanded: boolean;
-  onToggle: () => void;
+  onToggle: (open: boolean) => void;
+  wrapLines: boolean;
+  onToggleWrap: () => void;
 }): React.ReactElement {
+  // For moves, show the destination path (the file's current identity).
+  // `fromPath → filePath` is still useful context; keep it visible inside
+  // the filename slot so RTL-truncation of the directory still works.
+  const { directory, filename } = splitPath(file.filePath);
+
   return (
-    <div className="rounded border border-[var(--color-border)] overflow-hidden bg-[var(--color-surface)]/40">
-      <button
-        type="button"
-        onClick={onToggle}
-        className="w-full px-2 py-1 text-left flex items-center justify-between gap-2 hover:bg-[var(--color-border)]/20 transition-colors"
-      >
-        <div className="min-w-0 flex items-center gap-2">
-          <span
-            className={`px-1.5 py-0.5 rounded border text-[9px] uppercase tracking-wide ${ACTION_STYLES[file.action]}`}
-          >
-            {ACTION_LABELS[file.action]}
-          </span>
-
-          <div className="min-w-0">
-            {file.fromPath ? (
-              <div className="text-[10px] font-mono text-[var(--color-text)] truncate">
-                {file.fromPath}{' '}
-                <span className="text-[var(--color-text-faint)]">→</span>{' '}
-                {file.filePath}
-              </div>
-            ) : (
-              <div className="text-[10px] font-mono text-[var(--color-text)] truncate">
-                {file.filePath}
-              </div>
+    <Collapsible open={expanded} onOpenChange={onToggle} asChild>
+      <div data-slot="apply-patch-item">
+        <CollapsibleTrigger asChild>
+          <button type="button" data-slot="apply-patch-trigger">
+            {directory && (
+              <span data-slot="apply-patch-directory">{directory}</span>
             )}
-          </div>
-        </div>
+            <span data-slot="apply-patch-filename">
+              {file.fromPath ? `${file.fromPath} → ${filename}` : filename}
+            </span>
+            <span data-slot="apply-patch-summary">
+              <DiffChanges
+                additions={file.additions}
+                deletions={file.deletions}
+              />
+            </span>
+          </button>
+        </CollapsibleTrigger>
 
-        <div className="shrink-0 flex items-center gap-2 text-[10px] font-mono">
-          <span className="text-[var(--color-success)]">+{file.additions}</span>
-          <span className="text-[var(--color-error)]">-{file.deletions}</span>
-          <span className="text-[var(--color-text-muted)]">
-            {expanded ? '▾' : '▸'}
-          </span>
-        </div>
-      </button>
-
-      {expanded && <FileDiffBody file={file} />}
-    </div>
+        <CollapsibleContent>
+          <FileDiffBody
+            file={file}
+            wrapLines={wrapLines}
+            onToggleWrap={onToggleWrap}
+          />
+        </CollapsibleContent>
+      </div>
+    </Collapsible>
   );
 });
 
@@ -694,6 +411,7 @@ const ApplyPatchToolCard = memo(function ApplyPatchToolCard({
     [tool.input],
   );
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
+  const [wrappedById, setWrappedById] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
     if (files.length === 0) {
@@ -711,28 +429,37 @@ const ApplyPatchToolCard = memo(function ApplyPatchToolCard({
     setExpandedIds([firstExpandable.id]);
   }, [files, forceExpanded]);
 
-  const toggleExpanded = (id: string) => {
+  useEffect(() => {
+    setWrappedById((prev) =>
+      pruneDiffWrapState(
+        prev,
+        files.map((file) => file.id),
+      ),
+    );
+  }, [files]);
+
+  const toggleExpanded = (id: string, open: boolean) => {
     setExpandedIds((prev) => {
-      if (prev.includes(id)) {
-        return prev.filter((item) => item !== id);
+      if (open) {
+        return prev.includes(id) ? prev : [...prev, id];
       }
-      return [...prev, id];
+      return prev.filter((item) => item !== id);
     });
   };
 
   if (files.length === 0) {
     return (
-      <div className="border border-[var(--color-border)] rounded overflow-hidden bg-[var(--color-surface)]">
-        <div className="px-2 py-1 flex items-center justify-between gap-2 border-b border-[var(--color-border)]/60">
+      <div className="rounded-[var(--radius-md)] border border-[var(--border-weak-base)] overflow-hidden bg-[var(--background-base)]">
+        <div className="px-2 py-1 flex items-center justify-between gap-2 border-b border-[var(--border-weaker-base)]">
           <span className="text-[var(--color-tool)] font-mono text-[10px]">
             {tool.name}
           </span>
-          <span className="text-[9px] uppercase tracking-wide text-[var(--color-text-faint)]">
+          <span className="text-[9px] uppercase tracking-wide text-[var(--text-weaker)]">
             No patch preview
           </span>
         </div>
         {tool.output && (
-          <pre className="px-2 py-1.5 text-[10px] font-mono text-[var(--color-text-muted)] whitespace-pre-wrap max-h-48 overflow-auto">
+          <pre className="px-2 py-1.5 text-[10px] font-mono text-[var(--text-weak)] whitespace-pre-wrap max-h-48 overflow-auto">
             {tool.output}
           </pre>
         )}
@@ -740,68 +467,55 @@ const ApplyPatchToolCard = memo(function ApplyPatchToolCard({
     );
   }
 
-  const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0);
-  const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
-
+  // Single-file case — render one accordion item with a scope wrapper so
+  // border/sticky rules still apply. No summary row needed.
   if (files.length === 1) {
     const file = files[0];
     return (
-      <div className="rounded border border-[var(--color-border)] overflow-hidden bg-[var(--color-surface)]">
-        <div className="px-2 py-1 flex items-center justify-between gap-2 bg-[var(--color-surface)]/70 border-b border-[var(--color-border)]/60">
-          <div className="min-w-0 flex items-center gap-2">
-            <span
-              className={`px-1.5 py-0.5 rounded border text-[9px] uppercase tracking-wide ${ACTION_STYLES[file.action]}`}
-            >
-              {ACTION_LABELS[file.action]}
-            </span>
-            <span
-              className="text-[10px] font-mono text-[var(--color-text)] truncate"
-              title={file.filePath}
-            >
-              {file.filePath}
-            </span>
-          </div>
-          <span className="shrink-0 text-[10px] font-mono">
-            <span className="text-[var(--color-success)]">
-              +{file.additions}
-            </span>
-            <span className="mx-1 text-[var(--color-text-faint)]">/</span>
-            <span className="text-[var(--color-error)]">-{file.deletions}</span>
-          </span>
-        </div>
-        <FileDiffBody file={file} />
+      <div data-scope="apply-patch">
+        <FileDiffAccordionItem
+          file={file}
+          expanded={expandedIds.includes(file.id)}
+          onToggle={(open) => toggleExpanded(file.id, open)}
+          wrapLines={Boolean(wrappedById[file.id])}
+          onToggleWrap={() =>
+            setWrappedById((prev) => toggleDiffWrapState(prev, file.id))
+          }
+        />
       </div>
     );
   }
 
+  const totalAdditions = files.reduce((sum, file) => sum + file.additions, 0);
+  const totalDeletions = files.reduce((sum, file) => sum + file.deletions, 0);
+
   return (
-    <div className="rounded border border-[var(--color-border)] overflow-hidden bg-[var(--color-surface)]">
-      <div className="px-2 py-1 flex items-center justify-between gap-2 bg-[var(--color-surface)]/70 border-b border-[var(--color-border)]/60">
+    <div data-scope="apply-patch">
+      <div className="flex items-center justify-between gap-2 px-2 py-1 border-b border-[var(--border-weaker-base)] bg-[var(--background-stronger)]">
         <div className="min-w-0 flex items-center gap-2">
           <span className="text-[var(--color-tool)] font-mono text-[10px]">
             apply_patch
           </span>
-          <span className="text-[9px] uppercase tracking-wide text-[var(--color-text-faint)]">
+          <span className="text-[9px] uppercase tracking-wide text-[var(--text-weaker)]">
             {files.length} files
           </span>
+          <ToolDurationBadge tool={tool} />
         </div>
-        <span className="shrink-0 text-[10px] font-mono">
-          <span className="text-[var(--color-success)]">+{totalAdditions}</span>
-          <span className="mx-1 text-[var(--color-text-faint)]">/</span>
-          <span className="text-[var(--color-error)]">-{totalDeletions}</span>
-        </span>
+        <DiffChanges additions={totalAdditions} deletions={totalDeletions} />
       </div>
 
-      <div className="p-1.5 space-y-1.5">
-        {files.map((file) => (
-          <FileDiffAccordionItem
-            key={file.id}
-            file={file}
-            expanded={expandedIds.includes(file.id)}
-            onToggle={() => toggleExpanded(file.id)}
-          />
-        ))}
-      </div>
+      {files.map((file) => (
+        <FileDiffAccordionItem
+          key={file.id}
+          file={file}
+          expanded={expandedIds.includes(file.id)}
+          onToggle={(open) => toggleExpanded(file.id, open)}
+          wrapLines={Boolean(wrappedById[file.id])}
+          onToggleWrap={() =>
+            setWrappedById((prev) => toggleDiffWrapState(prev, file.id))
+          }
+        />
+      ))}
     </div>
   );
 });

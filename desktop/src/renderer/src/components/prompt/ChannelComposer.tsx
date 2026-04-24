@@ -294,9 +294,9 @@ function ChannelComposer({
     ta.style.height = `${newHeight}px`;
   }, [value]);
 
-  // Detect keyboard shortcut label based on platform
-  const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-  const sendShortcut = isMac ? '⌘⏎' : 'Ctrl+↵';
+  // Submit keybinding: Enter submits, Shift+Enter inserts newline (parity
+  // with opencode reference composer). Shortcut label reflects that.
+  const sendShortcut = '↵';
 
   // Handle popover toggle
   const handlePopoverToggle = useCallback(() => {
@@ -311,10 +311,10 @@ function ChannelComposer({
         {/* Main composer container */}
         <div
           ref={containerRef}
-          className={`relative flex flex-col rounded-xl border bg-[var(--color-surface)] shadow-sm transition-all duration-150 ${
+          className={`relative flex flex-col rounded-[12px] border bg-[var(--color-surface)] transition-all duration-150 ${
             isFocused
-              ? 'border-[var(--color-agent)]/50 ring-1 ring-[var(--color-agent)]/20'
-              : 'border-[var(--color-border)]'
+              ? 'border-transparent shadow-xs-border-focus'
+              : 'border-[var(--color-border-weak)] shadow-sm'
           } ${!enabled ? 'opacity-60' : ''}`}
         >
           {/* Autocomplete dropdown */}
@@ -337,6 +337,7 @@ function ChannelComposer({
               onClose={handleClosePalette}
               initialQuery={commandQuery}
               onCommandExecuted={handleCommandExecuted}
+              baseDirectory={baseDirectory}
             />
           )}
 
@@ -403,7 +404,11 @@ function ChannelComposer({
                   return;
                 }
               }
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              if (
+                e.key === 'Enter' &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing
+              ) {
                 e.preventDefault();
                 submit();
               }

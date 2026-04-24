@@ -1,7 +1,5 @@
-import { useCallback, useEffect, useRef } from 'react';
-import type { ChannelMessage, SessionNode } from '../../types';
-import { parseDbMessage, mergeMessages } from './message-utils';
-import type { StartupHistoryBuffer } from './types';
+import { useCallback } from 'react';
+import type { SessionNode } from '../../types';
 
 /**
  * Resolve the node key that should receive persisted history for `sessionId`.
@@ -51,73 +49,11 @@ interface UseStartupHistoryOptions {
  * Also provides a callback to apply buffered history when nodes arrive late.
  */
 export function useStartupHistory({ setNodes }: UseStartupHistoryOptions) {
-  const startupHistoryBuffer = useRef<StartupHistoryBuffer>(new Map());
+  void setNodes;
 
-  // ---------------------------------------------------------------------------
-  // Startup — load history for all persisted channels immediately on mount.
-  // This runs independently of the OpenCode session-tree so history appears
-  // even when OpenCode is not running. If the node doesn't exist yet (it
-  // arrives via the session-tree snapshot later), the history is buffered
-  // in a ref and applied once the node appears.
-  // ---------------------------------------------------------------------------
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async (): Promise<void> => {
-      const channels = await window.api.getPersistedSessionChannels?.();
-      if (!channels || cancelled) return;
-
-      await Promise.all(
-        channels.map(async (ch) => {
-          const records = await window.api.getSessionChannelHistory?.(
-            ch.sessionId,
-          );
-          if (!records || records.length === 0 || cancelled) return;
-
-          const dbMessages: ChannelMessage[] = records.map(parseDbMessage);
-
-          setNodes((prev) => {
-            const key = resolveHistoryNodeKey(prev, ch.sessionId);
-            if (!key) {
-              // Node not in map yet — store in buffer to apply when it arrives
-              startupHistoryBuffer.current.set(ch.sessionId, dbMessages);
-              return prev;
-            }
-            const n = prev.get(key)!;
-            const merged = mergeMessages(dbMessages, n.channelMessages);
-            const next = new Map(prev);
-            next.set(key, { ...n, channelMessages: merged });
-            return next;
-          });
-        }),
-      );
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [setNodes]);
-
-  // When new nodes arrive via the session-tree snapshot, apply any buffered
-  // startup history that couldn't be applied earlier (node didn't exist yet).
-  const applyStartupHistoryBuffer = useCallback(
-    (sessionId: string) => {
-      const buffered = startupHistoryBuffer.current.get(sessionId);
-      if (!buffered || buffered.length === 0) return;
-      startupHistoryBuffer.current.delete(sessionId);
-
-      setNodes((prev) => {
-        const key = resolveHistoryNodeKey(prev, sessionId);
-        if (!key) return prev;
-        const n = prev.get(key)!;
-        const merged = mergeMessages(buffered, n.channelMessages);
-        const next = new Map(prev);
-        next.set(key, { ...n, channelMessages: merged });
-        return next;
-      });
-    },
-    [setNodes],
-  );
+  // Channel history is loaded lazily on first activation. Keep the old hook
+  // boundary so callers do not need to know about that policy.
+  const applyStartupHistoryBuffer = useCallback((_sessionId: string) => {}, []);
 
   return {
     applyStartupHistoryBuffer,

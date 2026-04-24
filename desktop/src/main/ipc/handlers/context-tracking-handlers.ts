@@ -1,35 +1,37 @@
 import { ipcMain } from 'electron';
-import {
-  fetchSessionTokens,
-  setSessionTotalTokens,
-  triggerCompaction,
-} from '../../opencode/context-tracking';
-import { fetchProvidersInfo } from '../../opencode/provider';
+import { fetchProvidersInfo } from '../../utility/opencode-client';
 import { createLogger } from '../../utils/logger';
+import { getUtilitySupervisor } from '../../utility/supervisor';
 import { IpcHandlerDeps } from './types';
 
 const ipcLog = createLogger('ipc');
 
+/**
+ * Proxy handlers for context/token tracking.
+ *
+ * As of Phase 2 the `context-tracking` module lives inside the backend
+ * utility process. Main forwards renderer requests across the bridge so
+ * there is a single authoritative copy of the per-session token
+ * accumulators. Failures are surfaced to the renderer as `null` / `{ok:
+ * false}` the same way the legacy in-process handlers did.
+ */
 export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('get-context-usage', async (_event, sessionId: string) => {
     const settings = deps.getSettings();
     if (settings.agentBackend !== 'opencode') return null;
-
-    const sessionInfo = await fetchSessionTokens(
-      sessionId,
-      settings.openCodePort,
-    );
-    if (!sessionInfo) return null;
-
-    // Always recompute from the latest OpenCode session snapshot instead of
-    // returning potentially stale cached usage. This keeps parent/child context
-    // bars updating regularly rather than freezing after the first calculation.
-    return setSessionTotalTokens(
-      sessionId,
-      sessionInfo.tokens ?? 0,
-      sessionInfo.modelId,
-      sessionInfo.providerId,
-    );
+    try {
+      return await getUtilitySupervisor()
+        .getBridge()
+        .request('get-context-usage', {
+          sessionId,
+          openCodePort: settings.openCodePort,
+        });
+    } catch (err) {
+      ipcLog.warn(
+        `get-context-usage RPC failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   });
 
   ipcMain.handle(
@@ -44,19 +46,14 @@ export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
     ) => {
       const settings = deps.getSettings();
       ipcLog.info(`trigger-compaction: sessionId=${sessionId}`);
-      console.log(
-        '[trigger-compaction] Starting compaction for session:',
-        sessionId,
-      );
 
-      // If providerId or modelId not provided, get defaults from OpenCode API
+      // If providerId or modelId not provided, get defaults from OpenCode API.
       let finalProviderId = providerId;
       let finalModelId = modelId;
 
       if (!finalProviderId || !finalModelId) {
         const providersInfo = await fetchProvidersInfo(settings.openCodePort);
         if (providersInfo) {
-          // Get the first connected provider and its default model
           const connectedProvider = providersInfo.connectedProviderIds[0];
           if (connectedProvider) {
             finalProviderId = finalProviderId ?? connectedProvider;
@@ -73,16 +70,38 @@ export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
         };
       }
 
-      const result = await triggerCompaction(sessionId, settings.openCodePort, {
-        providerId: finalProviderId,
-        modelId: finalModelId,
-      });
-      return result;
+      try {
+        return await getUtilitySupervisor()
+          .getBridge()
+          .request('trigger-compaction', {
+            sessionId,
+            openCodePort: settings.openCodePort,
+            providerId: finalProviderId,
+            modelId: finalModelId,
+          });
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
   );
 
   ipcMain.handle('fetch-session-tokens', async (_event, sessionId: string) => {
     const settings = deps.getSettings();
-    return fetchSessionTokens(sessionId, settings.openCodePort);
+    try {
+      return await getUtilitySupervisor()
+        .getBridge()
+        .request('fetch-session-tokens', {
+          sessionId,
+          openCodePort: settings.openCodePort,
+        });
+    } catch (err) {
+      ipcLog.warn(
+        `fetch-session-tokens RPC failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return null;
+    }
   });
 }

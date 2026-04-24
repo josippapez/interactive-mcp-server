@@ -205,6 +205,17 @@ export function PreferencesSection({
         label="Hide Doc Injections"
         description="Hide repository documentation context in the chat view"
       />
+      <Toggle
+        id="settings-wrap-code-blocks"
+        checked={settings.wrapCodeBlocks ?? true}
+        onChange={() =>
+          setSettings((s) =>
+            s ? { ...s, wrapCodeBlocks: !(s.wrapCodeBlocks ?? true) } : s,
+          )
+        }
+        label="Wrap lines in code blocks"
+        description="Wrap long lines in tool output and code blocks instead of horizontal scrolling"
+      />
 
       {theme === 'light' && (
         <div className="pt-3 pb-1">

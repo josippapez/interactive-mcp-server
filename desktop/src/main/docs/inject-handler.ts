@@ -6,12 +6,12 @@
  */
 
 import { searchDocs, formatSearchResults } from './context-injector';
-import { injectOpenCodeMessage } from '../opencode/injector';
+import { injectOpenCodeMessage } from '../utility/opencode-client';
 import {
   getRegisteredConnection,
   getRegisteredConnectionBySessionId,
   upsertContextInjection,
-} from '../database';
+} from '../utility/db-client';
 import { errorMessage } from '../utils/errors';
 
 export interface InjectDocContextInput {
@@ -61,7 +61,7 @@ export async function handleInjectDocContext(
 
   // Resolve baseDirectory and check for parent session: use supplied value or look up from DB
   let baseDirectory: string | null = input.baseDirectory ?? null;
-  const conn = deps.getRegisteredConnection(connectionId);
+  const conn = await deps.getRegisteredConnection(connectionId);
   if (!baseDirectory) {
     baseDirectory = conn?.baseDirectory ?? null;
   }
@@ -84,7 +84,7 @@ export async function handleInjectDocContext(
   // the correct row for the calling session.
   const sessionConn =
     openCodeSessionId && deps.getRegisteredConnectionBySessionId
-      ? deps.getRegisteredConnectionBySessionId(openCodeSessionId)
+      ? await deps.getRegisteredConnectionBySessionId(openCodeSessionId)
       : null;
   const effectiveConn = sessionConn ?? conn;
 
@@ -129,7 +129,7 @@ export async function handleInjectDocContext(
         error: `No provider session found for connectionId=${connectionId}`,
       };
     }
-    deps.upsertContextInjection(
+    await deps.upsertContextInjection(
       standaloneProviderSessionId,
       'standalone',
       summaryText,

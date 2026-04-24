@@ -95,6 +95,8 @@ export function useSettingsState() {
       settings.compactMode !== initialSettings.compactMode ||
       settings.hideSystemReminders !== initialSettings.hideSystemReminders ||
       settings.hideDocInjections !== initialSettings.hideDocInjections ||
+      settings.chatTextSize !== initialSettings.chatTextSize ||
+      settings.wrapCodeBlocks !== initialSettings.wrapCodeBlocks ||
       JSON.stringify(settings.toolAutoExpandExclusions ?? []) !==
         JSON.stringify(initialSettings.toolAutoExpandExclusions ?? [])
     );

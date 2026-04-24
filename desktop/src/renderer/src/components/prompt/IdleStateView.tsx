@@ -1,7 +1,6 @@
-import { memo, useState, useCallback, useRef } from 'react';
+import { memo, useState, useCallback } from 'react';
 import type { Attachment } from '../../types';
 import NewSessionInput from './NewSessionInput';
-import { gsap, prefersReducedMotion, useGSAP } from '../../lib/gsap';
 
 type PinnedProject = {
   path: string;
@@ -49,28 +48,6 @@ function IdleStateView({
   onClearPreSelectedProject,
 }: Props): React.ReactElement {
   const [isCreating, setIsCreating] = useState(false);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-
-  useGSAP(
-    () => {
-      if (prefersReducedMotion()) return;
-
-      gsap.from(
-        '[data-gsap-idle-title], [data-gsap-idle-subtitle], [data-gsap-idle-input]',
-        {
-          y: 10,
-          opacity: 0,
-          duration: 0.4,
-          ease: 'power2.out',
-          stagger: 0.06,
-        },
-      );
-    },
-    {
-      scope: containerRef,
-      dependencies: [isOpenCodeAvailable, preSelectedProject],
-    },
-  );
 
   const handleCreateSession = useCallback(
     async (
@@ -107,11 +84,8 @@ function IdleStateView({
   // Show "New Session" input for OpenCode
   if (isOpenCodeAvailable && onCreateSession && onAddProject) {
     return (
-      <div
-        ref={containerRef}
-        className="flex flex-col items-center justify-center h-full gap-6 px-4"
-      >
-        <div className="text-center" data-gsap-idle-title>
+      <div className="anim-stagger-fade-up flex flex-col items-center justify-center h-full gap-6 px-4">
+        <div className="text-center" data-stagger-index="0">
           <div className="flex items-center justify-center gap-2 text-lg mb-2">
             <span className="text-[var(--color-agent)]">❯</span>
             <span className="text-[var(--color-text-muted)]">
@@ -120,12 +94,12 @@ function IdleStateView({
           </div>
           <p
             className="text-sm text-[var(--color-text-faint)]"
-            data-gsap-idle-subtitle
+            data-stagger-index="1"
           >
             Select a project and type a message to begin
           </p>
         </div>
-        <div data-gsap-idle-input>
+        <div data-stagger-index="2">
           <NewSessionInput
             onCreateSession={handleCreateSession}
             isCreating={isCreating}

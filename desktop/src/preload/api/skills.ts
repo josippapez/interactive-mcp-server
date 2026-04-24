@@ -13,6 +13,7 @@ export function createSkillsApi() {
       tags?: string[] | null;
       folderId?: number | null;
       scope?: 'global' | 'session-scoped';
+      injectionMode?: 'always' | 'catalog';
     }): Promise<SkillOrInstructionRecord | null> =>
       ipcRenderer.invoke('upsert-skill-or-instruction', data),
     listSkillsAndInstructions: (
@@ -77,6 +78,11 @@ export function createSkillsApi() {
       scope: 'global' | 'session-scoped',
     ): Promise<SkillOrInstructionRecord | null> =>
       ipcRenderer.invoke('set-entry-scope', { name, scope }),
+    setEntryInjectionMode: (
+      name: string,
+      injectionMode: 'always' | 'catalog',
+    ): Promise<SkillOrInstructionRecord | null> =>
+      ipcRenderer.invoke('set-entry-injection-mode', { name, injectionMode }),
 
     // Session-scoped opt-ins
     listSessionScopedEntries: (

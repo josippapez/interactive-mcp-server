@@ -3,8 +3,8 @@ import { ipcRenderer } from 'electron';
 export function createOpenCodeConfigApi() {
   return {
     // Manually trigger OpenCode config sync (register MCP server + update config file)
-    syncOpencodeConfig: (): Promise<string> =>
-      ipcRenderer.invoke('sync-opencode-config'),
+    syncOpencodeConfig: (baseDirectory?: string): Promise<string> =>
+      ipcRenderer.invoke('sync-opencode-config', baseDirectory),
 
     // ─── OpenCode config file IO (read/write global + per-project configs) ────
     // Writes preserve the `mcp["interactive-desktop"]` managed subtree; callers

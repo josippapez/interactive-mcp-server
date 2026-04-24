@@ -1,68 +1,72 @@
 {
-  "name": "interactive-mcp-desktop",
+  "name": "eden-desktop",
   "version": "1.0.0",
-  "description": "Desktop app for Interactive MCP Server — SSE transport for Android Studio and other HTTP-based MCP clients",
+  "description": "Desktop app for Eden — SSE transport for Android Studio and other HTTP-based MCP clients",
   "repository": {
     "type": "git",
     "url": "https://github.com/josippapez/interactive-mcp-server.git",
     "directory": "desktop"
   },
-  "main": "./out/main/index.js",
+  "main": "./out/main/index.mjs",
   "scripts": {
-    "dev": "npm run rebuild:electron && electron-vite dev",
-    "build": "npm run rebuild:electron && electron-vite build",
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
     "preview": "electron-vite preview",
     "rebuild:node": "npm rebuild better-sqlite3",
-    "rebuild:electron": "rm -rf node_modules/better-sqlite3/build && electron-rebuild -f -w better-sqlite3 --build-from-source",
-    "copy:opencode": "node scripts/copy-opencode.js",
-    "copy:opencode:mac": "node scripts/copy-opencode.js --platform darwin",
-    "copy:opencode:mac-arm64": "node scripts/copy-opencode.js --platform darwin --arch arm64",
-    "copy:opencode:mac-x64": "node scripts/copy-opencode.js --platform darwin --arch x64",
-    "copy:opencode:win": "node scripts/copy-opencode.js --platform windows --arch x64",
-    "copy:opencode:linux": "node scripts/copy-opencode.js --platform linux --arch x64",
-    "package": "npm run rebuild:electron && npm run copy:opencode && electron-vite build && electron-builder --config",
-    "package:mac": "npm run rebuild:electron && npm run copy:opencode:mac && electron-vite build && electron-builder --mac --config",
-    "package:mac-arm64": "npm run rebuild:electron && npm run copy:opencode:mac-arm64 && ENABLE_BYTECODE=1 electron-vite build && electron-builder --mac --arm64 --config",
-    "package:mac-x64": "npm run rebuild:electron && npm run copy:opencode:mac-x64 && electron-vite build && electron-builder --mac --x64 --config",
-    "package:win": "npm run rebuild:electron && npm run copy:opencode:win && electron-vite build && electron-builder --win --config",
-    "package:linux": "npm run rebuild:electron && npm run copy:opencode:linux && electron-vite build && electron-builder --linux --config",
+    "rebuild:electron": "electron-rebuild -w better-sqlite3",
+    "rebuild:electron:force": "rm -rf node_modules/better-sqlite3/build && electron-rebuild -f -w better-sqlite3 --build-from-source",
+    "postinstall": "electron-rebuild -w better-sqlite3",
+    "copy:opencode-node": "node scripts/copy-opencode-node.mjs",
+    "package": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --config",
+    "package:mac": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --mac --config",
+    "package:mac-arm64": "npm run rebuild:electron && npm run copy:opencode-node && ENABLE_BYTECODE=1 electron-vite build && electron-builder --mac --arm64 --config",
+    "package:mac-x64": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --mac --x64 --config",
+    "package:win": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --win --config",
+    "package:linux": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --linux --config",
     "package:all": "echo 'Use platform-specific package commands for bundled OpenCode'",
-    "package:dir": "npm run rebuild:electron && npm run copy:opencode && electron-vite build && electron-builder --dir --config",
-    "test": "npm run rebuild:node && vitest run",
-    "test:watch": "npm run rebuild:node && vitest"
+    "package:dir": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --dir --config"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.96",
-    "@gsap/react": "^2.1.2",
-    "@huggingface/transformers": "^4.0.1",
+    "@lydell/node-pty": "^1.2.0-beta.10",
+    "@lydell/node-pty-darwin-arm64": "^1.2.0-beta.10",
     "@modelcontextprotocol/sdk": "^1.27.1",
     "@opencode-ai/sdk": "^1.14.18",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-collapsible": "^1.1.12",
+    "@radix-ui/react-context-menu": "^2.2.16",
     "@radix-ui/react-dialog": "^1.1.15",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@radix-ui/react-popover": "^1.1.15",
+    "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-slot": "^1.2.4",
     "@radix-ui/react-tabs": "^1.1.13",
     "@radix-ui/react-tooltip": "^1.2.8",
+    "@radix-ui/react-use-controllable-state": "^1.2.2",
+    "@streamdown/cjk": "^1.0.3",
+    "@streamdown/code": "^1.1.1",
+    "@streamdown/math": "^1.0.2",
+    "@streamdown/mermaid": "^1.0.2",
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/pacer": "^0.17.0",
-    "@tanstack/react-virtual": "^3.13.23",
     "@tanstack/store": "^0.7.0",
+    "ai": "^6.0.168",
     "better-sqlite3": "^12.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "express": "^5.2.1",
-    "gsap": "^3.15.0",
+    "immer": "^11.1.4",
     "jotai": "^2.19.1",
+    "jsonc-parser": "^3.3.1",
     "jszip": "^3.10.1",
-    "morphdom": "^2.7.8",
-    "react-markdown": "^10.1.0",
-    "react-syntax-highlighter": "^16.1.1",
-    "remark-gfm": "^4.0.1",
+    "lucide-react": "^1.8.0",
+    "motion": "^12.38.0",
+    "radix-ui": "^1.4.3",
+    "shiki": "^4.0.2",
+    "streamdown": "^2.5.0",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
-    "use-stick-to-bottom": "^1.1.3",
     "zod": "^4.3.6"
   },
   "devDependencies": {
@@ -70,37 +74,47 @@
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
     "@tailwindcss/vite": "^4.1.11",
-    "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
-    "@types/jsdom": "^28.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/react-syntax-highlighter": "^15.5.13",
     "@vitejs/plugin-react": "^4.6.1",
     "electron": "^41.2.1",
     "electron-builder": "^26.8.1",
     "electron-vite": "^5.0.0",
-    "jsdom": "^29.0.2",
     "postcss": "^8.5.6",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "tailwindcss": "^4.1.11",
-    "typescript": "^5.9.3",
-    "vitest": "^4.1.2"
+    "typescript": "^5.9.3"
   },
   "build": {
-    "appId": "com.interactive-mcp.desktop",
-    "productName": "Interactive MCP",
+    "appId": "com.rawwee.eden",
+    "productName": "Eden",
+    "electronLanguages": [
+      "en-US"
+    ],
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
         "dmg",
         "zip"
       ],
-      "icon": "build/icon.icns"
+      "icon": "build/icon.icns",
+      "extraResources": [
+        "resources/icon.png",
+        "resources/opencode-node/**"
+      ],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v*/linux/**",
+        "!node_modules/onnxruntime-node/bin/napi-v*/win32/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-linux/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-linux/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/arm64-linux/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/x64-linux/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/arm64-win32/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/x64-win32/**"
+      ]
     },
     "win": {
       "target": [
@@ -119,7 +133,23 @@
           ]
         }
       ],
-      "icon": "build/icon.ico"
+      "icon": "build/icon.ico",
+      "extraResources": [
+        "resources/icon.png",
+        "resources/opencode-node/**"
+      ],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v*/linux/**",
+        "!node_modules/onnxruntime-node/bin/napi-v*/darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-linux/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-linux/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/arm64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/x64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/arm64-linux/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/x64-linux/**"
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -146,16 +176,51 @@
           ]
         }
       ],
-      "icon": "build/icon.png"
+      "icon": "build/icon.png",
+      "extraResources": [
+        "resources/icon.png",
+        "resources/opencode-node/**"
+      ],
+      "files": [
+        "!node_modules/onnxruntime-node/bin/napi-v*/darwin/**",
+        "!node_modules/onnxruntime-node/bin/napi-v*/win32/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/arm64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/ripgrep/x64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/arm64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/x64-darwin/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/arm64-win32/**",
+        "!node_modules/@anthropic-ai/claude-agent-sdk/vendor/audio-capture/x64-win32/**"
+      ]
     },
     "directories": {
       "output": "release"
     },
-    "files": [
-      "out/**/*"
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**/*"
     ],
-    "extraResources": [
-      "resources/**"
+    "files": [
+      "out/**/*",
+      "!**/*.map",
+      "!**/*.md",
+      "!**/*.d.ts",
+      "!**/CHANGELOG*",
+      "!**/test/**",
+      "!**/tests/**",
+      "!**/__tests__/**",
+      "!node_modules/better-sqlite3/deps/sqlite3/sqlite3.c",
+      "!node_modules/better-sqlite3/deps/sqlite3/sqlite3.h",
+      "!node_modules/better-sqlite3/deps/sqlite3/sqlite3ext.h",
+      "!node_modules/better-sqlite3/deps/patches/**",
+      "!node_modules/better-sqlite3/deps/test_extension.c",
+      "!node_modules/better-sqlite3/deps/download.sh",
+      "!node_modules/better-sqlite3/deps/*.gypi",
+      "!node_modules/better-sqlite3/deps/*.gyp",
+      "!node_modules/better-sqlite3/deps/copy.js",
+      "!node_modules/better-sqlite3/build/Release/obj/**",
+      "!node_modules/better-sqlite3/build/Release/test_extension.node",
+      "!node_modules/better-sqlite3/build/Release/.deps/**",
+      "!node_modules/better-sqlite3/src/**",
+      "!node_modules/better-sqlite3/binding.gyp"
     ]
   }
 }

@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  conversationToMarkdown,
+  mergeMessages,
+} from '../../types/unified-message';
+import {
   getPromptComposerBaseDirectory,
   getPromptPlaceholder,
   getQueueComposerBaseDirectory,
@@ -31,7 +35,6 @@ export function usePromptViewState(props: PromptViewProps) {
   } = props;
 
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const layoutRef = useRef<HTMLDivElement | null>(null);
 
   const {
     pinnedProjects,
@@ -73,11 +76,13 @@ export function usePromptViewState(props: PromptViewProps) {
     noReply,
     expandAllTools,
     showThinking,
+    chatTextSize,
     toolAutoExpandExclusions,
     isOpenCodeBackendAvailable,
     handleNoReplyChange,
     handleExpandAllToolsChange,
     handleShowThinkingChange,
+    handleChatTextSizeChange,
   } = usePromptSettingsState();
 
   const {
@@ -89,6 +94,8 @@ export function usePromptViewState(props: PromptViewProps) {
     handleToggleTasksSidebar,
     commandPaletteOpen,
     setCommandPaletteOpen,
+    chatFullWidth,
+    handleToggleChatFullWidth,
   } = usePromptInteractionState(activeConnectionId);
 
   const {
@@ -105,6 +112,7 @@ export function usePromptViewState(props: PromptViewProps) {
     vcsInfo,
     conversationMessages,
     conversationAvailable,
+    conversationIsSeeding,
     currentModelId,
     currentProviderId,
     sessionModelSelection,
@@ -281,9 +289,32 @@ export function usePromptViewState(props: PromptViewProps) {
     [handleCreateSession, handleSaveCreateModelSelection],
   );
 
+  /**
+   * Copy the full session transcript to the clipboard as Markdown. Uses
+   * the same `mergeMessages` pipeline that the chat view renders, so the
+   * copied content matches what the user sees (same ordering, same
+   * filtering). Returns `true` on success, `false` if the clipboard API
+   * fails or there is nothing to copy.
+   */
+  const handleCopyTranscript = useCallback(async (): Promise<boolean> => {
+    const unified = mergeMessages(
+      channelMessages,
+      conversationMessages,
+      activePromptId,
+    );
+    if (unified.length === 0) return false;
+    const markdown = conversationToMarkdown(unified);
+    if (!markdown) return false;
+    try {
+      await navigator.clipboard.writeText(markdown);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [channelMessages, conversationMessages, activePromptId]);
+
   return {
     chatEndRef,
-    layoutRef,
     activeNode,
     providerSessionId,
     isOpenCodeSession,
@@ -297,6 +328,7 @@ export function usePromptViewState(props: PromptViewProps) {
     vcsInfo,
     conversationMessages,
     conversationAvailable,
+    conversationIsSeeding,
     currentModelId,
     currentProviderId,
     sessionModelSelection,
@@ -318,8 +350,10 @@ export function usePromptViewState(props: PromptViewProps) {
     tasksSidebarCollapsed,
     commandPaletteOpen,
     setCommandPaletteOpen,
+    chatFullWidth,
     expandAllTools,
     showThinking,
+    chatTextSize,
     toolAutoExpandExclusions,
     isOpenCodeBackendAvailable,
     pinnedProjects,
@@ -334,6 +368,7 @@ export function usePromptViewState(props: PromptViewProps) {
     handleNoReplyChange,
     handleExpandAllToolsChange,
     handleShowThinkingChange,
+    handleChatTextSizeChange,
     handleModelSelect,
     handleCreateSession: handleCreateSessionWithModel,
     handleAddProject,
@@ -342,6 +377,7 @@ export function usePromptViewState(props: PromptViewProps) {
     handleAbortSession,
     handleClearMessages,
     handleDismissCurrentSession,
+    handleCopyTranscript,
     channelSearchQuery,
     channelSearchOpen,
     channelSearchMatchCount,
@@ -354,6 +390,7 @@ export function usePromptViewState(props: PromptViewProps) {
     setChannelSearchMatchCount,
     handleSelectProjectSession,
     handleToggleTasksSidebar,
+    handleToggleChatFullWidth,
     handleToggleExpandAllTools: () =>
       void handleExpandAllToolsChange(!expandAllTools),
     handleToggleShowThinking: () =>

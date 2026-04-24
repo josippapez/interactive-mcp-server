@@ -8,7 +8,7 @@ import {
   registerMcp,
   removeMcpAuth,
   startMcpAuth,
-} from '../../opencode/mcp-status';
+} from '../../utility/opencode-client';
 import { createLogger } from '../../utils/logger';
 import { IpcHandlerDeps } from './types';
 

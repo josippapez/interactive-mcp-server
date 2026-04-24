@@ -18,6 +18,12 @@ interface CommandPaletteProps {
   initialQuery?: string;
   /** Callback when a command is successfully executed */
   onCommandExecuted?: (commandName: string) => void;
+  /**
+   * Project directory to scope command fetch + execution to. Forwarded to the
+   * OpenCode SDK via the `x-opencode-directory` header so that project-local
+   * commands resolve correctly (otherwise OpenCode falls back to $HOME).
+   */
+  baseDirectory?: string | null;
 }
 
 /** Slash command icon */
@@ -71,9 +77,10 @@ export default function CommandPalette({
   anchorPosition,
   initialQuery = '',
   onCommandExecuted,
+  baseDirectory,
 }: CommandPaletteProps): React.ReactElement | null {
   const { commands, isLoading, error, execute, isExecuting, refresh } =
-    useCommands();
+    useCommands(true, baseDirectory);
   const [query, setQuery] = useState(initialQuery);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [executionError, setExecutionError] = useState<string | null>(null);
@@ -202,7 +209,7 @@ export default function CommandPalette({
 
       {/* Palette */}
       <div
-        className="z-50 w-[320px] max-h-[360px] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] shadow-xl overflow-hidden flex flex-col"
+        className="z-50 w-[320px] max-h-[360px] rounded-[12px] border border-[var(--color-border-weak)] bg-[var(--color-surface-raised)] shadow-xl overflow-hidden flex flex-col"
         style={style}
         role="dialog"
         aria-label="Command palette"

@@ -34,12 +34,6 @@ export function useSessionHandlers({
       reply: 'once' | 'always' | 'reject',
       directory?: string,
     ) => {
-      console.info('[permission-toast] dispatch replyPermission', {
-        sessionID,
-        requestId,
-        reply,
-        directory,
-      });
       void window.api.replyPermission(sessionID, requestId, reply, directory);
     },
     [],

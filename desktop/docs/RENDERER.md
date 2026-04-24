@@ -186,23 +186,23 @@ Central state manager for renderer session nodes. Owns the `Map<string, SessionN
 
 #### IPC events handled
 
-| Event                             | Effect                                                                                                                                                        |
-| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `onSessionTreeUpdated`            | Rebuilds renderer topology from the latest full snapshot, preserving runtime state and loading history for newly claimed `connectionId`s.                     |
-| `onConnectionOpened`              | Adds a direct-connection node keyed by `connectionId` when no OpenCode-backed node already owns that connection; loads channel history; activates prompt tab. |
-| `onConnectionClosed`              | Removes only direct-connection nodes. OpenCode-backed nodes are governed by later session-tree snapshots or explicit deletion events.                         |
-| `onPromptRequest`                 | Sets `prompt` and `hasPendingPrompt` on the connection; appends a `'question'` channel message; updates `clientInfo`; activates prompt tab.                   |
-| `onIntensiveChatStart`            | Sets `activeSession` (`{ id, title }`) on the connection; activates prompt tab.                                                                               |
-| `onIntensiveChatStop`             | Clears `activeSession` to `null`.                                                                                                                             |
-| `onSessionStatusUpdate`           | Appends a new `SessionStatus` to `sessionStatuses`.                                                                                                           |
-| `onSessionChannelDeleted`         | Removes the owning node by persisted session identifier (`connectionId`) or direct node key; clears active selection if it matched.                           |
-| `onSessionChannelMessagesCleared` | Resets `channelMessages` and `unreadCount` to empty/zero.                                                                                                     |
+| Event                             | Effect                                                                                                                                                                                                                      |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `onSessionTreeInvalidated`        | Payload-free signal. Renderer pulls the fresh tree via `window.api.getSessionTree()` and rebuilds topology from the returned flat snapshot, preserving runtime state and loading history for newly claimed `connectionId`s. |
+| `onConnectionOpened`              | Adds a direct-connection node keyed by `connectionId` when no OpenCode-backed node already owns that connection; loads channel history; activates prompt tab.                                                               |
+| `onConnectionClosed`              | Removes only direct-connection nodes. OpenCode-backed nodes are governed by later session-tree snapshots or explicit deletion events.                                                                                       |
+| `onPromptRequest`                 | Sets `prompt` and `hasPendingPrompt` on the connection; appends a `'question'` channel message; updates `clientInfo`; activates prompt tab.                                                                                 |
+| `onIntensiveChatStart`            | Sets `activeSession` (`{ id, title }`) on the connection; activates prompt tab.                                                                                                                                             |
+| `onIntensiveChatStop`             | Clears `activeSession` to `null`.                                                                                                                                                                                           |
+| `onSessionStatusUpdate`           | Appends a new `SessionStatus` to `sessionStatuses`.                                                                                                                                                                         |
+| `onSessionChannelDeleted`         | Removes the owning node by persisted session identifier (`connectionId`) or direct node key; clears active selection if it matched.                                                                                         |
+| `onSessionChannelMessagesCleared` | Resets `channelMessages` and `unreadCount` to empty/zero.                                                                                                                                                                   |
 
 #### Startup/session reconciliation flow
 
-The renderer now reconciles against full `session-tree-updated` snapshots instead of maintaining a separate restored-tab model.
+The renderer reconciles against the session tree it **pulls on demand** via `window.api.getSessionTree()` instead of consuming pushed full snapshots or maintaining a separate restored-tab model.
 
-- `session-tree-updated` supplies all live OpenCode sessions enriched with `registered_connections` metadata.
+- On mount and on every payload-free `session-tree-invalidated` IPC event, the renderer calls `window.api.getSessionTree()`. The returned flat snapshot supplies live OpenCode sessions within the currently selected folder enriched with `registered_connections` metadata. See [`ARCHITECTURE.md — Per-folder session scoping`](./ARCHITECTURE.md#per-folder-session-scoping).
 - `mergeSessionTreeSnapshot` rebuilds the node map using `openCodeSessionId ?? connectionId` keys while preserving runtime state such as prompts, messages, unread counts, and statuses.
 - If a snapshot node claims a `connectionId` that previously existed as a direct connection, the direct node's runtime state is absorbed into the OpenCode-keyed node.
 - History is loaded once per claimed `connectionId` via `getSessionChannelHistory(connectionId)`.
@@ -218,7 +218,9 @@ When a message targets a node that is **not** the currently active one, `unreadC
 
 **File:** `hooks/useIpcListeners.ts`
 
-Extracted hook that registers all Electron IPC event listeners (`onConnectionOpened`, `onConnectionClosed`, `onPromptRequest`, `onIntensiveChatStart`, `onIntensiveChatStop`, `onSessionStatusUpdate`, `onSessionChannelCreated`, `onSessionChannelDeleted`, `onSessionChannelMessagesCleared`, `onAgentMessage`, `onSessionTreeUpdated`). Called once by `useConnections`. Keeps listener registration behind a `listenersRegistered` ref to prevent double-registration in `React.StrictMode`.
+Extracted hook that registers all Electron IPC event listeners (`onConnectionOpened`, `onConnectionClosed`, `onPromptRequest`, `onIntensiveChatStart`, `onIntensiveChatStop`, `onSessionStatusUpdate`, `onSessionChannelCreated`, `onSessionChannelDeleted`, `onSessionChannelMessagesCleared`, `onAgentMessage`, `onSessionTreeInvalidated`). Called once by `useConnections`. On `onSessionTreeInvalidated`, the hook pulls the current tree via `window.api.getSessionTree()` and feeds it through `mergeSessionTreeSnapshot`.
+
+> **React effect discipline.** The subscription effect uses **empty `[]` deps** with `optsRef.current = opts` assigned on every render, and callback wrappers dereference `optsRef.current` at call time. A previous version with an 18-callback deps array caused a 127% / 1.22 GB renderer CPU regression (re-register → initial fetch → setState → parent re-render loop). See the "React: `useEffect` Discipline" section in the root [`AGENTS.md`](../../AGENTS.md) for the full checklist.
 
 ---
 

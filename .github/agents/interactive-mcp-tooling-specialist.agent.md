@@ -15,7 +15,7 @@ Primary scope:
 Execution expectations:
 
 - Keep schema, capability metadata, and runtime behavior consistent for every modified tool.
-- When behavior decisions are unclear, prompt the user using interactive-mcp tools instead of assuming.
+- When behavior decisions are unclear, prompt the user using the built-in questions tool instead of assuming.
 - Preserve existing response contract patterns (text content messages, timeout/empty-input semantics).
 - Avoid broad refactors; make precise, behavior-safe updates aligned with current file structure.
 - Run targeted checks (`bun run check-types`, `bun run build`, and lint when relevant) before handoff.

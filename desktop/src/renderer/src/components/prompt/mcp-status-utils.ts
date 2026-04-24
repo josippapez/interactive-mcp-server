@@ -17,7 +17,9 @@ export function getMcpStatusLabel(status: McpServer['status']): string {
   }
 }
 
-export function getMcpStatusIndicatorClass(status: McpServer['status']): string {
+export function getMcpStatusIndicatorClass(
+  status: McpServer['status'],
+): string {
   switch (status) {
     case 'connected':
       return 'bg-green-500';

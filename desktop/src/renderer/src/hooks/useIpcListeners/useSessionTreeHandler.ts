@@ -2,17 +2,20 @@ import {
   resolveNewlyCreatedSessionNodeId,
   shouldAutoSelectNewSession,
 } from './auto-select-decision';
-import {
-  mergeSessionTreeSnapshot,
-  upsertOptimisticSessionNode,
-} from '../session-tree-merge';
+import { mergeSessionTreeSnapshot } from '../session-tree-merge';
 import type { HandlerContext } from './types';
 
 export { resolveNewlyCreatedSessionNodeId } from './auto-select-decision';
 
 /**
- * Registers the IPC listener for session tree updates.
- * Handles: onSessionTreeUpdated
+ * Registers the IPC listener for session tree invalidations.
+ * Handles: onSessionTreeInvalidated
+ *
+ * On invalidation (or on mount), the renderer pulls the current tree via
+ * `window.api.getSessionTree()` and merges it into local state. Overlapping
+ * fetches are coalesced via an `isFetching` ref plus a `pendingRefetch`
+ * flag so at most one fetch is in flight at a time, and any invalidation
+ * that arrives during a fetch triggers a single follow-up refresh.
  *
  * Returns a disposer that removes every listener registered here.
  */
@@ -22,77 +25,103 @@ export function useSessionTreeHandler({
   activateRef,
   setNodes,
   selectChannel,
-  loadChannelHistory,
-  loadedHistoryIds,
-  applyStartupHistoryBuffer,
   applyStartupPromptBuffer,
   applyStartupPermissionBuffer,
   applyStartupQuestionBuffer,
 }: HandlerContext): () => void {
   const disposers: Array<(() => void) | undefined> = [];
 
-  disposers.push(
-    window.api.onOptimisticSessionNodeCreated?.((node) => {
-      setNodes((prev) => upsertOptimisticSessionNode(prev, node));
-    }),
-  );
+  // Coalesce overlapping fetches. If an invalidation arrives while a
+  // fetch is in flight, we don't start a new fetch — we just set
+  // `pendingRefetch` so that one follow-up fetch runs after the current
+  // one resolves. This collapses bursts of invalidations into at most
+  // two sequential fetches.
+  let isFetching = false;
+  let pendingRefetch = false;
 
-  // ------------------------------------------------------------------
-  // session-tree-updated — full snapshot from main process.
-  // Merges topology; preserves live runtime state.
-  // ------------------------------------------------------------------
-  disposers.push(
-    window.api.onSessionTreeUpdated?.((snapshotNodes) => {
-      setNodes((prev) => {
-        const candidate = resolveNewlyCreatedSessionNodeId(prev, snapshotNodes);
-        const next = mergeSessionTreeSnapshot(prev, snapshotNodes);
+  const applySnapshot = (
+    snapshotNodes: Parameters<typeof mergeSessionTreeSnapshot>[1],
+  ): void => {
+    // Track candidate for auto-selection before updating state
+    let candidateForSelection: ReturnType<
+      typeof resolveNewlyCreatedSessionNodeId
+    > = null;
 
-        // Load history once per providerSessionId for any newly-connected nodes.
-        // Also drain any startup-buffered history and prompts for nodes that just
-        // appeared. We key on providerSessionId (not connectionId) because the
-        // channel-history DB is keyed by providerSessionId, and a single MCP
-        // transport (connectionId) is shared across an OpenCode parent + all
-        // child agents — keying on connectionId here causes cross-channel bleed
-        // and skips siblings after the first load. (Bug A fix #5)
-        for (const snap of snapshotNodes) {
-          // Apply buffered prompts for this session (uses providerSessionId)
-          applyStartupPromptBuffer(snap.providerSessionId, snap.connectionId);
-          applyStartupPermissionBuffer(
-            snap.providerSessionId,
-            snap.connectionId,
-          );
-          applyStartupQuestionBuffer(snap.providerSessionId, snap.connectionId);
+    setNodes((prev) => {
+      candidateForSelection = resolveNewlyCreatedSessionNodeId(
+        prev,
+        snapshotNodes,
+      );
+      return mergeSessionTreeSnapshot(prev, snapshotNodes);
+    });
 
-          const historyKey = snap.providerSessionId;
-          if (historyKey) {
-            // Drain startup buffer first (no-op if nothing buffered)
-            applyStartupHistoryBuffer(historyKey);
-            if (!loadedHistoryIds.current.has(historyKey)) {
-              loadedHistoryIds.current.add(historyKey);
-              void loadChannelHistory(historyKey);
-            }
-          }
+    // Apply buffered prompts, permissions, and questions AFTER the state
+    // update completes. Using queueMicrotask ensures the setNodes calls
+    // inside these functions see the newly merged nodes. Without this,
+    // nested setNodes calls would see the pre-merge state and fail to
+    // find newly created nodes, causing prompts to be buffered indefinitely.
+    queueMicrotask(() => {
+      for (const snap of snapshotNodes) {
+        applyStartupPromptBuffer(snap.providerSessionId, snap.connectionId);
+        applyStartupPermissionBuffer(snap.providerSessionId, snap.connectionId);
+        applyStartupQuestionBuffer(snap.providerSessionId, snap.connectionId);
+      }
+    });
+
+    // Do not steal focus from a currently active channel, and do not
+    // override a deliberate user deselection (e.g., the "+ New Session"
+    // idle view). User-entered messages route through the active channel
+    // selection.
+    if (
+      candidateForSelection &&
+      shouldAutoSelectNewSession({
+        candidate: candidateForSelection,
+        activeChannelId: getActiveConnectionId(),
+        isIntentionalNullSelection: getIsIntentionalNullSelection(),
+      })
+    ) {
+      selectChannel(candidateForSelection.sessionId, 'connection-opened');
+      activateRef.current();
+    }
+  };
+
+  const fetchAndApply = (): void => {
+    if (isFetching) {
+      // Already fetching — request a follow-up once the current fetch
+      // completes so the latest invalidation is not lost.
+      pendingRefetch = true;
+      return;
+    }
+    const fetcher = window.api.getSessionTree?.();
+    if (!fetcher) return;
+    isFetching = true;
+    void Promise.resolve(fetcher)
+      .then((snapshotNodes) => {
+        if (snapshotNodes) {
+          applySnapshot(snapshotNodes);
         }
-
-        // Do not steal focus from a currently active channel, and do not
-        // override a deliberate user deselection (e.g., the "+ New Session"
-        // idle view). User-entered messages route through the active channel
-        // selection.
-        if (
-          shouldAutoSelectNewSession({
-            candidate,
-            activeChannelId: getActiveConnectionId(),
-            isIntentionalNullSelection: getIsIntentionalNullSelection(),
-          })
-        ) {
-          selectChannel(candidate!.sessionId, 'connection-opened');
-          activateRef.current();
+      })
+      .finally(() => {
+        isFetching = false;
+        if (pendingRefetch) {
+          pendingRefetch = false;
+          fetchAndApply();
         }
-
-        return next;
       });
+  };
+
+  // ------------------------------------------------------------------
+  // session-tree-invalidated — main process signals that its in-memory
+  // tree changed. Renderer pulls the latest via getSessionTree().
+  // ------------------------------------------------------------------
+  disposers.push(
+    window.api.onSessionTreeInvalidated?.(() => {
+      fetchAndApply();
     }),
   );
+
+  // Initial fetch on mount so the tree is populated on first render.
+  fetchAndApply();
 
   return () => {
     for (const dispose of disposers) {

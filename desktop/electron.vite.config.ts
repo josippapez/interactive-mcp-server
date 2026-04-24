@@ -1,4 +1,5 @@
 import { resolve } from 'path';
+import { promises as fsp } from 'fs';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -16,6 +17,20 @@ import tailwindcss from '@tailwindcss/vite';
 // sandbox: false on BrowserWindow, which is a security regression.
 const bytecodeEnabled = process.env.ENABLE_BYTECODE === '1';
 
+// Where the platform-agnostic OpenCode Node bundle lives (node.js + *.wasm).
+// Populated by `npm run copy:opencode-node` (see scripts/copy-opencode-node.mjs).
+// Imported by main via `import("virtual:opencode-server")` — the virtual ID is
+// rewritten to this absolute path at resolve time (see plugin below).
+const OPENCODE_NODE_DIR = resolve(__dirname, 'resources/opencode-node');
+
+// The OpenCode Node bundle imports `@lydell/node-pty` as an external module.
+// At runtime that specifier resolves to a platform-specific native package
+// (`@lydell/node-pty-<platform>-<arch>`) which cannot be bundled by Rollup.
+// We rewrite the bare specifier to the platform-specific one (matches upstream
+// `packages/desktop-electron/electron.vite.config.ts`) and externalize it so
+// Vite leaves the import alone.
+const nodePtyPkg = `@lydell/node-pty-${process.platform}-${process.arch}`;
+
 export default defineConfig({
   main: {
     build: {
@@ -24,6 +39,61 @@ export default defineConfig({
       // breakage. Leaves the .js source alongside the .jsc so version
       // mismatches fall back gracefully instead of crashing startup.
       bytecode: bytecodeEnabled,
+      rollupOptions: {
+        // Multi-entry build: the main process bundle PLUS separate entries
+        // for off-main-thread work.
+        //   - `context-injector-worker.thread` — Node worker_threads entry
+        //     for off-main-thread doc search, loaded via
+        //     `new Worker(join(__dirname, 'context-injector-worker.thread.mjs'))`.
+        //   - `opencode-utility.thread` — Electron `utilityProcess` entry for
+        //     the extracted backend (OpenCode server + MCP + SSE + DB), loaded
+        //     via `utilityProcess.fork(join(__dirname, 'opencode-utility.thread.mjs'))`
+        //     (see docs/BACKEND-UTILITY-PROCESS-PLAN.md).
+        // All must be emitted next to `index.mjs` in `out/main/`.
+        input: {
+          index: resolve(__dirname, 'src/main/index.ts'),
+          'context-injector-worker.thread': resolve(
+            __dirname,
+            'src/main/docs/context-injector-worker.thread.ts',
+          ),
+          'opencode-utility.thread': resolve(
+            __dirname,
+            'src/main/utility/entry.ts',
+          ),
+        },
+        // Rollup must not try to resolve/bundle these specifiers — they are
+        // either native modules (`@lydell/node-pty-*`) or were already
+        // externalized by the opencode build (`jsonc-parser`). Electron's Node
+        // runtime will `require()` them at runtime from node_modules/.
+        external: [
+          '@lydell/node-pty',
+          '@lydell/node-pty-darwin-arm64',
+          '@lydell/node-pty-darwin-x64',
+          '@lydell/node-pty-linux-arm64',
+          '@lydell/node-pty-linux-x64',
+          '@lydell/node-pty-win32-x64',
+          'jsonc-parser',
+        ],
+        output: {
+          // The opencode node bundle uses top-level `await`, which requires
+          // ESM. The Electron main-process entry therefore also has to emit
+          // ESM. Electron ≥28 supports ESM in the main process natively.
+          //
+          // The entry file is emitted as `index.mjs` so that both dev
+          // (electron-vite module-loader) AND packaged builds (electron-builder
+          // → Electron native loader) treat it as ESM. Using plain `.js` would
+          // require `"type": "module"` in package.json, which we avoid because
+          // it would affect the root scripts/CJS tooling too.
+          //
+          // Chunks keep the default rollup layout (emitted next to the entry)
+          // because the opencode node bundle loads `./chunks/*.wasm` via
+          // relative paths from the chunk — the `opencode:copy-server-assets`
+          // plugin below copies the wasm files into `out/main/chunks/` to
+          // match that expectation.
+          format: 'es',
+          entryFileNames: '[name].mjs',
+        },
+      },
     },
     plugins: [
       externalizeDepsPlugin({
@@ -31,6 +101,55 @@ export default defineConfig({
         // to convert ESM to CJS for Electron's main process
         exclude: ['@opencode-ai/sdk'],
       }),
+      // Narrow `@lydell/node-pty` imports inside the opencode bundle to the
+      // platform-specific package we actually ship. Must run with
+      // `enforce: "pre"` so it wins over Vite's default resolution.
+      {
+        name: 'opencode:node-pty-narrower',
+        enforce: 'pre',
+        resolveId(id: string) {
+          if (id === '@lydell/node-pty') return nodePtyPkg;
+          return undefined;
+        },
+      },
+      // Rewrite `import("virtual:opencode-server")` to the prebuilt bundle at
+      // resources/opencode-node/node.js. The bundle is produced by
+      // `bun run script/build-node.ts` inside the opencode repo and copied
+      // into this repo via `npm run copy:opencode-node`.
+      {
+        name: 'opencode:virtual-server-module',
+        enforce: 'pre',
+        resolveId(id: string) {
+          if (id === 'virtual:opencode-server') {
+            return resolve(OPENCODE_NODE_DIR, 'node.js');
+          }
+          return undefined;
+        },
+      },
+      // The OpenCode Node bundle loads tree-sitter grammars from sibling *.wasm
+      // files via `new URL("<name>.wasm", import.meta.url)`. Vite emits the
+      // bundle as a chunk inside `out/main/`, so the wasm files need to land
+      // *next to the chunk* — not in `out/main/chunks/`. (Upstream's
+      // `desktop-electron` build puts both under `out/main/chunks/` because
+      // their rollup config emits the chunk there; our config keeps chunks at
+      // the default rollup location, `out/main/`, so we copy accordingly.)
+      {
+        name: 'opencode:copy-server-assets',
+        async writeBundle() {
+          const outDir = resolve(__dirname, 'out/main');
+          await fsp.mkdir(outDir, { recursive: true });
+          const entries = await fsp.readdir(OPENCODE_NODE_DIR);
+          await Promise.all(
+            entries
+              .filter((name) => name.endsWith('.wasm'))
+              .map(async (name) => {
+                const src = resolve(OPENCODE_NODE_DIR, name);
+                const dst = resolve(outDir, name);
+                await fsp.copyFile(src, dst);
+              }),
+          );
+        },
+      },
     ],
   },
   preload: {
@@ -74,7 +193,6 @@ export default defineConfig({
             }
             if (
               id.includes('jotai') ||
-              id.includes('use-stick-to-bottom') ||
               id.includes('class-variance-authority') ||
               id.includes('clsx') ||
               id.includes('tailwind-merge') ||

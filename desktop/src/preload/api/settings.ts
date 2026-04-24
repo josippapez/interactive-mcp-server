@@ -17,6 +17,19 @@ export function createSettingsApi() {
     removePinnedProject: (path: string): Promise<boolean> =>
       ipcRenderer.invoke('remove-pinned-project', path),
 
+    /**
+     * Subscribe to pinned-project changes. The main process emits this event
+     * on add/remove so every consumer (project picker, sidebar rail, etc.)
+     * can refetch in sync. Returns an unsubscribe function.
+     */
+    onPinnedProjectsUpdated: (callback: () => void): (() => void) => {
+      const listener = () => callback();
+      ipcRenderer.on('pinned-projects:updated', listener);
+      return () => {
+        ipcRenderer.removeListener('pinned-projects:updated', listener);
+      };
+    },
+
     // ─── Allowed Read Folders Management ─────────────────────────────────────────
     addAllowedReadFolder: (folderPath: string): Promise<{ ok: boolean }> =>
       ipcRenderer.invoke('add-allowed-read-folder', folderPath),

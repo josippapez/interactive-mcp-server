@@ -43,4 +43,53 @@ A separate (less common) scenario: the app is backgrounded long enough for the O
 
 ---
 
-## 2. (Add future issues here)
+## 2. macOS unsigned-dev launch-at-login error (`platform_util_mac.mm:260`)
+
+### Symptom
+
+Running the app in dev mode (`npm run dev`) on macOS previously produced a native-log line:
+
+```
+[ERROR:platform_util_mac.mm:260] Operation not permitted
+```
+
+on startup and again on every `save-settings` IPC call. The error was emitted by Chromium's `app.setLoginItemSettings()` wrapper and bypassed any JS-level try/catch.
+
+### Root cause
+
+macOS refuses the `SMLoginItemSetEnabled` call for unsigned binaries. Because the failure is logged inside native code before control returns to JS, wrapping the call in try/catch does not suppress it.
+
+### Fix (implemented)
+
+Both call sites now guard the call on `app.isPackaged`:
+
+- `desktop/src/main/index.ts:271` — startup call inside `runDeferredInit`.
+- `desktop/src/main/ipc/handlers/settings-handlers.ts:26` — on every settings save.
+
+In dev (unpackaged) builds the call is simply skipped; in packaged/signed builds it runs as before so launch-at-login still works in production.
+
+No user action required.
+
+---
+
+## 3. Wasm copy layout sensitivity
+
+The `opencode:copy-server-assets` plugin in `electron.vite.config.ts` copies `tree-sitter-*.wasm` into `out/main/` — **not** `out/main/chunks/`. The OpenCode Node bundle resolves wasm files via `new URL('tree-sitter.wasm', import.meta.url)`, which is relative to the chunk's own path.
+
+Our current Rollup config keeps the main-process chunk at the default location (`out/main/`), so the wasm files have to land there. Upstream `packages/desktop-electron` emits the chunk under `out/main/chunks/` and copies the wasm files there instead.
+
+**If the chunk layout ever changes** (e.g. chunks are moved under `out/main/chunks/`), the copy target in the plugin must move with it. Otherwise the OpenCode server will fail at runtime when it tries to load tree-sitter grammars.
+
+No user-facing symptom yet — documented here so the next engineer to touch rollup output options does not silently regress wasm loading.
+
+---
+
+## 4. Legacy `copy:opencode*` still wired into packaging
+
+The Phase C migration replaced the spawned `opencode serve` subprocess with an in-process `Server.listen()` call (see `desktop/src/main/opencode/server.ts:46`), but the packaging scripts in `desktop/package.json` still chain `copy:opencode:mac` / `copy:opencode:win` / `copy:opencode:linux` into each `package:*` target. This ships **both** the 99 MB per-platform native `opencode` binary (under `resources/bin/opencode`) **and** the ~18 MB platform-agnostic Node bundle (under `resources/opencode-node/`).
+
+The legacy copy is currently redundant — nothing in the main-process code reads from `resources/bin/opencode` anymore. It is kept as a rollback safety net until a signed/packaged smoke-test confirms the in-process path works across every distribution channel. The expected follow-up is to drop `copy:opencode*` from the `package:*` scripts and delete `resources/bin/opencode` entirely.
+
+---
+
+## 5. (Add future issues here)

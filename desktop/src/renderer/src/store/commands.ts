@@ -70,38 +70,42 @@ export const commandsStateAtom = atom((get) => ({
 // -----------------------------------------------------------------------------
 
 /** Fetch commands from the OpenCode API. */
-export const fetchCommandsAtom = atom(null, async (_get, set) => {
-  set(commandsLoadingAtom, true);
-  set(commandsErrorAtom, null);
+export const fetchCommandsAtom = atom(
+  null,
+  async (_get, set, params?: { baseDirectory?: string }) => {
+    set(commandsLoadingAtom, true);
+    set(commandsErrorAtom, null);
 
-  try {
-    const result = await window.api.fetchCommands();
+    try {
+      const result = await window.api.fetchCommands(params?.baseDirectory);
 
-    if (result) {
-      set(commandsAtom, result);
+      if (result) {
+        set(commandsAtom, result);
+
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[commands-store] Commands fetched', {
+            count: result.length,
+            commands: result.map((c) => c.name),
+            baseDirectory: params?.baseDirectory,
+            timestamp: new Date().toISOString(),
+          });
+        }
+      } else {
+        set(commandsAtom, []);
+      }
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to fetch commands';
+      set(commandsErrorAtom, message);
 
       if (process.env.NODE_ENV === 'development') {
-        console.log('[commands-store] Commands fetched', {
-          count: result.length,
-          commands: result.map((c) => c.name),
-          timestamp: new Date().toISOString(),
-        });
+        console.warn('[commands-store] Failed to fetch:', err);
       }
-    } else {
-      set(commandsAtom, []);
+    } finally {
+      set(commandsLoadingAtom, false);
     }
-  } catch (err) {
-    const message =
-      err instanceof Error ? err.message : 'Failed to fetch commands';
-    set(commandsErrorAtom, message);
-
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[commands-store] Failed to fetch:', err);
-    }
-  } finally {
-    set(commandsLoadingAtom, false);
-  }
-});
+  },
+);
 
 /** Execute a command in a session. */
 export const executeCommandAtom = atom(
@@ -113,6 +117,7 @@ export const executeCommandAtom = atom(
       sessionId: string;
       commandName: string;
       args?: Record<string, string>;
+      baseDirectory?: string;
     },
   ): Promise<ExecuteCommandResult> => {
     set(commandExecutingAtom, true);
@@ -122,6 +127,7 @@ export const executeCommandAtom = atom(
         params.sessionId,
         params.commandName,
         params.args,
+        params.baseDirectory,
       );
 
       if (process.env.NODE_ENV === 'development') {
@@ -179,7 +185,9 @@ export function useCommandsState(): {
 }
 
 /** Get the fetch/refresh function (write-only). */
-export function useFetchCommands(): () => Promise<void> {
+export function useFetchCommands(): (params?: {
+  baseDirectory?: string;
+}) => Promise<void> {
   return useSetAtom(fetchCommandsAtom);
 }
 
@@ -188,6 +196,7 @@ export function useExecuteCommand(): (params: {
   sessionId: string;
   commandName: string;
   args?: Record<string, string>;
+  baseDirectory?: string;
 }) => Promise<ExecuteCommandResult> {
   return useSetAtom(executeCommandAtom);
 }
@@ -197,7 +206,10 @@ export function useExecuteCommand(): (params: {
  *
  * Fetches commands on mount when enabled.
  */
-export function useCommands(enabled = true): {
+export function useCommands(
+  enabled = true,
+  baseDirectory?: string | null,
+): {
   commands: Command[];
   isLoading: boolean;
   error: string | null;
@@ -216,9 +228,9 @@ export function useCommands(enabled = true): {
   // Fetch on mount when enabled
   useEffect(() => {
     if (enabled) {
-      void fetchCommands();
+      void fetchCommands({ baseDirectory: baseDirectory ?? undefined });
     }
-  }, [enabled, fetchCommands]);
+  }, [enabled, fetchCommands, baseDirectory]);
 
   // Wrapper for execute to match original API signature
   const execute = useCallback(
@@ -227,14 +239,24 @@ export function useCommands(enabled = true): {
       commandName: string,
       args?: Record<string, string>,
     ): Promise<ExecuteCommandResult> => {
-      return executeCommand({ sessionId, commandName, args });
+      return executeCommand({
+        sessionId,
+        commandName,
+        args,
+        baseDirectory: baseDirectory ?? undefined,
+      });
     },
-    [executeCommand],
+    [executeCommand, baseDirectory],
+  );
+
+  const refresh = useCallback(
+    () => fetchCommands({ baseDirectory: baseDirectory ?? undefined }),
+    [fetchCommands, baseDirectory],
   );
 
   return {
     ...state,
-    refresh: fetchCommands,
+    refresh,
     execute,
   };
 }

@@ -2,11 +2,13 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
 import {
   type Folder,
+  type InstructionDeliveryMode,
   type SkillOrInstruction,
   type SkillScope,
   type TabType,
   PREDEFINED_CATEGORIES,
 } from './skills/skills-types';
+import { getInstructionDeliveryMode } from './skills/instruction-delivery';
 import { SkillsSidebar } from './skills/SkillsSidebar';
 import { SkillEditor } from './skills/SkillEditor';
 import { SkillDetailView } from './skills/SkillDetailView';
@@ -34,6 +36,11 @@ export default function SkillsView(): React.ReactElement {
   const [formTags, setFormTags] = useState('');
   const [formFolderId, setFormFolderId] = useState<number | null>(null);
   const [formScope, setFormScope] = useState<SkillScope>('global');
+  const [formInjectionMode, setFormInjectionMode] =
+    useState<InstructionDeliveryMode>('always');
+  const [formAlwaysModeWarning, setFormAlwaysModeWarning] = useState<
+    string | null
+  >(null);
   const [saveStatus, setSaveStatus] = useState<string | null>(null);
 
   // Delete modal
@@ -96,6 +103,8 @@ export default function SkillsView(): React.ReactElement {
     setFormTags(entry.tags?.join(', ') ?? '');
     setFormFolderId(entry.folderId);
     setFormScope(entry.scope);
+    setFormInjectionMode(getInstructionDeliveryMode(entry));
+    setFormAlwaysModeWarning(entry.alwaysModeWarning ?? null);
   }, []);
 
   const handleSelect = useCallback(
@@ -120,6 +129,8 @@ export default function SkillsView(): React.ReactElement {
     setFormTags('');
     setFormFolderId(null);
     setFormScope('global');
+    setFormInjectionMode('always');
+    setFormAlwaysModeWarning(null);
   }, [tab]);
 
   const handleEdit = useCallback(() => {
@@ -165,6 +176,7 @@ export default function SkillsView(): React.ReactElement {
       tags: parsedTags.length > 0 ? parsedTags : null,
       folderId: formFolderId,
       scope: formScope,
+      injectionMode: formType === 'instruction' ? formInjectionMode : undefined,
     });
 
     if (result) {
@@ -189,6 +201,7 @@ export default function SkillsView(): React.ReactElement {
     formTags,
     formFolderId,
     formScope,
+    formInjectionMode,
     isCreating,
     loadEntries,
   ]);
@@ -245,6 +258,20 @@ export default function SkillsView(): React.ReactElement {
   const handleChangeFolder = useCallback(
     async (name: string, folderId: number | null) => {
       const updated = await window.api.setEntryFolder(name, folderId);
+      if (updated) {
+        await loadEntries();
+        if (selected?.name === name) setSelected(updated);
+      }
+    },
+    [loadEntries, selected?.name],
+  );
+
+  const handleChangeInjectionMode = useCallback(
+    async (name: string, injectionMode: InstructionDeliveryMode) => {
+      const updated = await window.api.setEntryInjectionMode(
+        name,
+        injectionMode,
+      );
       if (updated) {
         await loadEntries();
         if (selected?.name === name) setSelected(updated);
@@ -461,6 +488,9 @@ export default function SkillsView(): React.ReactElement {
                 setFormFolderId={setFormFolderId}
                 formScope={formScope}
                 setFormScope={setFormScope}
+                formInjectionMode={formInjectionMode}
+                setFormInjectionMode={setFormInjectionMode}
+                alwaysModeWarning={formAlwaysModeWarning}
                 folders={folders}
                 availableCategories={availableCategories}
                 saveStatus={saveStatus}
@@ -480,6 +510,9 @@ export default function SkillsView(): React.ReactElement {
                   onDelete={(name) => setDeleteTarget(name)}
                   onChangeScope={(name, scope) =>
                     void handleChangeScope(name, scope)
+                  }
+                  onChangeInjectionMode={(name, injectionMode) =>
+                    void handleChangeInjectionMode(name, injectionMode)
                   }
                   onChangeFolder={(name, folderId) =>
                     void handleChangeFolder(name, folderId)

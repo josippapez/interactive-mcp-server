@@ -102,7 +102,7 @@ Identity note:
 4. Sends a `connection-registered` IPC event to the renderer so the sidebar updates immediately.
 5. Resolves `openCodeSessionId`: if `openCodeSessionId` was passed explicitly it is used directly; otherwise `autoDetectOpenCodeSession(openCodePort, baseDirectory)` is called, which returns a `DetectedSession | null` object with `{ id: string; parentId: string | null }` (see [OpenCode auto-detection](#opencode-auto-detection)).
 6. Resolves `parentSessionId`: after the `openCodeSessionId` is known (whether explicit or auto-detected), the tool fetches `GET /session` and inspects the matched session's `parentID` field to identify the parent OpenCode session, if any.
-7. Triggers an immediate `session-tree-updated` refresh so the renderer reflects the new registration without waiting for the next poll.
+7. Fires a `session-tree-invalidated` signal so the renderer pulls a fresh tree and reflects the new registration immediately (no payload; renderer calls `window.api.getSessionTree()` in response).
 8. Returns `{ ok: true, connectionId, channelName, projectName, baseDirectory?, idFilePath, message, openCodeSessionId?, parentSessionId? }`.
 
 For OpenCode-backed sessions, sidebar grouping follows the session's own directory/creation metadata from OpenCode, not the `baseDirectory` supplied to `register_connection`.
@@ -644,19 +644,21 @@ const result = await mcp.callTool('poll_context_injections', {
 
 **File:** `desktop/src/main/tools/manage-skills-and-instructions.ts`
 
-**Description:** Manage skills and instructions stored in the Interactive MCP Desktop app. Skills and instructions are persistent knowledge entries that are automatically injected into every new agent session on `register_connection`, making the MCP server self-documenting. Use this tool to register, list, retrieve, or delete skills and instructions.
+**Description:** Manage skills and instructions stored in the Interactive MCP Desktop app. Skills and instructions are persistent knowledge entries that may be injected into OpenCode session bootstrap reminders, making the MCP server self-documenting. Use this tool to register, list, retrieve, or delete skills and instructions.
 
 > See [`SKILLS-INSTRUCTIONS-INJECTION.md`](./SKILLS-INSTRUCTIONS-INJECTION.md) for the end-to-end injection pipeline (message shape, triggers, de-duplication, and post-CRUD broadcast behavior).
 
 > **Important notes:**
 >
 > - Skills and instructions are persisted across app restarts — they are stored in the local SQLite database.
-> - ALL registered skills and instructions are automatically injected into every new agent session when `register_connection` is called.
+> - Bootstrap injection is broader than `register_connection`: it can also happen on auto-detected OpenCode sessions, MCP reconnect/auto-register, and post-compaction re-injection.
+> - Injection is filtered by entry state and session context. Only enabled entries participate; `session-scoped` entries require a per-session opt-in; muted globals are excluded for the target session when bootstrap state is resolved.
 > - Use `"skill"` type for reusable workflows, patterns, or automation recipes.
 > - Use `"instruction"` type for behavioral rules, policies, or guidelines that agents should follow.
 > - Names must be unique. Registering with an existing name will update (upsert) that entry.
 > - Content supports full Markdown formatting.
 > - Entries can be organized with `category` and `tags` for better discoverability.
+> - Delivery is minimal by mode: skills are catalog entries; instructions support `always` and `catalog`; `always` instructions are injected inline while `catalog` instructions are fetched on demand.
 
 #### Parameters
 
@@ -677,9 +679,15 @@ const result = await mcp.callTool('poll_context_injections', {
 ##### `register` — Create or update a skill/instruction
 
 Required fields: `name`, `type`, `description`, `content`.
-Optional fields: `category`, `tags`.
+Optional fields: `category`, `tags`, `injectionMode` (instructions only).
 
 If an entry with the same `name` already exists it is updated in-place (`updated_at` refreshes). After a successful upsert the renderer receives a `skills-updated` event so the UI updates live.
+
+Bootstrap delivery behavior today:
+
+- skills are injected as catalog entries only
+- instructions in `always` mode are injected inline as always-on policy
+- instructions in `catalog` mode are injected as catalog entries and fetched via `get`
 
 ###### Return value (success)
 
@@ -696,7 +704,7 @@ If an entry with the same `name` already exists it is updated in-place (`updated
     "createdAt": "2024-01-01T00:00:00.000Z",
     "updatedAt": "2024-01-01T00:00:00.000Z"
   },
-  "message": "Successfully registered skill \"code-review\". It will be automatically injected into all new agent sessions."
+  "message": "Successfully registered skill \"code-review\". Matching future session bootstraps can include it automatically."
 }
 ```
 
@@ -1036,18 +1044,18 @@ Attachments are supported by both `request_user_input` and `ask_intensive_chat`.
 
 These Electron IPC events are used internally between the main process and the renderer. They are not part of the MCP tool surface but are documented here for completeness.
 
-| Channel                   | Direction       | Payload                                                                                                | Triggered by                                                                                         |
-| ------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `prompt-request`          | main → renderer | `PromptData`                                                                                           | `request_user_input`, `ask_intensive_chat`                                                           |
-| `prompt-response`         | renderer → main | `{ id, answer, attachments? }`                                                                         | User submits a prompt reply                                                                          |
-| `intensive-chat-start`    | main → renderer | `{ sessionId, title, connectionId }`                                                                   | `start_intensive_chat`                                                                               |
-| `intensive-chat-stop`     | main → renderer | `{ sessionId, connectionId }`                                                                          | `stop_intensive_chat`                                                                                |
-| `session-status-update`   | main → renderer | `{ connectionId, status, type }`                                                                       | `push_session_status`                                                                                |
-| `agent-message`           | main → renderer | `{ connectionId, message }`                                                                            | `send_message`                                                                                       |
-| `connection-registered`   | main → renderer | `{ connectionId, channelName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                                                                |
-| `child-sessions-detected` | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                     | _(Deprecated — replaced by `session-tree-updated`.)_ Formerly fired by the background poller.        |
-| `session-tree-updated`    | main → renderer | `SessionTreeNode[]` (see [`IPC-API.md`](./IPC-API.md#session-tree))                                    | Session-tree manager (~2 s poll) delivers a full snapshot of all OpenCode sessions + MCP connections |
-| `inject-opencode-message` | renderer → main | `(openCodeSessionId: string, message: string, attachments?: Attachment[])` (IPC invoke)                | `ChannelComposer` message send when OpenCode session is present                                      |
+| Channel                    | Direction       | Payload                                                                                                | Triggered by                                                                                                                                                                                                                |
+| -------------------------- | --------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt-request`           | main → renderer | `PromptData`                                                                                           | `request_user_input`, `ask_intensive_chat`                                                                                                                                                                                  |
+| `prompt-response`          | renderer → main | `{ id, answer, attachments? }`                                                                         | User submits a prompt reply                                                                                                                                                                                                 |
+| `intensive-chat-start`     | main → renderer | `{ sessionId, title, connectionId }`                                                                   | `start_intensive_chat`                                                                                                                                                                                                      |
+| `intensive-chat-stop`      | main → renderer | `{ sessionId, connectionId }`                                                                          | `stop_intensive_chat`                                                                                                                                                                                                       |
+| `session-status-update`    | main → renderer | `{ connectionId, status, type }`                                                                       | `push_session_status`                                                                                                                                                                                                       |
+| `agent-message`            | main → renderer | `{ connectionId, message }`                                                                            | `send_message`                                                                                                                                                                                                              |
+| `connection-registered`    | main → renderer | `{ connectionId, channelName, projectName, baseDirectory, label, openCodeSessionId, parentSessionId }` | `register_connection`                                                                                                                                                                                                       |
+| `child-sessions-detected`  | main → renderer | `{ openCodeSessionId: string; parentOpenCodeSessionId: string }[]`                                     | _(Deprecated — replaced by `session-tree-invalidated` + `get-session-tree` pull.)_ Formerly fired by the background poller.                                                                                                 |
+| `session-tree-invalidated` | main → renderer | _(none — payload-free)_                                                                                | Session-tree service signals that the tree may have changed (SSE events, register/remove, folder change). Renderer pulls a fresh snapshot via `window.api.getSessionTree()`. See [`IPC-API.md`](./IPC-API.md#session-tree). |
+| `inject-opencode-message`  | renderer → main | `(openCodeSessionId: string, message: string, attachments?: Attachment[])` (IPC invoke)                | `ChannelComposer` message send when OpenCode session is present                                                                                                                                                             |
 
 ---
 

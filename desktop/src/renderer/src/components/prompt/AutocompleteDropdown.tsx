@@ -29,18 +29,18 @@ export default function AutocompleteDropdown({
 
   return (
     <div
-      className="absolute left-4 right-16 bottom-full mb-1 z-50 bg-[var(--color-surface)] border border-[var(--color-border)] rounded-sm shadow-xl max-h-64 overflow-y-auto"
+      className="absolute left-4 right-16 bottom-full mb-1 z-50 bg-[var(--color-surface-raised)] border border-[var(--color-border-weak)] rounded-[12px] shadow-xl max-h-64 overflow-y-auto p-2"
       ref={suggestionsRef}
     >
-      <div className="px-3 py-1 text-[10px] text-[var(--color-text-muted)] border-b border-[var(--color-border)]">
+      <div className="px-2 pb-1.5 text-[10px] text-[var(--color-text-muted)]">
         {triggerChar === '@' ? '📎 File reference' : '# File search'}
       </div>
       {isLoading && suggestions.length === 0 ? (
-        <div className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">
+        <div className="px-2 py-1 text-xs text-[var(--color-text-muted)] italic">
           Indexing…
         </div>
       ) : suggestions.length === 0 && !isLoading ? (
-        <div className="px-3 py-2 text-xs text-[var(--color-text-muted)] italic">
+        <div className="px-2 py-1 text-xs text-[var(--color-text-muted)] italic">
           No matches
         </div>
       ) : (
@@ -51,10 +51,10 @@ export default function AutocompleteDropdown({
           return (
             <div
               key={filePath}
-              className={`flex items-center gap-2 px-3 py-1.5 cursor-pointer text-xs ${
+              className={`flex items-center gap-2 px-2 py-1 cursor-pointer text-xs rounded-md ${
                 i === selectedIndex
                   ? 'bg-[var(--color-agent)]/10 text-[var(--color-agent)]'
-                  : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)]'
+                  : 'text-[var(--color-text-muted)] hover:bg-[var(--color-surface-alt)]'
               }`}
               onMouseDown={(e) => {
                 e.preventDefault();
@@ -64,12 +64,12 @@ export default function AutocompleteDropdown({
             >
               <span className="text-[var(--color-text-muted)]">◇</span>
               <span className="truncate">
-                <span className="font-medium">{fileName}</span>
                 {dirPath && (
-                  <span className="text-[var(--color-text-muted)] ml-1">
-                    {dirPath}
+                  <span className="text-[var(--color-text-muted)] mr-1">
+                    {dirPath}/
                   </span>
                 )}
+                <span className="font-medium">{fileName}</span>
               </span>
             </div>
           );

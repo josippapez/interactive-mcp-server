@@ -1,4 +1,4 @@
-import type { RegisteredConnection } from './database';
+import type { RegisteredConnection } from './utility/db-client';
 
 export interface ConnectionBootstrapProfile {
   channelName: string;

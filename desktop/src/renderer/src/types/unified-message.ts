@@ -77,6 +77,17 @@ export interface ToolCallInfo {
   output?: string;
   /** Tool metadata (e.g., sessionId for Task tools) */
   metadata?: Record<string, unknown>;
+  /**
+   * Spawned subagent session id (Task tool only). Sourced from a sibling
+   * `subtask` part in the same message via ordering-based matching (the
+   * Nth task tool call binds to the Nth subtask part). Authoritative
+   * before `tool.metadata.sessionId` is populated by opencode.
+   */
+  subtaskSessionId?: string;
+  /** Tool execution start timestamp in ms (present when status is running/completed/error). */
+  startedAt?: number;
+  /** Tool execution end timestamp in ms (present when status is completed/error). */
+  completedAt?: number;
 }
 
 /**
@@ -231,17 +242,42 @@ export function conversationToUnified(
     .concat(extractedTextParts.flatMap((part) => part.reasoning))
     .join('\n\n');
 
-  // Extract tool calls from parts
+  // Extract tool calls from parts. For Task tool calls, bind the spawned
+  // subagent session id using ordering-based matching: the Nth `task` tool
+  // call in the message is paired with the Nth `subtask` part in the same
+  // message. Subtask parts carry the authoritative child sessionID (from
+  // the opencode SDK SubtaskPart). Assumption: opencode emits subtask
+  // parts in the same order as the task tool calls that produced them,
+  // within one message. Holds in practice because each Task tool invocation
+  // causes one subtask part emission from the SDK.
+  const subtaskSessionIds: string[] = msg.parts
+    .filter(
+      (p) => p.type === 'subtask' && typeof p.subtaskSessionId === 'string',
+    )
+    .map((p) => p.subtaskSessionId as string);
+
+  let taskToolSeen = 0;
   const toolCalls: ToolCallInfo[] = msg.parts
     .filter((p) => p.type === 'tool-call')
-    .map((p) => ({
-      id: p.id,
-      name: p.toolName ?? 'Unknown tool',
-      status: p.toolStatus,
-      input: p.toolInput,
-      output: p.toolOutput,
-      metadata: p.toolMetadata,
-    }));
+    .map((p) => {
+      const info: ToolCallInfo = {
+        id: p.id,
+        name: p.toolName ?? 'Unknown tool',
+        status: p.toolStatus,
+        input: p.toolInput,
+        output: p.toolOutput,
+        metadata: p.toolMetadata,
+        startedAt: p.toolStartedAt,
+        completedAt: p.toolCompletedAt,
+      };
+      const lowerName = (p.toolName ?? '').toLowerCase();
+      if (lowerName === 'task' || lowerName === 'mcp__opencode__task') {
+        const candidate = subtaskSessionIds[taskToolSeen];
+        if (candidate) info.subtaskSessionId = candidate;
+        taskToolSeen += 1;
+      }
+      return info;
+    });
 
   // Extract source URLs from parts
   const sourceUrls = msg.parts
@@ -283,31 +319,62 @@ type CachedUnifiedEntry = {
 
 const channelUnifiedCache = new Map<string, CachedUnifiedEntry>();
 const conversationUnifiedCache = new Map<string, CachedUnifiedEntry>();
+const CACHE_PRUNE_THRESHOLD = 200;
+
+type PartCacheEntry = {
+  signature: string;
+  id: string;
+  type: string;
+  text: string;
+  toolName: string;
+  toolStatus: string;
+  toolOutput: string;
+  sourceUrl: string;
+  sourceTitle: string;
+  toolInputRef: unknown;
+  toolInputJson: string;
+  toolMetadataRef: unknown;
+  toolMetadataJson: string;
+  toolStartedAt: number | undefined;
+  toolCompletedAt: number | undefined;
+  /** Short hash derived from signature (length + tail-64 FNV-ish) — stable for same signature. */
+  sigHash: number;
+};
+
+const partSignatureCache = new WeakMap<
+  NonNullable<ConversationMessage['parts']>[number],
+  PartCacheEntry
+>();
+
+/**
+ * Streaming fast-path cache. Immer mints a new part object on each delta,
+ * so the WeakMap always misses for the actively-streaming part. Key on
+ * stable `part.id` so we can reuse the prior signature + short hash when
+ * only the text tail grew and no tool fields changed.
+ */
+const partSignatureByIdCache = new Map<string, PartCacheEntry>();
+
+/**
+ * Compute a short hash of the full signature without scanning every char.
+ * Correctness argument: `signature` already contains `part.id`, `type`,
+ * all tool fields, and the full `text`. Any change in those inputs
+ * changes `signature.length` or the trailing bytes of `text` (which is
+ * always at a fixed field position within `signature` — last fields are
+ * toolInputJson and toolMetadataJson, whose ref-equality we check
+ * before using this path). So `length + tail-64` distinguishes all
+ * deltas encountered during streaming.
+ */
+function shortHashSignature(signature: string): number {
+  const tail = signature.slice(-64);
+  let h = signature.length | 0;
+  for (let i = 0; i < tail.length; i += 1) {
+    h = (h * 31 + tail.charCodeAt(i)) | 0;
+  }
+  return h;
+}
 
 function toSafeText(value: unknown): string {
   return typeof value === 'string' ? value : '';
-}
-
-function normalizeComparableText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
-}
-
-function buildComparablePrefixes(text: string): string[] {
-  const normalized = normalizeComparableText(text);
-  if (!normalized) return [];
-
-  const prefixes = new Set<string>([normalized]);
-  const punctuationVariants = [':', '-', '>', '>>'];
-
-  for (const marker of punctuationVariants) {
-    const index = normalized.indexOf(marker);
-    if (index > 0) {
-      const suffix = normalizeComparableText(normalized.slice(index + marker.length));
-      if (suffix) prefixes.add(suffix);
-    }
-  }
-
-  return Array.from(prefixes);
 }
 
 function isHumanReadableToolCoveredByChannel(msg: UnifiedMessage): boolean {
@@ -337,22 +404,155 @@ function hashParts(parts: ConversationMessage['parts']): string {
   let hash = 0;
 
   for (const part of parts) {
-    const signature = [
-      part.id,
-      part.type,
-      toSafeText(part.text),
-      toSafeText(part.toolName),
-      toSafeText(part.toolStatus),
-      toSafeText(part.toolOutput),
-      toSafeText(part.sourceUrl),
-      toSafeText(part.sourceTitle),
-      JSON.stringify(part.toolInput ?? null),
-      JSON.stringify(part.toolMetadata ?? null),
-    ].join('|');
+    const text = toSafeText(part.text);
+    const toolName = toSafeText(part.toolName);
+    const toolStatus = toSafeText(part.toolStatus);
+    const toolOutput = toSafeText(part.toolOutput);
+    const sourceUrl = toSafeText(part.sourceUrl);
+    const sourceTitle = toSafeText(part.sourceTitle);
+    const toolInputRef = part.toolInput ?? null;
+    const toolMetadataRef = part.toolMetadata ?? null;
+    const toolStartedAt = part.toolStartedAt;
+    const toolCompletedAt = part.toolCompletedAt;
+    const cached = partSignatureCache.get(part);
 
-    for (let i = 0; i < signature.length; i += 1) {
-      hash = (hash * 31 + signature.charCodeAt(i)) | 0;
+    let entry: PartCacheEntry | undefined;
+
+    if (
+      cached &&
+      cached.id === part.id &&
+      cached.type === part.type &&
+      cached.text === text &&
+      cached.toolName === toolName &&
+      cached.toolStatus === toolStatus &&
+      cached.toolOutput === toolOutput &&
+      cached.sourceUrl === sourceUrl &&
+      cached.sourceTitle === sourceTitle &&
+      cached.toolInputRef === toolInputRef &&
+      cached.toolMetadataRef === toolMetadataRef &&
+      cached.toolStartedAt === toolStartedAt &&
+      cached.toolCompletedAt === toolCompletedAt
+    ) {
+      // WeakMap hit — same part object, unchanged.
+      entry = cached;
+    } else {
+      // WeakMap miss. During streaming, Immer produces a new part object
+      // every tick, but `part.id` is stable. Try the id-keyed cache for
+      // a streaming tail-append fast path.
+      const prior =
+        part.id != null ? partSignatureByIdCache.get(part.id) : undefined;
+
+      const toolFieldsMatch =
+        prior !== undefined &&
+        prior.id === part.id &&
+        prior.type === part.type &&
+        prior.toolName === toolName &&
+        prior.toolStatus === toolStatus &&
+        prior.toolOutput === toolOutput &&
+        prior.sourceUrl === sourceUrl &&
+        prior.sourceTitle === sourceTitle &&
+        prior.toolInputRef === toolInputRef &&
+        prior.toolMetadataRef === toolMetadataRef &&
+        prior.toolStartedAt === toolStartedAt &&
+        prior.toolCompletedAt === toolCompletedAt;
+
+      // Streaming tail-append: only `text` grew; every other field is
+      // ref/value-equal. We can rebuild `signature` cheaply and use the
+      // short-hash. If any tool field changed, `toolFieldsMatch` is false
+      // and we fall through to the full recompute branch — which also
+      // uses shortHashSignature but re-stringifies JSON fields as needed.
+      if (toolFieldsMatch && text.length >= prior.text.length) {
+        const signature = [
+          part.id,
+          part.type,
+          text,
+          toolName,
+          toolStatus,
+          toolOutput,
+          sourceUrl,
+          sourceTitle,
+          prior.toolInputJson,
+          prior.toolMetadataJson,
+          toolStartedAt ?? '',
+          toolCompletedAt ?? '',
+        ].join('|');
+
+        entry = {
+          signature,
+          id: part.id,
+          type: part.type,
+          text,
+          toolName,
+          toolStatus,
+          toolOutput,
+          sourceUrl,
+          sourceTitle,
+          toolInputRef,
+          toolInputJson: prior.toolInputJson,
+          toolMetadataRef,
+          toolMetadataJson: prior.toolMetadataJson,
+          toolStartedAt,
+          toolCompletedAt,
+          sigHash: shortHashSignature(signature),
+        };
+      } else {
+        // Full recompute: tool fields changed, length shrank, no prior,
+        // or no id. Re-stringify JSON fields unless ref-equal to prior.
+        const toolInputJson =
+          prior?.toolInputRef === toolInputRef
+            ? prior.toolInputJson
+            : cached?.toolInputRef === toolInputRef
+              ? cached.toolInputJson
+              : JSON.stringify(toolInputRef);
+        const toolMetadataJson =
+          prior?.toolMetadataRef === toolMetadataRef
+            ? prior.toolMetadataJson
+            : cached?.toolMetadataRef === toolMetadataRef
+              ? cached.toolMetadataJson
+              : JSON.stringify(toolMetadataRef);
+
+        const signature = [
+          part.id,
+          part.type,
+          text,
+          toolName,
+          toolStatus,
+          toolOutput,
+          sourceUrl,
+          sourceTitle,
+          toolInputJson,
+          toolMetadataJson,
+          toolStartedAt ?? '',
+          toolCompletedAt ?? '',
+        ].join('|');
+
+        entry = {
+          signature,
+          id: part.id,
+          type: part.type,
+          text,
+          toolName,
+          toolStatus,
+          toolOutput,
+          sourceUrl,
+          sourceTitle,
+          toolInputRef,
+          toolInputJson,
+          toolMetadataRef,
+          toolMetadataJson,
+          toolStartedAt,
+          toolCompletedAt,
+          sigHash: shortHashSignature(signature),
+        };
+      }
+
+      partSignatureCache.set(part, entry);
+      if (part.id != null) {
+        partSignatureByIdCache.set(part.id, entry);
+      }
     }
+
+    hash = (hash * 31 + entry.sigHash) | 0;
   }
 
   return `${parts.length}:${hash}`;
@@ -499,48 +699,39 @@ export function mergeMessages(
   const unified: UnifiedMessage[] = [];
   const validChannelIds = new Set<string>();
   const validConversationIds = new Set<string>();
-  const conversationUserSignatures = new Set<string>();
   const channelPromptTimestamps = new Set<number>();
 
-  for (const msg of conversationMessages) {
-    if (msg.role !== 'user') {
-      continue;
-    }
-
-    const text = msg.parts
-      .filter((part) => part.type === 'text' && part.text)
-      .map((part) => normalizeComparableText(part.text))
-      .join('\n\n')
-      .trim();
-
-    if (!text) {
-      continue;
-    }
-
-    for (const signature of buildComparablePrefixes(text)) {
-      conversationUserSignatures.add(signature);
-    }
-  }
-
   // Convert channel messages
+  //
+  // Outbound (user-sent) channel messages are NOT rendered in the chat
+  // history. They exist as a local echo for optimistic UX, but OpenCode
+  // echoes every accepted user message back via a `message.updated` event
+  // which lands in `conversationMessages`. Rendering both caused duplicate
+  // bubbles, stale "QUEUED" badges on already-sent messages, and lost
+  // server-confirmed content when the echo failed to match the local
+  // text signature. Source-of-truth is the conversation store.
+  //
+  // Queued/sending state for pending user input is surfaced outside of
+  // the chat flow (composer-level indicator), which reads the raw
+  // `channelMessages` list directly and is unaffected by this filter.
   for (const msg of channelMessages) {
-    if (msg.kind === 'question' || msg.kind === 'agent_message') {
-      channelPromptTimestamps.add(msg.timestamp.getTime());
-    }
-
-    if (
-      msg.kind === 'outbound' &&
-      msg.sent === true &&
-      buildComparablePrefixes(msg.text).some((signature) =>
-        conversationUserSignatures.has(signature),
-      )
-    ) {
+    if (msg.kind === 'outbound') {
+      // Still track as a "valid" id so the cache-prune pass doesn't
+      // evict entries other pipelines might cache. Do not push into the
+      // unified output.
       validChannelIds.add(msg.id);
       continue;
     }
 
+    if (msg.kind === 'question' || msg.kind === 'agent_message') {
+      channelPromptTimestamps.add(msg.timestamp.getTime());
+    }
+
     validChannelIds.add(msg.id);
-    const unifiedMessage = getCachedChannelUnified(msg, msg.id === activePromptId);
+    const unifiedMessage = getCachedChannelUnified(
+      msg,
+      msg.id === activePromptId,
+    );
     if (!shouldHideUnifiedMessage(unifiedMessage, hiddenFilterOptions)) {
       unified.push(unifiedMessage);
     }
@@ -561,8 +752,12 @@ export function mergeMessages(
     }
   }
 
-  pruneCache(channelUnifiedCache, validChannelIds);
-  pruneCache(conversationUnifiedCache, validConversationIds);
+  if (channelUnifiedCache.size > CACHE_PRUNE_THRESHOLD) {
+    pruneCache(channelUnifiedCache, validChannelIds);
+  }
+  if (conversationUnifiedCache.size > CACHE_PRUNE_THRESHOLD) {
+    pruneCache(conversationUnifiedCache, validConversationIds);
+  }
 
   // Sort by timestamp
   unified.sort((a, b) => a.timestamp - b.timestamp);
@@ -581,4 +776,124 @@ export interface MessageDisplayConfig {
   showConversationMessages: boolean;
   /** Whether conversation provider is available and connected */
   conversationAvailable: boolean;
+}
+
+// ─── Markdown serialization ──────────────────────────────────────────────────
+
+function formatDurationMs(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+  const minutes = Math.floor(ms / 60000);
+  const seconds = Math.round((ms % 60000) / 1000);
+  return `${minutes}m${seconds}s`;
+}
+
+function formatToolCallMarkdown(
+  call: NonNullable<UnifiedMessage['toolCalls']>[number],
+): string {
+  const parts: string[] = [`**${call.name}**`];
+  if (call.status && call.status !== 'completed') {
+    parts.push(`[${call.status}]`);
+  }
+  if (
+    typeof call.startedAt === 'number' &&
+    typeof call.completedAt === 'number' &&
+    call.completedAt >= call.startedAt
+  ) {
+    parts.push(`(${formatDurationMs(call.completedAt - call.startedAt)})`);
+  }
+  const header = `  - ${parts.join(' ')}`;
+  const inputLines: string[] = [];
+  if (call.input && Object.keys(call.input).length > 0) {
+    const summary = Object.entries(call.input)
+      .slice(0, 3)
+      .map(([k, v]) => {
+        const str =
+          typeof v === 'string'
+            ? v.length > 80
+              ? `${v.slice(0, 80)}…`
+              : v
+            : typeof v === 'number' || typeof v === 'boolean'
+              ? String(v)
+              : Array.isArray(v)
+                ? `[${v.length} items]`
+                : '{…}';
+        return `${k}: ${str}`;
+      })
+      .join(', ');
+    if (summary) inputLines.push(`    - input: ${summary}`);
+  }
+  return [header, ...inputLines].join('\n');
+}
+
+function roleLabel(role: UnifiedMessage['role']): string {
+  switch (role) {
+    case 'user':
+      return 'User';
+    case 'assistant':
+      return 'Assistant';
+    case 'system':
+      return 'System';
+    case 'sent':
+    case 'sending':
+    case 'queued':
+      return 'Outbound';
+    default:
+      return role;
+  }
+}
+
+function formatTimestamp(ms: number): string {
+  try {
+    const d = new Date(ms);
+    return d.toISOString().replace('T', ' ').slice(0, 19);
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Serialize a list of unified messages to a markdown transcript. Intended
+ * for the "copy full session" action in the channel header. Omits
+ * attachments, reasoning, and source URLs to keep the output concise;
+ * includes tool calls with duration + input summary.
+ */
+export function conversationToMarkdown(messages: UnifiedMessage[]): string {
+  if (messages.length === 0) return '';
+
+  const blocks: string[] = [];
+  for (const msg of messages) {
+    const ts = formatTimestamp(msg.timestamp);
+    const header = `### ${roleLabel(msg.role)}${ts ? ` — ${ts}` : ''}${msg.modelId ? ` — ${msg.modelId}` : ''}`;
+    const sections: string[] = [header];
+
+    if (msg.text && msg.text.trim()) {
+      sections.push(msg.text.trim());
+    }
+
+    if (msg.reasoning && msg.reasoning.trim()) {
+      sections.push(
+        [
+          '<details><summary>Reasoning</summary>',
+          '',
+          msg.reasoning.trim(),
+          '',
+          '</details>',
+        ].join('\n'),
+      );
+    }
+
+    if (msg.toolCalls && msg.toolCalls.length > 0) {
+      sections.push(
+        ['**Tool calls:**', ...msg.toolCalls.map(formatToolCallMarkdown)].join(
+          '\n',
+        ),
+      );
+    }
+
+    blocks.push(sections.join('\n\n'));
+  }
+
+  return blocks.join('\n\n---\n\n') + '\n';
 }

@@ -18,7 +18,7 @@ The main agent is the **orchestrator and user-interaction loop owner**. Custom a
 
 Responsibilities of the main agent at all times:
 
-- Use `prompt-user` skill / `request_user_input` to communicate with the user before, during, and after delegation.
+- Use the `prompt-user` skill and the **built-in questions tool** to communicate with the user before, during, and after delegation.
 - Confirm scope or approach with the user before delegating if there is **any ambiguity**.
 - After delegation completes, review all outputs, run additional verifications if needed, and present a concise result to the user.
 - Run the mandatory satisfaction check (`Are you satisfied with this result, or would you like any changes?`) before closing any task — even trivial ones.
@@ -57,7 +57,7 @@ When a task clearly maps to one of the custom agents below, the main agent MUST 
 
 1. Read the agent's full output.
 2. Run any verifications the agent did not cover.
-3. If the output reveals a new ambiguity or a blocking decision, surface it to the user via `prompt-user` **before** proceeding.
+3. If the output reveals a new ambiguity or a blocking decision, surface it to the user via the **built-in questions tool** **before** proceeding.
 4. If the agent reports failure, retry once with a refined prompt. If it fails again, execute directly and note why.
 5. If the retried handoff still lacks meaningful progress, do not delegate again for the same objective; execute directly.
 6. Present a concise summary to the user and run the mandatory satisfaction check.

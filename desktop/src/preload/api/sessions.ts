@@ -32,8 +32,10 @@ export function createSessionsApi() {
     // Return all currently-active prompts so the renderer can recover them on startup.
     getActivePrompts: (): Promise<PromptRequest[]> =>
       ipcRenderer.invoke('get-active-prompts'),
-    getPendingPermissions: (): Promise<PendingPermissionRequest[]> =>
-      ipcRenderer.invoke('get-pending-permissions'),
+    getPendingPermissions: (
+      baseDirectory?: string,
+    ): Promise<PendingPermissionRequest[]> =>
+      ipcRenderer.invoke('get-pending-permissions', baseDirectory),
     getPendingQuestions: (): Promise<PendingQuestionRequest[]> =>
       ipcRenderer.invoke('get-pending-questions'),
     dismissSession: (connectionId: string): Promise<void> =>
@@ -125,9 +127,13 @@ export function createSessionsApi() {
      */
     fetchConversationMessages: (
       sessionId: string,
-      limit?: number,
+      opts?: { limit?: number; before?: string },
     ): Promise<import('./types').ConversationMessage[]> =>
-      ipcRenderer.invoke('fetch-conversation-messages', { sessionId, limit }),
+      ipcRenderer.invoke('fetch-conversation-messages', {
+        sessionId,
+        limit: opts?.limit,
+        before: opts?.before,
+      }),
 
     /**
      * Check if conversation provider is available.

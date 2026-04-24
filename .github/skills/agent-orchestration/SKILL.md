@@ -1,6 +1,6 @@
 ---
 name: agent-orchestration
-description: Route tasks to the repository's starter custom agents based on task type and scope. Main agent acts as orchestrator and prompting loop owner throughout.
+description: Route tasks to the repository's starter custom agents based on task type and scope. Main agent acts as orchestrator and prompt-loop owner throughout, using the repo's active question-tool policy for user communication.
 ---
 
 # agent-orchestration
@@ -56,6 +56,7 @@ extensions (`docs-recommender`, `test-reminder`, `prompt-loop`). Therefore:
 
 - docs/guides/agent-files.md#custom-agent-orchestration-starter-set
 - .github/skills/prompt-user/SKILL.md
+- docs/guides/prompting-tool-selection.md
 - .github/instructions/interactive-prompt-loop.instructions.md
 - .github/instructions/agent-orchestration.instructions.md
 - .github/agents/hcp-frontend-specialist.agent.md

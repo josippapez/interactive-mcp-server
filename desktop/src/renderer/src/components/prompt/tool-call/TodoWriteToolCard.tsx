@@ -125,18 +125,90 @@ function parseTodoInput(
   return normalized.length > 0 ? normalized : null;
 }
 
-function todoStatusIcon(status: TodoSnapshot['status']): string {
-  switch (status) {
-    case 'completed':
-      return '●';
-    case 'in_progress':
-      return '◐';
-    case 'cancelled':
-      return '✕';
-    default:
-      return '○';
+/**
+ * Checkbox SVG per opencode `todowrite` reference:
+ *
+ * - pending: empty square
+ * - in_progress: half-filled square (agent color via CSS)
+ * - completed: filled square with check
+ * - cancelled: square with X
+ *
+ * Sizing (12x12) and status-driven color come from CSS at
+ * main.css `[data-component='todos'] [data-slot='todo-checkbox']`.
+ */
+const TodoCheckbox = memo(function TodoCheckbox({
+  status,
+}: {
+  status: TodoSnapshot['status'];
+}): React.ReactElement {
+  if (status === 'completed') {
+    return (
+      <svg
+        data-slot="todo-checkbox"
+        viewBox="0 0 12 12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="1.5" y="1.5" width="9" height="9" rx="1.5" />
+        <path d="M3.75 6L5.25 7.5L8.25 4.5" />
+      </svg>
+    );
   }
-}
+  if (status === 'in_progress') {
+    return (
+      <svg
+        data-slot="todo-checkbox"
+        viewBox="0 0 12 12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="1.5" y="1.5" width="9" height="9" rx="1.5" />
+        <path d="M6 1.5V10.5" stroke="currentColor" />
+        <path d="M1.5 6H6V10.5H1.5Z" fill="currentColor" stroke="none" />
+      </svg>
+    );
+  }
+  if (status === 'cancelled') {
+    return (
+      <svg
+        data-slot="todo-checkbox"
+        viewBox="0 0 12 12"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <rect x="1.5" y="1.5" width="9" height="9" rx="1.5" />
+        <path d="M4 4L8 8M8 4L4 8" />
+      </svg>
+    );
+  }
+  // pending
+  return (
+    <svg
+      data-slot="todo-checkbox"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="1.5" y="1.5" width="9" height="9" rx="1.5" />
+    </svg>
+  );
+});
 
 const TodoWriteToolCard = memo(function TodoWriteToolCard({
   tool,
@@ -151,68 +223,18 @@ const TodoWriteToolCard = memo(function TodoWriteToolCard({
 
   if (!todos || todos.length === 0) return null;
 
-  const completedCount = todos.filter(
-    (todo) => todo.status === 'completed',
-  ).length;
-  const inProgressCount = todos.filter(
-    (todo) => todo.status === 'in_progress',
-  ).length;
-
-  const statusColorClass: Record<TodoSnapshot['status'], string> = {
-    pending: 'text-[var(--color-text-faint)]',
-    in_progress: 'text-[var(--color-agent)]',
-    completed: 'text-[var(--color-success,#22c55e)]',
-    cancelled: 'text-[var(--color-error)]',
-  };
-
-  const statusLabel: Record<TodoSnapshot['status'], string> = {
-    pending: 'Pending',
-    in_progress: 'In progress',
-    completed: 'Done',
-    cancelled: 'Cancelled',
-  };
-
   return (
-    <div className="rounded border border-[var(--color-border)] bg-[var(--color-surface-alt)] p-2">
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--color-text-muted)]">
-          Todo list
-        </span>
-        <div className="flex items-center gap-1.5 text-[10px] text-[var(--color-text-faint)]">
-          <span>
-            {completedCount}/{todos.length} done
-          </span>
-          {inProgressCount > 0 && (
-            <span className="text-[var(--color-agent)]">
-              {inProgressCount} active
-            </span>
-          )}
+    <div data-component="todos">
+      {todos.map((todo, idx) => (
+        <div
+          key={`${todo.content}-${idx}`}
+          data-slot="todo-item"
+          data-status={todo.status}
+        >
+          <TodoCheckbox status={todo.status} />
+          <span>{todo.content}</span>
         </div>
-      </div>
-
-      <div className="space-y-1">
-        {todos.map((todo, idx) => (
-          <div
-            key={`${todo.content}-${idx}`}
-            className="flex items-start gap-2 rounded bg-[var(--color-surface)] px-2 py-1"
-          >
-            <span className={`${statusColorClass[todo.status]} mt-[1px]`}>
-              {todoStatusIcon(todo.status)}
-            </span>
-            <span className="flex-1 text-[11px] text-[var(--color-text)] leading-snug">
-              {todo.content}
-            </span>
-            <span
-              className={`text-[9px] uppercase ${statusColorClass[todo.status]}`}
-            >
-              {statusLabel[todo.status]}
-            </span>
-            <span className="text-[9px] text-[var(--color-text-muted)] uppercase">
-              {todo.priority}
-            </span>
-          </div>
-        ))}
-      </div>
+      ))}
     </div>
   );
 });

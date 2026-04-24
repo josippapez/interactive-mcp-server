@@ -1,33 +1,24 @@
 // Session module barrel file
-// Re-exports all public APIs from session-related modules
+// Re-exports the public APIs for session helpers.
+//
+// After Phase 4b:
+//   - resolver / auto-register / tree-service / reconnect     → utility/session-client
+//   - file (mcp-session-file helpers), registration-cleanup   → utility/backend/session
+//   - channel-cleanup                                         → still main-side (orphan helper)
 
-// channel-cleanup
+// channel-cleanup (still main-side, pure)
 export {
   findStaleGenericDirectChannels,
   type PersistedChannel,
 } from './channel-cleanup';
 
-// file
+// reconnect (now lives in utility; async proxy)
 export {
-  SESSION_FILE,
-  CWD_SESSION_FILE,
-  MCP_CONFIG_FILE,
-  writeSessionFile,
-  writeMcpConfigHint,
-  clearSessionFile,
-} from './file';
+  reconcileSessionConnections,
+  type ReconnectResult,
+} from '../utility/session-client';
 
-// reconnect
-export { reconcileSessionConnections, type ReconnectResult } from './reconnect';
-
-// registration-cleanup
-export {
-  pickUnregisteredConnectionsForCleanup,
-  pickUnregisteredDefaultConnectionsForCleanup,
-  type SessionRegistrationEntry,
-} from './registration-cleanup';
-
-// resolver
+// resolver (now lives in utility; async proxy)
 export {
   resolveSession,
   reResolveStaleSession,
@@ -35,23 +26,22 @@ export {
   type ResolutionMethod,
   type ResolvedSession,
   type ResolverOptions,
-} from './resolver';
+} from '../utility/session-client';
 
-// tree-manager
+// session-tree-service (now lives in utility; async proxy)
 export {
+  startSessionTreeService,
+  stopSessionTreeService,
+  fetchSessionTree,
+  invalidateSessionTree,
   tombstoneOpenCodeSession,
-  startSessionTreeManager,
-  stopSessionTreeManager,
-  triggerSessionTreeUpdate,
-  replayPendingSessionTreeSnapshot,
-  refreshSessionTreeCache,
-  type VcsInfo,
-  type SessionNodeData,
-} from './tree-manager';
+  getSelectedFolder,
+  setSelectedFolder,
+} from '../utility/session-client';
 
-// tree-poller
-export {
-  startSessionTreePoller,
-  stopSessionTreePoller,
-  type DetectedChildSession,
-} from './tree-poller';
+// Shared session-tree data types (re-exported from utility backend).
+export type {
+  SessionNodeData,
+  VcsInfo,
+  SessionInfo,
+} from '../utility/session-client';

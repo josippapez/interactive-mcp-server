@@ -13,6 +13,7 @@
 
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { useEffect, useRef } from 'react';
+import { isChatTextSize } from '../components/prompt/chat-text-size';
 
 // -----------------------------------------------------------------------------
 // Types
@@ -31,12 +32,14 @@ export type SyncedSettings = {
   agentBackend: string;
   hideSystemReminders: boolean;
   hideDocInjections: boolean;
+  chatTextSize: 'sm' | 'md' | 'lg';
   /** Default model ID for new sessions. */
   defaultModelId: string;
   /** Default provider ID for the default model. */
   defaultProviderId: string;
   /** Default reasoning variant/effort level. */
   defaultReasoningVariant: string;
+  wrapCodeBlocks: boolean;
 };
 
 // -----------------------------------------------------------------------------
@@ -52,9 +55,11 @@ const DEFAULT_SETTINGS: SyncedSettings = {
   agentBackend: '',
   hideSystemReminders: false,
   hideDocInjections: false,
+  chatTextSize: 'md',
   defaultModelId: '',
   defaultProviderId: '',
   defaultReasoningVariant: '',
+  wrapCodeBlocks: true,
 };
 
 // -----------------------------------------------------------------------------
@@ -113,9 +118,13 @@ export const fetchSettingsAtom = atom(null, async (_get, set) => {
       agentBackend: s.agentBackend ?? '',
       hideSystemReminders: s.hideSystemReminders ?? false,
       hideDocInjections: s.hideDocInjections ?? false,
+      chatTextSize: isChatTextSize(s.chatTextSize ?? '')
+        ? s.chatTextSize
+        : 'md',
       defaultModelId: s.defaultModelId ?? '',
       defaultProviderId: s.defaultProviderId ?? '',
       defaultReasoningVariant: s.defaultReasoningVariant ?? '',
+      wrapCodeBlocks: s.wrapCodeBlocks ?? true,
     };
 
     set(settingsAtom, syncedSettings);

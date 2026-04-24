@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 
 /**
  * Auto-scroll behavior for chat views — single source of truth.
@@ -95,6 +101,8 @@ export interface UseAutoScrollReturn {
   handleScroll: () => void;
   /** Attach to the scroll container's `onWheel` (deltaY). */
   handleWheel: (deltaY: number) => void;
+  /** Pause follow mode only when the user made a real text selection. */
+  handleInteraction: () => void;
   /** Channel-switch reset: sticky=true and scroll to bottom. */
   reset: (channelId?: string | null) => void;
 }
@@ -263,6 +271,12 @@ export function useAutoScroll(
     setShowJump(derived.showJump);
   }, [getDistanceFromBottom, jumpThreshold, threshold]);
 
+  const updateOverflowAnchor = useCallback(() => {
+    const el = scrollElRef.current;
+    if (!el) return;
+    el.style.overflowAnchor = stickyRef.current ? 'none' : 'auto';
+  }, []);
+
   /**
    * Core programmatic scroll: moves to bottom AND marks the expected scrollTop
    * so the subsequent `scroll` event is classified as programmatic.
@@ -361,6 +375,15 @@ export function useAutoScroll(
     [setSticky],
   );
 
+  const handleInteraction = useCallback(() => {
+    if (!options.working) return;
+    const selection = window.getSelection();
+    if (!selection || selection.toString().length === 0) return;
+    markerRef.current.clear();
+    programmaticScrollUntilRef.current = 0;
+    setSticky(false);
+  }, [options.working, setSticky]);
+
   const reset = useCallback(
     (_channelId?: string | null): void => {
       // channelId is accepted for API compatibility; current impl doesn't use it.
@@ -382,6 +405,33 @@ export function useAutoScroll(
     },
     [syncDerivedState],
   );
+
+  useEffect(() => {
+    updateOverflowAnchor();
+  }, [isStickyToBottom, updateOverflowAnchor]);
+
+  useLayoutEffect(() => {
+    const content = scrollElRef.current?.firstElementChild;
+    if (!(content instanceof HTMLElement)) return;
+
+    const observer = new ResizeObserver(() => {
+      const el = scrollElRef.current;
+      if (!el) return;
+      const canScroll = el.scrollHeight - el.clientHeight > 1;
+      if (!canScroll) {
+        setSticky(true);
+        syncDerivedState();
+        return;
+      }
+      if (!options.working) return;
+      if (!stickyRef.current) return;
+      scrollToBottomInternal('auto', false);
+    });
+
+    observer.observe(content);
+
+    return () => observer.disconnect();
+  }, [options.working, scrollToBottomInternal, setSticky, syncDerivedState]);
 
   // External stick-to-bottom preference (Bug 3). When the consumer flips the
   // preference (e.g. via the toggle button or on channel switch), reflect it
@@ -413,6 +463,7 @@ export function useAutoScroll(
     resume,
     handleScroll,
     handleWheel,
+    handleInteraction,
     reset,
   };
 }

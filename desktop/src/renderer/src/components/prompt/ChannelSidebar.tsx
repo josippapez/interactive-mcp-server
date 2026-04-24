@@ -1,10 +1,22 @@
-import { memo } from 'react';
-import { SidebarHeader } from './sidebar/SidebarHeader';
+import { memo, useEffect, useRef, useState } from 'react';
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarHeader as ShadcnSidebarHeader,
+  useSidebar,
+} from '@/components/ui/sidebar';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { cn } from '@/lib/utils';
+import { SidebarHeader as ChannelFilterBar } from './sidebar/SidebarHeader';
 import { ProjectsSection } from './sidebar/ProjectsSection';
 import { DirectConnectionsSection } from './sidebar/DirectConnectionsSection';
 import { ProjectRail } from './sidebar/ProjectRail';
 import { useSidebarState } from './sidebar/useSidebarState';
-import { MIN_SIDEBAR_WIDTH, MAX_SIDEBAR_WIDTH } from './sidebar/types';
+import {
+  SIDEBAR_WIDTH_STORAGE_KEY,
+  clampSidebarWidth,
+  parseStoredSidebarWidth,
+} from './sidebar/sidebar-resize';
 
 type Props = {
   activeConnectionId: string | null;
@@ -21,15 +33,29 @@ const ChannelSidebar = memo(function ChannelSidebar({
   onCreateSession,
   onSelectProjectSession,
 }: Props): React.ReactElement {
+  const { open, isMobile } = useSidebar();
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    if (typeof window === 'undefined') return 280;
+
+    try {
+      return parseStoredSidebarWidth(
+        window.localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY),
+      );
+    } catch {
+      return 280;
+    }
+  });
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   const {
-    sidebarRef,
     filter,
     setFilter,
     showInactive,
     collapsedProjects,
     collapsedSessions,
-    sidebarWidth,
-    isResizing,
     isRefreshing,
     selectedProjectPath,
     filteredProjects,
@@ -46,13 +72,69 @@ const ChannelSidebar = memo(function ChannelSidebar({
     handleToggleSession,
     handleAddProject,
     handleRemoveProject,
-    handleMouseDown,
     handleSelectProject,
   } = useSidebarState({ activeConnectionId });
 
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        SIDEBAR_WIDTH_STORAGE_KEY,
+        String(sidebarWidth),
+      );
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (isMobile) return;
+
+    const handlePointerMove = (event: PointerEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      const nextWidth = clampSidebarWidth(
+        dragState.startWidth + (event.clientX - dragState.startX),
+      );
+      setSidebarWidth(nextWidth);
+    };
+
+    const handlePointerUp = (event: PointerEvent) => {
+      const dragState = dragStateRef.current;
+      if (!dragState || dragState.pointerId !== event.pointerId) return;
+
+      dragStateRef.current = null;
+      document.body.style.removeProperty('cursor');
+      document.body.style.removeProperty('user-select');
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+  }, [isMobile]);
+
+  const handleResizeStart = (event: React.PointerEvent<HTMLButtonElement>) => {
+    if (isMobile || !open) return;
+
+    dragStateRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startWidth: sidebarWidth,
+    };
+    document.body.style.setProperty('cursor', 'col-resize');
+    document.body.style.setProperty('user-select', 'none');
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
   return (
-    <div className="flex h-full">
-      {/* Project Rail - far left */}
+    <div className="relative flex h-full min-h-0" data-sidebar-shell>
+      {/* Project Rail - far left, independent column (matches opencode layout) */}
       <ProjectRail
         projects={allProjects}
         selectedPath={selectedProjectPath}
@@ -64,64 +146,74 @@ const ChannelSidebar = memo(function ChannelSidebar({
         onRemoveProject={handleRemoveProject}
       />
 
-      {/* Main sidebar content */}
-      <aside
-        ref={sidebarRef}
-        style={{ width: sidebarWidth }}
-        className="relative border-r border-[var(--color-border)] bg-[var(--color-surface-alt)] overflow-hidden flex flex-col shrink-0"
+      {/* Channel list sidebar — shadcn primitive with collapsible="none" so it
+          stays inline with the flex layout (the outer SidebarProvider still
+          supplies context + the Ctrl/Cmd+B toggle for future use). */}
+      <Sidebar
+        collapsible="none"
+        style={
+          { '--sidebar-width': `${sidebarWidth}px` } as React.CSSProperties
+        }
+        className={cn(
+          'h-full border-r border-[var(--color-border)] bg-[var(--color-surface-alt)]/90 transition-[width,opacity,border-color] duration-200',
+          !open && !isMobile && 'w-0 border-r-0 opacity-0 pointer-events-none',
+        )}
       >
-        <SidebarHeader
-          filter={filter}
-          onFilterChange={setFilter}
-          providerTabs={providerTabs}
-          providerCounts={providerCounts}
-          isRefreshing={isRefreshing}
-          onRefresh={handleRefresh}
-        />
-
-        {/* Sessions list */}
-        <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden">
-          <ProjectsSection
-            projects={filteredProjects}
+        <ShadcnSidebarHeader className="p-0 gap-0">
+          <ChannelFilterBar
             filter={filter}
+            onFilterChange={setFilter}
+            providerTabs={providerTabs}
+            providerCounts={providerCounts}
             showInactive={showInactive}
-            runningCount={runningCount}
             inactiveCount={inactiveCount}
             onToggleInactive={handleToggleInactive}
-            collapsedProjects={collapsedProjects}
-            onToggleProject={handleToggleProject}
-            onRemoveProject={handleRemoveProject}
-            activeConnectionId={activeConnectionId}
-            onSelect={onSelect}
-            getStatus={getStatus}
-            onCreateSession={onCreateSession}
-            collapsedSessions={collapsedSessions}
-            onToggleSession={handleToggleSession}
-            hasDirectConnections={filteredDirectConnections.length > 0}
-            selectedProjectPath={selectedProjectPath}
+            isRefreshing={isRefreshing}
+            onRefresh={handleRefresh}
           />
+        </ShadcnSidebarHeader>
 
-          <DirectConnectionsSection
-            connections={filteredDirectConnections}
-            activeConnectionId={activeConnectionId}
-            onSelect={onSelect}
-          />
-        </div>
+        <SidebarContent className="gap-0 overflow-hidden">
+          <ScrollArea className="min-h-0 flex-1">
+            <div className="min-w-0 pb-3 pt-1">
+              <ProjectsSection
+                projects={filteredProjects}
+                filter={filter}
+                runningCount={runningCount}
+                collapsedProjects={collapsedProjects}
+                onToggleProject={handleToggleProject}
+                onRemoveProject={handleRemoveProject}
+                activeConnectionId={activeConnectionId}
+                onSelect={onSelect}
+                getStatus={getStatus}
+                onCreateSession={onCreateSession}
+                collapsedSessions={collapsedSessions}
+                onToggleSession={handleToggleSession}
+                hasDirectConnections={filteredDirectConnections.length > 0}
+                selectedProjectPath={selectedProjectPath}
+              />
 
-        {/* Resize handle */}
-        <div
-          role="slider"
+              <DirectConnectionsSection
+                connections={filteredDirectConnections}
+                activeConnectionId={activeConnectionId}
+                onSelect={onSelect}
+              />
+            </div>
+          </ScrollArea>
+        </SidebarContent>
+      </Sidebar>
+
+      {open && !isMobile && (
+        <button
+          type="button"
           aria-label="Resize sidebar"
-          aria-valuenow={sidebarWidth}
-          aria-valuemin={MIN_SIDEBAR_WIDTH}
-          aria-valuemax={MAX_SIDEBAR_WIDTH}
-          tabIndex={0}
-          onMouseDown={handleMouseDown}
-          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-[var(--color-agent)]/30 transition-colors ${
-            isResizing ? 'bg-[var(--color-agent)]/50' : ''
-          }`}
-        />
-      </aside>
+          title="Drag to resize sidebar"
+          onPointerDown={handleResizeStart}
+          className="absolute top-0 right-0 z-20 hidden h-full w-3 translate-x-1/2 cursor-col-resize md:block"
+        >
+          <span className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-transparent transition-colors hover:bg-[var(--color-agent)]/45" />
+        </button>
+      )}
     </div>
   );
 });

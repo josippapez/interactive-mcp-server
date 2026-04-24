@@ -78,6 +78,7 @@ export function ProviderSection({
   syncStatus: string | null;
   setSyncStatus: (value: string | null) => void;
 }): React.ReactElement {
+  const isOpenCodeBackend = settings.agentBackend === 'opencode';
   return (
     <div className="space-y-2">
       <div className="py-3">
@@ -116,51 +117,53 @@ export function ProviderSection({
         )}
       </div>
 
-      <Toggle
-        id="settings-auto-start"
-        checked={settings.autoStartOpenCode}
-        onChange={() =>
-          setSettings((s) =>
-            s ? { ...s, autoStartOpenCode: !s.autoStartOpenCode } : s,
-          )
-        }
-        label="Auto-start provider server"
-        description="Automatically run opencode serve on startup"
-      />
-      <Toggle
-        id="settings-auto-sync"
-        checked={settings.autoSyncOpencode}
-        onChange={() =>
-          setSettings((s) =>
-            s ? { ...s, autoSyncOpencode: !s.autoSyncOpencode } : s,
-          )
-        }
-        label="Auto-sync provider config"
-        description="Write a remote MCP entry into opencode.json on startup"
-      />
-
-      <div className="py-3 border-t border-[var(--color-border)] mt-4">
-        <Button
-          variant="outline"
-          onClick={async () => {
-            setSyncStatus(null);
-            try {
-              const result = await window.api.syncOpencodeConfig();
-              setSyncStatus(result);
-            } catch {
-              setSyncStatus('error');
+      {isOpenCodeBackend && (
+        <>
+          <Toggle
+            id="settings-auto-start"
+            checked={settings.autoStartOpenCode}
+            onChange={() =>
+              setSettings((s) =>
+                s ? { ...s, autoStartOpenCode: !s.autoStartOpenCode } : s,
+              )
             }
-            setTimeout(() => setSyncStatus(null), 4000);
-          }}
-        >
-          Register provider config
-        </Button>
-        {syncStatus && <p className="text-xs mt-1">{syncStatus}</p>}
-      </div>
+            label="Auto-start OpenCode server"
+            description="Automatically run opencode serve on startup"
+          />
+          <Toggle
+            id="settings-auto-sync"
+            checked={settings.autoSyncOpencode}
+            onChange={() =>
+              setSettings((s) =>
+                s ? { ...s, autoSyncOpencode: !s.autoSyncOpencode } : s,
+              )
+            }
+            label="Auto-sync OpenCode config"
+            description="Write a remote MCP entry into opencode.json on startup"
+          />
 
-      <ProviderAuthSection
-        isOpenCodeEnabled={settings.agentBackend === 'opencode'}
-      />
+          <div className="py-3 border-t border-[var(--color-border)] mt-4">
+            <Button
+              variant="outline"
+              onClick={async () => {
+                setSyncStatus(null);
+                try {
+                  const result = await window.api.syncOpencodeConfig();
+                  setSyncStatus(result);
+                } catch {
+                  setSyncStatus('error');
+                }
+                setTimeout(() => setSyncStatus(null), 4000);
+              }}
+            >
+              Register OpenCode config
+            </Button>
+            {syncStatus && <p className="text-xs mt-1">{syncStatus}</p>}
+          </div>
+        </>
+      )}
+
+      <ProviderAuthSection isOpenCodeEnabled={isOpenCodeBackend} />
     </div>
   );
 }

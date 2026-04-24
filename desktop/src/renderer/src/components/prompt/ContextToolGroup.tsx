@@ -1,6 +1,11 @@
-import React, { memo, useState, useCallback, useMemo } from 'react';
+import React, { memo, useMemo } from 'react';
 import type { ToolCallInfo } from '../../types/unified-message';
 import ToolCallView from './ToolCallView';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '../ui/collapsible';
 
 export const GATHER_CONTEXT_TOOL_NAME = 'Gather Context';
 
@@ -104,25 +109,76 @@ interface ContextToolGroupProps {
 }
 
 /**
+ * Chevron SVG used by the context-tool-group trigger. The CSS layer
+ * (`[data-component='context-tool-group-trigger'][data-state='open']
+ * [data-slot='chevron']`) rotates it 90° when the group is open.
+ */
+const Chevron = memo(function Chevron(): React.ReactElement {
+  return (
+    <svg
+      data-slot="chevron"
+      viewBox="0 0 12 12"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="w-3 h-3"
+      aria-hidden="true"
+    >
+      <path d="M4.5 3L7.5 6L4.5 9" />
+    </svg>
+  );
+});
+
+/**
+ * Spinner shown when any grouped tool is still running. Sized to match
+ * the chevron (12x12) so the trigger row height stays consistent.
+ */
+const RunningSpinner = memo(function RunningSpinner(): React.ReactElement {
+  return (
+    <svg
+      className="w-3 h-3 animate-spin text-[var(--color-agent)] shrink-0"
+      fill="none"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      />
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      />
+    </svg>
+  );
+});
+
+/**
  * Component that displays a collapsible group of context-gathering tools.
  * Shows a summary header like "Gathered context (5 files)" that expands
  * to show all the individual tool calls.
+ *
+ * Emits `data-component='context-tool-group-trigger'` on the trigger
+ * button and `data-component='context-tool-group-list'` on the body,
+ * matching the opencode CSS contract (main.css 1138-1166). Radix
+ * `Collapsible` forwards `data-state='open'|'closed'` to the trigger,
+ * which CSS uses to rotate the chevron.
+ *
+ * The `forceExpanded` prop drives `defaultOpen`, and we re-key on the
+ * prop so changes to `forceExpanded` reopen/close as before.
  */
 const ContextToolGroup = memo(function ContextToolGroup({
   tools,
   forceExpanded = false,
   onNavigateToSession,
 }: ContextToolGroupProps): React.ReactElement {
-  const [isExpanded, setIsExpanded] = useState(forceExpanded);
-
-  React.useEffect(() => {
-    setIsExpanded(forceExpanded);
-  }, [forceExpanded]);
-
-  const toggleExpanded = useCallback(() => {
-    setIsExpanded((prev) => !prev);
-  }, []);
-
   // Generate summary of what was gathered
   const summary = useMemo(() => {
     const readCount = tools.filter((t) =>
@@ -155,91 +211,40 @@ const ContextToolGroup = memo(function ContextToolGroup({
     return parts.join(', ');
   }, [tools]);
 
-  // Check if all tools are completed
-  const allCompleted = tools.every((t) => t.status === 'completed');
   const anyRunning = tools.some((t) => t.status === 'running');
-  const anyError = tools.some((t) => t.status === 'error');
-
-  const statusColor = anyError
-    ? 'text-[var(--color-error)]'
-    : anyRunning
-      ? 'text-[var(--color-agent)]'
-      : allCompleted
-        ? 'text-[var(--color-success,#22c55e)]'
-        : 'text-[var(--color-text-muted)]';
 
   return (
-    <div className="rounded border border-[var(--color-border)]/50 bg-[var(--color-surface)]/35 overflow-hidden">
-      <button
-        type="button"
-        onClick={toggleExpanded}
-        className="w-full px-2 py-0.5 flex items-center justify-between text-left hover:bg-[var(--color-border)]/20 transition-colors cursor-pointer"
-      >
-        <div className="flex items-center gap-1.5 min-w-0 flex-1">
-          <span className={`${statusColor} shrink-0`}>
-            {anyRunning ? (
-              <svg
-                className="w-3.5 h-3.5 animate-spin"
-                fill="none"
-                viewBox="0 0 24 24"
-                aria-hidden="true"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                />
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                />
-              </svg>
-            ) : (
-              <svg
-                className="w-3.5 h-3.5"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth="2"
-                aria-hidden="true"
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-            )}
-          </span>
-          <span className="text-[10px] text-[var(--color-text-muted)]">
+    <Collapsible
+      // `key` forces a remount when `forceExpanded` flips, so `defaultOpen`
+      // takes effect both when expanding-all and collapsing-all from the
+      // toolbar — matching previous `useEffect(setIsExpanded)` behavior.
+      key={forceExpanded ? 'expanded' : 'collapsed'}
+      defaultOpen={forceExpanded}
+      className="w-full"
+    >
+      <CollapsibleTrigger asChild>
+        <button type="button" data-component="context-tool-group-trigger">
+          <span className="text-[var(--text-base)]">
             {GATHER_CONTEXT_TOOL_NAME}
           </span>
-          <span className="text-[9px] text-[var(--color-text-faint)] truncate">
+          <span className="text-[var(--text-weaker)] truncate flex-1">
             {summary}
           </span>
-        </div>
-        <span className="text-[var(--color-text-faint)] text-[10px] shrink-0 ml-1">
-          {isExpanded ? '▾' : '▸'}
-        </span>
-      </button>
+          {anyRunning ? <RunningSpinner /> : <Chevron />}
+        </button>
+      </CollapsibleTrigger>
 
-      {isExpanded && (
-        <div className="border-t border-[var(--color-border)]/40 px-1 py-0.5 space-y-0.5 bg-[var(--color-background)]/20">
-          {tools.map((tool) => (
-            <ToolCallView
-              key={tool.id}
-              tool={tool}
-              forceExpanded={false}
-              onNavigateToSession={onNavigateToSession}
-            />
-          ))}
-        </div>
-      )}
-    </div>
+      <CollapsibleContent data-component="context-tool-group-list">
+        {tools.map((tool) => (
+          <ToolCallView
+            key={tool.id}
+            tool={tool}
+            forceExpanded={false}
+            onNavigateToSession={onNavigateToSession}
+          />
+        ))}
+      </CollapsibleContent>
+    </Collapsible>
   );
 });
 

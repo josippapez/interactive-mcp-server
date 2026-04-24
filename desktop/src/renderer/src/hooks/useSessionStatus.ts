@@ -1,4 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import {
+  seedSessionStatus,
+  useConversationSelector,
+} from '../store/conversation-store';
+import type { ConversationSessionStatus } from '../store/conversation-reducer';
 
 export type SessionStatusType = 'busy' | 'idle' | 'error' | 'unknown';
 
@@ -11,118 +16,122 @@ type UseSessionStatusResult = {
   getStatus: (sessionId: string) => SessionStatusType | null;
 };
 
-const POLL_INTERVAL_MS = 3000; // Poll every 3 seconds (fallback when SSE unavailable)
+/**
+ * Map a coarse store-side session status (`idle | streaming | error`) to the
+ * 4-value external surface this hook has always exposed. `streaming` → `busy`
+ * is the only non-trivial mapping.
+ */
+function mapStoreStatus(
+  status: ConversationSessionStatus | undefined,
+): SessionStatusType {
+  if (status === 'streaming') return 'busy';
+  if (status === 'idle') return 'idle';
+  if (status === 'error') return 'error';
+  return 'unknown';
+}
 
 /**
- * Hook to fetch session status from the OpenCode server.
+ * Map the REST `fetchSessionStatus` payload shape (`busy|idle|error|unknown`)
+ * to our store-side coarse status (`streaming|idle|error`). `busy` becomes
+ * `streaming`; `unknown` is seeded as `idle` (the store doesn't carry an
+ * unknown bucket — it treats missing entries as idle already).
+ */
+function mapRestStatus(raw: string): ConversationSessionStatus {
+  if (raw === 'busy') return 'streaming';
+  if (raw === 'error') return 'error';
+  return 'idle';
+}
+
+/**
+ * Shallow-compare two status maps (same keys, same values).
+ */
+function statusMapsEqual(
+  prev: SessionStatusMap,
+  next: SessionStatusMap,
+): boolean {
+  const prevKeys = Object.keys(prev);
+  const nextKeys = Object.keys(next);
+  if (prevKeys.length !== nextKeys.length) return false;
+  for (const key of nextKeys) {
+    const p = prev[key];
+    const n = next[key];
+    if (!p || p.type !== n.type) return false;
+  }
+  return true;
+}
+
+/**
+ * Hook exposing per-session status derived from the global conversation
+ * store. Status updates arrive live via `session.status` events on the
+ * `conversation-batch` pipeline (mapped by the event bridge). On mount
+ * we perform a one-shot REST seed via `fetchSessionStatus` so the UI has
+ * a snapshot before the first live event arrives.
  *
- * Uses the /session/status endpoint which returns status for all sessions
- * in a single call (efficient bulk fetch), and listens for real-time SSE
- * events (session.status) for instant updates.
- *
- * @param enabled - Whether to enable status fetching
- * @returns Object containing status map, loading state, refresh function, and getter
+ * Identity stability (H5 perf): the returned `statusMap` object keeps
+ * its reference across renders whenever the derived key/value set is
+ * unchanged, and `getStatus` is stable across renders for the whole
+ * hook lifetime (reads through a ref). Callers depending on either of
+ * these identities via `useMemo`/`useCallback` stay memoized across
+ * unrelated `rawStatus` churn.
  */
 export function useSessionStatus(
   enabled: boolean = true,
 ): UseSessionStatusResult {
-  const [statusMap, setStatusMap] = useState<SessionStatusMap>({});
-  const [isLoading, setIsLoading] = useState(false);
-  const enabledRef = useRef(enabled);
-  const hasReceivedSseRef = useRef(false);
-  enabledRef.current = enabled;
+  const rawStatus = useConversationSelector(
+    (state) => state.status,
+    (a, b) => a === b,
+  );
 
-  const fetchStatus = useCallback(async (): Promise<void> => {
-    if (!enabledRef.current) {
-      setStatusMap({});
-      return;
-    }
-
-    setIsLoading(true);
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!enabled) return;
     try {
       const result = await window.api.fetchSessionStatus?.();
-      if (!enabledRef.current) return;
-
-      if (result) {
-        setStatusMap(result);
-      } else {
-        setStatusMap({});
+      if (!result) return;
+      for (const [sessionId, entry] of Object.entries(result)) {
+        seedSessionStatus(sessionId, mapRestStatus(entry.type));
       }
     } catch {
-      if (!enabledRef.current) return;
-      setStatusMap({});
-    } finally {
-      if (enabledRef.current) {
-        setIsLoading(false);
-      }
+      // Best-effort seed — live events will fill in eventually.
     }
-  }, []);
-
-  // Initial fetch and when enabled changes
-  useEffect(() => {
-    if (!enabled) {
-      setStatusMap({});
-      hasReceivedSseRef.current = false;
-      return;
-    }
-
-    void fetchStatus();
-  }, [enabled, fetchStatus]);
-
-  // Set up polling (fallback when SSE unavailable)
-  useEffect(() => {
-    if (!enabled) return;
-
-    const intervalId = setInterval(() => {
-      // Skip polling if we've received SSE events (SSE is working)
-      if (hasReceivedSseRef.current) return;
-      void fetchStatus();
-    }, POLL_INTERVAL_MS);
-
-    return () => clearInterval(intervalId);
-  }, [enabled, fetchStatus]);
-
-  // Listen for real-time SSE session status updates (session.status event)
-  useEffect(() => {
-    if (!enabled) return;
-
-    const handler = (data: { sessionID: string; status: string }) => {
-      hasReceivedSseRef.current = true;
-      // Map SSE status string to our SessionStatusType
-      const statusType: SessionStatusType =
-        data.status === 'busy'
-          ? 'busy'
-          : data.status === 'idle'
-            ? 'idle'
-            : data.status === 'error'
-              ? 'error'
-              : 'unknown';
-
-      setStatusMap((prev) => ({
-        ...prev,
-        [data.sessionID]: { type: statusType },
-      }));
-    };
-
-    const cleanup = window.api.onOpenCodeSessionStatus?.(handler);
-
-    return () => {
-      cleanup?.();
-    };
   }, [enabled]);
 
-  // Helper to get status for a specific session
+  useEffect(() => {
+    if (!enabled) return;
+    void refresh();
+  }, [enabled, refresh]);
+
+  // Memoize the exposed statusMap so its identity is preserved across
+  // no-op updates (e.g., status events for sessions the caller doesn't
+  // track). useMemo's equality check fires on every rawStatus change,
+  // but we compare shallowly and return the previous object when the
+  // shape is unchanged.
+  const statusMapRef = useRef<SessionStatusMap>({});
+  const statusMap = useMemo<SessionStatusMap>(() => {
+    const next: SessionStatusMap = {};
+    for (const key of Object.keys(rawStatus)) {
+      next[key] = { type: mapStoreStatus(rawStatus[key]) };
+    }
+    const prev = statusMapRef.current;
+    if (statusMapsEqual(prev, next)) return prev;
+    statusMapRef.current = next;
+    return next;
+  }, [rawStatus]);
+
+  // Stable getStatus: reads from the ref rather than capturing rawStatus
+  // in the closure, so its identity never changes after mount.
   const getStatus = useCallback(
     (sessionId: string): SessionStatusType | null => {
-      return statusMap[sessionId]?.type ?? null;
+      const map = statusMapRef.current;
+      const entry = map[sessionId];
+      return entry ? entry.type : null;
     },
-    [statusMap],
+    [],
   );
 
   return {
     statusMap,
-    isLoading,
-    refresh: fetchStatus,
+    isLoading: false,
+    refresh,
     getStatus,
   };
 }

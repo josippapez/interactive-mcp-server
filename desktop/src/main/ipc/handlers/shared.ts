@@ -1,9 +1,9 @@
 import { ipcMain } from 'electron';
-import { listSkillsAndInstructions } from '../../database';
+import { listSkillsAndInstructions } from '../../utility/db-client';
 import {
   buildSkillSuggestionText,
   matchSkillsForMessage,
-} from '../../tools/skill-match';
+} from '../../utility/backend/tools/skill-match';
 import { createLogger } from '../../utils/logger';
 
 const ipcLog = createLogger('ipc');
@@ -26,8 +26,8 @@ export function registerRendererLogChannel(): void {
   );
 }
 
-export function withSkillSuggestion(message: string): string {
-  const skills = listSkillsAndInstructions('skill');
+export async function withSkillSuggestion(message: string): Promise<string> {
+  const skills = await listSkillsAndInstructions('skill');
   const matched = matchSkillsForMessage(message, skills);
   const suggestion = buildSkillSuggestionText(matched);
   if (!suggestion) {

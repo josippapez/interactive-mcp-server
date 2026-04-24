@@ -6,7 +6,7 @@ import {
   deleteAgent,
   type AgentDefinition,
   type WriteAgentParams,
-} from '../../opencode/agents';
+} from '../../utility/opencode-client';
 import { logIpcInfo } from './shared';
 import { errorMessage } from '../../utils/errors';
 

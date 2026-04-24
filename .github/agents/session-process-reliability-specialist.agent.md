@@ -17,7 +17,7 @@ Primary scope:
 Execution expectations:
 
 - Prevent orphaned processes and stale temp artifacts.
-- If lifecycle trade-offs are ambiguous, gather user preference via interactive-mcp tools before proceeding.
+- If lifecycle trade-offs are ambiguous, gather user preference via the built-in questions tool before proceeding.
 - Keep file-based IPC contracts stable for both single-input and intensive-chat flows.
 - Preserve graceful shutdown semantics and error visibility.
 - Validate any lifecycle changes with at least `bun run check-types` and `bun run build`.

@@ -1,5 +1,7 @@
 # Global Stream Migration Plan
 
+> **Superseded by the pull-on-invalidation session-tree model (2026-04).** The `session-tree-updated` full-snapshot push mentioned below has been replaced by a payload-free `session-tree-invalidated` signal + renderer-pulled `get-session-tree`. See [`ARCHITECTURE.md`](./ARCHITECTURE.md) and [`IPC-API.md`](./IPC-API.md) for current behaviour. Content below is historical.
+
 ## Goal
 
 Move the desktop app from the current split event model to a global-stream-driven architecture that is closer to OpenCode's runtime model, while preserving existing UI behavior and avoiding a high-risk rewrite.

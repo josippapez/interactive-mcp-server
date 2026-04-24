@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import type { PendingQuestion } from '../../types';
 import { Button } from '../ui/button';
 import { Textarea } from '../ui/textarea';
+import MarkdownContent from '../MarkdownContent';
 
 type Props = {
   question: PendingQuestion;
@@ -186,9 +187,9 @@ export default function QuestionDock({
           )}
         </div>
 
-        <p className="text-sm text-[var(--color-text)]">
-          {currentQuestion.question}
-        </p>
+        <div className="text-sm text-[var(--color-text)] [&_.prose]:text-sm [&_.prose_p]:!text-sm [&_.prose_p]:my-1 [&_[data-streamdown='code-block']]:my-2">
+          <MarkdownContent content={currentQuestion.question} />
+        </div>
       </div>
 
       {/* Scrollable middle — options + custom answer */}
@@ -226,7 +227,29 @@ export default function QuestionDock({
               value={customAnswer}
               onChange={(event) => handleCustomChange(event.target.value)}
               onPaste={handleCustomPaste}
-              placeholder="Type your own answer (paste an image to attach)"
+              onKeyDown={(event) => {
+                // Ctrl+Enter or Cmd+Enter to submit/next
+                if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+                  event.preventDefault();
+                  if (hasMultipleQuestions && !isLastQuestion) {
+                    // Go to next question
+                    setCurrentIndex((prev) =>
+                      Math.min(questions.length - 1, prev + 1),
+                    );
+                  } else if (canSubmit) {
+                    // Submit all answers
+                    const answersToSubmit = questions.map(
+                      (_, index) => answers[index] ?? [],
+                    );
+                    onReply(
+                      question.requestId,
+                      answersToSubmit,
+                      question.sessionID,
+                    );
+                  }
+                }
+              }}
+              placeholder="Type your own answer (paste an image to attach) · Ctrl+Enter to submit"
               className="min-h-[72px]"
             />
             {pasteNotice && (

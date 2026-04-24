@@ -1,6 +1,14 @@
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type { Folder, SkillScope } from './skills-types';
+import {
+  getAlwaysModeWarning,
+  shouldShowInstructionDeliveryControl,
+} from './instruction-delivery';
+import type {
+  Folder,
+  InstructionDeliveryMode,
+  SkillScope,
+} from './skills-types';
 
 type SkillEditorProps = {
   isCreating: boolean;
@@ -20,6 +28,9 @@ type SkillEditorProps = {
   setFormFolderId: (id: number | null) => void;
   formScope: SkillScope;
   setFormScope: (scope: SkillScope) => void;
+  formInjectionMode: InstructionDeliveryMode;
+  setFormInjectionMode: (mode: InstructionDeliveryMode) => void;
+  alwaysModeWarning: string | null;
   folders: Folder[];
   availableCategories: string[];
   saveStatus: string | null;
@@ -45,6 +56,9 @@ export function SkillEditor({
   setFormFolderId,
   formScope,
   setFormScope,
+  formInjectionMode,
+  setFormInjectionMode,
+  alwaysModeWarning,
   folders,
   availableCategories,
   saveStatus,
@@ -52,6 +66,13 @@ export function SkillEditor({
   onCancel,
 }: SkillEditorProps): React.ReactElement {
   const isEditing = !isCreating;
+  const showInstructionDelivery =
+    shouldShowInstructionDeliveryControl(formType);
+  const visibleAlwaysModeWarning = getAlwaysModeWarning({
+    type: formType,
+    injectionMode: formInjectionMode,
+    alwaysModeWarning,
+  });
 
   return (
     <div className="space-y-3">
@@ -108,6 +129,29 @@ export function SkillEditor({
           </select>
         </div>
       </div>
+
+      {showInstructionDelivery && (
+        <div>
+          <label className="block text-xs text-[var(--color-text-muted)] mb-1">
+            Delivery
+          </label>
+          <select
+            value={formInjectionMode}
+            onChange={(e) =>
+              setFormInjectionMode(e.target.value as InstructionDeliveryMode)
+            }
+            className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
+          >
+            <option value="always">Always</option>
+            <option value="catalog">Catalog only</option>
+          </select>
+          {visibleAlwaysModeWarning && (
+            <p className="text-xs text-[var(--color-warning,orange)] mt-1">
+              {visibleAlwaysModeWarning}
+            </p>
+          )}
+        </div>
+      )}
 
       <div>
         <label className="block text-xs text-[var(--color-text-muted)] mb-1">

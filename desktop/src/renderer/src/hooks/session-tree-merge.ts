@@ -11,7 +11,7 @@ import type { ProviderType, SessionNode, VcsInfo } from '../types';
 
 /**
  * Shape of a single node in the session-tree snapshot emitted by the
- * main-process session-tree-manager.
+ * main-process session-tree-service.
  */
 export interface SnapshotNode {
   providerSessionId: string;
@@ -111,6 +111,10 @@ export function upsertOptimisticSessionNode(
   prev: Map<string, SessionNode>,
   snapshotNode: SnapshotNode,
 ): Map<string, SessionNode> {
+  // Kept as a no-op wrapper around mergeSnapshotNode for any external
+  // callers that may still import this helper. In the pull-on-invalidation
+  // model the renderer refetches the full tree on `session-tree-invalidated`,
+  // so optimistic node insertion is no longer needed internally.
   const next = new Map(prev);
   next.set(
     snapshotNode.providerSessionId,
@@ -137,6 +141,9 @@ export function mergeSessionTreeSnapshot(
   snapshotNodes: SnapshotNode[],
 ): Map<string, SessionNode> {
   const next = new Map<string, SessionNode>();
+  const snapshotSessionIds = new Set(
+    snapshotNodes.map((snap) => snap.providerSessionId),
+  );
 
   // Build a set of connectionIds claimed by the snapshot so we can detect
   // direct-connection nodes that should be absorbed.
@@ -165,6 +172,15 @@ export function mergeSessionTreeSnapshot(
       node.isDirectConnection &&
       !snapshotConnectionIds.has(node.connectionId ?? '') &&
       !snapshotConnectionIds.has(id)
+    ) {
+      next.set(id, node);
+      continue;
+    }
+
+    if (
+      !node.isDirectConnection &&
+      node.sessionChannel &&
+      !snapshotSessionIds.has(node.providerSessionId ?? id)
     ) {
       next.set(id, node);
     }

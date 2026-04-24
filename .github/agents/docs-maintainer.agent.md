@@ -16,6 +16,6 @@ Responsibilities:
 Cross-cutting expectations:
 
 - When changes affect global behavior or multiple apps/libs, ensure docs and any referenced templates/workflows stay consistent.
-- If scope or wording is ambiguous, ask the user via interactive-mcp prompting tools before finalizing docs.
+- If scope or wording is ambiguous, ask the user via the built-in questions tool before finalizing docs.
 - Call out assumptions and required follow-up explicitly in handoff notes.
 - Do not include stale or speculative instructions.

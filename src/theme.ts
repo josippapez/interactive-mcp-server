@@ -27,9 +27,9 @@ export interface ThemeColors {
 }
 
 export const DARK_THEME: ThemeColors = {
-  bgOuter: '#0d0d0d',
-  bgPromptBox: '#121212',
-  bgModeTabs: '#151515',
+  bgOuter: '#000000',
+  bgPromptBox: '#000000',
+  bgModeTabs: '#000000',
   bgInput: '#1f1f1f',
   borderPrompt: '#00bcd4',
   borderMode: '#e07000',

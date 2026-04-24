@@ -76,6 +76,7 @@ export type AppSettings = {
   defaultShowThinking: boolean;
   allowedReadFolders: string[];
   allowedPermissions: string[];
+  chatTextSize: 'sm' | 'md' | 'lg';
 };
 
 export type PendingPermissionRequest = {
@@ -133,6 +134,8 @@ export type SkillOrInstructionRecord = {
   updatedAt: string;
   folderId: number | null;
   scope: 'global' | 'session-scoped';
+  injectionMode?: 'always' | 'catalog' | null;
+  alwaysModeWarning?: string | null;
 };
 
 export type FolderRecord = {
@@ -222,6 +225,7 @@ export type ConversationPartType =
   | 'step-end'
   | 'compaction'
   | 'source-url'
+  | 'subtask'
   | 'unknown';
 
 export type ConversationMessagePart = {
@@ -247,6 +251,18 @@ export type ConversationMessagePart = {
   filename?: string;
   /** File URL (for 'file' parts). */
   fileUrl?: string;
+  /** Spawned subagent session id (for 'subtask' parts). Authoritative child sessionID from the opencode SDK. */
+  subtaskSessionId?: string;
+  /** Subagent prompt (for 'subtask' parts). */
+  subtaskPrompt?: string;
+  /** Subagent short description (for 'subtask' parts). */
+  subtaskDescription?: string;
+  /** Subagent type/name (for 'subtask' parts). */
+  subtaskAgent?: string;
+  /** Tool execution start timestamp in ms (for 'tool-call' parts; present when status is running/completed/error). Sourced from SDK ToolState.time.start. */
+  toolStartedAt?: number;
+  /** Tool execution end timestamp in ms (for 'tool-call' parts; present when status is completed/error). Sourced from SDK ToolState.time.end. */
+  toolCompletedAt?: number;
 };
 
 export type ConversationMessage = {
@@ -280,6 +296,186 @@ export type ConversationMessage = {
     cwd?: string;
     root?: string;
   };
+};
+
+// ─── Conversation Event Stream (C1 scaffold) ─────────────────────────────────
+
+/**
+ * Discriminated union of conversation events emitted by the main-process
+ * event-stream and delivered to the renderer in coalesced batches.
+ *
+ * Modeled after opencode's `event-reducer.ts` handlers (message.updated,
+ * message.part.updated, message.removed, session.updated, session.idle,
+ * session.error). Kept transport-agnostic so the renderer reducer is pure.
+ */
+export type ConversationTodoItem = {
+  id: string;
+  content: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  priority: 'high' | 'medium' | 'low';
+};
+
+export type ConversationContextUsage = {
+  sessionId: string;
+  totalTokens: number;
+  contextLimit: number;
+  usableLimit: number;
+  usagePercent: number;
+  isNearOverflow: boolean;
+  isOverflow: boolean;
+};
+
+export type ConversationEvent =
+  | {
+      type: 'message.updated';
+      sessionId: string;
+      message: ConversationMessage;
+    }
+  | {
+      type: 'message.part.updated';
+      sessionId: string;
+      messageId: string;
+      part: ConversationMessagePart;
+    }
+  | {
+      type: 'message.part.delta';
+      sessionId: string;
+      messageId: string;
+      partId: string;
+      field: 'text' | 'reasoning';
+      delta: string;
+    }
+  | {
+      type: 'message.part.removed';
+      sessionId: string;
+      messageId: string;
+      partId: string;
+    }
+  | {
+      type: 'message.removed';
+      sessionId: string;
+      messageId: string;
+    }
+  | {
+      type: 'session.status';
+      sessionId: string;
+      status: 'idle' | 'streaming' | 'error';
+      error?: string;
+    }
+  | {
+      type: 'session.compacted';
+      sessionId: string;
+      messageId: string;
+    }
+  // ── C5 additions: merged from legacy orphan IPC channels ──
+  | {
+      type: 'todo.updated';
+      sessionId: string;
+      todos: ConversationTodoItem[];
+    }
+  | {
+      type: 'vcs.updated';
+      branch: string | null;
+    }
+  | {
+      type: 'context.usage';
+      sessionId: string;
+      totalTokens: number;
+      contextLimit: number;
+      usableLimit: number;
+      usagePercent: number;
+      isNearOverflow: boolean;
+      isOverflow: boolean;
+    }
+  | {
+      type: 'session.compaction-done';
+      sessionId: string;
+      beforeTokens: number;
+      afterTokens: number;
+    }
+  | {
+      type: 'file.edited';
+      directory: string | null;
+      file: string;
+    }
+  // ── Permission / question prompts (previously delivered on legacy
+  //    IPC channels `permission-asked`/`permission-replied`/`question-asked`/
+  //    `question-cleared`; now routed through the unified conversation-batch
+  //    stream so the renderer can react to live OpenCode prompts).
+  | {
+      type: 'permission.asked';
+      sessionId: string;
+      requestId: string;
+      permission: string;
+      patterns?: string[];
+      always?: string[];
+      tool?: { messageID: string; callID: string };
+      metadata?: Record<string, unknown>;
+    }
+  | {
+      type: 'permission.replied';
+      sessionId: string;
+      requestId: string;
+      reply: 'once' | 'always' | 'reject';
+    }
+  | {
+      type: 'question.asked';
+      sessionId: string;
+      requestId: string;
+      questions: Array<{
+        question: string;
+        header: string;
+        options: Array<{ label: string; description: string }>;
+        multiple?: boolean;
+        custom?: boolean;
+      }>;
+      tool?: { messageID: string; callID: string };
+    }
+  | {
+      type: 'question.cleared';
+      sessionId: string;
+      requestId: string;
+      /** 'replied' when user answered (may include answer text), 'rejected' when user rejected the prompt. */
+      outcome: 'replied' | 'rejected';
+    }
+  // ── Low-risk additions: forward SDK signals that have no renderer
+  //    surface yet but are cheap to expose so future features can consume.
+  | {
+      type: 'session.diff';
+      sessionId: string;
+      diff: Array<{
+        file: string;
+        patch: string;
+        additions: number;
+        deletions: number;
+        status?: 'added' | 'deleted' | 'modified';
+      }>;
+    }
+  | {
+      type: 'mcp.tools.changed';
+      server: string;
+    }
+  | {
+      type: 'mcp.browser.open.failed';
+      mcpName: string;
+      url: string;
+    }
+  | {
+      type: 'installation.update-available';
+      version: string;
+    };
+
+/**
+ * A flushed batch of `ConversationEvent` delivered in one IPC message.
+ * The main-process `event-stream` coalesces high-frequency updates into
+ * ~16ms-spaced batches. `seq` monotonically increases per stream connection
+ * so the renderer can detect gaps / reset.
+ */
+export type ConversationBatch = {
+  seq: number;
+  events: ConversationEvent[];
+  /** Epoch ms of flush on the main side (for perf telemetry). */
+  flushedAt: number;
 };
 
 // Shared node shape used by session tree events.

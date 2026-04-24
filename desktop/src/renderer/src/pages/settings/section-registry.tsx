@@ -1,5 +1,17 @@
 import type React from 'react';
 import {
+  Bell,
+  Bot,
+  FileText,
+  Hexagon,
+  Lock,
+  Server,
+  Settings2,
+  Sparkles,
+  Target,
+  type LucideIcon,
+} from 'lucide-react';
+import {
   AdvancedSection,
   PermissionsSection,
   PreferencesSection,
@@ -34,7 +46,7 @@ export type SettingsStateShape = ReturnType<typeof useSettingsState>;
 export type SettingsSectionDefinition = {
   id: SettingsSection;
   label: string;
-  icon: string;
+  icon: LucideIcon;
   component: React.ComponentType<{ state: SettingsStateShape }>;
 };
 
@@ -165,38 +177,48 @@ function AdvancedAdapter({
 // --- Registry ----------------------------------------------------------------
 
 export const SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
-  { id: 'server', label: 'Server', icon: '⚙', component: ServerAdapter },
-  { id: 'provider', label: 'Provider', icon: '⬡', component: ProviderAdapter },
-  { id: 'sessions', label: 'Sessions', icon: '◎', component: SessionAdapter },
+  { id: 'server', label: 'Server', icon: Server, component: ServerAdapter },
+  {
+    id: 'provider',
+    label: 'Provider',
+    icon: Hexagon,
+    component: ProviderAdapter,
+  },
+  {
+    id: 'sessions',
+    label: 'Sessions',
+    icon: Target,
+    component: SessionAdapter,
+  },
   {
     id: 'documentation',
     label: 'Documentation',
-    icon: '📄',
+    icon: FileText,
     component: DocumentationAdapter,
   },
   {
     id: 'permissions',
     label: 'Permissions',
-    icon: '🔒',
+    icon: Lock,
     component: PermissionsAdapter,
   },
   {
     id: 'preferences',
     label: 'Preferences',
-    icon: '🔔',
+    icon: Bell,
     component: PreferencesAdapter,
   },
-  { id: 'agents', label: 'Agents', icon: '🤖', component: AgentsAdapter },
+  { id: 'agents', label: 'Agents', icon: Bot, component: AgentsAdapter },
   {
     id: 'opencode-config',
     label: 'OpenCode Config',
-    icon: '📝',
+    icon: Settings2,
     component: OpenCodeConfigAdapter,
   },
   {
     id: 'advanced',
     label: 'Advanced',
-    icon: '⚡',
+    icon: Sparkles,
     component: AdvancedAdapter,
   },
 ];

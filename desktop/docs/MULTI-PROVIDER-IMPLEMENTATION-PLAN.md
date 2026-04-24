@@ -1,5 +1,7 @@
 # Multi-Provider Architecture Implementation Plan
 
+> **Superseded by the pull-on-invalidation session-tree model (2026-04).** References to `session-tree-manager.ts` / `session-tree-updated` are historical; the current module is `session/session-tree-service.ts` and the IPC is `session-tree-invalidated` (payload-free) + `get-session-tree` pull. See [`ARCHITECTURE.md`](./ARCHITECTURE.md).
+
 ## Problem Statement
 
 Cross-contamination occurs when different AI providers (OpenCode, Copilot CLI, Claude SDK) connect to the same MCP server and can overwrite each other's sessions. For example:

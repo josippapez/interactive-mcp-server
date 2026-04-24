@@ -17,7 +17,7 @@ Primary scope:
 Execution expectations:
 
 - Preserve keyboard-first interaction quality and existing UX semantics.
-- Ask for user confirmation through interactive-mcp tools when multiple UX behaviors are possible.
+- Ask for user confirmation through the built-in questions tool when multiple UX behaviors are possible.
 - Keep UI state transitions explicit and predictable across question lifecycle events.
 - Ensure timeout/countdown and submission behavior remain consistent with backend expectations.
 - Validate with `bun run check-types` and `bun run build`; run lint for touched UI files.

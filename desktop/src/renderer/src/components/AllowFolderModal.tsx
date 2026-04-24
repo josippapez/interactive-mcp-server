@@ -1,62 +1,12 @@
 import { useMemo } from 'react';
 import { Button } from './ui/button';
+import { buildAllowFolderOptions } from './allow-folder-options';
 
 type Props = {
   filePath: string;
   onSelectFolder: (folderPath: string) => void;
   onCancel: () => void;
 };
-
-/**
- * Extract the immediate parent folder of a file path.
- */
-function extractImmediateFolder(filePath: string): string {
-  const parts = filePath.split('/');
-  // Remove the file name to get the directory
-  parts.pop();
-  return parts.join('/') || '/';
-}
-
-/**
- * Find the likely project root by looking for depth-2 or depth-3 directory
- * that could be a project folder.
- */
-function findProjectRoot(filePath: string): string | null {
-  const parts = filePath.split('/').filter(Boolean);
-
-  // Common patterns:
-  // /Users/username/Desktop/project-name/... -> /Users/username/Desktop/project-name
-  // /home/user/projects/repo/... -> /home/user/projects/repo
-
-  // Look for ~/Desktop, ~/Documents, ~/projects, etc.
-  for (let i = 0; i < parts.length; i++) {
-    const part = parts[i].toLowerCase();
-    if (
-      [
-        'desktop',
-        'documents',
-        'projects',
-        'repos',
-        'code',
-        'dev',
-        'work',
-      ].includes(part)
-    ) {
-      // The next directory is likely the project root
-      if (i + 1 < parts.length) {
-        return '/' + parts.slice(0, i + 2).join('/');
-      }
-    }
-  }
-
-  // Fallback: if we have at least 4 parts (e.g., /Users/name/folder/project/...),
-  // return the 4th level as a potential project root
-  if (parts.length >= 4) {
-    return '/' + parts.slice(0, 4).join('/');
-  }
-
-  return null;
-}
 
 /**
  * Modal for selecting which folder to allow for auto-approval.
@@ -67,81 +17,81 @@ export default function AllowFolderModal({
   onSelectFolder,
   onCancel,
 }: Props): React.ReactElement {
-  const folderOptions = useMemo(() => {
-    const options: { label: string; path: string }[] = [];
-
-    // Immediate parent folder
-    const immediateFolder = extractImmediateFolder(filePath);
-    if (immediateFolder && immediateFolder !== '/') {
-      const folderName = immediateFolder.split('/').pop() || immediateFolder;
-      options.push({
-        label: `Current folder (${folderName})`,
-        path: immediateFolder,
-      });
-    }
-
-    // Project root (detected heuristically)
-    const projectRoot = findProjectRoot(filePath);
-    if (projectRoot && projectRoot !== immediateFolder) {
-      const projectName = projectRoot.split('/').pop() || projectRoot;
-      options.push({
-        label: `Project root (${projectName})`,
-        path: projectRoot,
-      });
-    }
-
-    return options;
-  }, [filePath]);
+  const folderOptions = useMemo(
+    () => buildAllowFolderOptions(filePath),
+    [filePath],
+  );
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50">
-      <div className="bg-[var(--color-surface)] border border-[var(--color-border)] rounded-lg shadow-xl max-w-md w-full mx-4 overflow-hidden">
-        {/* Header */}
-        <div className="px-4 py-3 bg-[var(--color-surface-alt)] border-b border-[var(--color-border)]">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 px-4 backdrop-blur-sm">
+      <div className="w-full max-w-xl overflow-hidden rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface)] shadow-2xl shadow-black/35">
+        <div className="border-b border-[var(--color-border)] bg-[var(--color-surface-alt)]/80 px-5 py-4">
           <h3 className="text-sm font-semibold text-[var(--color-text)]">
             Allow Folder for Auto-Approval
           </h3>
-          <p className="text-xs text-[var(--color-text-muted)] mt-1">
+          <p className="mt-1 text-xs text-[var(--color-text-muted)]">
             Future file read requests from this folder will be auto-approved.
           </p>
         </div>
 
-        {/* File path preview */}
-        <div className="px-4 py-3 border-b border-[var(--color-border)]">
-          <p className="text-[10px] text-[var(--color-text-faint)] mb-1">
-            File requested:
+        <div className="border-b border-[var(--color-border)] px-5 py-4">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
+            File Requested
           </p>
-          <p className="text-xs font-mono text-[var(--color-text-muted)] break-all">
+          <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-surface-alt)]/70 px-3 py-2 font-mono text-[11px] leading-5 text-[var(--color-text-muted)] break-all">
             {filePath}
-          </p>
+          </div>
         </div>
 
-        {/* Folder options */}
-        <div className="px-4 py-3">
-          <p className="text-xs text-[var(--color-text-muted)] mb-2">
+        <div className="px-5 py-4">
+          <p className="mb-3 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
             Select folder to allow:
           </p>
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {folderOptions.map((option) => (
               <button
                 key={option.path}
                 type="button"
                 onClick={() => onSelectFolder(option.path)}
-                className="w-full text-left px-3 py-2 rounded border border-[var(--color-border)] hover:border-[var(--color-agent)] hover:bg-[var(--color-agent)]/5 transition-colors"
+                className="group flex w-full items-start gap-3 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-alt)]/45 px-3.5 py-3 text-left transition-colors hover:border-[var(--color-agent)]/50 hover:bg-[var(--color-agent)]/6"
               >
-                <p className="text-xs font-medium text-[var(--color-text)]">
-                  {option.label}
-                </p>
-                <p className="text-[10px] font-mono text-[var(--color-text-muted)] break-all mt-0.5">
-                  {option.path}
-                </p>
+                <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text-faint)] transition-colors group-hover:border-[var(--color-agent)]/40 group-hover:text-[var(--color-agent)]">
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                  </svg>
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-medium text-[var(--color-text)]">
+                      {option.label}
+                    </p>
+                    <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-surface)] px-2 py-0.5 text-[10px] text-[var(--color-text-faint)]">
+                      {option.name}
+                    </span>
+                  </div>
+                  <p className="mt-1 text-xs text-[var(--color-text-muted)]">
+                    {option.hint}
+                  </p>
+                  <p className="mt-1.5 break-all font-mono text-[11px] text-[var(--color-text-faint)]">
+                    {option.path}
+                  </p>
+                </div>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="flex items-center justify-end gap-2 px-4 py-3 bg-[var(--color-surface-alt)] border-t border-[var(--color-border)]">
+        <div className="flex items-center justify-end gap-2 border-t border-[var(--color-border)] bg-[var(--color-surface-alt)]/80 px-5 py-4">
           <Button variant="outline" size="sm" onClick={onCancel}>
             Cancel
           </Button>

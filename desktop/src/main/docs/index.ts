@@ -14,25 +14,6 @@ export {
   type DocSearchResult,
 } from './context-injector';
 
-// indexer.ts
-export {
-  buildFullCache,
-  DOC_MAX_FILE_SIZE,
-  embedText,
-  extractTitle,
-  findSemantic,
-  isReady,
-  loadCache,
-  saveCache,
-  SEMANTIC_THRESHOLD,
-  SEMANTIC_WEIGHT,
-  shutdown,
-  warmUp,
-  type DocEmbeddingCache,
-  type DocEmbeddingEntry,
-  type SemanticHit,
-} from './indexer';
-
 // inject-handler.ts
 export {
   handleInjectDocContext,
@@ -44,11 +25,12 @@ export {
 // file-indexer.ts
 export { indexFiles, rankFileSuggestions } from './file-indexer';
 
-// search.ts
-export {
-  searchGlobal,
-  type GlobalSearchResult,
-  type MessageSearchResult,
-  type SearchOptions,
-  type SessionSearchResult,
-} from './search';
+// search.ts — moved to utility/backend; re-export async proxy from main-side
+// docs/search-client.ts and types from the moved module.
+export { searchGlobal } from './search-client';
+export type {
+  GlobalSearchResult,
+  MessageSearchResult,
+  SearchOptions,
+  SessionSearchResult,
+} from '../utility/backend/search';

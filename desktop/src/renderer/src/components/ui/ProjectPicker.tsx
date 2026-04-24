@@ -49,18 +49,29 @@ export function ProjectPicker({
         cancelled = true;
       };
     }
-    api()
-      .then((list) => {
-        if (cancelled) return;
-        setPinned(list ?? []);
-      })
-      .catch((e: unknown) => {
-        if (cancelled) return;
-        const msg = e instanceof Error ? e.message : String(e);
-        setLoadError(msg);
-      });
+
+    const load = () => {
+      api()
+        .then((list) => {
+          if (cancelled) return;
+          setPinned(list ?? []);
+        })
+        .catch((e: unknown) => {
+          if (cancelled) return;
+          const msg = e instanceof Error ? e.message : String(e);
+          setLoadError(msg);
+        });
+    };
+
+    load();
+
+    // Re-fetch whenever the main process broadcasts a pinned-projects change
+    // (e.g. user pins a new folder from Settings or the sidebar rail).
+    const unsubscribe = window.api?.onPinnedProjectsUpdated?.(load);
+
     return () => {
       cancelled = true;
+      unsubscribe?.();
     };
   }, []);
 

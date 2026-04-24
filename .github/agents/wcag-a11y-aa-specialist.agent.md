@@ -22,6 +22,6 @@ Responsibilities:
 Execution requirements:
 
 - Cite relevant WCAG criterion IDs (for example 1.3.1, 2.4.6, 4.1.2) when explaining fixes.
-- Use interactive-mcp prompting tools to confirm user-facing accessibility behavior choices when requirements are ambiguous.
+- Use the built-in questions tool to confirm user-facing accessibility behavior choices when requirements are ambiguous.
 - Prefer fixing source component contracts over one-off workarounds.
 - Re-run targeted project checks after remediation and report what was validated.

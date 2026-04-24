@@ -71,6 +71,8 @@ OpenCode exposes REST endpoints for runtime MCP management:
 
 ## OpenCode Desktop App Architecture
 
+> **Note:** This section describes the **official OpenCode desktop app** (the Tauri-based `packages/desktop/` reference implementation) for comparison. The Interactive MCP Desktop app (this repo) takes a different approach: since Phase C it loads the OpenCode server bundle in-process via `Server.listen()` rather than spawning a CLI sidecar. See [`ARCHITECTURE.md` — OpenCode server runs in-process](./ARCHITECTURE.md#opencode-server-runs-in-process-phase-c).
+
 The official OpenCode desktop app (`packages/desktop/`) uses **Tauri** (Rust backend + web frontend).
 
 ### How It Spawns OpenCode
@@ -162,7 +164,7 @@ Services using InstanceState:
 
 **Code references:**
 
-- `desktop/src/main/session/tree-manager.ts:716-797` — SSE subscription
+- `desktop/src/main/session/session-tree-service.ts` — SSE subscription (+ `desktop/src/main/session/sse-handlers.ts` for per-event dispatch)
 - `desktop/src/main/opencode/session.ts:115-146` — REST API queries
 - `desktop/src/main/opencode/config-sync.ts:52-172` — Config file sync
 
@@ -303,10 +305,12 @@ async function autoInjectProjectMcps(
 
 The desktop app could manage multiple OpenCode server instances (one per project directory).
 
+> **Note:** Since Phase C, the app starts a **single in-process** OpenCode server by dynamic-importing the bundled server and calling `Server.listen({ port, hostname: '127.0.0.1' })` — there is no `opencode serve` subprocess. Multi-instance support would therefore run as multiple in-process listeners on different ports (each with its own `XDG_STATE_HOME` / `cwd` override), not as multiple spawned CLI processes.
+
 **Implementation:**
 
-1. Track multiple sidecar processes with different working directories
-2. Each sidecar loads its own `.opencode/` config
+1. Track multiple in-process `Server.listen()` instances with different working directories
+2. Each instance loads its own `.opencode/` config
 3. Route MCP tool calls to the correct instance based on `baseDirectory`
 
 **Pros:**
@@ -317,37 +321,38 @@ The desktop app could manage multiple OpenCode server instances (one per project
 
 **Cons:**
 
-- Higher resource usage (multiple Node.js processes)
+- Higher resource usage (multiple in-process servers per Electron main process)
 - Complex routing logic
 - Session management complexity
+- Per-instance `XDG_STATE_HOME` / `process.chdir()` juggling in a single Node.js process
 
 ```typescript
-// Proposed architecture
+// Proposed architecture — note: in-process, no child process
 interface OpenCodeInstance {
-  pid: number;
   port: number;
   baseDirectory: string;
   sessions: Set<string>;
+  stop: () => Promise<void>;
 }
 
 const instances = new Map<string, OpenCodeInstance>();
 
-async function getOrSpawnInstance(
+async function getOrStartInstance(
   baseDirectory: string,
 ): Promise<OpenCodeInstance> {
   const existing = instances.get(baseDirectory);
   if (existing) return existing;
 
   const port = await findFreePort();
-  const child = spawn('opencode', ['serve', '--port', String(port)], {
-    cwd: baseDirectory,
-  });
+  // Dynamic import of the bundled OpenCode server (see desktop/src/main/opencode/server.ts)
+  const { Server } = await import('virtual:opencode-server');
+  const handle = await Server.listen({ port, hostname: '127.0.0.1' });
 
   const instance: OpenCodeInstance = {
-    pid: child.pid!,
     port,
     baseDirectory,
     sessions: new Set(),
+    stop: () => handle.close(),
   };
 
   instances.set(baseDirectory, instance);
@@ -380,9 +385,9 @@ Combine auto-injection with a UI for visibility:
 
 For full project isolation, implement multi-instance support:
 
-1. Spawn sidecar per unique `baseDirectory`
+1. Start an in-process `Server.listen()` per unique `baseDirectory` (see [`ARCHITECTURE.md`](./ARCHITECTURE.md#opencode-server-runs-in-process-phase-c))
 2. Route all API calls based on session → instance mapping
-3. Clean up instances when all sessions close
+3. Close instances when all sessions close
 
 ---
 

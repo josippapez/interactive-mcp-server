@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
+import {
+  isChatTextSize,
+  type ChatTextSize,
+} from '../../components/prompt/chat-text-size';
 
 const POLL_EXCLUSIONS_MS = 5000;
 
@@ -6,6 +10,7 @@ export function usePromptSettingsState() {
   const [noReply, setNoReply] = useState(true);
   const [expandAllTools, setExpandAllTools] = useState(false);
   const [showThinking, setShowThinking] = useState(false);
+  const [chatTextSize, setChatTextSize] = useState<ChatTextSize>('md');
   const [toolAutoExpandExclusions, setToolAutoExpandExclusions] = useState<
     string[]
   >([]);
@@ -18,6 +23,11 @@ export function usePromptSettingsState() {
       setNoReply(settings.defaultNoReply ?? true);
       setExpandAllTools(settings.defaultExpandAllTools ?? false);
       setShowThinking(settings.defaultShowThinking ?? false);
+      setChatTextSize(
+        isChatTextSize(settings.chatTextSize ?? '')
+          ? settings.chatTextSize
+          : 'md',
+      );
       setToolAutoExpandExclusions(settings.toolAutoExpandExclusions ?? []);
       setIsOpenCodeBackendAvailable(settings.agentBackend === 'opencode');
     };
@@ -66,14 +76,24 @@ export function usePromptSettingsState() {
     [saveSettingsPatch],
   );
 
+  const handleChatTextSizeChange = useCallback(
+    async (value: ChatTextSize) => {
+      setChatTextSize(value);
+      await saveSettingsPatch({ chatTextSize: value });
+    },
+    [saveSettingsPatch],
+  );
+
   return {
     noReply,
     expandAllTools,
     showThinking,
+    chatTextSize,
     toolAutoExpandExclusions,
     isOpenCodeBackendAvailable,
     handleNoReplyChange,
     handleExpandAllToolsChange,
     handleShowThinkingChange,
+    handleChatTextSizeChange,
   };
 }

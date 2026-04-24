@@ -2,10 +2,28 @@
 @plugin '@tailwindcss/typography';
 @plugin 'tailwindcss-animate';
 
+/* Streamdown ships utility classes in its compiled output. Tailwind must
+   scan those files so the runtime markup isn't missing styles. */
+@source "../../../../node_modules/streamdown/dist/*.js";
+@source "../../../../node_modules/@streamdown/code/dist/*.js";
+@source "../../../../node_modules/@streamdown/math/dist/*.js";
+@source "../../../../node_modules/@streamdown/mermaid/dist/*.js";
+@source "../../../../node_modules/@streamdown/cjk/dist/*.js";
+
 /* Override Tailwind's dark variant to use data-theme="dark" selector,
    not the OS media query. This ensures dark: utilities only apply when
    the app is explicitly in dark mode, regardless of system preference. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* ===== Font stacks (design-system parity with opencode reference) ===== */
+:root {
+  --font-family-sans:
+    ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
+  --font-family-mono:
+    ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Monaco, Consolas,
+    'Liberation Mono', 'Courier New', monospace;
+}
 
 /* ===== Dark theme (default) ===== */
 :root,
@@ -18,6 +36,9 @@
   --color-surface-alt: #272a30;
   --color-surface-raised: #24272d;
   --color-border: #3f454f;
+  /* Softer border used for chat surfaces (user bubble, code blocks, tool cards)
+     to match opencode `--border-weak-base` (~8% alpha white on dark). */
+  --color-border-weak: #2c323a;
   --color-error: #f87171;
   --color-warning: #facc15;
   --color-success: #4ade80;
@@ -30,6 +51,150 @@
   --color-scrollbar: #596273;
   --color-kbd-bg: #3a404b;
 
+  /* =============================================================
+     Opencode reference tokens (dark) — tool-call design-system parity
+     -------------------------------------------------------------
+     Names mirror ~/Desktop/opencode/packages/ui/src/styles/theme.css
+     so component CSS selectors from `message-part.css`, `basic-tool.css`,
+     `diff-changes.css`, `tool-error-card.css`, `file.css`, `card.css`
+     can be translated 1:1. Values tuned to this app's existing dark
+     palette (not literal hex ports) to preserve visual identity.
+     ============================================================= */
+  --text-strong: #f3f5f9;
+  --text-base: var(--color-text);
+  --text-weak: var(--color-text-muted);
+  --text-weaker: var(--color-text-faint);
+  --text-interactive-base: var(--color-agent);
+  --text-diff-add-base: var(--color-success);
+  --text-diff-delete-base: var(--color-error);
+
+  --background-base: var(--color-bg);
+  --background-stronger: var(--color-surface-alt);
+
+  --border-weak-base: var(--color-border-weak);
+  --border-weaker-base: color-mix(
+    in srgb,
+    var(--color-border-weak) 60%,
+    transparent
+  );
+
+  --icon-base: var(--color-text);
+  --icon-weak: var(--color-text-muted);
+  --icon-weaker: var(--color-text-faint);
+  --icon-weak-base: color-mix(
+    in srgb,
+    var(--color-text-muted) 55%,
+    transparent
+  );
+  --icon-strong-base: var(--color-text);
+  --icon-diff-add-base: var(--color-success);
+  --icon-diff-delete-base: var(--color-error);
+  --icon-diff-modified-base: var(--color-agent);
+
+  --surface-weak: var(--color-surface-alt);
+
+  --surface-diff-add-base: color-mix(
+    in srgb,
+    var(--color-success) 22%,
+    transparent
+  );
+  --surface-diff-add-weak: color-mix(
+    in srgb,
+    var(--color-success) 14%,
+    transparent
+  );
+  --surface-diff-add-weaker: color-mix(
+    in srgb,
+    var(--color-success) 7%,
+    transparent
+  );
+  --surface-diff-add-strong: color-mix(
+    in srgb,
+    var(--color-success) 32%,
+    transparent
+  );
+  --surface-diff-add-stronger: color-mix(
+    in srgb,
+    var(--color-success) 45%,
+    transparent
+  );
+
+  --surface-diff-delete-base: color-mix(
+    in srgb,
+    var(--color-error) 22%,
+    transparent
+  );
+  --surface-diff-delete-weak: color-mix(
+    in srgb,
+    var(--color-error) 14%,
+    transparent
+  );
+  --surface-diff-delete-weaker: color-mix(
+    in srgb,
+    var(--color-error) 7%,
+    transparent
+  );
+  --surface-diff-delete-strong: color-mix(
+    in srgb,
+    var(--color-error) 32%,
+    transparent
+  );
+  --surface-diff-delete-stronger: color-mix(
+    in srgb,
+    var(--color-error) 45%,
+    transparent
+  );
+
+  --surface-diff-hidden-base: color-mix(
+    in srgb,
+    var(--color-surface-alt) 70%,
+    transparent
+  );
+  --surface-diff-hidden-strong: var(--color-surface-alt);
+  --surface-diff-skip-base: color-mix(
+    in srgb,
+    var(--color-tool) 18%,
+    transparent
+  );
+  --surface-diff-unchanged-base: transparent;
+
+  --surface-critical-base: color-mix(
+    in srgb,
+    var(--color-error) 18%,
+    transparent
+  );
+  --surface-critical-weak: color-mix(
+    in srgb,
+    var(--color-error) 10%,
+    transparent
+  );
+  --surface-critical-strong: color-mix(
+    in srgb,
+    var(--color-error) 28%,
+    transparent
+  );
+
+  /* Status-pill surfaces for ToolStatusBadge (Done / Error pills). */
+  --color-success-surface: color-mix(
+    in srgb,
+    var(--color-success) 14%,
+    transparent
+  );
+  --color-error-surface: color-mix(
+    in srgb,
+    var(--color-error) 14%,
+    transparent
+  );
+
+  /* Motion + geometry tokens used by message-part.css */
+  --tool-motion-duration: 180ms;
+  --tool-motion-ease: cubic-bezier(0.2, 0, 0, 1);
+  --tool-content-gap: 8px;
+  --sticky-accordion-top: 0px;
+  --radius-md: 6px;
+  --radius-sm: 4px;
+  --radius-xs: 3px;
+
   /* shadcn/ui CSS variable mappings */
   --background: var(--color-bg);
   --foreground: var(--color-text);
@@ -42,24 +207,126 @@
   --border: var(--color-border);
   --input: var(--color-input-border);
   --primary: var(--color-agent);
-  --primary-foreground: #ffffff;
+  --primary-foreground: var(--color-inverse-text);
   --secondary: var(--color-surface-alt);
   --secondary-foreground: var(--color-text);
   --accent: var(--color-surface-alt);
   --accent-foreground: var(--color-text);
   --destructive: var(--color-error);
-  --destructive-foreground: #ffffff;
+  --destructive-foreground: var(--color-inverse-text);
   --ring: var(--color-agent);
   --radius: 0.375rem;
+
+  /* Inverse text (used on filled primary/destructive/sidebar-primary surfaces).
+     Both dark + light themes render white text on saturated blues/reds for
+     WCAG AA contrast — kept at pure white and re-declared per theme so any
+     future tuning is a single override. */
+  --color-inverse-text: #ffffff;
+
+  /* Sidebar tokens (shadcn sidebar primitive) — mapped onto our palette so
+     all 5 themes (dark + light + sage/sand/teal/sky tints) Just Work via
+     the cascade. `--color-sidebar-*` (in `@theme inline` at end of file)
+     re-exports these to Tailwind utilities (bg-sidebar, text-sidebar-*…). */
+  --sidebar: var(--color-surface-alt);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-agent);
+  --sidebar-primary-foreground: var(--color-inverse-text);
+  --sidebar-accent: var(--color-surface);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border-weak);
+  --sidebar-ring: var(--color-agent);
+
+  /* =============================================================
+     Wave 1 semantic tokens (opencode parity — dark)
+     GAP_REPORT.md §9.2, §9.4. Used by MessageItem outbound badges,
+     ProviderAuthSection connected row, ChannelHeader VCS diff
+     counters, and any status/diagnostic surface.
+     ============================================================= */
+  --surface-success: color-mix(in srgb, var(--color-success) 14%, transparent);
+  --surface-success-strong: color-mix(
+    in srgb,
+    var(--color-success) 24%,
+    transparent
+  );
+  --surface-warning: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  --surface-warning-strong: color-mix(
+    in srgb,
+    var(--color-warning) 24%,
+    transparent
+  );
+  --surface-critical: color-mix(in srgb, var(--color-error) 14%, transparent);
+  --surface-critical-strong: color-mix(
+    in srgb,
+    var(--color-error) 24%,
+    transparent
+  );
+  --surface-info: color-mix(in srgb, var(--color-agent) 14%, transparent);
+  --surface-info-strong: color-mix(
+    in srgb,
+    var(--color-agent) 24%,
+    transparent
+  );
+
+  --border-success: color-mix(in srgb, var(--color-success) 30%, transparent);
+  --border-warning: color-mix(in srgb, var(--color-warning) 30%, transparent);
+  --border-critical: color-mix(in srgb, var(--color-error) 30%, transparent);
+  --border-info: color-mix(in srgb, var(--color-agent) 30%, transparent);
+  --border-interactive: var(--color-agent);
+  --border-weak-selected: color-mix(
+    in srgb,
+    var(--color-agent) 35%,
+    transparent
+  );
+
+  --text-on-success: #86efac;
+  --text-on-warning: #fcd34d;
+  --text-on-critical: #fca5a5;
+  --text-on-info: #93c5fd;
+  --text-interactive: var(--color-agent);
+  --text-success: var(--color-success);
+  --text-critical: var(--color-error);
+
+  --icon-diff-add: var(--color-success);
+  --icon-diff-delete: var(--color-error);
+
+  /* Shadow / focus-ring scale (opencode `--shadow-xs-border-*`). */
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.25);
+  --shadow-xs-border: 0 0 0 1px var(--border-weak-base);
+  --shadow-xs-border-focus:
+    0 0 0 1px var(--border-interactive),
+    0 0 0 3px color-mix(in srgb, var(--color-agent) 25%, transparent);
+  --shadow-xs-border-select: 0 0 0 1px var(--border-weak-selected);
+  --shadow-xs-border-critical-focus:
+    0 0 0 1px var(--color-error),
+    0 0 0 3px color-mix(in srgb, var(--color-error) 25%, transparent);
+
+  /* =============================================================
+     Tool-card category accents (dark)
+     -------------------------------------------------------------
+     Per-tool-category left-stripe + hover surface used by the
+     `[data-component='tool-card-shell']` wrapper around every
+     tool trigger. Values are color-mix tints of the existing
+     semantic hues so the palette stays consistent across themes
+     and auto-rebalances on accent-color changes.
+     ============================================================= */
+  --tool-accent-file: var(--color-agent);
+  --tool-accent-shell: var(--color-warning);
+  --tool-accent-web: #a78bfa;
+  --tool-accent-mcp: var(--color-agent-info);
+  --tool-accent-todo: #f0abfc;
+  --tool-accent-task: var(--color-agent);
+  --tool-accent-default: var(--color-tool);
+  --tool-accent-error: var(--color-error);
 }
 
 /* ===== Light theme ===== */
 [data-theme='light'] {
-  --color-bg: #bcc5d2;
+  --color-bg: #cfd7e1;
   --color-text: #1a202c;
-  --color-text-muted: #3c4d5e;
-  --color-text-faint: #5c6d7e;
-  --color-border: #8a9eb0;
+  --color-text-muted: #2f4256;
+  --color-text-faint: #506273;
+  --color-border: #7690a8;
+  --color-border-weak: #99adbf;
   --color-error: #b91c1c;
   --color-warning: #92400e;
   --color-success: #166534;
@@ -67,13 +334,83 @@
   --color-agent: #1a44c8;
   --color-agent-info: #0d9488;
   --color-tool: #3d5268;
-  --color-surface: #d4dbe5;
-  --color-surface-alt: #ccd3de;
-  --color-surface-raised: #e8eef6;
-  --color-input-bg: #edf2f8;
-  --color-input-border: #4e6e88;
+  --color-surface: #e8eef5;
+  --color-surface-alt: #dde6ef;
+  --color-surface-raised: #f5f8fc;
+  --color-input-bg: #f7faff;
+  --color-input-border: #466887;
   --color-scrollbar: #7a91a6;
   --color-kbd-bg: #aab7c4;
+
+  /* Reference tokens (light) — `--text-strong` darker than base for headings.
+     Diff/surface/icon tokens inherit via --color-success/--color-error/--color-agent
+     re-definitions above, so color-mix results rebalance automatically. */
+  --text-strong: #0a1018;
+  --border-weaker-base: color-mix(
+    in srgb,
+    var(--color-border-weak) 70%,
+    transparent
+  );
+  --icon-weak-base: color-mix(
+    in srgb,
+    var(--color-text-muted) 40%,
+    transparent
+  );
+
+  /* Diff surfaces need slightly stronger alpha on light backgrounds
+     for legibility (bright backgrounds wash out color-mix <20%). */
+  --surface-diff-add-base: color-mix(
+    in srgb,
+    var(--color-success) 28%,
+    transparent
+  );
+  --surface-diff-add-weak: color-mix(
+    in srgb,
+    var(--color-success) 18%,
+    transparent
+  );
+  --surface-diff-add-weaker: color-mix(
+    in srgb,
+    var(--color-success) 10%,
+    transparent
+  );
+  --surface-diff-delete-base: color-mix(
+    in srgb,
+    var(--color-error) 28%,
+    transparent
+  );
+  --surface-diff-delete-weak: color-mix(
+    in srgb,
+    var(--color-error) 18%,
+    transparent
+  );
+  --surface-diff-delete-weaker: color-mix(
+    in srgb,
+    var(--color-error) 10%,
+    transparent
+  );
+  --surface-critical-base: color-mix(
+    in srgb,
+    var(--color-error) 22%,
+    transparent
+  );
+  --surface-critical-weak: color-mix(
+    in srgb,
+    var(--color-error) 14%,
+    transparent
+  );
+
+  /* Status-pill surfaces — slightly stronger alpha for light legibility. */
+  --color-success-surface: color-mix(
+    in srgb,
+    var(--color-success) 18%,
+    transparent
+  );
+  --color-error-surface: color-mix(
+    in srgb,
+    var(--color-error) 18%,
+    transparent
+  );
 
   /* shadcn/ui CSS variable mappings */
   --background: var(--color-bg);
@@ -87,17 +424,95 @@
   --border: var(--color-border);
   --input: var(--color-input-border);
   --primary: var(--color-agent);
-  --primary-foreground: #ffffff;
+  --primary-foreground: var(--color-inverse-text);
   --secondary: var(--color-surface-alt);
   --secondary-foreground: var(--color-text);
   --accent: var(--color-surface-alt);
   --accent-foreground: var(--color-text);
   --destructive: var(--color-error);
-  --destructive-foreground: #ffffff;
+  --destructive-foreground: var(--color-inverse-text);
   --ring: var(--color-agent);
+
+  /* Sidebar tokens — same mapping as dark (re-declared so light-theme
+     values resolve correctly; tinted variants below inherit these). */
+  --sidebar: var(--color-surface-alt);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-agent);
+  --sidebar-primary-foreground: var(--color-inverse-text);
+  --sidebar-accent: var(--color-surface);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border-weak);
+  --sidebar-ring: var(--color-agent);
+
+  /* Wave 1 semantic tokens (opencode parity — light).
+     Values re-resolve through color-mix against the redefined
+     --color-success/--color-warning/--color-error/--color-agent above,
+     so only text-on-* needs per-theme tuning for AA contrast. */
+  --surface-success: color-mix(in srgb, var(--color-success) 18%, transparent);
+  --surface-success-strong: color-mix(
+    in srgb,
+    var(--color-success) 30%,
+    transparent
+  );
+  --surface-warning: color-mix(in srgb, var(--color-warning) 18%, transparent);
+  --surface-warning-strong: color-mix(
+    in srgb,
+    var(--color-warning) 30%,
+    transparent
+  );
+  --surface-critical: color-mix(in srgb, var(--color-error) 18%, transparent);
+  --surface-critical-strong: color-mix(
+    in srgb,
+    var(--color-error) 30%,
+    transparent
+  );
+  --surface-info: color-mix(in srgb, var(--color-agent) 18%, transparent);
+  --surface-info-strong: color-mix(
+    in srgb,
+    var(--color-agent) 30%,
+    transparent
+  );
+
+  --border-success: color-mix(in srgb, var(--color-success) 45%, transparent);
+  --border-warning: color-mix(in srgb, var(--color-warning) 45%, transparent);
+  --border-critical: color-mix(in srgb, var(--color-error) 45%, transparent);
+  --border-info: color-mix(in srgb, var(--color-agent) 45%, transparent);
+  --border-interactive: var(--color-agent);
+  --border-weak-selected: color-mix(
+    in srgb,
+    var(--color-agent) 45%,
+    transparent
+  );
+
+  /* Light theme: text-on-* uses the darker brand hue for AA against tinted surface. */
+  --text-on-success: var(--color-success);
+  --text-on-warning: var(--color-warning);
+  --text-on-critical: var(--color-error);
+  --text-on-info: var(--color-agent);
+  --text-interactive: var(--color-agent);
+  --text-success: var(--color-success);
+  --text-critical: var(--color-error);
+
+  --icon-diff-add: var(--color-success);
+  --icon-diff-delete: var(--color-error);
+
+  --shadow-xs: 0 1px 2px rgb(0 0 0 / 0.08);
+  --shadow-xs-border: 0 0 0 1px var(--border-weak-base);
+  --shadow-xs-border-focus:
+    0 0 0 1px var(--border-interactive),
+    0 0 0 3px color-mix(in srgb, var(--color-agent) 22%, transparent);
+  --shadow-xs-border-select: 0 0 0 1px var(--border-weak-selected);
+  --shadow-xs-border-critical-focus:
+    0 0 0 1px var(--color-error),
+    0 0 0 3px color-mix(in srgb, var(--color-error) 22%, transparent);
 }
 
-/* ===== Light tints (override bg/surface tokens only; applied via data-tint) ===== */
+/* ===== Light tints (override bg/surface tokens only; applied via data-tint) =====
+   Each tint also re-declares `--color-border-weak` so downstream consumers
+   (shadcn `--sidebar-border`, chat card borders, kbd outlines) don't fall back
+   to the default light value (`#a8b6c4` blue-grey) which clashes with non-blue
+   tints. Values are ~20–25% lighter + desaturated relative to each tint's
+   `--color-border`, matching the dark/light ratio (see L38-41). */
 [data-theme='light'][data-tint='sage'] {
   --color-bg: #bdd0c2;
   --color-surface: #cddbd0;
@@ -105,6 +520,7 @@
   --color-surface-raised: #e2eee5;
   --color-input-bg: #e8f2ea;
   --color-border: #7a9f86;
+  --color-border-weak: #a4c0ae;
   --color-scrollbar: #7a9f86;
   --color-kbd-bg: #a8c0ad;
 }
@@ -116,6 +532,7 @@
   --color-surface-raised: #eee5d9;
   --color-input-bg: #f2ece2;
   --color-border: #a89080;
+  --color-border-weak: #c8b6a8;
   --color-scrollbar: #a89080;
   --color-kbd-bg: #c4b5a8;
 }
@@ -127,6 +544,7 @@
   --color-surface-raised: #ddeeed;
   --color-input-bg: #e4f2f1;
   --color-border: #6a9e9c;
+  --color-border-weak: #9cc0be;
   --color-scrollbar: #6a9e9c;
   --color-kbd-bg: #9abfbe;
 }
@@ -138,19 +556,32 @@
   --color-surface-raised: #ddedf6;
   --color-input-bg: #e4f0f8;
   --color-border: #6a8faa;
+  --color-border-weak: #9eb8cc;
   --color-scrollbar: #6a8faa;
   --color-kbd-bg: #9ab6c9;
 }
 
 body {
   margin: 0;
-  font-family:
-    'SF Mono', 'Fira Code', 'Cascadia Code', 'JetBrains Mono', ui-monospace,
-    SFMono-Regular, monospace;
+  /* Monospace body font is intentional — this is the app's visual identity,
+     not a parity target. GAP_REPORT.md Wave 1 win #1 (sans swap) was reverted
+     per user preference. Sans stack remains available via
+     `var(--font-family-sans)` / `font-family: sans-serif` for any surface
+     that explicitly opts in. */
+  font-family: var(--font-family-mono);
   font-size: 13px;
   -webkit-font-smoothing: antialiased;
   background: var(--color-bg);
   color: var(--color-text);
+}
+
+/* Ensure code/pre explicitly stay monospace even if a parent opts into sans. */
+code,
+pre,
+kbd,
+samp,
+[data-font='mono'] {
+  font-family: var(--font-family-mono);
 }
 
 /* Form-control legibility across themes (Electron/WebKit can dim input text). */
@@ -229,6 +660,123 @@ textarea::placeholder {
 }
 .msg-enter {
   animation: msg-in 0.18s ease-out both;
+}
+
+/* =============================================================
+   Enter animations (replaces the former GSAP tweens).
+
+   Each keyframe matches the original GSAP `.from()` call's
+   starting state and eases back to the identity (final) state.
+   `both` fill-mode locks in the starting state before the
+   animation runs (prevents a single-frame flash) and keeps the
+   final state after it completes.
+
+   Motion is gated by `prefers-reduced-motion: no-preference`.
+   Reduced-motion users get no animation class at all because
+   these rules only apply inside the media query — the element
+   simply shows in its final state.
+   ============================================================= */
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes anim-fade-in-left {
+    from {
+      opacity: 0;
+      transform: translateX(-6px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes anim-fade-in-left-lg {
+    from {
+      opacity: 0;
+      transform: translateX(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes anim-fade-in-up-sm {
+    from {
+      opacity: 0;
+      transform: translateY(5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes anim-fade-in-up {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes anim-fade-in-up-lg {
+    from {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  /* ChannelItem sidebar row */
+  .anim-channel-item {
+    animation: anim-fade-in-left 0.18s ease-out both;
+  }
+
+  /* ToolCallView enter (one-shot; callers guard remounts) */
+  .anim-tool-enter {
+    animation: anim-fade-in-up-sm 0.2s ease-out both;
+  }
+
+  /* PromptView shell + main columns */
+  .anim-prompt-shell {
+    animation: anim-fade-in-left-lg 0.35s ease-out both;
+  }
+  .anim-prompt-main {
+    animation: anim-fade-in-up 0.35s ease-out 0.05s both;
+  }
+
+  /* IdleStateView staggered group — children with `data-stagger-index`
+     attr (0-based) get an incremental delay of 60ms per step. */
+  .anim-stagger-fade-up > [data-stagger-index] {
+    animation: anim-fade-in-up-lg 0.4s ease-out both;
+    animation-delay: calc(
+      var(--stagger-step, 60ms) * attr(data-stagger-index number, 0)
+    );
+  }
+  /* Fallback for browsers without `attr()` typed values — explicit
+     delays per index. Chromium-based Electron supports typed attr()
+     only partially, so we pin common indices. */
+  .anim-stagger-fade-up > [data-stagger-index='0'] {
+    animation-delay: 0ms;
+  }
+  .anim-stagger-fade-up > [data-stagger-index='1'] {
+    animation-delay: 60ms;
+  }
+  .anim-stagger-fade-up > [data-stagger-index='2'] {
+    animation-delay: 120ms;
+  }
+  .anim-stagger-fade-up > [data-stagger-index='3'] {
+    animation-delay: 180ms;
+  }
+  .anim-stagger-fade-up > [data-stagger-index='4'] {
+    animation-delay: 240ms;
+  }
 }
 
 /* Left-border message styles */
@@ -437,7 +985,6 @@ textarea::placeholder {
 [data-compact='true'] .prose pre {
   margin-top: 0.25rem;
   margin-bottom: 0.25rem;
-  padding: 0.5rem;
 }
 
 [data-compact='true'] .prose code {
@@ -496,4 +1043,1150 @@ textarea::placeholder {
 
 .split-divider:hover {
   background: var(--color-agent);
+}
+
+/* ===== Streamdown table polish (Vercel ai-chatbot reference look) =====
+   - Drop the boxed/bordered look (no outer table border, no vertical cell borders)
+   - Keep horizontal row separators only via top border on each row
+   - Allow natural cell wrap (no last-column truncation) */
+[data-streamdown='table-wrapper'] {
+  border: none !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  overflow-x: auto;
+}
+[data-streamdown='table'] {
+  border: none !important;
+  border-collapse: collapse;
+  width: 100%;
+}
+[data-streamdown='table-header'] {
+  background: transparent;
+}
+[data-streamdown='table-header-cell'],
+[data-streamdown='table-cell'] {
+  border: none !important;
+  border-bottom: 1px solid var(--color-border) !important;
+  padding: 0.5rem 0.75rem;
+  white-space: normal;
+  word-break: break-word;
+  overflow: visible;
+  text-overflow: clip;
+  max-width: none;
+}
+[data-streamdown='table-header-cell'] {
+  font-weight: 600;
+  color: var(--color-text);
+  text-align: left;
+}
+[data-streamdown='table-row']:last-child [data-streamdown='table-cell'] {
+  border-bottom: none !important;
+}
+
+/* ===== Streamdown fullscreen overlay — opaque background =====
+   Streamdown ships a fullscreen wrapper using bg-background/50 (see-through).
+   Force a solid surface so chat content behind isn't visible. */
+[data-streamdown='table-fullscreen'] {
+  background: var(--color-bg) !important;
+  backdrop-filter: none !important;
+}
+
+/* =============================================================
+   Message timeline (opencode design-system parity)
+   -------------------------------------------------------------
+   Visual port of ~/Desktop/opencode/packages/ui/src/components/
+   session-turn.css + message-part.css. Logic untouched.
+   ============================================================= */
+
+/* Timeline root — scoped to `data-slot="session-turn-list"` to avoid
+   leaking typography onto other surfaces (composer, dialogs, sidebar). */
+[data-slot='session-turn-list'] {
+  font-family: var(--font-family-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--color-text);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* Per-turn wrapper */
+[data-slot='session-turn'] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px; /* between assistant subsections (text, reasoning, tool) */
+}
+
+/* User message bubble (right-aligned, rounded, outlined) */
+[data-slot='session-turn-user'] {
+  display: flex;
+  justify-content: flex-end;
+}
+
+[data-slot='session-turn-user-bubble'] {
+  max-width: min(82%, 64ch);
+  padding: 8px 12px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-weak);
+  color: var(--color-text);
+  font-family: var(--font-family-sans);
+  font-size: var(--chat-message-size, 14px);
+  line-height: var(--chat-message-line-height, 1.5);
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+
+[data-slot='session-turn-container'][data-full-width='true']
+  [data-slot='session-turn-user-bubble'] {
+  max-width: min(92%, 110ch);
+}
+
+/* Assistant block — full width, no border, sans body */
+[data-slot='session-turn-assistant'] {
+  font-family: var(--font-family-sans);
+  font-size: var(--chat-message-size, 14px);
+  line-height: var(--chat-message-line-height, 1.6);
+  color: var(--color-text);
+}
+
+[data-slot='session-turn-assistant'] .prose {
+  font-family: var(--font-family-sans);
+  font-size: var(--chat-message-size, 14px);
+  line-height: var(--chat-message-line-height, 1.6);
+  color: var(--color-text);
+  max-width: none;
+}
+
+/* Code blocks inside assistant prose — flat single-surface design.
+   Streamdown ships a double-wrapped structure:
+     [data-streamdown='code-block']       (outer: border, rounded-xl, bg-sidebar, p-2)
+       [data-streamdown='code-block-header'] (language label, 32px tall)
+       [data-streamdown='code-block-body']   (inner: border, rounded-md, bg-background, p-4)
+   We flatten it to one surface: kill the outer border/bg/padding,
+   and tighten the inner body. */
+[data-slot='session-turn-assistant'] [data-streamdown='code-block'] {
+  margin: 0.75rem 0;
+  padding: 0;
+  border: 1px solid var(--color-border-weak);
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  gap: 0;
+  overflow: hidden;
+  font-family: var(--font-family-mono);
+}
+[data-slot='session-turn-assistant'] [data-streamdown='code-block-header'] {
+  height: 28px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border-weak);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  background: transparent;
+}
+[data-slot='session-turn-assistant'] [data-streamdown='code-block-body'] {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  line-height: 1.55;
+  scrollbar-width: none;
+  display: block;
+}
+/* Make the inner <pre> fill the body edge-to-edge so its shiki theme
+   background is the only surface visible (no gutter strips above/below). */
+[data-slot='session-turn-assistant'] [data-streamdown='code-block-body'] > pre {
+  display: block;
+  width: 100%;
+  margin: 0 !important;
+  box-sizing: border-box;
+}
+/* Preserve exact characters in code blocks (no smart-punctuation / ligatures
+   from the OS or font that could substitute `-` for `–`, or `...` for `…`). */
+[data-slot='session-turn-assistant'] [data-streamdown='code-block-body'],
+[data-slot='session-turn-assistant'] [data-streamdown='code-block-body'] *,
+.prose [data-streamdown='code-block-body'],
+.prose [data-streamdown='code-block-body'] * {
+  font-variant-ligatures: none !important;
+  font-feature-settings:
+    'liga' 0,
+    'clig' 0,
+    'calt' 0 !important;
+  -webkit-font-feature-settings:
+    'liga' 0,
+    'clig' 0,
+    'calt' 0 !important;
+}
+/* Streamdown renders each source line as a direct <span> child of <code>.
+   When line numbers are disabled, it omits the `block` utility, so all
+   lines collapse onto a single horizontally-scrolling row. Force block
+   layout on token-line spans so multi-line code wraps as expected. */
+[data-slot='session-turn-assistant']
+  [data-streamdown='code-block-body']
+  pre
+  > code
+  > span {
+  display: block;
+}
+/* Shiki dual-theme tokens: each token span gets --sdm-c (light color)
+   and --shiki-dark (dark color) inline CSS vars via `htmlStyle`. Streamdown
+   ships Tailwind arbitrary-value classes to read them, but those utilities
+   aren't in our renderer's Tailwind scan — fall back to explicit rules. */
+[data-slot='session-turn-assistant']
+  [data-streamdown='code-block-body']
+  pre
+  > code
+  span {
+  color: var(--sdm-c, inherit);
+}
+[data-theme='dark']
+  [data-slot='session-turn-assistant']
+  [data-streamdown='code-block-body']
+  pre
+  > code
+  span {
+  color: var(--shiki-dark, var(--sdm-c, inherit));
+}
+/* Shiki dual-theme tokens: each token span gets --sdm-c (light color)
+   and --shiki-dark (dark color) inline CSS vars via `htmlStyle`. Streamdown
+   ships Tailwind arbitrary-value classes to read them, but those utilities
+   aren't in our renderer's Tailwind scan — fall back to explicit rules. */
+.dark
+  [data-slot='session-turn-assistant']
+  [data-streamdown='code-block-body']
+  pre
+  > code
+  span {
+  color: var(--shiki-dark, var(--sdm-c, inherit));
+}
+[data-slot='session-turn-assistant']
+  [data-streamdown='code-block-body']::-webkit-scrollbar {
+  display: none;
+}
+
+/* Code blocks inside prompt banner / question dock — same flat look as
+   assistant messages, but rules need their own selectors because the
+   prompt UI lives outside the session-turn timeline. */
+[data-streamdown='code-block'] {
+  margin: 0.5rem 0;
+}
+.prose [data-streamdown='code-block'] {
+  border: 1px solid var(--color-border-weak);
+  border-radius: var(--radius-md, 6px);
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--font-family-mono);
+}
+.prose [data-streamdown='code-block-header'] {
+  height: 28px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--color-border-weak);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  background: transparent;
+}
+.prose [data-streamdown='code-block-body'] {
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  font-size: 12.5px;
+  line-height: 1.55;
+  display: block;
+}
+.prose [data-streamdown='code-block-body'] > pre {
+  display: block;
+  width: 100%;
+  margin: 0 !important;
+  box-sizing: border-box;
+}
+.prose [data-streamdown='code-block-body'] pre > code > span {
+  display: block;
+}
+/* Preserve Shiki token colors set via --sdm-c / --shiki-dark — nothing
+   here should force `color:`. Bare <pre>/<code> fallbacks keep font only. */
+[data-slot='session-turn-assistant'] pre,
+[data-slot='session-turn-assistant'] .shiki {
+  font-family: var(--font-family-mono);
+}
+/* Inline code pill */
+[data-slot='session-turn-assistant'] :not(pre) > code,
+[data-slot='session-turn-assistant'] [data-streamdown='inline-code'] {
+  font-family: var(--font-family-mono);
+  font-size: 0.9em;
+  color: var(--color-text);
+  background: var(--background-stronger, var(--color-surface-alt));
+  border: 1px solid var(--color-border-weak);
+  padding: 1px 6px;
+  border-radius: 4px;
+  white-space: break-spaces;
+}
+
+/* Reasoning — smaller, muted, per reference */
+[data-slot='session-turn-reasoning'] {
+  font-family: var(--font-family-sans);
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--color-text-muted);
+}
+
+[data-slot='session-turn-reasoning'] strong,
+[data-slot='session-turn-reasoning'] b {
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+/* Timeline horizontal padding & max-width wrapper */
+[data-slot='session-turn-container'] {
+  width: 100%;
+  max-width: 50rem; /* 800px — mirrors md:max-w-200 */
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: 1rem;
+  padding-right: 1rem;
+}
+[data-slot='session-turn-container'][data-full-width='true'] {
+  max-width: none;
+}
+@media (min-width: 768px) {
+  [data-slot='session-turn-container'] {
+    padding-left: 1.25rem;
+    padding-right: 1.25rem;
+  }
+}
+@media (min-width: 1536px) {
+  [data-slot='session-turn-container'] {
+    max-width: 1000px;
+  }
+  [data-slot='session-turn-container'][data-full-width='true'] {
+    max-width: none;
+  }
+}
+
+/* =============================================================
+   Tool-call parity block (opencode reference visual port)
+   -------------------------------------------------------------
+   Port of ~/Desktop/opencode/packages/ui/src/components/:
+     - basic-tool.css             (generic tool trigger row)
+     - message-part.css           (per-tool visuals: bash, edit/write,
+                                   apply_patch, todos, context-tool-group,
+                                   diagnostics, tool-loaded-file, exa)
+     - diff-changes.css           (+N/-N counters, 5-block bars)
+     - tool-error-card.css        (left-accent error card)
+     - card.css                   (left-accent bar via ::before)
+     - file.css                   (sticky hunk separator)
+
+   Sizing scaled to this app's compact 10–11px density (not the
+   reference's 13–14px). Selectors target data-component / data-slot
+   attributes emitted by tool-call TSX components.
+   ============================================================= */
+
+/* --- Generic tool trigger row (basic-tool) ---
+   NOT a full-bordered box. Flex row only. Cards only appear on
+   tool-error-card and Task (see below). */
+[data-component='tool-trigger'],
+[data-component='grep-trigger'],
+[data-component='glob-trigger'],
+[data-component='todoread-trigger'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 0;
+  min-height: 24px;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--text-base);
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--tool-motion-duration) var(--tool-motion-ease);
+}
+[data-component='tool-trigger']:hover,
+[data-component='grep-trigger']:hover,
+[data-component='glob-trigger']:hover,
+[data-component='todoread-trigger']:hover {
+  color: var(--text-strong);
+}
+[data-component='tool-trigger'] [data-slot='tool-icon'],
+[data-component='grep-trigger'] [data-slot='tool-icon'],
+[data-component='glob-trigger'] [data-slot='tool-icon'],
+[data-component='todoread-trigger'] [data-slot='tool-icon'] {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  color: var(--icon-weak);
+}
+[data-component='tool-trigger'] [data-slot='tool-title'],
+[data-component='grep-trigger'] [data-slot='tool-title'],
+[data-component='glob-trigger'] [data-slot='tool-title'],
+[data-component='todoread-trigger'] [data-slot='tool-title'] {
+  font-weight: 500;
+  color: var(--text-strong);
+  flex-shrink: 0;
+}
+[data-component='tool-trigger'] [data-slot='tool-subtitle'],
+[data-component='grep-trigger'] [data-slot='tool-subtitle'],
+[data-component='glob-trigger'] [data-slot='tool-subtitle'],
+[data-component='todoread-trigger'] [data-slot='tool-subtitle'] {
+  color: var(--text-base);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
+}
+[data-component='tool-trigger'] [data-slot='tool-args'] {
+  color: var(--text-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+/* Chevron sizing applies to every tool trigger variant (tool-trigger,
+   grep-trigger, glob-trigger, edit-trigger, write-trigger,
+   todoread-trigger, tool-loaded-file). Without this global rule the
+   inline SVG has no intrinsic size and fills its parent. */
+[data-slot='tool-chevron'] {
+  width: 12px;
+  height: 12px;
+  color: var(--icon-weaker);
+  flex-shrink: 0;
+  margin-left: auto;
+  transition: transform var(--tool-motion-duration) var(--tool-motion-ease);
+}
+[data-state='open'] > [data-slot='tool-chevron'],
+[data-state='open'] [data-slot='tool-chevron'] {
+  transform: rotate(90deg);
+}
+[data-component='tool-trigger'][data-pending='true'] [data-slot='tool-args'],
+[data-component='tool-trigger'][data-pending='true'] [data-slot='tool-chevron'],
+[data-pending='true'] [data-slot='tool-chevron'] {
+  display: none;
+}
+[data-component='tool-trigger'][data-pending='true']
+  [data-slot='tool-subtitle'] {
+  opacity: 0.6;
+  animation: tool-subtitle-shimmer 1.6s ease-in-out infinite;
+}
+@keyframes tool-subtitle-shimmer {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.85;
+  }
+}
+
+/* --- Tool-loaded-file row (read) ---
+   Indented to align under the tool icon column. */
+[data-component='tool-loaded-file'] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-left: 24px;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--text-weak);
+  min-height: 20px;
+}
+[data-component='tool-loaded-file'] [data-slot='file-icon'] {
+  width: 12px;
+  height: 12px;
+  color: var(--icon-weak);
+  flex-shrink: 0;
+}
+[data-component='tool-loaded-file'] [data-slot='file-path'] {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+/* --- Edit / Write tool body (joined via top-border only) --- */
+[data-component='edit-trigger'],
+[data-component='write-trigger'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  min-height: 24px;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+[data-component='edit-trigger'] [data-slot='edit-title'],
+[data-component='write-trigger'] [data-slot='edit-title'] {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+[data-component='edit-trigger'] [data-slot='tool-name'],
+[data-component='write-trigger'] [data-slot='tool-name'] {
+  color: var(--text-strong);
+  font-weight: 500;
+  text-transform: capitalize;
+  flex-shrink: 0;
+}
+[data-component='edit-trigger'] [data-slot='message-part-directory'],
+[data-component='write-trigger'] [data-slot='message-part-directory'] {
+  color: var(--text-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  min-width: 0;
+}
+[data-component='edit-trigger'] [data-slot='message-part-filename'],
+[data-component='write-trigger'] [data-slot='message-part-filename'] {
+  color: var(--text-base);
+  flex-shrink: 0;
+}
+[data-component='edit-content'],
+[data-component='write-content'] {
+  border-top: 1px solid var(--border-weaker-base);
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+/* --- Bash output box ---
+   Bordered container with copy button reveal on hover. */
+[data-component='bash-output'] {
+  position: relative;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  max-height: 240px;
+  background: var(--background-stronger);
+}
+[data-component='bash-output'] [data-slot='bash-pre'] {
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  color: var(--text-base);
+  padding: 10px 12px;
+  overflow: auto;
+  max-height: 240px;
+  white-space: pre;
+  margin: 0;
+  scrollbar-width: none;
+}
+[data-component='bash-output'][data-wrap='true'] [data-slot='bash-pre'],
+[data-component='bash-output'] [data-slot='bash-pre'][data-wrap='true'] {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+[data-component='bash-output'] [data-slot='bash-pre']::-webkit-scrollbar {
+  display: none;
+}
+[data-component='bash-output'] [data-slot='bash-copy'] {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  opacity: 0;
+  transition: opacity var(--tool-motion-duration) var(--tool-motion-ease);
+  background: var(--background-stronger);
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  font-size: 9px;
+  color: var(--text-weak);
+  cursor: pointer;
+}
+[data-component='bash-output']:hover [data-slot='bash-copy'] {
+  opacity: 1;
+}
+
+/* --- Apply-patch accordion ---
+   Sticky trigger, RTL-truncated directory, right-side diff summary. */
+[data-scope='apply-patch'] {
+  display: flex;
+  flex-direction: column;
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-item'] {
+  border-top: 1px solid var(--border-weaker-base);
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-item']:first-child {
+  border-top: none;
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-trigger'] {
+  position: sticky;
+  top: var(--sticky-accordion-top);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background-color: var(--background-stronger);
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--text-base);
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-directory'] {
+  color: var(--text-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl;
+  text-align: left;
+  min-width: 0;
+  flex: 1;
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-filename'] {
+  color: var(--text-strong);
+  flex-shrink: 0;
+  font-weight: 500;
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-summary'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+}
+
+/* --- Diff counters (+N / -N) & 5-block bars --- */
+[data-component='diff-changes'] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+}
+[data-component='diff-changes'] [data-slot='diff-add-count'] {
+  color: var(--text-diff-add-base);
+}
+[data-component='diff-changes'] [data-slot='diff-delete-count'] {
+  color: var(--text-diff-delete-base);
+}
+[data-component='diff-changes'] [data-slot='diff-bars'] {
+  width: 18px;
+  height: 14px;
+  flex-shrink: 0;
+}
+[data-component='diff-changes'] [data-slot='diff-bar-add'] {
+  fill: var(--icon-diff-add-base);
+}
+[data-component='diff-changes'] [data-slot='diff-bar-delete'] {
+  fill: var(--icon-diff-delete-base);
+}
+[data-component='diff-changes'] [data-slot='diff-bar-empty'] {
+  fill: var(--icon-weak-base);
+}
+
+/* --- Diff hunk view (file.css port) ---
+   Sticky line-number gutter + hunk separator. */
+[data-component='diff-view'] {
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  background: var(--background-base);
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+[data-component='diff-view'] [data-slot='diff-header'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  background: var(--background-stronger);
+  border-bottom: 1px solid var(--border-weaker-base);
+  font-size: 10px;
+}
+[data-component='diff-view'] [data-slot='diff-filepath'] {
+  color: var(--text-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+[data-component='diff-view'] [data-slot='diff-hunk-separator'] {
+  display: grid;
+  grid-template-columns: 40px 1fr;
+  background: var(--surface-diff-hidden-base);
+  border-top: 1px solid var(--border-weaker-base);
+  border-bottom: 1px solid var(--border-weaker-base);
+}
+[data-component='diff-view'] [data-slot='diff-hunk-gutter'] {
+  position: sticky;
+  left: 0;
+  background: var(--surface-diff-hidden-strong);
+  color: var(--icon-strong-base);
+  padding: 2px 6px;
+  text-align: right;
+  border-right: 1px solid var(--border-weaker-base);
+}
+
+/* --- Side-by-side diff (OLD | NEW) ---
+   Two-column grid with per-row status tint and per-side syntax
+   highlighting. Rows align one-to-one across the two columns. */
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-grid'] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  overflow-x: auto;
+  max-height: 28rem;
+  width: max-content;
+  min-width: 100%;
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-side-old'] {
+  border-right: 1px solid var(--border-weaker-base);
+  min-width: 24rem;
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-side-new'] {
+  min-width: 24rem;
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-row'] {
+  display: grid;
+  grid-template-columns: 3ch 1.5ch 1fr;
+  column-gap: 4px;
+  padding: 0 6px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre;
+  min-width: 0;
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-row'][data-kind='removal'] {
+  background: var(--surface-diff-delete-weak);
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-row'][data-kind='addition'] {
+  background: var(--surface-diff-add-weak);
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-row'][data-kind='empty'] {
+  background: var(--surface-diff-hidden-base);
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-gutter'] {
+  color: var(--text-weaker);
+  text-align: right;
+  user-select: none;
+  padding-right: 4px;
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-marker'] {
+  color: var(--text-weaker);
+  user-select: none;
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-row'][data-kind='removal']
+  [data-slot='diff-marker'] {
+  color: var(--color-error);
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-row'][data-kind='addition']
+  [data-slot='diff-marker'] {
+  color: var(--color-agent-success, var(--color-agent));
+}
+[data-component='diff-view'][data-variant='side-by-side']
+  [data-slot='diff-content'] {
+  min-width: max-content;
+  overflow: visible;
+  text-overflow: clip;
+}
+[data-component='diff-view'][data-variant='side-by-side'][data-wrap='true']
+  [data-slot='diff-row'] {
+  white-space: pre-wrap;
+}
+[data-component='diff-view'][data-variant='side-by-side'][data-wrap='true']
+  [data-slot='diff-content'] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* --- Todos (todowrite) ---
+   Strikethrough + weaker color for completed items. */
+[data-component='todos'] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0 16px;
+}
+[data-component='todos'] [data-slot='todo-item'] {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 0;
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  color: var(--text-base);
+  line-height: 1.4;
+}
+[data-component='todos'] [data-slot='todo-checkbox'] {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--icon-weak);
+}
+[data-component='todos'] [data-slot='todo-item'][data-status='completed'] {
+  text-decoration: line-through;
+  color: var(--text-weaker);
+}
+[data-component='todos']
+  [data-slot='todo-item'][data-status='in_progress']
+  [data-slot='todo-checkbox'] {
+  color: var(--color-agent);
+}
+[data-component='todos'] [data-slot='todo-item'][data-status='cancelled'] {
+  color: var(--text-weaker);
+  opacity: 0.7;
+}
+
+/* --- Context tool group (gather context) ---
+   Trigger row + indented (nested) list. */
+[data-component='context-tool-group-trigger'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 0;
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--text-base);
+  background: transparent;
+  border: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+[data-component='context-tool-group-trigger'] [data-slot='chevron'] {
+  color: var(--icon-weaker);
+  transition: transform var(--tool-motion-duration) var(--tool-motion-ease);
+}
+[data-component='context-tool-group-trigger'][data-state='open']
+  [data-slot='chevron'] {
+  transform: rotate(90deg);
+}
+[data-component='context-tool-group-list'] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 12px;
+}
+
+/* --- Task tool (special: full-bordered card used in expanded output) --- */
+[data-component='task-tool-card'] {
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-weak-base);
+  background: color-mix(in srgb, var(--background-base) 92%, transparent);
+  transition: background var(--tool-motion-duration) var(--tool-motion-ease);
+}
+[data-component='task-tool-card']:hover {
+  background: color-mix(in srgb, var(--background-stronger) 96%, transparent);
+}
+
+/* --- Tool error card (left-accent bar via ::before) --- */
+[data-component='tool-error-card'] {
+  position: relative;
+  padding: 8px 12px 8px 14px;
+  border-radius: var(--radius-md);
+  background: var(--surface-critical-weak);
+  color: var(--text-base);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+}
+[data-component='tool-error-card']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--color-error);
+  border-top-left-radius: var(--radius-md);
+  border-bottom-left-radius: var(--radius-md);
+}
+
+/* =============================================================
+   Tool-card shell (outer wrapper around every tool trigger)
+   -------------------------------------------------------------
+   A subtle bordered card with a colored left-accent per category.
+   Applied to the `ToolCallView` outer wrapper which carries
+   `data-tool-category` + `data-tool-status`. The inner
+   `tool-trigger` / `edit-trigger` / `write-trigger` / `grep-trigger`
+   / `glob-trigger` / `todoread-trigger` / `tool-loaded-file`
+   components retain their original row layout and chrome — this
+   shell only provides the card surround + accent stripe.
+
+   Error state overrides the category accent to red so failing
+   calls visually dominate regardless of tool type.
+   ============================================================= */
+[data-component='tool-card-shell'] {
+  position: relative;
+  border: 1px solid var(--border-weaker-base);
+  border-left-width: 2px;
+  border-left-color: var(--tool-accent, var(--tool-accent-default));
+  border-radius: var(--radius-md);
+  background: color-mix(
+    in srgb,
+    var(--tool-accent, var(--tool-accent-default)) 4%,
+    var(--background-base)
+  );
+  padding: 4px 10px 4px 10px;
+  transition:
+    background var(--tool-motion-duration) var(--tool-motion-ease),
+    border-color var(--tool-motion-duration) var(--tool-motion-ease);
+}
+[data-component='tool-card-shell']:hover {
+  background: color-mix(
+    in srgb,
+    var(--tool-accent, var(--tool-accent-default)) 8%,
+    var(--background-base)
+  );
+}
+[data-component='tool-card-shell'][data-tool-category='file'] {
+  --tool-accent: var(--tool-accent-file);
+}
+[data-component='tool-card-shell'][data-tool-category='shell'] {
+  --tool-accent: var(--tool-accent-shell);
+}
+[data-component='tool-card-shell'][data-tool-category='web'] {
+  --tool-accent: var(--tool-accent-web);
+}
+[data-component='tool-card-shell'][data-tool-category='mcp'] {
+  --tool-accent: var(--tool-accent-mcp);
+}
+[data-component='tool-card-shell'][data-tool-category='todo'] {
+  --tool-accent: var(--tool-accent-todo);
+}
+[data-component='tool-card-shell'][data-tool-category='task'] {
+  --tool-accent: var(--tool-accent-task);
+}
+[data-component='tool-card-shell'][data-tool-category='default'] {
+  --tool-accent: var(--tool-accent-default);
+}
+[data-component='tool-card-shell'][data-tool-status='error'] {
+  --tool-accent: var(--tool-accent-error);
+  background: color-mix(
+    in srgb,
+    var(--tool-accent-error) 8%,
+    var(--background-base)
+  );
+}
+[data-component='tool-card-shell'][data-tool-status='running'],
+[data-component='tool-card-shell'][data-tool-status='pending'] {
+  background: color-mix(
+    in srgb,
+    var(--tool-accent, var(--tool-accent-default)) 6%,
+    var(--background-base)
+  );
+}
+/* Pulsing left edge while a tool is running/pending so the user has
+   a visual "this is in-progress" signal for every tool type — including
+   edit/write/glob that don't emit incremental output. Matches the
+   surface-level accent color used above. */
+@keyframes tool-running-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+[data-component='tool-card-shell'][data-tool-status='running']::before,
+[data-component='tool-card-shell'][data-tool-status='pending']::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--tool-accent, var(--tool-accent-default));
+  border-top-left-radius: inherit;
+  border-bottom-left-radius: inherit;
+  animation: tool-running-pulse 1.4s ease-in-out infinite;
+  pointer-events: none;
+}
+[data-component='tool-card-shell'] {
+  position: relative;
+}
+/* The inner trigger buttons had a natural vertical padding. Drop
+   it to 0 now that the shell owns the card padding — keeps the
+   row visual density unchanged. */
+[data-component='tool-card-shell'] [data-component='tool-trigger'],
+[data-component='tool-card-shell'] [data-component='edit-trigger'],
+[data-component='tool-card-shell'] [data-component='write-trigger'],
+[data-component='tool-card-shell'] [data-component='grep-trigger'],
+[data-component='tool-card-shell'] [data-component='glob-trigger'],
+[data-component='tool-card-shell'] [data-component='todoread-trigger'] {
+  padding: 0;
+  min-height: 22px;
+}
+/* Read row: the shell now owns the indent chrome, so drop the
+   24px left-pad the row used to add itself. */
+[data-component='tool-card-shell'] [data-component='tool-loaded-file'] {
+  padding-left: 0;
+}
+/* Expanded content should hug the left edge of the card interior
+   instead of the 24px icon indent that was used when the trigger
+   lived on a flat surface. */
+[data-component='tool-card-shell']
+  [data-component='tool-trigger']
+  + [data-state='open'],
+[data-component='tool-card-shell'] [data-radix-collection-item] {
+  margin-left: 0;
+}
+/* Icon on the trigger now picks up the category accent so the
+   card feels coordinated even when collapsed. */
+[data-component='tool-card-shell']
+  [data-component='tool-trigger']
+  [data-slot='tool-icon'],
+[data-component='tool-card-shell']
+  [data-component='edit-trigger']
+  [data-slot='tool-icon'],
+[data-component='tool-card-shell']
+  [data-component='write-trigger']
+  [data-slot='tool-icon'],
+[data-component='tool-card-shell']
+  [data-component='grep-trigger']
+  [data-slot='tool-icon'],
+[data-component='tool-card-shell']
+  [data-component='glob-trigger']
+  [data-slot='tool-icon'],
+[data-component='tool-card-shell']
+  [data-component='todoread-trigger']
+  [data-slot='tool-icon'] {
+  color: var(--tool-accent, var(--tool-accent-default));
+}
+[data-component='tool-card-shell'][data-tool-status='error']
+  [data-slot='tool-icon'] {
+  color: var(--tool-accent-error);
+}
+
+/* --- Diagnostics row --- */
+[data-component='diagnostics'] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  background: var(--surface-critical-weak);
+  border-top: 1px solid var(--color-error);
+  font-family: var(--font-family-mono);
+  font-size: 10px;
+  color: var(--text-base);
+}
+[data-component='diagnostics'] [data-slot='diagnostic-label'] {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 9px;
+  color: var(--color-error);
+  font-weight: 500;
+}
+[data-component='diagnostics'] [data-slot='diagnostic-message'] {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* --- Exa / web-fetch links --- */
+[data-component='exa-tool-links'] {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+[data-component='exa-tool-links'] a {
+  color: var(--text-interactive-base);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  font-size: 11px;
+}
+
+.dark {
+  /* Kept for shadcn compatibility; this app routes via [data-theme='dark'] (see above). */
+  --sidebar: var(--color-surface-alt);
+  --sidebar-foreground: var(--color-text);
+  --sidebar-primary: var(--color-agent);
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: var(--color-surface);
+  --sidebar-accent-foreground: var(--color-text);
+  --sidebar-border: var(--color-border-weak);
+  --sidebar-ring: var(--color-agent);
+}
+
+/* =============================================================
+   Typography utilities (opencode parity).
+   GAP_REPORT.md §9.3 / Wave 1 win #13.
+   Naming: .text-{size}-{weight} where size is px, weight is regular|medium.
+   Line-heights: 13px → 1.5 (19.5px), 14px → 1.5 (21px), 20px → 1.4 (28px).
+   ============================================================= */
+.text-13-regular {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+.text-13-medium {
+  font-size: 13px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.text-14-regular {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 400;
+}
+.text-14-medium {
+  font-size: 14px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.text-16-medium {
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.text-20-medium {
+  font-size: 20px;
+  line-height: 1.4;
+  font-weight: 500;
+}
+
+/* Composable shadow helper utilities so Tailwind class lists can apply
+   the opencode shadow tokens directly (e.g. `shadow-xs-border-focus`). */
+.shadow-xs-border {
+  box-shadow: var(--shadow-xs-border);
+}
+.shadow-xs-border-focus {
+  box-shadow: var(--shadow-xs-border-focus);
+}
+.shadow-xs-border-select {
+  box-shadow: var(--shadow-xs-border-select);
+}
+.shadow-xs-border-critical-focus {
+  box-shadow: var(--shadow-xs-border-critical-focus);
+}
+
+@theme inline {
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
 }

@@ -9,11 +9,11 @@ import {
   addPinnedProject,
   removePinnedProject,
   resetDatabase,
-} from '../../database';
+} from '../../utility/db-client';
 import { rankFileSuggestions, indexFiles } from '../../docs/file-indexer';
 import { getBackendAdapter } from '../../backend-adapter';
 import { forceTerminateChat, getActivePromptData } from '../prompt';
-import { SUPPORTED_FILE_EXTENSIONS } from '../../opencode/injector';
+import { SUPPORTED_FILE_EXTENSIONS } from '../../utility/opencode-client';
 import { IpcHandlerDeps } from './types';
 
 const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp'];
@@ -134,17 +134,25 @@ export function registerSystemHandlers(deps: IpcHandlerDeps): void {
     forceTerminateChat(connectionId);
   });
 
-  ipcMain.handle('get-pinned-projects', () => getPinnedProjects());
+  ipcMain.handle('get-pinned-projects', async () => getPinnedProjects());
 
   ipcMain.handle(
     'add-pinned-project',
-    (_event, data: { path: string; name: string }) => {
-      return addPinnedProject(data.path, data.name);
+    async (_event, data: { path: string; name: string }) => {
+      const added = await addPinnedProject(data.path, data.name);
+      if (added) {
+        deps.getMainWindow()?.webContents.send('pinned-projects:updated');
+      }
+      return added;
     },
   );
 
-  ipcMain.handle('remove-pinned-project', (_event, path: string) => {
-    return removePinnedProject(path);
+  ipcMain.handle('remove-pinned-project', async (_event, path: string) => {
+    const removed = await removePinnedProject(path);
+    if (removed) {
+      deps.getMainWindow()?.webContents.send('pinned-projects:updated');
+    }
+    return removed;
   });
 
   ipcMain.handle('get-active-prompts', () => getActivePromptData());

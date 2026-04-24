@@ -12,8 +12,6 @@ export function useConnectionHandlers({
   activateRef,
   setNodes,
   selectChannel,
-  loadChannelHistory,
-  loadedHistoryIds,
   rehydrateActivePrompts,
 }: HandlerContext): () => void {
   const disposers: Array<(() => void) | undefined> = [];
@@ -48,10 +46,6 @@ export function useConnectionHandlers({
       if (!getActiveConnectionId()) {
         selectChannel(data.connectionId, 'connection-opened');
       }
-      if (!loadedHistoryIds.current.has(data.connectionId)) {
-        loadedHistoryIds.current.add(data.connectionId);
-        void loadChannelHistory(data.connectionId);
-      }
       void rehydrateActivePrompts();
       activateRef.current();
     }),
@@ -59,16 +53,28 @@ export function useConnectionHandlers({
 
   disposers.push(
     window.api.onConnectionClosed?.((data) => {
+      let wasLastVisibleNode = false;
       setNodes((prev) => {
         const node = prev.get(data.connectionId);
-        if (!node?.isDirectConnection) return prev;
+        if (!node?.isDirectConnection) {
+          // OpenCode-backed channels aren't removed here (their lifecycle is
+          // managed by the session tree), but track whether dismissing this
+          // channel leaves no other visible nodes so we can intentionally
+          // clear selection and show the "new session" screen.
+          if (prev.size <= 1) wasLastVisibleNode = true;
+          return prev;
+        }
         const next = new Map(prev);
         next.delete(data.connectionId);
+        if (next.size === 0) wasLastVisibleNode = true;
         return next;
       });
-      // Only clear selection if this was the active channel
+      // Only clear selection if this was the active channel. When it was the
+      // last visible node, mark the null selection as intentional so the
+      // auto-select-first side-effect does not immediately re-pick the same
+      // (still-present) node and keeps the New Session screen visible.
       if (getActiveConnectionId() === data.connectionId) {
-        selectChannel(null, 'connection-closed');
+        selectChannel(null, 'connection-closed', wasLastVisibleNode);
       }
     }),
   );

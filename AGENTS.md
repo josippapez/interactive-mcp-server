@@ -160,12 +160,19 @@ The following tools REQUIRE `openCodeSessionId` on every call:
 
 ---
 
-## Prompt-Loop Policy (for AI agents using interactive-mcp tools)
+## Prompt-Loop Policy (for AI agents working in this repository)
 
-When calling `request_user_input` or `ask_intensive_chat`:
+Agents MUST use the **built-in questions tool** (the harness-provided `question` / `ask_question` / equivalent) for all user-facing prompts. Interactive MCP prompt tools (`request_user_input`, `ask_intensive_chat`, `start_intensive_chat`, `stop_intensive_chat`, `push_session_status`, `send_message`) are NOT the prompt path for in-repo agent work and MUST NOT be used here.
 
-- If the tool returns `"User did not reply: Timeout occurred."` — call the tool **again immediately**. Never emit a plain-text-only reply after a timeout.
+> Note: The MCP tool implementations still exist in `desktop/src/main/tools/` for external consumers of the desktop app. The above rule governs only the agents editing this repository.
+
+When prompting via the built-in questions tool:
+
+- If a prompt returns an empty response or error, re-prompt immediately with a shorter, option-driven question. Do not fall back to plain-text completion.
 - Continue prompting until the user sends one of the exact stop phrases: `Stop prompting`, `End session`, `Don't ask anymore`, `Close conversation`.
+- After every task delivery, run the mandatory satisfaction check: `Are you satisfied with this result, or would you like any changes?`
+
+See `docs/guides/prompting-tool-selection.md` for the full policy.
 
 ---
 
@@ -190,6 +197,22 @@ cd desktop && npm run build
 - Do NOT use `useMemo` for side effects (setter calls, singleton updates) — use `useEffect` instead.
 - Do NOT read or write `.env` files — use process environment variables or the settings store.
 - Do NOT call `npm audit fix` or `npm audit fix --force` — these only patch `package-lock.json` temporarily.
+
+---
+
+## React: `useEffect` Discipline
+
+**Default: avoid `useEffect`.** Before adding one, justify it against this checklist:
+
+1. **Can this be derived during render?** → use inline computation or `useMemo`. Do not sync props-to-state with an effect.
+2. **Is it triggered by a user action?** → put it in an event handler, not an effect.
+3. **Do I just need the latest value of something inside a callback?** → ref + getter (`ref.current`), not `useEffect` with a deps array.
+4. **Is it a genuine subscription to an external system** (Electron IPC, DOM event, timer, WebSocket, SSE) whose lifecycle matches the component's? → `useEffect` with **empty `[]` deps** is acceptable. Access latest values via a ref updated on every render, not via the deps array.
+5. **Am I using it to keep two pieces of state in sync?** → it is almost always wrong. Lift, derive, or use a `key` prop reset.
+
+**Sprawling deps arrays are a code smell.** If an effect has 5+ callback deps and any one of them is recreated on parent re-render, the effect thrashes (cleanup → re-register → setState → parent re-render → loop). This has caused 100%+ renderer CPU regressions in this repo. Fix with `optsRef.current` + `[]` deps.
+
+When an effect is the right tool, keep it narrowly scoped: one subscription, explicit disposer, empty deps where possible.
 
 ---
 

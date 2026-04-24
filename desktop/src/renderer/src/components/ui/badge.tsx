@@ -26,7 +26,7 @@ const badgeVariants = cva(
         'status-running':
           'border-transparent bg-[var(--color-agent)]/20 text-[var(--color-agent)]',
         'status-completed':
-          'border-transparent bg-[var(--color-success)]/20 text-[var(--color-success,#22c55e)]',
+          'border-transparent bg-[var(--color-success)]/20 text-[var(--color-success)]',
         'status-error':
           'border-transparent bg-[var(--color-error)]/20 text-[var(--color-error)]',
       },

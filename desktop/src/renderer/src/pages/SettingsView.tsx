@@ -45,7 +45,7 @@ export default function SettingsView(): React.ReactElement {
                     : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
                 }`}
               >
-                <span className="text-xs">{section.icon}</span>
+                <section.icon size={14} aria-hidden="true" />
                 <span>{section.label}</span>
               </button>
             </li>
@@ -73,7 +73,7 @@ export default function SettingsView(): React.ReactElement {
       </nav>
 
       <main className="flex-1 overflow-y-auto p-6">
-        <h3 className="text-sm font-medium text-[var(--color-text)] mb-4 pb-2 border-b border-[var(--color-border)]">
+        <h3 className="text-20-medium text-[var(--color-text)] mb-4 pb-2 border-b border-[var(--color-border-weak)]">
           {activeSectionLabel}
         </h3>
         <div className="max-w-2xl">{sectionContent}</div>

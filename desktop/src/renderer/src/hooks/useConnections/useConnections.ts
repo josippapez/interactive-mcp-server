@@ -18,6 +18,7 @@ import { usePromptHandlers } from './prompt-handlers';
 import { useSessionHandlers } from './session-handlers';
 import { useMessageHandlers } from './message-handlers';
 import { useUiHandlers } from './ui-handlers';
+import { hydratePersistedSessionChannels } from './persisted-session-channels';
 
 export function useConnections(onActivatePromptTab: () => void) {
   // ---------------------------------------------------------------------------
@@ -44,6 +45,7 @@ export function useConnections(onActivatePromptTab: () => void) {
   activateRef.current = onActivatePromptTab;
   const nodesRef = useRef(nodes);
   nodesRef.current = nodes;
+  const loadedHistoryIds = useRef(new Set<string>());
 
   // ---------------------------------------------------------------------------
   // Core helper — update one node by map key
@@ -89,6 +91,25 @@ export function useConnections(onActivatePromptTab: () => void) {
     setNodes(new Map());
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrate = async (): Promise<void> => {
+      const channels = await window.api.getPersistedSessionChannels?.();
+      if (cancelled || !channels?.length) {
+        return;
+      }
+
+      setNodes((prev) => hydratePersistedSessionChannels(prev, channels));
+    };
+
+    void hydrate();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   useIpcListeners({
     getActiveConnectionId: getActiveChannelIdSnapshot,
     getIsIntentionalNullSelection: getIntentionalNullSelectionSnapshot,
@@ -123,6 +144,8 @@ export function useConnections(onActivatePromptTab: () => void) {
     isIntentionalNull,
     withNode,
     selectChannel,
+    loadChannelHistory,
+    loadedHistoryIds,
   });
 
   // ---------------------------------------------------------------------------

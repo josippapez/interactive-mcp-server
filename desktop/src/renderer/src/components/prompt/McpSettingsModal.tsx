@@ -141,7 +141,8 @@ export default function McpSettingsModal({
 
           <div className="text-xs text-[var(--color-text-faint)] bg-[var(--color-surface-alt)] px-3 py-2 rounded">
             Configure MCP servers in your workspace's{' '}
-            <span className="font-mono">.opencode/opencode.jsonc</span>, then use refresh or connect actions here.
+            <span className="font-mono">.opencode/opencode.jsonc</span>, then
+            use refresh or connect actions here.
           </div>
 
           {/* Server List */}
@@ -150,13 +151,13 @@ export default function McpSettingsModal({
               Configured Servers ({servers.length})
             </h3>
 
-             {servers.length === 0 ? (
-               <div className="text-center py-6 text-[var(--color-text-faint)] text-xs">
-                 No MCP servers configured.
-                 <br />
-                 Configure them in your project's{' '}
-                 <span className="font-mono">.opencode/opencode.jsonc</span>
-               </div>
+            {servers.length === 0 ? (
+              <div className="text-center py-6 text-[var(--color-text-faint)] text-xs">
+                No MCP servers configured.
+                <br />
+                Configure them in your project's{' '}
+                <span className="font-mono">.opencode/opencode.jsonc</span>
+              </div>
             ) : (
               <div className="space-y-2">
                 {servers.map((server) => (
@@ -201,13 +202,16 @@ export default function McpSettingsModal({
 
                         {server.status === 'needs_auth' && (
                           <div className="text-[10px] text-amber-600 bg-amber-500/10 px-2 py-1 rounded mt-2">
-                            This server requires authentication before it can connect.
+                            This server requires authentication before it can
+                            connect.
                           </div>
                         )}
 
                         {server.status === 'needs_client_registration' && (
                           <div className="text-[10px] text-orange-600 bg-orange-500/10 px-2 py-1 rounded mt-2">
-                            This server needs OAuth client registration or a configured client ID before authentication can complete.
+                            This server needs OAuth client registration or a
+                            configured client ID before authentication can
+                            complete.
                           </div>
                         )}
 
@@ -237,7 +241,8 @@ export default function McpSettingsModal({
                       {/* Actions */}
                       <div className="flex-shrink-0">
                         <div className="flex gap-1">
-                          {getMcpPrimaryAction(server.status).action === 'disconnect' ? (
+                          {getMcpPrimaryAction(server.status).action ===
+                          'disconnect' ? (
                             <button
                               type="button"
                               onClick={() => handleDisconnect(server.name)}
@@ -248,21 +253,21 @@ export default function McpSettingsModal({
                                 ? 'Disconnecting...'
                                 : 'Disconnect'}
                             </button>
-                           ) : getMcpPrimaryAction(server.status).action ===
-                                 'authenticate' ||
-                               getMcpPrimaryAction(server.status).action ===
-                                 'configure_auth' ? (
-                             <button
-                               type="button"
-                               onClick={() => handleAuthenticate(server.name)}
-                               disabled={actionInProgress === server.name}
-                               className="px-2 py-1 text-[10px] rounded bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 disabled:opacity-50"
-                             >
-                               {actionInProgress === server.name
-                                 ? 'Authenticating...'
-                                 : getMcpPrimaryAction(server.status).label}
-                             </button>
-                           ) : (
+                          ) : getMcpPrimaryAction(server.status).action ===
+                              'authenticate' ||
+                            getMcpPrimaryAction(server.status).action ===
+                              'configure_auth' ? (
+                            <button
+                              type="button"
+                              onClick={() => handleAuthenticate(server.name)}
+                              disabled={actionInProgress === server.name}
+                              className="px-2 py-1 text-[10px] rounded bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 disabled:opacity-50"
+                            >
+                              {actionInProgress === server.name
+                                ? 'Authenticating...'
+                                : getMcpPrimaryAction(server.status).label}
+                            </button>
+                          ) : (
                             <button
                               type="button"
                               onClick={() => handleConnect(server.name)}

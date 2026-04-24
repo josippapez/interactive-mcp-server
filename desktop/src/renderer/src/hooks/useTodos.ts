@@ -1,4 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  seedTodosForSession,
+  useConversationSelector,
+} from '../store/conversation-store';
 
 export type Todo = {
   content: string;
@@ -13,29 +17,41 @@ type UseTodosResult = {
   refresh: () => Promise<void>;
 };
 
-const POLL_INTERVAL_MS = 5000; // Poll every 5 seconds (fallback when SSE unavailable)
+const EMPTY_TODOS: Todo[] = [];
 
 /**
- * Hook to fetch and manage todos for a specific OpenCode session.
+ * Hook exposing the todo list for a specific OpenCode session. Updates flow
+ * through the single `conversation-batch` pipeline (`todo.updated` event).
+ * On mount (and whenever `sessionId` changes) we perform a one-shot REST
+ * seed via `fetchSessionTodos` so the UI has content before the first
+ * live event arrives.
  *
- * Listens for real-time SSE events (todo.updated) from the OpenCode server
- * and falls back to polling every 5 seconds if SSE is unavailable.
- *
- * @param sessionId - The OpenCode session ID to fetch todos for, or null if none selected
- * @returns Object containing todos array, loading state, error, and refresh function
+ * The previous IPC subscriptions (`onTodosUpdated`,
+ * `onOpenCodeTodoUpdated`, `onOpenCodeSessionIdle`) have been removed
+ * — their work is now done by the main-side event bridge.
  */
 export function useTodos(sessionId: string | null): UseTodosResult {
-  const [todos, setTodos] = useState<Todo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sessionIdRef = useRef(sessionId);
-  const hasReceivedSseRef = useRef(false);
   sessionIdRef.current = sessionId;
 
-  const fetchTodos = useCallback(async (): Promise<void> => {
+  const storeTodos = useConversationSelector((state) =>
+    sessionId ? (state.todos[sessionId] ?? EMPTY_TODOS) : EMPTY_TODOS,
+  );
+
+  // The store carries `ConversationTodoItem` (includes `id`); the external
+  // surface of this hook has never exposed `id`. Strip it at the selector
+  // boundary so downstream widgets keep the same shape.
+  const todos: Todo[] = storeTodos.map((t) => ({
+    content: t.content,
+    status: t.status,
+    priority: t.priority,
+  }));
+
+  const refresh = useCallback(async (): Promise<void> => {
     const currentSessionId = sessionIdRef.current;
     if (!currentSessionId) {
-      setTodos([]);
       setError(null);
       return;
     }
@@ -43,19 +59,22 @@ export function useTodos(sessionId: string | null): UseTodosResult {
     setIsLoading(true);
     try {
       const result = await window.api.fetchSessionTodos?.(currentSessionId);
-      // Only update state if the session ID hasn't changed while we were fetching
       if (sessionIdRef.current !== currentSessionId) return;
 
       if (result?.todos) {
-        setTodos(result.todos);
+        // The REST endpoint doesn't return `id` either; synthesize a stable
+        // one from the index so binary-search / React keys have something
+        // to hold onto until a live `todo.updated` replaces the list.
+        seedTodosForSession(
+          currentSessionId,
+          result.todos.map((t, i) => ({ id: `seed-${i}`, ...t })),
+        );
         setError(null);
-      } else {
-        setTodos([]);
-        setError(result?.error ?? 'Failed to fetch todos');
+      } else if (result?.error) {
+        setError(result.error);
       }
     } catch (err) {
       if (sessionIdRef.current !== currentSessionId) return;
-      setTodos([]);
       setError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       if (sessionIdRef.current === currentSessionId) {
@@ -64,24 +83,21 @@ export function useTodos(sessionId: string | null): UseTodosResult {
     }
   }, []);
 
-  // Fetch todos when session ID changes (deferred to idle time)
   useEffect(() => {
     if (!sessionId) {
-      setTodos([]);
       setError(null);
       setIsLoading(false);
-      hasReceivedSseRef.current = false;
       return;
     }
 
-    // Defer non-critical fetch to idle time to prioritize conversation rendering
+    // Defer non-critical fetch to idle time to prioritize conversation rendering.
     const idleCallback =
       'requestIdleCallback' in window
         ? window.requestIdleCallback
         : (cb: () => void) => setTimeout(cb, 50);
 
     const handle = idleCallback(() => {
-      void fetchTodos();
+      void refresh();
     });
 
     return () => {
@@ -89,72 +105,12 @@ export function useTodos(sessionId: string | null): UseTodosResult {
         window.cancelIdleCallback(handle);
       }
     };
-  }, [sessionId, fetchTodos]);
-
-  // Set up polling for todo updates (fallback when SSE is unavailable)
-  useEffect(() => {
-    if (!sessionId) return;
-
-    const intervalId = setInterval(() => {
-      // Skip polling if we've received SSE events (SSE is working)
-      if (hasReceivedSseRef.current) return;
-      void fetchTodos();
-    }, POLL_INTERVAL_MS);
-
-    return () => clearInterval(intervalId);
-  }, [sessionId, fetchTodos]);
-
-  // Listen for todo update events from main process (legacy IPC)
-  useEffect(() => {
-    const handler = (data: { sessionId: string; todos: Todo[] }) => {
-      if (data.sessionId === sessionIdRef.current) {
-        setTodos(data.todos);
-        setError(null);
-      }
-    };
-
-    const dispose = window.api.onTodosUpdated?.(handler);
-
-    return () => {
-      dispose?.();
-    };
-  }, []);
-
-  // Listen for real-time SSE todo updates (todo.updated event)
-  useEffect(() => {
-    const handler = (data: {
-      sessionID: string;
-      todos: {
-        id: string;
-        content: string;
-        status: string;
-        priority: string;
-      }[];
-    }) => {
-      if (data.sessionID === sessionIdRef.current) {
-        hasReceivedSseRef.current = true;
-        // Transform SSE todos to match our Todo type
-        const transformedTodos: Todo[] = data.todos.map((t) => ({
-          content: t.content,
-          status: t.status as Todo['status'],
-          priority: t.priority as Todo['priority'],
-        }));
-        setTodos(transformedTodos);
-        setError(null);
-      }
-    };
-
-    const dispose = window.api.onOpenCodeTodoUpdated?.(handler);
-
-    return () => {
-      dispose?.();
-    };
-  }, []);
+  }, [sessionId, refresh]);
 
   return {
     todos,
     isLoading,
     error,
-    refresh: fetchTodos,
+    refresh,
   };
 }

@@ -2,13 +2,12 @@ import { ipcMain } from 'electron';
 import {
   authorizeProvider,
   callbackProvider,
-  fetchModels,
   fetchProviderAuthMethods,
   fetchProviders,
   fetchProvidersInfo,
   setProviderApiKey,
-} from '../../opencode/provider';
-import { executeCommand, fetchCommands } from '../../opencode/command';
+} from '../../utility/opencode-client';
+import { executeCommand, fetchCommands } from '../../utility/opencode-client';
 import { createLogger } from '../../utils/logger';
 import { IpcHandlerDeps } from './types';
 
@@ -33,22 +32,14 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
     return fetchProvidersInfo(settings.openCodePort);
   });
 
-  ipcMain.handle('fetch-models', async () => {
-    const settings = deps.getSettings();
-    if (settings.agentBackend !== 'opencode') {
-      return [];
-    }
-    return fetchModels(settings.openCodePort);
-  });
-
   // ─── Slash Command IPC Handlers ────────────────────────────────────────────
 
-  ipcMain.handle('fetch-commands', async () => {
+  ipcMain.handle('fetch-commands', async (_event, baseDirectory?: string) => {
     const settings = deps.getSettings();
     if (settings.agentBackend !== 'opencode') {
       return [];
     }
-    return fetchCommands(settings.openCodePort);
+    return fetchCommands(settings.openCodePort, baseDirectory);
   });
 
   ipcMain.handle(
@@ -59,10 +50,12 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
         sessionId,
         commandName,
         args,
+        baseDirectory,
       }: {
         sessionId: string;
         commandName: string;
         args?: Record<string, string>;
+        baseDirectory?: string;
       },
     ) => {
       const settings = deps.getSettings();
@@ -74,6 +67,7 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
         sessionId,
         commandName,
         args,
+        baseDirectory,
       );
     },
   );

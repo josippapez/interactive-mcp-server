@@ -1,27 +1,38 @@
 import { describe, expect, it } from 'vitest';
-import { filterMessageText } from './message-item-helpers';
+import { getAttachmentKey, getEffortBadge } from './message-item-helpers';
 
-describe('filterMessageText', () => {
-  it('removes visible doc injection summaries when hideDocInjections is enabled', () => {
-    const text = [
-      '**Context injected (5 docs):**',
-      '1. `README.md`',
-      '2. `.github/skills/react-best-practices/SKILL.md`',
-      '',
-      'Regular message body.',
-    ].join('\n');
+describe('getAttachmentKey', () => {
+  it('disambiguates duplicate attachments in the same message', () => {
+    const attachment = {
+      data: 'abc',
+      mimeType: 'image/png',
+      name: 'image.png',
+      size: 3,
+    };
 
-    expect(filterMessageText(text, false, true)).toBe('Regular message body.');
+    expect(getAttachmentKey('db-56', attachment, 0)).toBe(
+      'db-56-att-0-image.png-image/png',
+    );
+    expect(getAttachmentKey('db-56', attachment, 1)).toBe(
+      'db-56-att-1-image.png-image/png',
+    );
+  });
+});
+
+describe('getEffortBadge', () => {
+  it('maps known reasoning variants to visible badges', () => {
+    expect(getEffortBadge('low')).toEqual({
+      label: 'Low effort',
+      variant: 'effort-low',
+    });
+    expect(getEffortBadge('XHIGH')).toEqual({
+      label: 'Max effort',
+      variant: 'effort-xhigh',
+    });
   });
 
-  it('preserves visible doc injection summaries when hideDocInjections is disabled', () => {
-    const text = [
-      '**Context injected (1 docs):**',
-      '1. `README.md`',
-    ].join('\n');
-
-    expect(filterMessageText(text, false, false)).toContain(
-      'Context injected (1 docs)',
-    );
+  it('returns null for unknown or missing variants', () => {
+    expect(getEffortBadge()).toBeNull();
+    expect(getEffortBadge('turbo')).toBeNull();
   });
 });

@@ -1,19 +1,44 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import type { SessionNode } from '../../../types';
 import type { Project } from '../../../hooks/session-tree-merge';
-import type { SessionStatusType } from '../../../hooks/useSessionStatus';
+import type {
+  SessionStatusMap,
+  SessionStatusType,
+} from '../../../hooks/useSessionStatus';
 import { ProviderFilter } from './types';
+import { filterVisibleSessionIds } from './sidebar-activity';
 
 type UseSessionFilteringProps = {
   openCodeTree: SessionNode[];
   directConnections: SessionNode[];
   projects: Project[];
   activeConnectionId: string | null;
+  /**
+   * Stable identity across renders. Value lookups go through
+   * `statusMap` so filter memos depend on the derived map rather than
+   * the callback, keeping the sidebar quiet during status churn that
+   * doesn't affect any session we track.
+   */
   getStatus: (sessionId: string) => SessionStatusType | null;
+  /**
+   * Identity changes only when the session-status set actually
+   * changes (see `useSessionStatus` for the shallow-equal gating).
+   * Used as the memo dep for filter/sort passes.
+   */
+  statusMap: SessionStatusMap;
 };
 
 /**
  * Hook for filtering, sorting, and computing session statistics.
+ *
+ * Perf notes (H5):
+ *   - Parent walk in `filterByActivity` uses a pre-built Map instead of
+ *     `nodes.find(...)` inside the while-loop, dropping the per-pass
+ *     cost from O(N × depth) to O(N + depth).
+ *   - `sortNodes` returns the previous array when the sorted tuple is
+ *     element-for-element equal, so downstream memos (`filteredProjects`
+ *     / `filteredDirectConnections`) keep their identity across no-op
+ *     status updates.
  */
 export function useSessionFiltering({
   openCodeTree,
@@ -21,6 +46,7 @@ export function useSessionFiltering({
   projects,
   activeConnectionId,
   getStatus,
+  statusMap,
 }: UseSessionFilteringProps) {
   const [filter, setFilter] = useState<ProviderFilter>('all');
   const [showInactive, setShowInactive] = useState(() => {
@@ -28,7 +54,11 @@ export function useSessionFiltering({
     return saved === 'true';
   });
 
-  // Helper to check if a node is "running" (active)
+  // Helper to check if a node is "running" (active).
+  //
+  // Depends on `statusMap` (not `getStatus`) so this callback — and
+  // every memo that uses it as a dep — invalidates only when the
+  // status set actually changes. `getStatus` is reference-stable.
   const isNodeRunning = useCallback(
     (node: SessionNode): boolean => {
       const status = getStatus(node.providerSessionId ?? '');
@@ -38,7 +68,7 @@ export function useSessionFiltering({
         node.sessionStatuses.some((s) => s.type === 'working')
       );
     },
-    [getStatus],
+    [statusMap, getStatus],
   );
 
   // Filter nodes by provider
@@ -55,39 +85,28 @@ export function useSessionFiltering({
     (nodes: SessionNode[]): SessionNode[] => {
       if (showInactive) return nodes;
 
-      const visibleIds = new Set<string>();
-
-      for (const node of nodes) {
-        if (
-          node.id === activeConnectionId ||
-          isNodeRunning(node) ||
-          node.unreadCount > 0
-        ) {
-          visibleIds.add(node.id);
-
-          let parentId = node.openCodeParentId;
-          while (parentId) {
-            visibleIds.add(parentId);
-            const parent = nodes.find(
-              (n) => n.providerSessionId === parentId || n.id === parentId,
-            );
-            parentId = parent?.openCodeParentId ?? null;
-          }
-        }
-      }
-
-      return nodes.filter(
-        (node) =>
-          visibleIds.has(node.id) || visibleIds.has(node.providerSessionId!),
+      const visibleIds = new Set(
+        filterVisibleSessionIds(nodes, activeConnectionId),
       );
+      return nodes.filter((node) => visibleIds.has(node.id));
     },
-    [showInactive, activeConnectionId, isNodeRunning],
+    [showInactive, activeConnectionId],
   );
 
-  // Sort nodes by running status and recency
+  // Sort nodes by running status and recency.
+  //
+  // Memoize per caller so that when the input array identity + sorted
+  // tuple are unchanged, we return the previous result and downstream
+  // memos (`filteredProjects` / `filteredDirectConnections`) keep
+  // their refs.
+  const sortCacheRef = useRef<WeakMap<SessionNode[], SessionNode[]>>(
+    new WeakMap(),
+  );
   const sortNodes = useCallback(
     (nodes: SessionNode[]): SessionNode[] => {
-      return [...nodes].sort((a, b) => {
+      const cache = sortCacheRef.current;
+      const cached = cache.get(nodes);
+      const sorted = [...nodes].sort((a, b) => {
         const aIsRunning = isNodeRunning(a);
         const bIsRunning = isNodeRunning(b);
 
@@ -105,6 +124,19 @@ export function useSessionFiltering({
 
         return bLatest - aLatest;
       });
+
+      if (cached && cached.length === sorted.length) {
+        let same = true;
+        for (let i = 0; i < cached.length; i += 1) {
+          if (cached[i] !== sorted[i]) {
+            same = false;
+            break;
+          }
+        }
+        if (same) return cached;
+      }
+      cache.set(nodes, sorted);
+      return sorted;
     },
     [isNodeRunning],
   );

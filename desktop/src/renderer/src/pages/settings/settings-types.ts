@@ -21,6 +21,8 @@ export type AppSettings = {
   allowedPermissions: string[];
   hideSystemReminders: boolean;
   hideDocInjections: boolean;
+  chatTextSize: 'sm' | 'md' | 'lg';
+  wrapCodeBlocks: boolean;
 };
 
 export type SettingsSection =

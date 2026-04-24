@@ -1,6 +1,14 @@
 import type { Attachment } from '../../types';
 import type { UnifiedMessage } from '../../types/unified-message';
 
+export function getAttachmentKey(
+  messageId: string,
+  attachment: Attachment,
+  index: number,
+): string {
+  return `${messageId}-att-${index}-${attachment.name}-${attachment.mimeType}`;
+}
+
 export function formatAgentName(agent: string | undefined): string {
   if (!agent) return 'Assistant';
   const lowerAgent = agent.toLowerCase();
@@ -33,35 +41,8 @@ export function unifiedRoleLabel(msg: UnifiedMessage): string {
   return formatAgentName(msg.agent);
 }
 
-export function unifiedMessageClass(msg: UnifiedMessage): string {
-  if (msg.source === 'channel') {
-    if (msg.channelKind === 'answer' || msg.channelKind === 'outbound') {
-      return 'msg-user';
-    }
-    if (msg.channelKind === 'agent_message') return 'msg-agent-info';
-    return 'msg-agent';
-  }
-
-  if (msg.role === 'user') return 'msg-user';
-  if (msg.role === 'system') return 'msg-system';
-  return 'msg-conversation';
-}
-
 export function isImageAttachment(att: Attachment): boolean {
   return att.mimeType.startsWith('image/') && att.data.length > 0;
-}
-
-export function formatTokens(tokens?: UnifiedMessage['tokens']): string | null {
-  if (!tokens) return null;
-  const total =
-    tokens.total ??
-    (tokens.input ?? 0) +
-      (tokens.output ?? 0) +
-      (tokens.reasoning ?? 0) +
-      (tokens.cache?.read ?? 0) +
-      (tokens.cache?.write ?? 0);
-  if (total > 0) return `${total.toLocaleString()} tokens`;
-  return null;
 }
 
 export function formatCost(cost?: number): string | null {

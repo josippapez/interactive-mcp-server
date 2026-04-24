@@ -1,5 +1,7 @@
 export type SkillScope = 'global' | 'session-scoped';
 
+export type InstructionDeliveryMode = 'always' | 'catalog';
+
 export type SkillOrInstruction = {
   id: number;
   name: string;
@@ -14,6 +16,8 @@ export type SkillOrInstruction = {
   updatedAt: string;
   folderId: number | null;
   scope: SkillScope;
+  injectionMode?: InstructionDeliveryMode | null;
+  alwaysModeWarning?: string | null;
 };
 
 export type Folder = {

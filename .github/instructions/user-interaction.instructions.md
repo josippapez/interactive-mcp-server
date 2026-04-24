@@ -1,27 +1,31 @@
 ---
 applyTo: '**'
 name: user-interaction-instructions
-description: Instructions for interacting, prompting general communication, and asking questions and providing suggestions to the user using interactive MCP tools.
+description: Instructions for interacting, prompting general communication, and asking questions using the built-in questions tool.
 ---
 
 Use this file as a strict policy. Do not interpret these rules loosely.
 
+## Canonical policy
+
+- Follow `docs/guides/prompting-tool-selection.md` as the owning source for prompt-tool selection.
+
 ## Mandatory tool usage
 
-- You MUST NOT use the built-in `askQuestions` tool.
-- You MUST use `interactive` MCP server prompts (for example `request_user_input`) for interactive communication with the user.
+- You MUST use the **built-in questions tool** (the harness-provided question/ask-question tool) for all interactive communication with the user.
+- You MUST NOT use `interactive` MCP server prompts (`request_user_input`, `ask_intensive_chat`, `start_intensive_chat`, `stop_intensive_chat`, `push_session_status`, `send_message`) for in-repo agent work. That MCP path is deprecated for this repository's agent guidance, though the tool implementations remain in `desktop/src/main/tools/` for external consumers.
 - You MUST NOT exit the prompt loop until the user explicitly indicates they want to stop being prompted, even if they are unresponsive or keep giving empty responses.
-- You MUST NOT send plain-text-only user-facing replies when a prompt trigger applies; use an `interactive` prompt in that same response.
+- You MUST NOT send plain-text-only user-facing replies when a prompt trigger applies; use the built-in questions tool in that same response.
 
 ## System-notification clarification
 
 - System notifications (for example command completion/background updates) are **not** a valid reason to skip prompting.
 - If you send a user-facing reply after processing a system notification, all normal prompt-trigger rules still apply.
-- If that reply is a completion/handoff, you MUST run the mandatory satisfaction prompt via `interactive` in the same response.
+- If that reply is a completion/handoff, you MUST run the mandatory satisfaction prompt via the built-in questions tool in the same response.
 
 ## Required prompt triggers
 
-You MUST call `interactive` mcp tools in all of the following situations:
+You MUST ask the user via the built-in questions tool in all of the following situations:
 
 1. Before any task, even when requirements look clear.
 2. After any task, to run the satisfaction check — and update the prompt-loop todo accordingly (see [Prompt-loop task tracking](#prompt-loop-task-tracking)).
@@ -37,10 +41,15 @@ You MUST call `interactive` mcp tools in all of the following situations:
 12. When satisfactory check is done but the user has not USED a stop phrase.
 13. When replying after system notifications and presenting task output/handoff to the user.
 
+## Active question tool
+
+- The active question tool is the **built-in questions tool** at all times.
+- There is no fallback or alternate path. Interactive MCP prompting is disabled for this repository.
+
 ## Per-turn enforcement
 
-- In every assistant turn during an active session, if a prompt trigger applies, you MUST include an interactive MCP prompt in that same turn. Plain-text-only turns are forbidden when a trigger applies.
-- If an interactive prompt was missed in the previous turn, the next turn MUST begin with a corrective interactive MCP prompt before any additional work.
+- In every assistant turn during an active session, if a prompt trigger applies, you MUST include a built-in-questions-tool prompt in that same turn. Plain-text-only turns are forbidden when a trigger applies.
+- If a required prompt was missed in the previous turn, the next turn MUST begin with a corrective prompt via the built-in questions tool before any additional work.
 - Every turn where a prompt is sent or a task begins MUST also update the prompt-loop todo via TodoWrite (see [Prompt-loop task tracking](#prompt-loop-task-tracking)).
 
 ## Mandatory satisfaction check
@@ -50,15 +59,15 @@ You MUST ask exactly:
 `Are you satisfied with this result, or would you like any changes?`
 
 You MUST NOT skip this step, including for simple or obvious tasks. And you MUST NOT infer satisfaction as a session stopping condition. Always ask for explicit confirmation, and continue prompting until the user explicitly indicates they want to stop being prompted.
-You MUST NOT send satisfaction check prompts as plain text; they MUST be sent using an `interactive` prompt trigger.
+You MUST NOT send satisfaction check prompts as plain text; they MUST be sent using the built-in questions tool.
 
 ## Follow-up continuity rule (anti-stop safeguard)
 
 - If the user sends any follow-up request/question after a satisfaction prompt and does not use an exact stop phrase, the session is still active.
 - You MUST treat that follow-up as an active session continuation: complete the requested work and continue the mandatory prompt loop.
-- In every subsequent user-facing response where a prompt trigger applies, you MUST include the required `interactive` prompt in that same response.
+- In every subsequent user-facing response where a prompt trigger applies, you MUST include the required built-in-questions-tool prompt in that same response.
 - You MUST NOT send plain-text-only follow-up/completion replies when a prompt trigger applies.
-- After each follow-up task completion, you MUST ask the mandatory satisfaction question again via `interactive` prompt.
+- After each follow-up task completion, you MUST ask the mandatory satisfaction question again via the built-in questions tool.
 - This applies even when the follow-up is only "explain", "show diff", or any brief clarification.
 
 ## Session stop phrases
@@ -90,19 +99,19 @@ If a user skips a requested command/script:
 ## Empty response and timeout policy
 
 - If a required prompt times out or the user response is empty, you MUST re-prompt indefinitely.
-- If interactive MCP prompting returns timeout failures (for example `request timed out`, `-32001`, or equivalent timeout errors), you MUST keep prompting indefinitely with interactive prompt tools and MUST NOT fall back to plain-text completion.
+- You MUST NOT fall back to plain-text completion when the built-in questions tool returns an empty response or error — re-prompt with a shorter, option-driven prompt.
 - Re-prompts SHOULD be shorter and include predefined options when practical.
-- You MUST NOT proceed with assumptions while required user input is still missing, including when interactive MCP calls return timeout errors (for example `request timed out` or `-32001`).
+- You MUST NOT proceed with assumptions while required user input is still missing.
 
 ## Prompt-loop task tracking
 
-- Use the TodoWrite tool to maintain a persistent interactive prompt-loop reminder todo throughout the entire session.
+- Use the TodoWrite tool to maintain a persistent prompt-loop reminder todo throughout the entire session.
 - At the start of every task, create or keep a todo item titled "Interactively Prompt user after [current task]" with status `pending`.
 - After each task completes and the satisfaction prompt is sent, update this todo to `in_progress` to signal a response is awaited.
-- When the user responds without a stop phrase, reset the interactive prompt todo back to `pending` for the next task cycle — never mark it `completed` prematurely.
-- Continue this cycle, keeping the interactive prompt reminder todo always active, for every task in the session.
+- When the user responds without a stop phrase, reset the prompt todo back to `pending` for the next task cycle — never mark it `completed` prematurely.
+- Continue this cycle, keeping the prompt reminder todo always active, for every task in the session.
 - Only when the user sends one of the exact stop phrases:
   1. Add a todo "Final satisfaction check" with status `completed`.
   2. Add a todo "Stop prompting — session ended" with status `completed`.
-  3. Mark the active interactive prompt-loop todo as `completed`.
-- This ensures the interactive prompt obligation is always visible in the todo list and cannot be accidentally dropped between tasks.
+  3. Mark the active prompt-loop todo as `completed`.
+- This ensures the prompt obligation is always visible in the todo list and cannot be accidentally dropped between tasks.

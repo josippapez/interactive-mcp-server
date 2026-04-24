@@ -3,20 +3,23 @@ import { basename } from 'path';
 import {
   getRegisteredConnectionBySessionId,
   upsertRegisteredConnection,
-} from '../../database';
-import { createOpenCodeSession } from '../../opencode/session';
-import { injectOpenCodeMessage } from '../../opencode/injector';
-import { replyToOpenCodePermission } from '../../opencode/permission-reply';
+} from '../../utility/db-client';
+import { createOpenCodeSession } from '../../utility/opencode-client';
+import { injectOpenCodeMessage } from '../../utility/opencode-client';
 import {
   replyToOpenCodeQuestion,
   rejectOpenCodeQuestion,
-} from '../../opencode/question-list';
-import { fetchTodosForSession } from '../../opencode/todo';
-import { abortOpenCodeSession } from '../../opencode/abort';
+} from '../../utility/opencode-client';
+import { fetchTodosForSession } from '../../utility/opencode-client';
+import { abortOpenCodeSession } from '../../utility/opencode-client';
 import {
-  refreshSessionTreeCache,
-  triggerSessionTreeUpdate,
-} from '../../session/tree-manager';
+  fetchSessionTree,
+  getSelectedFolder,
+  invalidateSessionTree,
+  setSelectedFolder,
+} from '../../utility/session-client';
+import { reconcileSessionConnections } from '../../utility/session-client';
+import { getUtilitySupervisor } from '../../utility/supervisor';
 import {
   IpcHandlerDeps,
   AttachmentPayload,
@@ -25,10 +28,50 @@ import {
 import { logIpcInfo } from './shared';
 
 export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
-  // Refresh session tree cache on demand
-  ipcMain.handle('refresh-session-tree', async () => {
-    await refreshSessionTreeCache();
+  // Pull-on-invalidation: return the current session tree snapshot on demand.
+  ipcMain.handle('get-session-tree', async () => {
+    return fetchSessionTree();
   });
+
+  // Renderer-triggered invalidation (user-clicked "refresh" button in sidebar).
+  // Fires `session-tree-invalidated` so the renderer refetches. A plain
+  // refetch would also work, but routing through invalidate() lets multiple
+  // renderer surfaces (sidebar + main) stay consistent on the same schedule.
+  ipcMain.handle('invalidate-session-tree', async () => {
+    invalidateSessionTree();
+  });
+
+  // Set the currently selected project folder for sidebar session scoping.
+  // When `baseDirectory` is null, the sidebar renders its empty state until
+  // the user picks a folder.
+  ipcMain.handle(
+    'set-selected-folder',
+    async (_event, baseDirectory: string | null): Promise<void> => {
+      const trimmed = baseDirectory?.trim() ?? '';
+      const nextFolder = trimmed.length > 0 ? trimmed : null;
+
+      if ((await getSelectedFolder()) === nextFolder) {
+        // No change — nothing to do.
+        return;
+      }
+
+      logIpcInfo(
+        `set-selected-folder: ${nextFolder ?? '(none)'} (was ${(await getSelectedFolder()) ?? '(none)'})`,
+      );
+
+      // setSelectedFolder also invalidates the session tree so the renderer
+      // refetches against the new folder scope.
+      await setSelectedFolder(nextFolder);
+
+      if (nextFolder) {
+        const { openCodePort } = deps.getSettings();
+        // Reconcile stale DB entries for this folder before the renderer
+        // pulls the fresh tree.
+        await reconcileSessionConnections(openCodePort, nextFolder);
+        invalidateSessionTree();
+      }
+    },
+  );
 
   // Permission reply — forward agent decision to OpenCode
   ipcMain.handle(
@@ -46,13 +89,22 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       logIpcInfo(
         `reply-permission session=${data.sessionID} request=${data.requestID} reply=${data.reply}`,
       );
-      return replyToOpenCodePermission(
-        openCodePort,
-        data.sessionID,
-        data.requestID,
-        data.reply,
-        data.directory,
-      );
+      try {
+        return await getUtilitySupervisor()
+          .getBridge()
+          .request<{ ok: boolean; error?: string }>('reply-permission', {
+            openCodePort,
+            sessionID: data.sessionID,
+            requestID: data.requestID,
+            reply: data.reply,
+            directory: data.directory,
+          });
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
     },
   );
 
@@ -226,11 +278,11 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
 
       // If a baseDirectory was provided, upsert the registered connection immediately.
       if (data.baseDirectory && result.session?.id) {
-        const existing = getRegisteredConnectionBySessionId(
+        const existing = await getRegisteredConnectionBySessionId(
           result.session.id,
           'opencode',
         );
-        upsertRegisteredConnection({
+        await upsertRegisteredConnection({
           providerType: 'opencode',
           providerSessionId: result.session.id,
           connectionId: existing?.connectionId ?? null,
@@ -239,7 +291,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
           baseDirectory: data.baseDirectory,
           parentSessionId: existing?.parentSessionId ?? data.parentID ?? null,
         });
-        const corrected = getRegisteredConnectionBySessionId(
+        const corrected = await getRegisteredConnectionBySessionId(
           result.session.id,
           'opencode',
         );
@@ -248,10 +300,10 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
         );
       }
 
-      await refreshSessionTreeCache();
+      invalidateSessionTree();
 
       if (result.session?.id) {
-        const refreshed = getRegisteredConnectionBySessionId(
+        const refreshed = await getRegisteredConnectionBySessionId(
           result.session.id,
           'opencode',
         );
@@ -261,7 +313,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       }
 
       if (data.baseDirectory && result.session?.id) {
-        await triggerSessionTreeUpdate(deps.getMainWindow);
+        invalidateSessionTree();
       }
 
       return { ok: true, sessionId: result.session?.id };

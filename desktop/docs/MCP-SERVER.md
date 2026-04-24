@@ -1,31 +1,71 @@
 # MCP Server — Implementation Reference
 
-**Source:** `desktop/src/main/mcp-server.ts`, `desktop/src/main/api-routes.ts`
+**Source (utility process):** `desktop/src/main/utility/backend/mcp-server.ts`,
+`desktop/src/main/utility/backend/api-routes.ts`, and `desktop/src/main/utility/backend/tools/*`.
+**Main-side client:** `desktop/src/main/utility/mcp-server-client.ts`.
+
+> **Process boundary (post Phase 4).** The MCP Express server, all `McpServer` instances,
+> all tool handlers, and the durable prompt store run inside the Electron **utility
+> process**. Main only exposes a thin client (`mcp-server-client.ts`) that forwards
+> lifecycle calls over the MessagePort bridge. Renderer-facing behaviour is unchanged.
+> See [ARCHITECTURE.md → Main ↔ utility split](./ARCHITECTURE.md#main--utility-split)
+> for context.
 
 ---
 
 ## Overview
 
-The Interactive MCP Desktop app exposes an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server over HTTP using the `@modelcontextprotocol/sdk` `StreamableHTTPServerTransport`. The HTTP layer is an Express 5 application that is started in the Electron main process.
+The Interactive MCP Desktop app exposes an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server over HTTP using the `@modelcontextprotocol/sdk` `StreamableHTTPServerTransport`. The HTTP layer is an Express 5 application that is started inside the Electron utility process via `bridge.request('mcp.server.start', ...)`.
 
-One `McpServer` instance is created **per client connection**. Each server instance has all tools registered against it, is bound to its own `StreamableHTTPServerTransport`, and is torn down when the session ends. Multiple simultaneous client connections are supported via an in-memory `sessions` map keyed by MCP session ID.
+One `McpServer` instance is created **per client connection**. Each server instance has all tools registered against it, is bound to its own `StreamableHTTPServerTransport`, and is torn down when the session ends. Multiple simultaneous client connections are supported via an in-memory `sessions` map keyed by MCP session ID, held in the utility.
+
+---
+
+## Lifecycle RPCs
+
+All MCP lifecycle calls flow through the bridge as `mcp.server.*` RPCs. Main-side code
+uses the thin proxies in `desktop/src/main/utility/mcp-server-client.ts`; renderer IPC
+handlers (`restart-mcp-server`, `reconnect-mcp-server`, `force-terminate-chat`,
+`dismiss-session`) are themselves thin wrappers over these calls.
+
+| RPC                                     | Direction      | Purpose                                                                                             |
+| --------------------------------------- | -------------- | --------------------------------------------------------------------------------------------------- |
+| `mcp.server.start`                      | main → utility | Start the Express listener on the configured `port`. Settings snapshot already mirrored in utility. |
+| `mcp.server.stop`                       | main → utility | Stop the HTTP listener and drop the in-memory `sessions` map.                                       |
+| `mcp.server.restart`                    | main → utility | Hard restart — `stop` → `start` on (possibly new) port. Clears session files.                       |
+| `mcp.server.softRestart`                | main → utility | Clear all in-memory MCP sessions without stopping the listener. Returns cleared count.              |
+| `mcp.server.closeSessionByConnectionId` | main → utility | Programmatic per-connection eviction (used by the renderer's disconnect button).                    |
+| `mcp.server.activeSessionCount`         | main → utility | Health/status readout.                                                                              |
+| `mcp.server.markSessionDeleted`         | main → utility | Fire-and-forget event marking a `connectionId` as deleted for the stale-connection guard.           |
+
+Tool registration (`registerRequestUserInput`, `registerIntensiveChatTools`, etc.) happens
+**inside the utility process** when a new `McpServer` is constructed by
+`createMcpServerWithTools`. No tool code runs in main.
+
+The MCP server's API router receives `closeSessionByConnectionId` via dependency
+injection rather than by direct import, so the handler can be exercised in the utility
+without pulling in the client module.
 
 ---
 
 ## Startup
 
+`mcp.server.start` is invoked by the supervisor (or by Settings when `port` changes). The
+utility's `startMcpServer` has an identical signature to the pre-extraction version but
+now binds inside the utility process:
+
 ```ts
 startMcpServer(port, getWindow, getSoundEnabled, getPromptTimeoutMs);
 ```
 
-| Parameter            | Type                          | Description                                                              |
-| -------------------- | ----------------------------- | ------------------------------------------------------------------------ |
-| `port`               | `number`                      | TCP port the Express server binds to                                     |
-| `getWindow`          | `() => BrowserWindow \| null` | Accessor for the Electron renderer window (used for IPC)                 |
-| `getSoundEnabled`    | `() => boolean`               | Accessor for the user's sound-enabled preference (default: `() => true`) |
-| `getPromptTimeoutMs` | `() => number`                | Accessor for prompt timeout in milliseconds (default: `() => 800_000`)   |
+| Parameter            | Type                          | Description                                                                                                                                                                    |
+| -------------------- | ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `port`               | `number`                      | TCP port the Express server binds to                                                                                                                                           |
+| `getWindow`          | `() => BrowserWindow \| null` | Historical shim. The utility has no `BrowserWindow` handle; the implementation emits `'to-renderer'` bridge events instead of `webContents.send`. Kept for type compatibility. |
+| `getSoundEnabled`    | `() => boolean`               | Accessor for the user's sound-enabled preference (default: `() => true`). Reads from the settings mirror inside the utility.                                                   |
+| `getPromptTimeoutMs` | `() => number`                | Accessor for prompt timeout in milliseconds (default: `() => 800_000`). Reads from the settings mirror inside the utility.                                                     |
 
-All four parameters are stored in module-level `_startParams` so that `restartMcpServer()` can replay an identical startup without being called again by the caller.
+All four parameters are stored in module-level `_startParams` so `mcp.server.restart` can replay an identical startup.
 
 ### OpenCode startup registration
 
@@ -323,7 +363,11 @@ When the session ends, `server.close()` is called as the final cleanup step.
 
 ## IPC Events Sent to Renderer
 
-All events are sent via `webContents.send` on the `BrowserWindow` returned by `getWindow()`. If `getWindow()` returns `null`, the send is silently skipped.
+All events are emitted by the utility as `bridge.emit('to-renderer', { channel, payload })`.
+The main-side utility supervisor forwards each envelope to the focused `BrowserWindow`'s
+`webContents.send(channel, payload)`. If no window is focused, the send is silently
+skipped. From the renderer's perspective the payload shapes are identical to the
+pre-extraction `webContents.send` calls.
 
 | Event                     | Payload                                    | Trigger                                                  |
 | ------------------------- | ------------------------------------------ | -------------------------------------------------------- |
@@ -338,11 +382,16 @@ All events are sent via `webContents.send` on the `BrowserWindow` returned by `g
 
 ## Restart and Recovery
 
-### `stopMcpServer()`
+All entry points below are utility-side functions invoked via bridge RPCs
+(`mcp.server.stop`, `mcp.server.restart`, `mcp.server.softRestart`,
+`mcp.server.closeSessionByConnectionId`). Main-side callers use the proxies in
+`utility/mcp-server-client.ts`.
+
+### `stopMcpServer()` (RPC: `mcp.server.stop`)
 
 Calls `httpServer.closeAllConnections()` and `httpServer.close()`. Sets `httpServer` and `_sessionCleanup` to `null`. The in-memory `sessions` map is scoped to the `startMcpServer` closure and is implicitly dropped.
 
-### `restartMcpServer()`
+### `restartMcpServer()` (RPC: `mcp.server.restart`)
 
 ```
 stopMcpServer() → clearSessionFile() → startMcpServer(_startParams...)
@@ -350,7 +399,7 @@ stopMcpServer() → clearSessionFile() → startMcpServer(_startParams...)
 
 Requires that `_startParams` was populated by a prior `startMcpServer` call. If called before `startMcpServer` has ever run, it is a no-op. This is a **hard restart** — the HTTP listener is stopped entirely and all in-memory sessions are lost. Clients will see `ECONNREFUSED` until the new server is listening. Used when the port changes (via Settings).
 
-### `softRestartMcpServer()`
+### `softRestartMcpServer()` (RPC: `mcp.server.softRestart`)
 
 Clears all in-memory MCP sessions (transports, servers, active prompts) but **keeps the HTTP listener running**. Each session's server is closed before its transport so in-flight tool handlers see the SDK abort signal, active prompts are cancelled via `cancelActivePrompt`, session channels are deleted from SQLite, and the renderer is notified with `connection-closed` and `session-channel-deleted` IPC events.
 
@@ -368,7 +417,7 @@ This is the preferred approach for in-app "reconnect" operations since it avoids
 
 Returns the number of sessions that were cleared, or `0` if the server is not running.
 
-### `closeSessionByConnectionId(connectionId)`
+### `closeSessionByConnectionId(connectionId)` (RPC: `mcp.server.closeSessionByConnectionId`)
 
 Finds the MCP session ID corresponding to `connectionId` via a linear scan of `sessions`, removes it from the map, then calls `server.close()` followed by `transport.close()` on that entry. Returns `true` if a session was found and closed, `false` otherwise.
 
@@ -382,21 +431,7 @@ Clients that send a tool call immediately after a server restart carry a stale `
 
 ## Dock-launch Guards
 
-When the Electron app is launched from the macOS Dock or registered as a login item, the OS starts the process with a working directory of `/`. Two subsystems that depend on a meaningful working directory contain explicit guards against this:
-
-### `opencode-server.ts` — `startOpenCodeServer()` spawn `cwd`
-
-`spawn()` is always called with an explicit `cwd` option:
-
-```ts
-const spawnCwd = process.env.HOME ?? process.env.USERPROFILE ?? '/';
-child = spawn(opencodeBin, ['serve', '--port', String(port)], {
-  cwd: spawnCwd,
-  ...
-});
-```
-
-Without this, `opencode serve` would inherit `/` as its working directory and immediately begin scanning the filesystem root, producing a flood of permission-denied errors and high I/O load.
+When the Electron app is launched from the macOS Dock or registered as a login item, the OS starts the process with a working directory of `/`. The `autoRegisterDefaultConnection` path explicitly guards against this:
 
 ### `mcp-server.ts` — `autoRegisterDefaultConnection()` `baseDirectory` guard
 
@@ -411,6 +446,8 @@ const baseDirectory =
 ```
 
 Without this guard, the doc indexer (`doc-context-injector.ts`) would receive `/` as the `baseDirectory` and attempt to walk the entire filesystem to discover documentation files.
+
+> **Historical note:** Prior to the Phase C in-process migration, `opencode-server.ts` spawned `opencode serve` as a child process and had to pass an explicit `cwd` to `spawn()` for the same reason. That code path is gone — OpenCode now runs in-process via `Server.listen()` (see `desktop/src/main/opencode/server.ts` and [ARCHITECTURE.md → OpenCode server runs in-process](./ARCHITECTURE.md#opencode-server-runs-in-process-phase-c)).
 
 ---
 

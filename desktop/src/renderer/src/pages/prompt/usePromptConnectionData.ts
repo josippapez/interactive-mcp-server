@@ -35,13 +35,19 @@ export function usePromptConnectionData({
     refresh: refreshTodos,
   } = useTodos(providerSessionId);
 
-  const { vcsInfo } = useVcsInfo(Boolean(providerSessionId));
+  const { vcsInfo } = useVcsInfo(
+    Boolean(providerSessionId),
+    sessionBaseDirectory,
+  );
 
-  const { messages: conversationMessages, isAvailable: conversationAvailable } =
-    useConversation(
-      isOpenCodeSession ? providerSessionId : null,
-      isOpenCodeSession,
-    );
+  // Live conversation wiring (C4). `useConversation` returns an empty result
+  // when `providerSessionId` is null/undefined, so this is safe to call
+  // unconditionally. The downstream `&&` gate at PromptView (showConversation)
+  // handles provider semantics via `view.isOpenCodeSession && view.conversationAvailable`.
+  const { messages, isSeeding: conversationIsSeeding } =
+    useConversation(providerSessionId);
+  const conversationMessages = messages;
+  const conversationAvailable = isOpenCodeSession;
 
   const { modelId: currentModelId, providerId: currentProviderId } =
     useSessionModelId(providerSessionId, isOpenCodeSession);
@@ -90,6 +96,7 @@ export function usePromptConnectionData({
     vcsInfo,
     conversationMessages,
     conversationAvailable,
+    conversationIsSeeding,
     currentModelId,
     currentProviderId,
     sessionModelSelection,

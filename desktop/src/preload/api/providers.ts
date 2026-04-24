@@ -59,24 +59,6 @@ export function createProvidersApi() {
     } | null> => ipcRenderer.invoke('fetch-providers-info'),
 
     /**
-     * Fetch all models from all providers, flattened with provider info.
-     */
-    fetchModels: (): Promise<
-      {
-        id: string;
-        name: string;
-        providerId: string;
-        providerName: string;
-        contextWindow?: number;
-        inputLimit?: number;
-        outputLimit?: number;
-        reasoning?: boolean;
-        variants?: string[];
-        defaultVariant?: string;
-      }[]
-    > => ipcRenderer.invoke('fetch-models'),
-
-    /**
      * Fetch available auth methods for all providers.
      */
     fetchProviderAuthMethods: (): Promise<Record<
@@ -109,5 +91,60 @@ export function createProvidersApi() {
      */
     setProviderApiKey: (providerId: string, apiKey: string): Promise<boolean> =>
       ipcRenderer.invoke('set-provider-api-key', { providerId, apiKey }),
+
+    /**
+     * Subscribe to providers-info push updates from main. Fired after the
+     * initial cold-start warmup, after auth callbacks succeed, and on the
+     * periodic background refresh. Lets the renderer hydrate without
+     * requiring any component to mount `useProviders()` first.
+     *
+     * Returns a cleanup function; call it in the effect's cleanup phase.
+     */
+    onProvidersInfoUpdated: (
+      callback: (info: {
+        providers: {
+          id: string;
+          name: string;
+          models: {
+            id: string;
+            name: string;
+            contextWindow?: number;
+            inputLimit?: number;
+            outputLimit?: number;
+            reasoning?: boolean;
+            variants?: string[];
+            defaultVariant?: string;
+          }[];
+        }[];
+        connectedProviderIds: string[];
+        defaults: Record<string, string>;
+      }) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        info: {
+          providers: {
+            id: string;
+            name: string;
+            models: {
+              id: string;
+              name: string;
+              contextWindow?: number;
+              inputLimit?: number;
+              outputLimit?: number;
+              reasoning?: boolean;
+              variants?: string[];
+              defaultVariant?: string;
+            }[];
+          }[];
+          connectedProviderIds: string[];
+          defaults: Record<string, string>;
+        },
+      ) => callback(info);
+      ipcRenderer.on('providers-info:updated', handler);
+      return () => {
+        ipcRenderer.removeListener('providers-info:updated', handler);
+      };
+    },
   };
 }

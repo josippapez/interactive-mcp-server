@@ -1,5 +1,5 @@
 import { ipcRenderer } from 'electron';
-import type { Attachment } from './types';
+import type { Attachment, SessionTreeNode } from './types';
 
 export function createOpenCodeSessionsApi() {
   return {
@@ -31,9 +31,21 @@ export function createOpenCodeSessionsApi() {
     }> =>
       ipcRenderer.invoke('re-resolve-session', { connectionId, baseDirectory }),
 
-    // Manually re-seed the session tree cache from the OpenCode REST API
+    // Trigger a session-tree invalidation on main, which fires
+    // `session-tree-invalidated` back to the renderer. The renderer's
+    // `useSessionTreeHandler` then refetches via `getSessionTree`.
     refreshSessionTree: (): Promise<void> =>
-      ipcRenderer.invoke('refresh-session-tree'),
+      ipcRenderer.invoke('invalidate-session-tree'),
+
+    // Tell the main process which project folder the sidebar currently has
+    // selected. Passing null clears the selection and empties the sidebar.
+    setSelectedFolder: (baseDirectory: string | null): Promise<void> =>
+      ipcRenderer.invoke('set-selected-folder', baseDirectory),
+
+    // Pull-on-invalidation: fetch the current session tree snapshot directly.
+    // Renderer calls this in response to `onSessionTreeInvalidated` events.
+    getSessionTree: (): Promise<SessionTreeNode[]> =>
+      ipcRenderer.invoke('get-session-tree'),
 
     // Fetch todos for an OpenCode session
     fetchSessionTodos: (
@@ -92,10 +104,12 @@ export function createOpenCodeSessionsApi() {
     }> => ipcRenderer.invoke('check-opencode-health'),
 
     // Fetch VCS info from OpenCode
-    fetchVcsInfo: (): Promise<{
+    fetchVcsInfo: (
+      baseDirectory?: string,
+    ): Promise<{
       branch: string | null;
       defaultBranch: string | null;
-    } | null> => ipcRenderer.invoke('fetch-vcs-info'),
+    } | null> => ipcRenderer.invoke('fetch-vcs-info', baseDirectory),
 
     // Fetch session status from OpenCode
     fetchSessionStatus: (): Promise<Record<

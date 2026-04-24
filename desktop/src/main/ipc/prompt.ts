@@ -1,6 +1,9 @@
 import type { BrowserWindow } from 'electron';
 import { ipcMain, shell } from 'electron';
-import { saveConversation, appendSessionChannelMessage } from '../database';
+import {
+  saveConversation,
+  appendSessionChannelMessage,
+} from '../utility/db-client';
 
 let _getSoundEnabled: () => boolean = () => true;
 let _getPromptTimeoutMs: () => number = () => 1_200_000;

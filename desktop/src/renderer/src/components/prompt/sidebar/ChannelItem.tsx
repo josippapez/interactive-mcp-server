@@ -1,4 +1,5 @@
-import { memo, useRef } from 'react';
+import { memo } from 'react';
+import { SidebarMenuButton } from '@/components/ui/sidebar';
 import type { SessionNode } from '../../../types';
 import type { SessionStatusType } from '../../../hooks/useSessionStatus';
 import {
@@ -6,7 +7,6 @@ import {
   SessionStatusBadge,
   ProviderBadge,
 } from './StatusIndicators';
-import { gsap, useGSAP, prefersReducedMotion } from '../../../lib/gsap';
 
 type ChannelItemProps = {
   node: SessionNode;
@@ -43,21 +43,6 @@ export const ChannelItem = memo(function ChannelItem({
   onToggleCollapse,
   showStartTime = false,
 }: ChannelItemProps): React.ReactElement {
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useGSAP(
-    () => {
-      if (prefersReducedMotion()) return;
-      gsap.from(containerRef.current, {
-        opacity: 0,
-        x: -6,
-        duration: 0.18,
-        ease: 'power2.out',
-      });
-    },
-    { scope: containerRef },
-  );
-
   const label = node.sessionChannel?.label ?? node.title;
   const depth = node.depth ?? 0;
   const isChild = depth > 0;
@@ -65,7 +50,6 @@ export const ChannelItem = memo(function ChannelItem({
 
   const indentPx = depth * 12;
 
-  // Determine what status indicator to show (priority order)
   const showPendingPrompt = node.hasPendingPrompt;
   const showUnread = !showPendingPrompt && node.unreadCount > 0;
   const showBusy =
@@ -73,7 +57,6 @@ export const ChannelItem = memo(function ChannelItem({
   const showLegacyStatus =
     !showPendingPrompt && !showUnread && !showBusy && !isActive;
 
-  // Determine if this channel is "running" (has activity)
   const isRunning =
     showPendingPrompt ||
     sessionStatus === 'busy' ||
@@ -82,8 +65,7 @@ export const ChannelItem = memo(function ChannelItem({
   const startTimeLabel = showStartTime ? formatStartTime(node.createdAt) : '';
 
   return (
-    <div ref={containerRef} className="group flex min-w-0 items-center">
-      {/* Collapse/expand button for parent sessions */}
+    <div className="group anim-channel-item flex min-w-0 items-center">
       {hasChildren ? (
         <button
           type="button"
@@ -92,7 +74,7 @@ export const ChannelItem = memo(function ChannelItem({
             onToggleCollapse?.();
           }}
           style={{ marginLeft: `${indentPx}px` }}
-          className="w-5 h-5 flex items-center justify-center shrink-0 text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] transition-colors"
+          className="flex h-5 w-5 shrink-0 items-center justify-center text-[var(--color-text-faint)] transition-colors hover:text-[var(--color-text-muted)]"
           aria-label={
             isSessionCollapsed ? 'Expand children' : 'Collapse children'
           }
@@ -116,55 +98,61 @@ export const ChannelItem = memo(function ChannelItem({
           </svg>
         </button>
       ) : (
-        /* Spacer for alignment when no children */
         <div
           style={{
             marginLeft: `${indentPx}px`,
-            width: hasChildren ? undefined : '8px',
+            width: '8px',
           }}
         />
       )}
-      <button
-        type="button"
-        onClick={() => onSelect(node.id)}
-        className={`flex min-w-0 flex-1 items-center gap-2 rounded-md py-1.5 pr-2 text-left transition-colors ${
+
+      <SidebarMenuButton
+        asChild
+        isActive={isActive}
+        className={`h-auto min-w-0 flex-1 rounded-lg px-2.5 py-2 pr-2 ${
           isChild ? 'text-xs' : 'text-sm'
         } ${
           showPendingPrompt
             ? 'bg-[var(--color-user)]/15 text-[var(--color-user)] font-medium ring-1 ring-[var(--color-user)]/30'
             : isActive
-              ? 'bg-[var(--color-agent)]/15 text-[var(--color-agent)]'
+              ? 'bg-[var(--color-agent)]/12 text-[var(--color-agent)] ring-1 ring-[var(--color-agent)]/12'
               : isRunning
-                ? 'text-[var(--color-text)] hover:bg-[var(--color-border)] font-medium'
-                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
+                ? 'font-medium text-[var(--color-text)] hover:bg-[var(--color-border)]/75'
+                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)]/75 hover:text-[var(--color-text)]'
         }`}
       >
-        {isDeepChild ? (
-          <span className="text-[var(--color-text-faint)] shrink-0">↳</span>
-        ) : isChild ? (
-          <span className="text-[var(--color-text-faint)] shrink-0">↳</span>
-        ) : (
-          <ProviderBadge providerType={node.providerType} />
-        )}
-        <span className="truncate flex-1">{label}</span>
-        {showPendingPrompt && (
-          <span className="w-2 h-2 rounded-full bg-[var(--color-user)] animate-pulse shrink-0" />
-        )}
-        {showUnread && (
-          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-[var(--color-user)]/15 text-[var(--color-user)] shrink-0">
-            {node.unreadCount}
+        <button
+          type="button"
+          onClick={() => onSelect(node.id)}
+          className="flex min-w-0 w-full items-center gap-2 overflow-hidden"
+        >
+          {isDeepChild || isChild ? (
+            <span className="shrink-0 text-[var(--color-text-faint)]">↳</span>
+          ) : (
+            <ProviderBadge providerType={node.providerType} />
+          )}
+          <span className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+            {label}
           </span>
-        )}
-        {showBusy && <SessionStatusBadge status={sessionStatus} />}
-        {showLegacyStatus && (
-          <StatusDot sessionStatuses={node.sessionStatuses} />
-        )}
-        {startTimeLabel ? (
-          <span className="ml-1 text-[11px] text-[var(--color-text-faint)] shrink-0">
-            {startTimeLabel}
-          </span>
-        ) : null}
-      </button>
+          {showPendingPrompt && (
+            <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-user)] animate-pulse" />
+          )}
+          {showUnread && (
+            <span className="shrink-0 rounded-full bg-[var(--color-user)]/15 px-1.5 py-0.5 text-[10px] text-[var(--color-user)]">
+              {node.unreadCount}
+            </span>
+          )}
+          {showBusy && <SessionStatusBadge status={sessionStatus} />}
+          {showLegacyStatus && (
+            <StatusDot sessionStatuses={node.sessionStatuses} />
+          )}
+          {startTimeLabel ? (
+            <span className="ml-1 shrink-0 text-[11px] text-[var(--color-text-faint)]">
+              {startTimeLabel}
+            </span>
+          ) : null}
+        </button>
+      </SidebarMenuButton>
     </div>
   );
 });

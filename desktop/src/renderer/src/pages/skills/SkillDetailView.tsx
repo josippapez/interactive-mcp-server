@@ -1,4 +1,14 @@
-import type { Folder, SkillOrInstruction, SkillScope } from './skills-types';
+import {
+  getAlwaysModeWarning,
+  getInstructionDeliveryMode,
+  shouldShowInstructionDeliveryControl,
+} from './instruction-delivery';
+import type {
+  Folder,
+  InstructionDeliveryMode,
+  SkillOrInstruction,
+  SkillScope,
+} from './skills-types';
 
 type SkillDetailViewProps = {
   selected: SkillOrInstruction;
@@ -10,6 +20,10 @@ type SkillDetailViewProps = {
   onEdit: () => void;
   onDelete: (name: string) => void;
   onChangeScope: (name: string, scope: SkillScope) => void;
+  onChangeInjectionMode: (
+    name: string,
+    injectionMode: InstructionDeliveryMode,
+  ) => void;
   onChangeFolder: (name: string, folderId: number | null) => void;
 };
 
@@ -23,9 +37,15 @@ export function SkillDetailView({
   onEdit,
   onDelete,
   onChangeScope,
+  onChangeInjectionMode,
   onChangeFolder,
 }: SkillDetailViewProps): React.ReactElement {
   const currentFolder = folders.find((f) => f.id === selected.folderId);
+  const showInstructionDelivery = shouldShowInstructionDeliveryControl(
+    selected.type,
+  );
+  const deliveryMode = getInstructionDeliveryMode(selected);
+  const alwaysModeWarning = getAlwaysModeWarning(selected);
 
   return (
     <div className="max-w-2xl space-y-4">
@@ -108,6 +128,24 @@ export function SkillDetailView({
                 <option value="session-scoped">Session-scoped</option>
               </select>
             </label>
+            {showInstructionDelivery && (
+              <label className="flex items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
+                <span>Delivery</span>
+                <select
+                  value={deliveryMode}
+                  onChange={(e) =>
+                    onChangeInjectionMode(
+                      selected.name,
+                      e.target.value as InstructionDeliveryMode,
+                    )
+                  }
+                  className="bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-1.5 py-0.5 text-[10px] text-[var(--color-text)]"
+                >
+                  <option value="always">Always</option>
+                  <option value="catalog">Catalog</option>
+                </select>
+              </label>
+            )}
             <label className="flex items-center gap-1 text-[10px] text-[var(--color-text-faint)]">
               <span>Folder</span>
               <select
@@ -131,6 +169,12 @@ export function SkillDetailView({
               </select>
             </label>
           </div>
+
+          {alwaysModeWarning && (
+            <p className="text-[10px] text-[var(--color-warning,orange)]">
+              {alwaysModeWarning}
+            </p>
+          )}
 
           {singleExportStatus && (
             <span className="text-[10px] text-[var(--color-text-faint)]">
@@ -166,6 +210,22 @@ export function SkillDetailView({
           >
             {selected.scope === 'session-scoped' ? 'Session-scoped' : 'Global'}
           </span>
+          {showInstructionDelivery && (
+            <span
+              className={`px-1.5 py-0.5 text-[10px] rounded-sm border ${
+                deliveryMode === 'always'
+                  ? 'border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-surface)]'
+                  : 'border-[var(--color-tool)]/30 text-[var(--color-tool)] bg-[var(--color-tool)]/10'
+              }`}
+              title={
+                deliveryMode === 'always'
+                  ? 'Instruction content is delivered with every session injection'
+                  : 'Instruction is shown in the catalog and loaded on demand'
+              }
+            >
+              {deliveryMode === 'always' ? 'Always' : 'Catalog'}
+            </span>
+          )}
           {currentFolder && (
             <span className="px-1.5 py-0.5 text-[10px] rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-surface)]">
               📁 {currentFolder.name}

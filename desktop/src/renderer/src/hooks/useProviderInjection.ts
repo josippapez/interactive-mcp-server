@@ -294,9 +294,10 @@ export function useProviderInjection(
       if (!providerSessionId) {
         // No provider session — SQLite queue is the delivery. Mark sent immediately.
         // Also inject doc context into the SQLite queue for poll_context_injections delivery.
+        // Fire-and-forget (no await) — IPC round-trip must not block message delivery.
         try {
           if (node?.docContextEnabled !== false) {
-            await window.api.injectDocContext?.(
+            void window.api.injectDocContext?.(
               connectionId,
               null,
               message,
@@ -320,12 +321,12 @@ export function useProviderInjection(
 
       // Inject relevant doc context (noReply) before the user's message so
       // the provider has repo docs in context when it processes the request.
-      // This is intentionally fire-and-forget on the error path — a failure
-      // here should NOT block the user's message from being injected.
+      // Fire-and-forget (no await) — a failure or slow IPC round-trip here
+      // must NOT block the user's message from being injected.
       // Skip if the session has doc context injection disabled.
       try {
         if (node?.docContextEnabled !== false) {
-          await window.api.injectDocContext?.(
+          void window.api.injectDocContext?.(
             connectionId,
             providerSessionId,
             message,

@@ -1,10 +1,14 @@
-import { memo } from 'react';
+import { memo, useMemo } from 'react';
+import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarMenu,
+} from '@/components/ui/sidebar';
 import type { Project } from '../../../hooks/session-tree-merge';
 import type { SessionStatusType } from '../../../hooks/useSessionStatus';
 import { ProviderFilter, PROVIDER_LABELS } from './types';
 import { ProjectSection } from './ProjectSection';
-
-type ProjectStartBucket = 'today' | 'yesterday' | 'older' | 'unknown';
 
 type GroupedProjects = {
   key: string;
@@ -13,62 +17,36 @@ type GroupedProjects = {
   projects: Project[];
 };
 
-const HOURS_PER_DAY = 24;
-const MINUTES_PER_HOUR = 60;
-const SECONDS_PER_MINUTE = 60;
-const MS_PER_SECOND = 1000;
-const MS_PER_DAY =
-  HOURS_PER_DAY * MINUTES_PER_HOUR * SECONDS_PER_MINUTE * MS_PER_SECOND;
+// Module-scope cached formatter — constructing Intl.DateTimeFormat is
+// expensive (hundreds of µs per call) and was previously instantiated
+// once per group on every sidebar render.
+const DATE_HEADER_FORMATTER = new Intl.DateTimeFormat('en-US', {
+  weekday: 'short',
+  month: 'short',
+  day: '2-digit',
+  year: 'numeric',
+});
 
-function getProjectStartBucket(timestamp: number): ProjectStartBucket {
-  if (timestamp <= 0) return 'unknown';
-
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime();
-  const startOfYesterday = startOfToday - MS_PER_DAY;
-
-  if (timestamp >= startOfToday) return 'today';
-  if (timestamp >= startOfYesterday) return 'yesterday';
-  return 'older';
-}
-
-function formatDateHeader(timestamp: number): string {
-  if (timestamp <= 0) return 'Unknown Start Date';
-
-  const now = new Date();
-  const startOfToday = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate(),
-  ).getTime();
-  const startOfDate = new Date(
-    new Date(timestamp).getFullYear(),
-    new Date(timestamp).getMonth(),
-    new Date(timestamp).getDate(),
-  ).getTime();
-
-  if (startOfDate === startOfToday) return 'Today';
-
-  return new Intl.DateTimeFormat('en-US', {
-    weekday: 'short',
-    month: 'short',
-    day: '2-digit',
-    year: 'numeric',
-  }).format(new Date(timestamp));
+function startOfDay(ts: number): number {
+  const d = new Date(ts);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 }
 
 function groupProjectsBySessionStart(projects: Project[]): GroupedProjects[] {
   const grouped = new Map<string, GroupedProjects>();
 
+  // Compute "today boundary" once per invocation, not per project.
+  const now = new Date();
+  const startOfToday = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate(),
+  ).getTime();
+
   for (const project of projects) {
     const timestamp = project.earliestSessionCreatedAt;
-    const bucket = getProjectStartBucket(timestamp);
 
-    if (bucket === 'unknown') {
+    if (timestamp <= 0) {
       const key = 'unknown';
       const existing = grouped.get(key);
       if (existing) {
@@ -84,12 +62,7 @@ function groupProjectsBySessionStart(projects: Project[]): GroupedProjects[] {
       continue;
     }
 
-    const date = new Date(timestamp);
-    const dayStart = new Date(
-      date.getFullYear(),
-      date.getMonth(),
-      date.getDate(),
-    ).getTime();
+    const dayStart = startOfDay(timestamp);
     const key = String(dayStart);
     const existing = grouped.get(key);
 
@@ -98,9 +71,14 @@ function groupProjectsBySessionStart(projects: Project[]): GroupedProjects[] {
       continue;
     }
 
+    const label =
+      dayStart === startOfToday
+        ? 'Today'
+        : DATE_HEADER_FORMATTER.format(new Date(timestamp));
+
     grouped.set(key, {
       key,
-      label: formatDateHeader(timestamp),
+      label,
       sortValue: dayStart,
       projects: [project],
     });
@@ -119,10 +97,7 @@ function groupProjectsBySessionStart(projects: Project[]): GroupedProjects[] {
 type ProjectsSectionProps = {
   projects: Project[];
   filter: ProviderFilter;
-  showInactive: boolean;
   runningCount: number;
-  inactiveCount: number;
-  onToggleInactive: () => void;
   collapsedProjects: Set<string>;
   onToggleProject: (path: string) => void;
   onRemoveProject: (path: string) => void;
@@ -143,10 +118,7 @@ type ProjectsSectionProps = {
 export const ProjectsSection = memo(function ProjectsSection({
   projects,
   filter,
-  showInactive,
   runningCount,
-  inactiveCount,
-  onToggleInactive,
   collapsedProjects,
   onToggleProject,
   onRemoveProject,
@@ -159,98 +131,66 @@ export const ProjectsSection = memo(function ProjectsSection({
   hasDirectConnections,
   selectedProjectPath,
 }: ProjectsSectionProps): React.ReactElement {
-  const groupedProjects = groupProjectsBySessionStart(projects);
+  const groupedProjects = useMemo(
+    () => groupProjectsBySessionStart(projects),
+    [projects],
+  );
   const isProjectSelected =
     selectedProjectPath !== null && selectedProjectPath !== undefined;
 
   return (
-    <section>
+    <SidebarGroup className="gap-0 p-0">
       {/* Show header when no specific project is selected */}
       {!isProjectSelected && (
-        <div className="flex items-center justify-between gap-2 px-3 py-2.5">
-          <span className="text-[11px] uppercase tracking-wide text-[var(--color-text-faint)]">
+        <div className="flex items-center gap-2 px-3 py-2">
+          <SidebarGroupLabel className="h-auto px-0 py-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
             Projects
-            {!showInactive && inactiveCount > 0 && (
-              <span className="ml-1 opacity-60">({runningCount} active)</span>
-            )}
-          </span>
-          {inactiveCount > 0 && (
-            <button
-              type="button"
-              onClick={onToggleInactive}
-              title={
-                showInactive
-                  ? 'Hide inactive sessions'
-                  : `Show ${inactiveCount} inactive sessions`
-              }
-              className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-                showInactive
-                  ? 'bg-[var(--color-agent)]/15 text-[var(--color-agent)]'
-                  : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-border)]'
-              }`}
-            >
-              {showInactive ? 'Hide inactive' : `+${inactiveCount} more`}
-            </button>
-          )}
-        </div>
-      )}
-      {/* Show compact header with inactive toggle when project is selected */}
-      {isProjectSelected && inactiveCount > 0 && (
-        <div className="flex items-center justify-end px-3 py-2">
-          <button
-            type="button"
-            onClick={onToggleInactive}
-            title={
-              showInactive
-                ? 'Hide inactive sessions'
-                : `Show ${inactiveCount} inactive sessions`
-            }
-            className={`text-[10px] px-1.5 py-0.5 rounded transition-colors ${
-              showInactive
-                ? 'bg-[var(--color-agent)]/15 text-[var(--color-agent)]'
-                : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-border)]'
-            }`}
-          >
-            {showInactive ? 'Hide inactive' : `+${inactiveCount} more`}
-          </button>
+            <span className="ml-1 opacity-60">({runningCount} active)</span>
+          </SidebarGroupLabel>
         </div>
       )}
       {projects.length === 0 && !hasDirectConnections && (
-        <p className="px-4 py-1 text-xs text-[var(--color-text-faint)] italic">
-          {filter === 'all'
-            ? 'No sessions yet'
-            : `No ${PROVIDER_LABELS[filter]} sessions`}
-        </p>
+        <SidebarGroupContent>
+          <p className="px-4 py-1 text-xs text-[var(--color-text-faint)] italic">
+            {filter === 'all'
+              ? 'No sessions yet'
+              : `No ${PROVIDER_LABELS[filter]} sessions`}
+          </p>
+        </SidebarGroupContent>
       )}
       {groupedProjects.map((group, index) => (
         <div key={group.key} className={index > 0 ? 'mt-3' : ''}>
-          <div className="flex items-center gap-2 px-3 py-1">
-            <span className="text-[11px] font-semibold text-[var(--color-text-faint)]/90">
+          <div className="flex items-center gap-2 px-3 py-1.5">
+            <SidebarGroupLabel className="h-auto px-0 py-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]/90">
               {group.label}
-            </span>
+            </SidebarGroupLabel>
             <div className="h-px flex-1 bg-[var(--color-border)]" />
           </div>
-          {group.projects.map((project) => (
-            <ProjectSection
-              key={project.path}
-              project={project}
-              isCollapsed={collapsedProjects.has(project.path)}
-              onToggle={() => onToggleProject(project.path)}
-              onRemove={
-                project.isPinned
-                  ? () => onRemoveProject(project.path)
-                  : undefined
-              }
-              activeConnectionId={activeConnectionId}
-              onSelect={onSelect}
-              getStatus={getStatus}
-              onCreateSession={onCreateSession}
-              collapsedSessions={collapsedSessions}
-              onToggleSession={onToggleSession}
-            />
-          ))}
+          <SidebarGroupContent>
+            <SidebarMenu className="gap-1 px-2">
+              {group.projects.map((project) => (
+                <ProjectSection
+                  key={project.path}
+                  project={project}
+                  isCollapsed={collapsedProjects.has(project.path)}
+                  onToggle={() => onToggleProject(project.path)}
+                  onRemove={
+                    project.isPinned
+                      ? () => onRemoveProject(project.path)
+                      : undefined
+                  }
+                  activeConnectionId={activeConnectionId}
+                  onSelect={onSelect}
+                  getStatus={getStatus}
+                  onCreateSession={onCreateSession}
+                  collapsedSessions={collapsedSessions}
+                  onToggleSession={onToggleSession}
+                />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
         </div>
       ))}
-    </section>
+    </SidebarGroup>
   );
 });

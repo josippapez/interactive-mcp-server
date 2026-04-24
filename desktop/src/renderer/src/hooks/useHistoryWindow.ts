@@ -1,4 +1,11 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import {
+  useState,
+  useCallback,
+  useMemo,
+  useRef,
+  useEffect,
+  startTransition,
+} from 'react';
 
 /**
  * Turn-based windowing hook based on OpenCode's implementation.
@@ -154,7 +161,13 @@ export function useHistoryWindow<T>(
 
   const hasMore = visibleTurnCount < totalTurnCount;
 
-  // Load more turns (scroll-triggered backfill)
+  // Load more turns (scroll-triggered backfill).
+  //
+  // Staged mount (C7): the window bump is wrapped in `startTransition` so
+  // React treats the large synchronous mount of older rows as a
+  // non-blocking update. This keeps the backfill scroll-preservation
+  // snap-back (the `useEffect` below) running at interactive priority
+  // rather than competing with the heavy paint of newly mounted rows.
   const loadMore = useCallback(() => {
     if (!hasMore || isBackfilling) return;
 
@@ -169,10 +182,13 @@ export function useHistoryWindow<T>(
       };
     }
 
-    // Add more turns
-    setVisibleTurnCount((prev) =>
-      Math.min(prev + backfillTurns, totalTurnCount),
-    );
+    // Stage the mount — the scroll-restore effect below will still run
+    // synchronously after the transition commits, preserving position.
+    startTransition(() => {
+      setVisibleTurnCount((prev) =>
+        Math.min(prev + backfillTurns, totalTurnCount),
+      );
+    });
 
     // Backfilling state will be cleared after render via useEffect
   }, [hasMore, isBackfilling, backfillTurns, totalTurnCount]);

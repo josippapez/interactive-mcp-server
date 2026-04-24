@@ -1,20 +1,23 @@
 import { ipcMain } from 'electron';
 import { checkOpenCodeHealth } from '../../opencode/health';
-import { fetchVcsInfo } from '../../opencode/vcs';
-import { fetchSessionStatus } from '../../opencode/session-status';
-import { fetchPendingPermissions } from '../../opencode/permission-list';
-import { fetchPendingQuestions } from '../../opencode/question-list';
-import { searchGlobal } from '../../docs/search';
+import { fetchVcsInfo } from '../../utility/opencode-client';
+import { fetchSessionStatus } from '../../utility/opencode-client';
+import { fetchPendingPermissions } from '../../utility/opencode-client';
+import { fetchPendingQuestions } from '../../utility/opencode-client';
+import { searchGlobal } from '../../docs/search-client';
 import { IpcHandlerDeps } from './types';
 
 export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
-  ipcMain.handle('get-pending-permissions', async () => {
-    const { openCodePort, agentBackend } = deps.getSettings();
-    if (agentBackend !== 'opencode') {
-      return [];
-    }
-    return fetchPendingPermissions(openCodePort);
-  });
+  ipcMain.handle(
+    'get-pending-permissions',
+    async (_event, baseDirectory?: string) => {
+      const { openCodePort, agentBackend } = deps.getSettings();
+      if (agentBackend !== 'opencode') {
+        return [];
+      }
+      return fetchPendingPermissions(openCodePort, baseDirectory);
+    },
+  );
 
   ipcMain.handle('get-pending-questions', async () => {
     const { openCodePort, agentBackend } = deps.getSettings();
@@ -57,7 +60,10 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
 
   ipcMain.handle(
     'fetch-vcs-info',
-    async (): Promise<{
+    async (
+      _event,
+      baseDirectory?: string,
+    ): Promise<{
       branch: string | null;
       defaultBranch: string | null;
     } | null> => {
@@ -65,7 +71,7 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
       if (agentBackend !== 'opencode') {
         return null;
       }
-      return fetchVcsInfo(openCodePort);
+      return fetchVcsInfo(openCodePort, baseDirectory);
     },
   );
 

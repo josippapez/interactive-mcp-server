@@ -93,7 +93,7 @@ function ComposerBottomBarComponent({
   submitLabel,
 }: ComposerBottomBarProps): React.ReactElement {
   return (
-    <div className="flex items-center gap-2 px-3 py-2 border-t border-[var(--color-border)]/50">
+    <div className="flex items-center gap-2 px-3 py-2">
       {/* Left side - Model selector + variant + agent */}
       <div className="flex items-center gap-1.5 shrink-0">
         {showModelSelector && (
@@ -200,7 +200,7 @@ function ComposerBottomBarComponent({
           />
         )}
 
-        {/* Send button */}
+        {/* Send button — circular IconButton (opencode parity, GAP_REPORT §4.3). */}
         <button
           type="button"
           onClick={onSubmit}
@@ -213,14 +213,13 @@ function ComposerBottomBarComponent({
               : `${submitLabel} (${sendShortcut})`
           }
           aria-label={submitLabel}
-          className={`flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+          className={`flex size-8 items-center justify-center rounded-full text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
             showReplyButton && !noReply
-              ? 'bg-[var(--color-user)] text-white hover:opacity-90'
-              : 'bg-[var(--color-agent)] text-white hover:opacity-90'
+              ? 'bg-[var(--color-user)] hover:opacity-90'
+              : 'bg-[var(--color-agent)] hover:opacity-90'
           }`}
         >
           <SendIcon />
-          <span className="hidden sm:inline">{submitLabel}</span>
         </button>
       </div>
     </div>

@@ -1,19 +1,5 @@
 {
   "mcp": {
-    // interactive MCP for prompting the user for context with extended timeout
-    "interactive": {
-      "command": [
-        "npx",
-        "-y",
-        "@rawwee/interactive-mcp",
-        "-t",
-        "1200",
-        "--disable-tools",
-        "message_complete_notification",
-      ],
-      "type": "local",
-      "timeout": 1210000,
-    },
     "repo-docs-libs": {
       "type": "local",
       "command": ["node", "tools/mcp/repo-docs-libs-server.cjs"],

@@ -5,7 +5,16 @@ import eslintPluginPrettierRecommended from 'eslint-plugin-prettier/recommended'
 export default tseslint.config(
   {
     // Global ignores
-    ignores: ['node_modules/', 'dist/'],
+    ignores: [
+      'node_modules/',
+      'dist/',
+      // Node CLI build scripts use Node globals (process, console, __dirname)
+      // that the flat-config globals shorthand above doesn't actually wire up.
+      'desktop/scripts/',
+      // Vendored OpenCode sidecar Node runtime (bundled binary blob)
+      'desktop/resources/',
+      'desktop/out/',
+    ],
   },
   // Base ESLint recommended rules
   eslint.configs.recommended,

@@ -1,6 +1,5 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useSessionStatus } from '../../../hooks/useSessionStatus';
-import { useSidebarResize } from './useSidebarResize';
 import { useCollapsedState } from './useCollapsedState';
 import { usePinnedProjects } from './usePinnedProjects';
 import { useSessionFiltering } from './useSessionFiltering';
@@ -8,6 +7,7 @@ import {
   useSessionGraphProjects,
   useSessionGraphSelector,
 } from '../../../store/session-graph';
+import { useHealthStatus } from '../../../store/opencode-health';
 
 /** Local storage key for persisted selected project */
 const SELECTED_PROJECT_KEY = 'sidebar-selected-project';
@@ -18,6 +18,10 @@ type UseSidebarStateProps = {
 
 /**
  * Main orchestrating hook that composes smaller focused hooks.
+ *
+ * Width/resize is now owned by the shadcn `<SidebarProvider>` (cookie-based
+ * expand/collapse via `--sidebar-width`); this hook no longer exposes
+ * sidebarRef/sidebarWidth/isResizing/handleMouseDown.
  */
 export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
   // Pinned projects management
@@ -61,25 +65,37 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     }
   }, [handleSelectProject, projects, selectedProjectPath]);
 
+  // Tell the main process which folder is selected. The main process scopes
+  // every OpenCode session-list fetch (seed, poller, reconcile) to this
+  // folder. When null, nothing is fetched and the sidebar renders empty.
+  useEffect(() => {
+    void window.api.setSelectedFolder(selectedProjectPath);
+  }, [selectedProjectPath]);
+
   // Refresh state
-  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isUserRefreshing, setIsUserRefreshing] = useState(false);
 
   const handleRefresh = useCallback(async () => {
-    if (isRefreshing) return;
-    setIsRefreshing(true);
+    if (isUserRefreshing) return;
+    setIsUserRefreshing(true);
     try {
       await window.api.refreshSessionTree();
     } finally {
-      setIsRefreshing(false);
+      setIsUserRefreshing(false);
     }
-  }, [isRefreshing]);
+  }, [isUserRefreshing]);
+
+  // Show the spinner as rotating during cold-start while OpenCode is still
+  // coming up and we don't yet have any projects to display. As soon as the
+  // backend is healthy and the retry loop has populated the session tree,
+  // the spinner stops. Merged with the user-clicked-refresh flag so manual
+  // refreshes still animate.
+  const healthStatus = useHealthStatus();
+  const isColdStartLoading = !healthStatus.healthy && projects.length === 0;
+  const isRefreshing = isUserRefreshing || isColdStartLoading;
 
   // Session status from OpenCode API
-  const { getStatus } = useSessionStatus(true);
-
-  // Resize functionality
-  const { sidebarRef, sidebarWidth, isResizing, handleMouseDown } =
-    useSidebarResize();
+  const { getStatus, statusMap } = useSessionStatus(true);
 
   // Collapsed state management
   const {
@@ -107,6 +123,7 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     projects,
     activeConnectionId,
     getStatus,
+    statusMap,
   });
 
   // Filter projects by selected project path
@@ -123,16 +140,12 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
   }, [projects]);
 
   return {
-    // Refs
-    sidebarRef,
     // State
     filter,
     setFilter,
     showInactive,
     collapsedProjects,
     collapsedSessions,
-    sidebarWidth,
-    isResizing,
     isRefreshing,
     selectedProjectPath,
     // Computed
@@ -152,7 +165,6 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     handleToggleSession,
     handleAddProject,
     handleRemoveProject,
-    handleMouseDown,
     handleSelectProject,
   };
 }
