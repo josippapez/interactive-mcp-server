@@ -197,6 +197,13 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
       );
 
       if (answer === null || answer === undefined) {
+        log.info(
+          `request_user_input complete ts=${Date.now()} ` +
+            `durationMs=${Date.now() - t0} ` +
+            `connectionId=${connectionId} ` +
+            `providerSessionId=${providerSessionId ?? 'null'} ` +
+            `outcome=timeout`,
+        );
         return {
           content: [
             {
@@ -207,6 +214,13 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
         };
       }
       if (answer === '') {
+        log.info(
+          `request_user_input complete ts=${Date.now()} ` +
+            `durationMs=${Date.now() - t0} ` +
+            `connectionId=${connectionId} ` +
+            `providerSessionId=${providerSessionId ?? 'null'} ` +
+            `outcome=empty`,
+        );
         return {
           content: [
             { type: 'text' as const, text: 'User replied with empty input.' },
@@ -274,6 +288,14 @@ Feel free to ask anything! **Proactive questioning is preferred over making assu
         }
       }
 
+      log.info(
+        `request_user_input complete ts=${Date.now()} ` +
+          `durationMs=${Date.now() - t0} ` +
+          `connectionId=${connectionId} ` +
+          `providerSessionId=${providerSessionId ?? 'null'} ` +
+          `outcome=answered ` +
+          `attachments=${attachments?.length ?? 0}`,
+      );
       return { content };
     },
   );

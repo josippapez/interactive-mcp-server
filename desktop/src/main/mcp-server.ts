@@ -408,7 +408,30 @@ export async function startMcpServer(
 
     // Route to existing session
     if (sessionId && sessions[sessionId]) {
-      await sessions[sessionId].transport.handleRequest(req, res, req.body);
+      try {
+        await sessions[sessionId].transport.handleRequest(req, res, req.body);
+      } catch (err) {
+        // Underlying socket may have been reset/destroyed mid-flight (e.g.
+        // client disconnected, renderer reloaded, SSE companion stream died).
+        // Log for visibility but do NOT rethrow — Express's default error
+        // handler would try to send a 500 on an already-written response,
+        // producing ERR_HTTP_HEADERS_SENT and making the symptom worse on
+        // the caller side (undici surfaces it as `fetch failed`).
+        mcpLog.error(
+          `POST /mcp route-to-existing failed sessionId=${sessionId}: ${errorMessage(err)}`,
+        );
+        if (!res.headersSent) {
+          try {
+            res.status(500).json({
+              jsonrpc: '2.0',
+              error: { code: -32000, message: 'Transport handler failed' },
+              id: null,
+            });
+          } catch {
+            // Response is already unwritable — nothing we can do.
+          }
+        }
+      }
       return;
     }
 
@@ -457,7 +480,24 @@ export async function startMcpServer(
       };
 
       await server.connect(transport);
-      await transport.handleRequest(req, res, req.body);
+      try {
+        await transport.handleRequest(req, res, req.body);
+      } catch (err) {
+        mcpLog.error(
+          `POST /mcp initialize handleRequest failed: ${errorMessage(err)}`,
+        );
+        if (!res.headersSent) {
+          try {
+            res.status(500).json({
+              jsonrpc: '2.0',
+              error: { code: -32000, message: 'Initialize handler failed' },
+              id: null,
+            });
+          } catch {
+            // Response is already unwritable.
+          }
+        }
+      }
       return;
     }
 

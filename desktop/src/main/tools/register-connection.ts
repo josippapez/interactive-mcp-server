@@ -7,6 +7,7 @@ import {
   createSessionChannel,
   listSkillsAndInstructions,
   listSessionScopedEntryNames,
+  listSessionMutedEntryNames,
   upsertRegisteredConnection,
   type RegisteredConnection,
 } from '../database';
@@ -28,6 +29,10 @@ import {
 } from './register-connection-deadline';
 import { REGISTER_CONNECTION_TOOL_DESCRIPTION } from './register-connection-description';
 import { buildStartupContextMessage } from './startup-context';
+import {
+  markDbContextInjected,
+  isDbContextInjected,
+} from './db-context-injection';
 
 /** Provider types supported by the multi-provider architecture. */
 export type ProviderType = RegisteredConnection['providerType'];
@@ -206,6 +211,9 @@ export function registerConnectionTool(
       const sessionOptInNames = openCodeSessionId
         ? listSessionScopedEntryNames('opencode', openCodeSessionId)
         : [];
+      const sessionMutedNames = openCodeSessionId
+        ? listSessionMutedEntryNames('opencode', openCodeSessionId)
+        : [];
 
       const startupContextMessage = buildStartupContextMessage({
         channelName,
@@ -214,18 +222,34 @@ export function registerConnectionTool(
         openCodeSessionId: openCodeSessionId ?? undefined,
         entries: listSkillsAndInstructions(),
         sessionOptInNames,
+        sessionMutedNames,
       });
 
-      startStartupContextInjection({
-        getWindow,
-        connectionId,
-        openCodeSessionId,
-        startupContextMessage,
-        getOpenCodePort,
-        backendName: backend.backend,
-        runtime: backend.runtime,
-        supportsProviderInjection: backend.supportsProviderInjection,
-      });
+      // Guard: another injection path (SSE `session.created` auto-register or
+      // MCP `initialize` auto-register) may have already delivered the
+      // DB-skills `<system-reminder>` for this session. Re-injecting would
+      // produce a duplicate message in the OpenCode conversation because each
+      // `injectOpenCodeMessage` POST creates a distinct `message.id` — neither
+      // OpenCode nor the renderer dedupes by content. Skip if already marked.
+      const alreadyInjected =
+        openCodeSessionId && isDbContextInjected(openCodeSessionId);
+
+      if (!alreadyInjected) {
+        startStartupContextInjection({
+          getWindow,
+          connectionId,
+          openCodeSessionId,
+          startupContextMessage,
+          getOpenCodePort,
+          backendName: backend.backend,
+          runtime: backend.runtime,
+          supportsProviderInjection: backend.supportsProviderInjection,
+        });
+
+        if (openCodeSessionId) {
+          markDbContextInjected(openCodeSessionId);
+        }
+      }
 
       const toolResultContent: Array<{ type: 'text'; text: string }> = [
         {

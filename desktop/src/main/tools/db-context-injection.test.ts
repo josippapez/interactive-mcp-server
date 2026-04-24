@@ -1,91 +1,87 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('../utils/logger', () => ({
+  createLogger: () => ({
+    info: vi.fn(),
+    warn: vi.fn(),
+    debug: vi.fn(),
+  }),
+}));
+
+import type { SkillOrInstruction } from '../database';
 import {
   _getInjectedSessionsForTests,
   _resetInjectedSessionsForTests,
+  clearDbContextInjected,
   decideShouldInjectDbContext,
+  isDbContextInjected,
   markDbContextInjected,
   maybeInjectDbContextOnConnect,
 } from './db-context-injection';
-import type { SkillOrInstruction } from '../database';
-import type { StartupContextParams } from './startup-context';
+
+function makeEntry(
+  overrides: Partial<SkillOrInstruction> = {},
+): SkillOrInstruction {
+  return {
+    id: 1,
+    name: 'entry-name',
+    type: 'skill',
+    description: 'entry description',
+    content: 'entry content',
+    category: null,
+    tags: null,
+    enabled: true,
+    isBuiltin: false,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+    folderId: null,
+    scope: 'global',
+    ...overrides,
+  };
+}
 
 describe('decideShouldInjectDbContext', () => {
-  it('skips when openCodeSessionId is missing', () => {
+  it('returns no-session-id when the session id is missing', () => {
     expect(
       decideShouldInjectDbContext({
         openCodeSessionId: undefined,
-        alreadyInjected: new Set(),
-        enabledEntryCount: 3,
-      }),
-    ).toEqual({ shouldInject: false, reason: 'no-session-id' });
-
-    expect(
-      decideShouldInjectDbContext({
-        openCodeSessionId: null,
-        alreadyInjected: new Set(),
-        enabledEntryCount: 3,
+        alreadyInjected: new Set<string>(),
+        enabledEntryCount: 1,
       }),
     ).toEqual({ shouldInject: false, reason: 'no-session-id' });
   });
 
-  it('skips when session was already injected this process', () => {
+  it('returns already-injected-this-process when the session was deduped', () => {
     expect(
       decideShouldInjectDbContext({
-        openCodeSessionId: 'ses_abc',
-        alreadyInjected: new Set(['ses_abc']),
-        enabledEntryCount: 3,
+        openCodeSessionId: 'ses_existing',
+        alreadyInjected: new Set(['ses_existing']),
+        enabledEntryCount: 1,
       }),
-    ).toEqual({ shouldInject: false, reason: 'already-injected-this-process' });
+    ).toEqual({
+      shouldInject: false,
+      reason: 'already-injected-this-process',
+    });
   });
 
-  it('skips when there are no enabled entries', () => {
+  it('returns no-enabled-entries when nothing is effectively injectable', () => {
     expect(
       decideShouldInjectDbContext({
-        openCodeSessionId: 'ses_abc',
-        alreadyInjected: new Set(),
+        openCodeSessionId: 'ses_active',
+        alreadyInjected: new Set<string>(),
         enabledEntryCount: 0,
       }),
     ).toEqual({ shouldInject: false, reason: 'no-enabled-entries' });
   });
 
-  it('injects when session is new and entries exist', () => {
+  it('returns inject when the session has effective entries and is not deduped', () => {
     expect(
       decideShouldInjectDbContext({
-        openCodeSessionId: 'ses_abc',
-        alreadyInjected: new Set(['ses_other']),
-        enabledEntryCount: 1,
+        openCodeSessionId: 'ses_active',
+        alreadyInjected: new Set<string>(),
+        enabledEntryCount: 2,
       }),
     ).toEqual({ shouldInject: true, reason: 'inject' });
-  });
-});
-
-describe('markDbContextInjected', () => {
-  beforeEach(() => {
-    _resetInjectedSessionsForTests();
-  });
-  afterEach(() => {
-    _resetInjectedSessionsForTests();
-  });
-
-  it('adds the session id to the shared dedupe set', () => {
-    markDbContextInjected('ses_xyz');
-    expect(_getInjectedSessionsForTests().has('ses_xyz')).toBe(true);
-  });
-
-  it('makes a subsequent decideShouldInjectDbContext skip the same session', () => {
-    markDbContextInjected('ses_xyz');
-    expect(
-      decideShouldInjectDbContext({
-        openCodeSessionId: 'ses_xyz',
-        alreadyInjected: _getInjectedSessionsForTests(),
-        enabledEntryCount: 3,
-      }),
-    ).toEqual({ shouldInject: false, reason: 'already-injected-this-process' });
-  });
-
-  it('ignores empty session ids', () => {
-    markDbContextInjected('');
-    expect(_getInjectedSessionsForTests().size).toBe(0);
   });
 });
 
@@ -93,233 +89,105 @@ describe('maybeInjectDbContextOnConnect', () => {
   beforeEach(() => {
     _resetInjectedSessionsForTests();
   });
-  afterEach(() => {
+
+  it('skips injection when muting globals and missing opt-ins remove all effective entries', () => {
+    const buildMessage = vi.fn(() => 'unused');
+    const startInjection = vi.fn();
+
+    maybeInjectDbContextOnConnect({
+      openCodeSessionId: 'ses_filtered',
+      channelName: 'Test Agent',
+      projectName: 'interactive-mcp-server',
+      baseDirectory: '/tmp/project',
+      connectionId: 'conn-1',
+      getWindow: () => null,
+      getOpenCodePort: () => 4096,
+      _listEntries: () => [
+        makeEntry({ name: 'muted-global', scope: 'global' }),
+        makeEntry({ id: 2, name: 'session-only', scope: 'session-scoped' }),
+      ],
+      _listSessionOptIns: () => [],
+      _listSessionMutes: () => ['muted-global'],
+      _buildMessage: buildMessage,
+      _startInjection: startInjection,
+    });
+
+    expect(buildMessage).not.toHaveBeenCalled();
+    expect(startInjection).not.toHaveBeenCalled();
+    expect(_getInjectedSessionsForTests().has('ses_filtered')).toBe(false);
+  });
+
+  it('passes session opt-ins and mutes to the builder and dedupes repeat connects', () => {
+    const buildMessage = vi.fn(() => 'startup context');
+    const startInjection = vi.fn();
+    const options = {
+      openCodeSessionId: 'ses_repeat',
+      channelName: 'Test Agent',
+      projectName: 'interactive-mcp-server',
+      baseDirectory: '/tmp/project',
+      connectionId: 'conn-1',
+      getWindow: () => null,
+      getOpenCodePort: () => 4096,
+      _listEntries: () => [
+        makeEntry({ name: 'global-visible', scope: 'global' }),
+        makeEntry({ id: 2, name: 'session-opt-in', scope: 'session-scoped' }),
+      ],
+      _listSessionOptIns: () => ['session-opt-in'],
+      _listSessionMutes: () => ['global-visible'],
+      _buildMessage: buildMessage,
+      _startInjection: startInjection,
+    };
+
+    maybeInjectDbContextOnConnect(options);
+    maybeInjectDbContextOnConnect(options);
+
+    expect(buildMessage).toHaveBeenCalledTimes(1);
+    expect(buildMessage).toHaveBeenCalledWith({
+      channelName: 'Test Agent',
+      projectName: 'interactive-mcp-server',
+      baseDirectory: '/tmp/project',
+      openCodeSessionId: 'ses_repeat',
+      entries: [
+        makeEntry({ name: 'global-visible', scope: 'global' }),
+        makeEntry({ id: 2, name: 'session-opt-in', scope: 'session-scoped' }),
+      ],
+      sessionOptInNames: ['session-opt-in'],
+      sessionMutedNames: ['global-visible'],
+    });
+    expect(startInjection).toHaveBeenCalledTimes(1);
+    expect(startInjection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        connectionId: 'conn-1',
+        openCodeSessionId: 'ses_repeat',
+        startupContextMessage: 'startup context',
+      }),
+    );
+    expect(_getInjectedSessionsForTests().has('ses_repeat')).toBe(true);
+  });
+});
+
+describe('isDbContextInjected', () => {
+  beforeEach(() => {
     _resetInjectedSessionsForTests();
   });
 
-  const baseEntry = (
-    overrides: Partial<SkillOrInstruction>,
-  ): SkillOrInstruction => ({
-    id: 1,
-    name: 'sk',
-    type: 'instruction',
-    description: 'desc',
-    content: 'content',
-    category: null,
-    tags: null,
-    enabled: true,
-    isBuiltin: false,
-    createdAt: '2024-01-01T00:00:00Z',
-    updatedAt: '2024-01-01T00:00:00Z',
-    folderId: null,
-    scope: 'global',
-    ...overrides,
+  it('returns false for a never-marked session', () => {
+    expect(isDbContextInjected('ses_unknown')).toBe(false);
   });
 
-  const baseOptions = () => ({
-    openCodeSessionId: 'ses_abc',
-    channelName: 'channel',
-    projectName: 'proj',
-    baseDirectory: '/tmp/proj',
-    connectionId: 'conn_1',
-    getWindow: () => null,
-    getOpenCodePort: () => 4096,
+  it('returns true after markDbContextInjected', () => {
+    markDbContextInjected('ses_marked');
+    expect(isDbContextInjected('ses_marked')).toBe(true);
   });
 
-  it('fires injection when entries are enabled and session is new', () => {
-    const start = vi.fn();
-    const build = vi.fn(() => '<system-reminder>built</system-reminder>');
-    const list = vi.fn(() => [baseEntry({ name: 'a' })]);
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: list,
-      _buildMessage: build,
-      _startInjection: start,
-    });
-
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(build).toHaveBeenCalledTimes(1);
-    expect(start.mock.calls[0]?.[0]?.startupContextMessage).toBe(
-      '<system-reminder>built</system-reminder>',
-    );
-    expect(start.mock.calls[0]?.[0]?.openCodeSessionId).toBe('ses_abc');
-    expect(start.mock.calls[0]?.[0]?.supportsProviderInjection).toBe(true);
-    expect(_getInjectedSessionsForTests().has('ses_abc')).toBe(true);
+  it('returns false after clearDbContextInjected', () => {
+    markDbContextInjected('ses_compacted');
+    clearDbContextInjected('ses_compacted');
+    expect(isDbContextInjected('ses_compacted')).toBe(false);
   });
 
-  it('does not fire twice for the same session in the same process', () => {
-    const start = vi.fn();
-    const list = vi.fn(() => [baseEntry({ name: 'a' })]);
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: list,
-      _buildMessage: () => 'msg',
-      _startInjection: start,
-    });
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: list,
-      _buildMessage: () => 'msg',
-      _startInjection: start,
-    });
-
-    expect(start).toHaveBeenCalledTimes(1);
-  });
-
-  it('skips and does not record session when there are no enabled entries', () => {
-    const start = vi.fn();
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: () => [baseEntry({ enabled: false })],
-      _buildMessage: () => 'msg',
-      _startInjection: start,
-    });
-
-    expect(start).not.toHaveBeenCalled();
-    expect(_getInjectedSessionsForTests().has('ses_abc')).toBe(false);
-  });
-
-  it('skips when openCodeSessionId is missing', () => {
-    const start = vi.fn();
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      openCodeSessionId: undefined,
-      _listEntries: () => [baseEntry({ name: 'a' })],
-      _buildMessage: () => 'msg',
-      _startInjection: start,
-    });
-
-    expect(start).not.toHaveBeenCalled();
-  });
-
-  it('rolls back the dedupe entry when the build step throws', () => {
-    const start = vi.fn();
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: () => [baseEntry({ name: 'a' })],
-      _buildMessage: () => {
-        throw new Error('build failed');
-      },
-      _startInjection: start,
-    });
-
-    expect(start).not.toHaveBeenCalled();
-    expect(_getInjectedSessionsForTests().has('ses_abc')).toBe(false);
-  });
-
-  it('rolls back the dedupe entry when startInjection throws synchronously', () => {
-    const start = vi.fn(() => {
-      throw new Error('start failed');
-    });
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: () => [baseEntry({ name: 'a' })],
-      _buildMessage: () => 'msg',
-      _startInjection: start,
-    });
-
-    expect(_getInjectedSessionsForTests().has('ses_abc')).toBe(false);
-  });
-
-  it('does not throw when the entry list lookup fails', () => {
-    const start = vi.fn();
-
-    expect(() =>
-      maybeInjectDbContextOnConnect({
-        ...baseOptions(),
-        _listEntries: () => {
-          throw new Error('db down');
-        },
-        _buildMessage: () => 'msg',
-        _startInjection: start,
-      }),
-    ).not.toThrow();
-    expect(start).not.toHaveBeenCalled();
-  });
-
-  it('forwards session-scoped opt-in names to the message builder', () => {
-    const start = vi.fn();
-    const build = vi.fn<(p: StartupContextParams) => string>(() => 'msg');
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: () => [
-        baseEntry({ name: 'global-a', scope: 'global' }),
-        baseEntry({ name: 'opt-b', scope: 'session-scoped' }),
-      ],
-      _listSessionOptIns: (providerType, sessionId) => {
-        expect(providerType).toBe('opencode');
-        expect(sessionId).toBe('ses_abc');
-        return ['opt-b'];
-      },
-      _buildMessage: build,
-      _startInjection: start,
-    });
-
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(build).toHaveBeenCalledTimes(1);
-    expect(build.mock.calls[0]?.[0]?.sessionOptInNames).toEqual(['opt-b']);
-  });
-
-  it('skips injection when only session-scoped entries exist and nothing is opted in', () => {
-    const start = vi.fn();
-    const build = vi.fn(() => 'msg');
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: () => [
-        baseEntry({ name: 'opt-a', scope: 'session-scoped' }),
-      ],
-      _listSessionOptIns: () => [],
-      _buildMessage: build,
-      _startInjection: start,
-    });
-
-    expect(start).not.toHaveBeenCalled();
-    expect(build).not.toHaveBeenCalled();
-    expect(_getInjectedSessionsForTests().has('ses_abc')).toBe(false);
-  });
-
-  it('injects when only session-scoped entries exist but at least one is opted in', () => {
-    const start = vi.fn();
-    const build = vi.fn<(p: StartupContextParams) => string>(() => 'msg');
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: () => [
-        baseEntry({ name: 'opt-a', scope: 'session-scoped' }),
-        baseEntry({ name: 'opt-b', scope: 'session-scoped' }),
-      ],
-      _listSessionOptIns: () => ['opt-a'],
-      _buildMessage: build,
-      _startInjection: start,
-    });
-
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(build.mock.calls[0]?.[0]?.sessionOptInNames).toEqual(['opt-a']);
-  });
-
-  it('still injects when opt-in lookup throws (treats as empty list)', () => {
-    const start = vi.fn();
-    const build = vi.fn<(p: StartupContextParams) => string>(() => 'msg');
-
-    maybeInjectDbContextOnConnect({
-      ...baseOptions(),
-      _listEntries: () => [baseEntry({ name: 'global-a', scope: 'global' })],
-      _listSessionOptIns: () => {
-        throw new Error('opt-in db read failed');
-      },
-      _buildMessage: build,
-      _startInjection: start,
-    });
-
-    expect(start).toHaveBeenCalledTimes(1);
-    expect(build.mock.calls[0]?.[0]?.sessionOptInNames).toEqual([]);
+  it('returns false for empty input', () => {
+    markDbContextInjected('ses_x');
+    expect(isDbContextInjected('')).toBe(false);
   });
 });

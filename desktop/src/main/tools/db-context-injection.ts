@@ -227,6 +227,34 @@ export function markDbContextInjected(openCodeSessionId: string): void {
   injectedSessionIds.add(openCodeSessionId);
 }
 
+/**
+ * Clear the dedupe flag for a session so a subsequent call to
+ * `maybeInjectDbContextOnConnect` or the SSE-path re-injection helper will
+ * re-inject the startup context. Used after OpenCode compaction
+ * (`session.compacted`), which rewrites the session's history and drops
+ * previously-injected `<system-reminder>` blocks from the visible context
+ * window.
+ */
+export function clearDbContextInjected(openCodeSessionId: string): void {
+  if (!openCodeSessionId) {
+    return;
+  }
+  injectedSessionIds.delete(openCodeSessionId);
+}
+
+/**
+ * Predicate: has this session already received a DB context injection in the
+ * current desktop process? Used by callers that want to skip their own
+ * injection path when another path already handled it (prevents duplicate
+ * `<system-reminder>` blocks from appearing in the OpenCode conversation).
+ */
+export function isDbContextInjected(openCodeSessionId: string): boolean {
+  if (!openCodeSessionId) {
+    return false;
+  }
+  return injectedSessionIds.has(openCodeSessionId);
+}
+
 /** Test-only: reset the dedupe set. */
 export function _resetInjectedSessionsForTests(): void {
   injectedSessionIds.clear();
