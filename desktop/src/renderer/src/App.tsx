@@ -14,9 +14,15 @@ function LazyViewFallback(): React.ReactElement {
 }
 import StatusBar from './components/StatusBar';
 import ShortcutHelpModal from './components/ShortcutHelpModal';
-import PermissionToast from './components/PermissionToast';
+import AllowFolderModal from './components/AllowFolderModal';
 import { TooltipProvider } from './components/ui/tooltip';
+import { Toaster } from './components/ui/sonner';
 import { useConnections } from './hooks/useConnections';
+import {
+  usePermissionToasts,
+  dismissPermissionToast,
+  type FolderPromptRequest,
+} from './hooks/usePermissionToasts';
 import { useGlobalShortcuts } from './hooks/useGlobalShortcuts';
 import { useSettingsSync } from './store';
 import { useProvidersBootstrap } from './store/providers';
@@ -36,6 +42,10 @@ export default function App(): React.ReactElement {
   useProvidersBootstrap();
 
   const switchToPrompt = useCallback(() => setActiveTab('prompt'), []);
+
+  const [folderPrompt, setFolderPrompt] = useState<FolderPromptRequest | null>(
+    null,
+  );
 
   const {
     connections,
@@ -58,10 +68,15 @@ export default function App(): React.ReactElement {
     jumpToFirstPendingPrompt,
   } = useConnections(switchToPrompt);
 
-  const handlePromptTabClick = useCallback(() => {
-    setActiveTab('prompt');
-    jumpToFirstPendingPrompt();
-  }, [jumpToFirstPendingPrompt]);
+  usePermissionToasts({
+    connections,
+    onReplyPermission: handleReplyPermission,
+    onSelectSession: (sessionId) => {
+      setActiveConnectionId(sessionId);
+      setActiveTab('prompt');
+    },
+    onRequestFolderPrompt: setFolderPrompt,
+  });
 
   const switchTab = useCallback((tab: 1 | 2 | 3) => {
     setActiveTab(TABS[tab - 1]);
@@ -72,10 +87,19 @@ export default function App(): React.ReactElement {
     openShortcuts,
     closeShortcuts,
     showQuickSwitcher,
+    openQuickSwitcher,
     closeQuickSwitcher,
   } = useGlobalShortcuts({
     onSwitchTab: switchTab,
   });
+
+  // "New chat" — clear the active connection so the IdleStateView /
+  // new-session form takes over. This mirrors the existing path used when
+  // the active session is removed.
+  const handleNewChat = useCallback(() => {
+    setActiveTab('prompt');
+    setActiveConnectionId(null);
+  }, [setActiveConnectionId]);
 
   const handleRefreshSessions = useCallback(() => {
     void window.api.refreshSessionTree();
@@ -94,81 +118,30 @@ export default function App(): React.ReactElement {
   const handleSelectSession = useCallback(
     (sessionId: string) => {
       setActiveConnectionId(sessionId);
+      setActiveTab('prompt');
     },
     [setActiveConnectionId],
   );
 
-  const hasAnyPrompt = useSessionGraphSelector(
-    (state) => state.hasPendingPrompt,
-  );
-  // Show the badge whenever there is a pending prompt on a channel that is NOT
-  // currently visible — i.e. either we're on a different tab, or we're on the
-  // prompt tab but viewing a channel without a pending prompt.
-  const activeChannelHasPrompt = Boolean(activeConn?.hasPendingPrompt);
-  const showPromptBadge = hasAnyPrompt && !activeChannelHasPrompt;
   const connectionCount = useSessionGraphSelector(
     (state) => state.connectionCount,
   );
 
   return (
-    <TooltipProvider delayDuration={200}>
+    <TooltipProvider delay={200}>
       <div
-        className="flex flex-col h-screen bg-[var(--color-bg)] text-[var(--color-text)]"
+        className="relative flex flex-col h-screen bg-[var(--color-bg)] text-[var(--color-text)]"
         data-compact={compactMode ? 'true' : 'false'}
       >
-        <header
-          data-titlebar
-          className="titlebar-drag flex items-center justify-between border-b border-[var(--color-border)] bg-[var(--color-surface)]/92 pb-3 pl-24 pr-5 pt-4 backdrop-blur-md"
-        >
-          <div className="flex min-w-0 items-center gap-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-2xl border border-[var(--color-border)] bg-[var(--color-agent)]/10 text-[var(--color-agent)] shadow-sm">
-              <span className="text-base leading-none">&#x276F;</span>
-            </div>
-            <div className="min-w-0">
-              <h1 className="text-sm font-semibold uppercase tracking-[0.18em] text-[var(--color-text)]">
-                Eden
-              </h1>
-              <p className="truncate text-[11px] text-[var(--color-text-faint)]">
-                Interactive MCP Desktop
-              </p>
-            </div>
-          </div>
-          <nav className="titlebar-no-drag flex items-center gap-1 rounded-2xl border border-[var(--color-border)] bg-[var(--color-surface-alt)]/85 p-1 shadow-sm">
-            <TabButton
-              active={activeTab === 'prompt'}
-              onClick={handlePromptTabClick}
-              badge={showPromptBadge}
-              shortcut="&#x2318;1"
-            >
-              Prompts
-            </TabButton>
-            <TabButton
-              active={activeTab === 'skills'}
-              onClick={() => setActiveTab('skills')}
-              shortcut="&#x2318;2"
-            >
-              Skills
-            </TabButton>
-            <TabButton
-              active={activeTab === 'settings'}
-              onClick={() => setActiveTab('settings')}
-              shortcut="&#x2318;3"
-            >
-              Settings
-            </TabButton>
-          </nav>
-        </header>
-
         <main className="flex-1 overflow-hidden">
-          <div
-            className={
-              activeTab === 'prompt' ? 'h-full min-h-0 w-full' : 'hidden'
-            }
-          >
+          <div className="h-full min-h-0 w-full">
             <PromptView
               connections={connections}
               activeConnectionId={activeConnectionId}
-              onSelectConnection={setActiveConnectionId}
+              onSelectConnection={(id) => {
+                setActiveConnectionId(id);
+                setActiveTab('prompt');
+              }}
               prompt={activeConn?.prompt ?? null}
               pendingQuestions={activeConn?.pendingQuestions ?? []}
               activeSession={activeConn?.activeSession ?? null}
@@ -190,18 +163,23 @@ export default function App(): React.ReactElement {
               }
               onReplyQuestion={handleReplyQuestion}
               onRejectQuestion={handleRejectQuestion}
+              activeTab={activeTab}
+              onNavigate={handleNavigate}
+              onNewChat={handleNewChat}
+              onOpenSearch={openQuickSwitcher}
+              rightPaneOverride={
+                activeTab === 'skills' ? (
+                  <Suspense fallback={<LazyViewFallback />}>
+                    <SkillsView />
+                  </Suspense>
+                ) : activeTab === 'settings' ? (
+                  <Suspense fallback={<LazyViewFallback />}>
+                    <SettingsView />
+                  </Suspense>
+                ) : undefined
+              }
             />
           </div>
-          {activeTab === 'skills' && (
-            <Suspense fallback={<LazyViewFallback />}>
-              <SkillsView />
-            </Suspense>
-          )}
-          {activeTab === 'settings' && (
-            <Suspense fallback={<LazyViewFallback />}>
-              <SettingsView />
-            </Suspense>
-          )}
         </main>
 
         <StatusBar
@@ -221,53 +199,25 @@ export default function App(): React.ReactElement {
             />
           </Suspense>
         )}
-        <PermissionToast
-          connections={connections}
-          onReplyPermission={handleReplyPermission}
-          onSelectSession={(sessionId) => {
-            setActiveConnectionId(sessionId);
-            setActiveTab('prompt');
-          }}
-        />
+        {folderPrompt && (
+          <AllowFolderModal
+            filePath={folderPrompt.filePath}
+            onSelectFolder={(folderPath) => {
+              dismissPermissionToast(folderPrompt.requestId);
+              handleReplyPermission(
+                folderPrompt.sessionID,
+                folderPrompt.requestId,
+                'always',
+                folderPrompt.directory,
+              );
+              void window.api.addAllowedReadFolder(folderPath);
+              setFolderPrompt(null);
+            }}
+            onCancel={() => setFolderPrompt(null)}
+          />
+        )}
+        <Toaster position="bottom-right" richColors closeButton />
       </div>
     </TooltipProvider>
-  );
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-  badge,
-  shortcut,
-}: {
-  active: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-  badge?: boolean;
-  shortcut?: string;
-}): React.ReactElement {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`relative rounded-xl px-3.5 py-1.5 text-xs font-medium transition-all ${
-        active
-          ? 'bg-[var(--color-agent)]/12 text-[var(--color-agent)] shadow-xs-border-select'
-          : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)]/70 hover:text-[var(--color-text)]'
-      }`}
-    >
-      <span className="flex items-center gap-1">
-        {children}
-        {shortcut && (
-          <span className="text-[10px] text-[var(--color-text-faint)]">
-            {shortcut}
-          </span>
-        )}
-      </span>
-      {badge && (
-        <span className="absolute right-1 top-1 h-2 w-2 rounded-full bg-[var(--color-user)] animate-pulse" />
-      )}
-    </button>
   );
 }

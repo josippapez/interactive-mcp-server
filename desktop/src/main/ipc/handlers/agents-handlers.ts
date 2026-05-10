@@ -8,11 +8,12 @@ import {
   type WriteAgentParams,
 } from '../../utility/opencode-client';
 import { logIpcInfo } from './shared';
+import { IpcHandlerDeps } from './types';
 import { errorMessage } from '../../utils/errors';
 
 type IpcResult<T> = { ok: true; data: T } | { ok: false; error: string };
 
-export function registerAgentsHandlers(): void {
+export function registerAgentsHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'list-agents',
     async (
@@ -21,7 +22,8 @@ export function registerAgentsHandlers(): void {
     ): Promise<IpcResult<AgentDefinition[]>> => {
       try {
         logIpcInfo(`list-agents: baseDirectory=${baseDirectory ?? '<none>'}`);
-        const data = await listAgents(baseDirectory);
+        const settings = deps.getSettings();
+        const data = await listAgents(settings.openCodePort, baseDirectory);
         return { ok: true, data };
       } catch (err) {
         return { ok: false, error: errorMessage(err) };

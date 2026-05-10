@@ -10,6 +10,7 @@ import { findModelById, modelsAtom } from './providers';
 type SessionBaseModel = {
   modelId: string | null;
   providerId: string | null;
+  variant?: string | null;
 };
 
 type SessionBaseModelMap = Record<string, SessionBaseModel>;
@@ -23,23 +24,30 @@ export function useSetSessionBaseModel(): (
   sessionId: string,
   modelId: string | null,
   providerId: string | null,
+  variant?: string | null,
 ) => void {
   const setBaseModels = useSetAtom(sessionBaseModelsAtom);
 
   return useCallback(
-    (sessionId: string, modelId: string | null, providerId: string | null) => {
+    (
+      sessionId: string,
+      modelId: string | null,
+      providerId: string | null,
+      variant?: string | null,
+    ) => {
       setBaseModels((prev) => {
         const current = prev[sessionId];
         if (
           current?.modelId === modelId &&
-          current?.providerId === providerId
+          current?.providerId === providerId &&
+          current?.variant === variant
         ) {
           return prev;
         }
 
         return {
           ...prev,
-          [sessionId]: { modelId, providerId },
+          [sessionId]: { modelId, providerId, variant: variant ?? null },
         };
       });
     },
@@ -94,7 +102,7 @@ export function useSessionModelSelection(sessionId: string | null): {
     const modelId = currentModelOverride?.modelId ?? base?.modelId ?? null;
     const providerId =
       currentModelOverride?.providerId ?? base?.providerId ?? null;
-    const variant = currentModelOverride?.variant ?? null;
+    const variant = currentModelOverride?.variant ?? base?.variant ?? null;
     const model = modelId ? findModelById(models, modelId, providerId) : null;
 
     return {

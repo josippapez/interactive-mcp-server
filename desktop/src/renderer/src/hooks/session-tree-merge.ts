@@ -347,6 +347,8 @@ export type Project = {
   latestActivity: number;
   /** Oldest session creation timestamp across all root sessions */
   earliestSessionCreatedAt: number;
+  /** Newest session creation timestamp across all root sessions */
+  latestSessionCreatedAt: number;
   /** Whether this project was manually pinned (vs auto-detected from sessions) */
   isPinned: boolean;
 };
@@ -394,9 +396,14 @@ export function groupByProject(
     projectMap.get(projectPath)!.push(root);
   }
 
-  // Add pinned paths that don't have any sessions yet
-  const pinnedSet = new Set(pinnedPaths);
-  for (const pinnedPath of pinnedPaths) {
+  // Add pinned paths that don't have any sessions yet.
+  // Skip empty/whitespace-only paths defensively — they would otherwise
+  // render a phantom rail tile with blank initials and a literal "Project"
+  // tooltip (because getProjectName('') === '' and ProjectRail's display
+  // fallback uses the literal string "Project").
+  const sanitizedPinned = pinnedPaths.filter((path) => path?.trim());
+  const pinnedSet = new Set(sanitizedPinned);
+  for (const pinnedPath of sanitizedPinned) {
     if (!projectMap.has(pinnedPath)) {
       projectMap.set(pinnedPath, []);
     }
@@ -418,6 +425,7 @@ export function groupByProject(
         hasUnread: false,
         latestActivity: 0,
         earliestSessionCreatedAt: 0,
+        latestSessionCreatedAt: 0,
         isPinned,
       });
       continue;
@@ -449,6 +457,10 @@ export function groupByProject(
       const createdAt = session.createdAt ?? Number.POSITIVE_INFINITY;
       return Math.min(earliest, createdAt);
     }, Number.POSITIVE_INFINITY);
+    const latestSessionCreatedAt = sortedRoots.reduce((latest, session) => {
+      const createdAt = session.createdAt ?? 0;
+      return Math.max(latest, createdAt);
+    }, 0);
 
     projects.push({
       path,
@@ -461,21 +473,24 @@ export function groupByProject(
         earliestSessionCreatedAt === Number.POSITIVE_INFINITY
           ? 0
           : earliestSessionCreatedAt,
+      latestSessionCreatedAt,
       isPinned,
     });
   }
 
-  // Sort projects by earliest session start time (newer first).
-  // This keeps ordering stable and avoids activity-based jumping.
-  // Pinned projects without sessions go to the bottom.
+  // Sort pinned projects first, then by latest session creation time (newer
+  // first). This keeps ordering stable and avoids activity-based jumping.
   projects.sort((a, b) => {
-    // Empty pinned projects go last
+    if (a.isPinned !== b.isPinned) {
+      return a.isPinned ? -1 : 1;
+    }
+
     const aEmpty = a.sessions.length === 0;
     const bEmpty = b.sessions.length === 0;
     if (aEmpty && !bEmpty) return 1;
     if (!aEmpty && bEmpty) return -1;
 
-    const createdDiff = b.earliestSessionCreatedAt - a.earliestSessionCreatedAt;
+    const createdDiff = b.latestSessionCreatedAt - a.latestSessionCreatedAt;
     if (createdDiff !== 0) return createdDiff;
 
     return a.name.localeCompare(b.name);

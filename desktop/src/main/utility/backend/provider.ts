@@ -463,13 +463,18 @@ export async function authorizeProvider(
 ): Promise<ProviderActionResult<AuthorizeResult>> {
   try {
     const client = getClient(openCodePort);
+    // OAuth device-code flows (e.g. GitHub Copilot) require the user to
+    // visit a browser, paste a code, and authorize — easily 30-60s+. A 10s
+    // timeout would abort before the user finishes, leaving auth.json
+    // updated on disk but the in-app modal in an error state. 5 min is a
+    // generous upper bound for human-in-the-loop OAuth.
     const response = await client.provider.oauth.authorize(
       {
         providerID: providerId,
         method,
         inputs,
       },
-      { signal: AbortSignal.timeout(10000) },
+      { signal: AbortSignal.timeout(300_000) },
     );
 
     if (response.error) {
@@ -501,13 +506,15 @@ export async function callbackProvider(
 ): Promise<ProviderActionResult<true>> {
   try {
     const client = getClient(openCodePort);
+    // See note on authorizeProvider — the same human-in-the-loop window
+    // applies to the callback step.
     const response = await client.provider.oauth.callback(
       {
         providerID: providerId,
         method,
         code,
       },
-      { signal: AbortSignal.timeout(10000) },
+      { signal: AbortSignal.timeout(300_000) },
     );
 
     if (response.error) {

@@ -9,16 +9,19 @@ import {
 import {
   DiagnosticsBadge,
   DiagnosticsList,
+  HighlightedCodeBlock,
   TOOL_CALL_MONO_TEXT_CLASS,
   ToolChevron,
   ToolDurationBadge,
+  ToolNameBadge,
   ToolStatusBadge,
-  WrapToggleCodeBlock,
   countDiagnostics,
   extractDiagnosticsForFile,
   splitPath,
 } from './ToolCallShared';
 import { classifyTool } from './tool-registry';
+import { resolveNextToolExpandedState } from './tool-expanded-state';
+import { inferLanguage } from '../DiffView';
 
 function getFilePath(input: Record<string, unknown> | undefined): string {
   if (!input) return '';
@@ -74,17 +77,23 @@ export const WriteToolCard = memo(function WriteToolCard({
   tool: ToolCallInfo;
   forceExpanded: boolean;
 }): React.ReactElement {
-  const [isExpanded, setIsExpanded] = useState(forceExpanded);
+  const isPending = tool.status === 'pending';
+  const [isExpanded, setIsExpanded] = useState(forceExpanded || isPending);
 
   useEffect(() => {
-    if (forceExpanded) setIsExpanded(true);
-  }, [forceExpanded]);
+    setIsExpanded((currentExpanded) =>
+      resolveNextToolExpandedState({
+        currentExpanded,
+        forceExpanded,
+        isPending,
+      }),
+    );
+  }, [forceExpanded, isPending]);
 
   const filePath = getFilePath(tool.input);
   const content = getContent(tool.input);
   const { directory, filename } = splitPath(filePath);
   const lineCount = countLines(content);
-  const isPending = tool.status === 'pending';
   const showSuccessFooter =
     tool.status === 'completed' && isSuccessOutput(tool.output) && filePath;
   const diagnostics = extractDiagnosticsForFile(tool.metadata, filePath);
@@ -96,51 +105,55 @@ export const WriteToolCard = memo(function WriteToolCard({
       onOpenChange={setIsExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-component="tool-trigger"
-          data-variant="write-trigger"
-          data-pending={isPending ? 'true' : undefined}
-        >
-          <FilePlus
-            data-slot="tool-icon"
-            aria-hidden="true"
-            className="shrink-0"
-          />
-          <span data-slot="tool-title">Write</span>
-          <span
-            data-slot="tool-subtitle"
-            title={filePath}
-            className="font-mono inline-flex items-baseline min-w-0"
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            data-component="tool-trigger"
+            data-variant="write-trigger"
+            data-pending={isPending ? 'true' : undefined}
           >
-            {directory && (
-              <span className="text-[var(--text-weak)] truncate">
-                {directory}
+            <FilePlus
+              data-slot="tool-icon"
+              aria-hidden="true"
+              className="shrink-0"
+            />
+            <span data-slot="tool-title">Write</span>
+            <ToolNameBadge name={tool.name} />
+            <span
+              data-slot="tool-subtitle"
+              title={filePath}
+              className="font-mono inline-flex items-baseline min-w-0"
+            >
+              {directory && (
+                <span className="text-[var(--text-weak)] truncate">
+                  {directory}
+                </span>
+              )}
+              <span className="text-[var(--text-strong)] font-medium">
+                {filename}
+              </span>
+            </span>
+            {lineCount > 0 && (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium uppercase tracking-wide shrink-0 bg-[var(--color-success-surface)] text-[var(--color-success)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+              >
+                +{lineCount} lines
               </span>
             )}
-            <span className="text-[var(--text-strong)] font-medium">
-              {filename}
-            </span>
-          </span>
-          {lineCount > 0 && (
-            <span
-              className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium uppercase tracking-wide shrink-0 bg-[var(--color-success-surface)] text-[var(--color-success)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
-            >
-              +{lineCount} lines
-            </span>
-          )}
-          <DiagnosticsBadge counts={diagnosticCounts} />
-          <ToolDurationBadge tool={tool} />
-          <ToolStatusBadge status={tool.status} />
-          <ToolChevron />
-        </button>
-      </CollapsibleTrigger>
+            <DiagnosticsBadge counts={diagnosticCounts} />
+            <ToolDurationBadge tool={tool} />
+            <ToolStatusBadge status={tool.status} />
+            <ToolChevron />
+          </button>
+        }
+      />
 
       <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">
         {content && (
-          <WrapToggleCodeBlock
+          <HighlightedCodeBlock
             text={content}
+            language={inferLanguage(filePath)}
             maxHeightClass="max-h-[360px]"
             preClassName="!max-h-[360px]"
           />

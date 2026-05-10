@@ -1,9 +1,10 @@
 /**
- * Bridge RPC handlers for the in-process OpenCode HTTP server.
+ * Bridge RPC handlers for the in-process OpenCode HTTP server (Mode A).
  *
- * Registered once by `entry.ts`. One RPC per public function in
- * `opencode-server.ts` — main-side proxies live in
- * `utility/opencode-server-client.ts`.
+ * Registered by `entry.ts` ONLY when `RUNTIME_KIND === 'in-process-utility'`.
+ * Each RPC maps 1:1 onto a public function in `./opencode-server.ts`. The
+ * main-side counterpart is the `UtilityRpcAdapter` in
+ * `src/main/opencode/adapters/`, behind the `server-facade.ts`.
  */
 
 import type { Bridge } from '../bridge';

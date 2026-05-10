@@ -47,6 +47,8 @@ import { registerDbRpcHandlers } from './backend/db-rpc';
 import { registerSessionRpcHandlers } from './backend/session-rpc';
 import { registerOpencodeServerRpcHandlers } from './backend/opencode-server-rpc';
 import { registerOpencodeRpcHandlers } from './backend/opencode-rpc';
+import { registerOpenCodeUrlBridgeHandler } from './backend/opencode/url-bridge-handler';
+import { RUNTIME_KIND } from '../opencode/runtime-mode';
 import {
   startMcpServer,
   stopMcpServer,
@@ -54,8 +56,10 @@ import {
   softRestartMcpServer,
   closeSessionByConnectionId,
   getActiveMcpSessionCount,
+  getResolvedMcpPort,
 } from './backend/mcp-server';
 import { markSessionDeleted } from './backend/tools/connection-guard';
+import { replyToOpenCodePermission } from './backend/permission-reply';
 
 // Electron utility processes expose `process.parentPort` to receive messages
 // and MessagePortMain instances from the parent. Node's own type defs do not
@@ -175,9 +179,20 @@ function bootstrap(): void {
     // reconcile). Main-side proxies live in utility/session-client.ts.
     registerSessionRpcHandlers(bridge);
 
-    // Register in-process OpenCode server RPC handlers. Main-side proxies
-    // live in utility/opencode-server-client.ts.
-    registerOpencodeServerRpcHandlers(bridge);
+    // Register in-process OpenCode server RPC handlers ONLY in Mode A
+    // (`in-process-utility`). In Mode B/C the runtime lives in the main
+    // process; registering Mode A handlers here would let main accidentally
+    // boot a second backend-hosted instance and bind the same port.
+    if (RUNTIME_KIND === 'in-process-utility') {
+      registerOpencodeServerRpcHandlers(bridge);
+    }
+
+    // URL bridge handler is wired UNCONDITIONALLY. In Mode A the backend
+    // already owns the URL via the local URL subject — main pushes are
+    // a no-op. In Mode B/C this is the only mechanism by which backend
+    // SDK clients learn about the active URL after main starts the
+    // host process.
+    registerOpenCodeUrlBridgeHandler(bridge);
 
     // Register the OpenCode SDK-layer RPC handlers (session, injector,
     // providers, MCP, config, agents, etc.). Main-side proxies live in
@@ -188,7 +203,11 @@ function bootstrap(): void {
     // in `utility/mcp-server-client.ts`. The Express listener lives here.
     bridge.handle('mcp.server.start', async () => {
       await startMcpServer();
-      return { ok: true };
+      return { ok: true, port: getResolvedMcpPort() };
+    });
+    bridge.handle('mcp.server.restart', async () => {
+      await restartMcpServer();
+      return { ok: true, port: getResolvedMcpPort() };
     });
     bridge.handle('mcp.server.stop', () => {
       stopMcpServer();
@@ -197,10 +216,6 @@ function bootstrap(): void {
     bridge.handle('mcp.server.softRestart', async () => {
       const cleared = await softRestartMcpServer();
       return { cleared };
-    });
-    bridge.handle('mcp.server.restart', async () => {
-      await restartMcpServer();
-      return { ok: true };
     });
     bridge.handle('mcp.server.closeSessionByConnectionId', async (payload) => {
       const p = payload as { connectionId?: string } | undefined;
@@ -332,8 +347,6 @@ function bootstrap(): void {
       if (!p?.openCodePort || !p.sessionID || !p.requestID || !p.reply) {
         return { ok: false, error: 'reply-permission missing required fields' };
       }
-      const { replyToOpenCodePermission } =
-        await import('./backend/permission-reply');
       return replyToOpenCodePermission(
         p.openCodePort,
         p.sessionID,

@@ -6,6 +6,7 @@ import {
 import { autoDetectOpenCodeSessionId } from '../../utility/opencode-client';
 import { registerMcpAcrossReachablePorts } from '../../utility/opencode-client';
 import { syncRemoteConfig } from '../../utility/opencode-client';
+import { fetchOpenCodeConfigDefaults } from '../../utility/opencode-client';
 import {
   readGlobalConfig,
   readProjectConfig,
@@ -19,6 +20,7 @@ import {
 import { IpcHandlerDeps } from './types';
 import { logIpcInfo } from './shared';
 import { errorMessage } from '../../utils/errors';
+import { withIpcResult } from './ipc-result';
 
 export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
   // Manually trigger MCP registration + config sync into OpenCode
@@ -71,6 +73,17 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
         throw new Error(message, { cause: err });
       }
     },
+  );
+
+  ipcMain.handle(
+    'fetch-opencode-config-defaults',
+    withIpcResult(async (_event, baseDirectory?: string) => {
+      const settings = deps.getSettings();
+      logIpcInfo(
+        `fetch-opencode-config-defaults: baseDirectory=${baseDirectory ?? '<none>'}`,
+      );
+      return fetchOpenCodeConfigDefaults(settings.openCodePort, baseDirectory);
+    }),
   );
 
   ipcMain.handle(

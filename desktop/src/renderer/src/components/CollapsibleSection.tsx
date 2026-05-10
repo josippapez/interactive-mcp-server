@@ -23,20 +23,22 @@ export default function CollapsibleSection({
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen}>
       <div className="border-l-[3px] rounded-sm" style={{ borderColor }}>
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 w-full px-3 py-1.5 text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
-          >
-            <span
-              className="transition-transform duration-200 text-[10px]"
-              style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+        <CollapsibleTrigger
+          render={
+            <button
+              type="button"
+              className="flex items-center gap-1.5 w-full px-3 py-1.5 text-left text-xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors"
             >
-              ▶
-            </span>
-            <span className="truncate">{title}</span>
-          </button>
-        </CollapsibleTrigger>
+              <span
+                className="transition-transform duration-200 text-[10px]"
+                style={{ transform: isOpen ? 'rotate(90deg)' : 'rotate(0deg)' }}
+              >
+                ▶
+              </span>
+              <span className="truncate">{title}</span>
+            </button>
+          }
+        />
         <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
           <div className="px-3 pb-2">{children}</div>
         </CollapsibleContent>

@@ -9,7 +9,7 @@ import {
   type DiffLine,
 } from '../../lib/diff-parser';
 import type { ToolCallInfo } from '../../types/unified-message';
-import { DiffChanges, splitPath } from './tool-call/ToolCallShared';
+import { useWrapCodeBlocks } from './tool-call/use-wrap-code-blocks';
 
 type DiffViewProps = {
   tool: ToolCallInfo;
@@ -360,7 +360,7 @@ const SideColumn = memo(function SideColumn({
 const DiffView = memo(function DiffView({
   tool,
 }: DiffViewProps): React.ReactElement | null {
-  const [wrapLines, setWrapLines] = useState(false);
+  const { wrapLines } = useWrapCodeBlocks();
   const diffData = useMemo(() => {
     if (!isEditToolCall(tool.name)) return null;
 
@@ -400,41 +400,8 @@ const DiffView = memo(function DiffView({
 
   if (!diffData) return null;
 
-  const { directory, filename } = splitPath(diffData.filePath);
-
   return (
     <div data-component="diff-view" data-variant="side-by-side">
-      <div data-slot="diff-header">
-        <span
-          data-slot="diff-filepath"
-          title={diffData.filePath}
-          className="font-mono"
-        >
-          {directory && (
-            <span className="text-[var(--text-weaker)]">{directory}</span>
-          )}
-          <span>{filename}</span>
-        </span>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            aria-pressed={wrapLines}
-            onClick={() => setWrapLines((prev) => !prev)}
-            className={`rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wide transition-colors ${
-              wrapLines
-                ? 'border-[var(--color-agent)]/40 bg-[var(--color-agent)]/12 text-[var(--color-agent)]'
-                : 'border-[var(--border-weaker-base)] text-[var(--text-weaker)] hover:bg-[var(--background-base)]'
-            }`}
-          >
-            Wrap lines
-          </button>
-          <DiffChanges
-            additions={diffData.additions}
-            deletions={diffData.removals}
-          />
-        </div>
-      </div>
-
       <SideBySideDiffGrid
         rows={diffData.rows}
         language={diffData.language}

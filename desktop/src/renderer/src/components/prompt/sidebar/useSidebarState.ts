@@ -25,8 +25,12 @@ type UseSidebarStateProps = {
  */
 export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
   // Pinned projects management
-  const { pinnedPaths, handleAddProject, handleRemoveProject } =
-    usePinnedProjects();
+  const {
+    pinnedPaths,
+    handleAddProject,
+    handlePinProject,
+    handleRemoveProject,
+  } = usePinnedProjects();
 
   const openCodeTree = useSessionGraphSelector((state) => state.openCodeTree);
   const directConnections = useSessionGraphSelector(
@@ -164,6 +168,7 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     handleToggleProject,
     handleToggleSession,
     handleAddProject,
+    handlePinProject,
     handleRemoveProject,
     handleSelectProject,
   };

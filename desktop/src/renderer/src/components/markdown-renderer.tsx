@@ -14,7 +14,7 @@ export function getMarkdownProseClasses(
     prose-a:text-[var(--color-agent)]
     prose-strong:text-[var(--color-text)]
     prose-code:text-[var(--color-agent)] prose-code:bg-[var(--color-surface)] prose-code:px-1 prose-code:py-0.5 prose-code:rounded-sm
-    prose-pre:bg-transparent prose-pre:p-0
+    prose-pre:bg-transparent prose-pre:p-0 prose-pre:overflow-x-auto
     prose-li:text-[var(--color-text)]
     prose-th:text-[var(--color-text)] prose-td:text-[var(--color-text-muted)]
     prose-blockquote:border-[var(--color-tool)] prose-blockquote:text-[var(--color-text-muted)]

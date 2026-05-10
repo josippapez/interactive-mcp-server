@@ -1,5 +1,9 @@
 import { ipcRenderer } from 'electron';
-import type { FolderRecord, SkillOrInstructionRecord } from './types';
+import type {
+  FolderRecord,
+  NativeOpenCodeSkill,
+  SkillOrInstructionRecord,
+} from './types';
 
 export function createSkillsApi() {
   return {
@@ -24,6 +28,10 @@ export function createSkillsApi() {
         filterType,
         filterCategory,
       }),
+    listNativeOpenCodeSkills: (
+      baseDirectory?: string,
+    ): Promise<NativeOpenCodeSkill[]> =>
+      ipcRenderer.invoke('list-native-opencode-skills', baseDirectory),
     getSkillOrInstruction: (
       name: string,
     ): Promise<SkillOrInstructionRecord | null> =>

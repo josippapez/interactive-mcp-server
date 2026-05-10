@@ -528,7 +528,7 @@ export default function ProviderAuthModal({
             currentKey={auth.promptState.currentKey}
             onInputChange={auth.submitPromptInput}
             onSubmit={() => void auth.proceedToAuthorize()}
-            isSubmitting={auth.status === 'authorizing'}
+            isSubmitting={false}
           />
         );
 
@@ -555,7 +555,7 @@ export default function ProviderAuthModal({
             instructions={auth.oauthResult.instructions}
             onSubmitCode={(code) => void auth.submitOAuthCode(code)}
             onAutoComplete={() => void auth.completeAutoOAuth()}
-            isSubmitting={auth.status === 'authorizing'}
+            isSubmitting={false}
           />
         );
 

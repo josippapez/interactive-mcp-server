@@ -4,6 +4,7 @@ import {
   filterCommands,
   type Command,
 } from '../../hooks/useCommands';
+import type { NativeOpenCodeSkill } from '../../../../preload/api/types';
 
 interface CommandPaletteProps {
   /** The session ID to execute commands in */
@@ -18,6 +19,8 @@ interface CommandPaletteProps {
   initialQuery?: string;
   /** Callback when a command is successfully executed */
   onCommandExecuted?: (commandName: string) => void;
+  /** Callback when a skill is selected from the native skill picker */
+  onSkillSelected?: (skillName: string) => void;
   /**
    * Project directory to scope command fetch + execution to. Forwarded to the
    * OpenCode SDK via the `x-opencode-directory` header so that project-local
@@ -77,10 +80,13 @@ export default function CommandPalette({
   anchorPosition,
   initialQuery = '',
   onCommandExecuted,
+  onSkillSelected,
   baseDirectory,
 }: CommandPaletteProps): React.ReactElement | null {
   const { commands, isLoading, error, execute, isExecuting, refresh } =
     useCommands(true, baseDirectory);
+  const [skills, setSkills] = useState<NativeOpenCodeSkill[]>([]);
+  const [showSkillPicker, setShowSkillPicker] = useState(false);
   const [query, setQuery] = useState(initialQuery);
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [executionError, setExecutionError] = useState<string | null>(null);
@@ -89,9 +95,30 @@ export default function CommandPalette({
 
   // Filter commands based on search query
   const filteredCommands = useMemo(
-    () => filterCommands(commands, query),
+    () =>
+      filterCommands(
+        [
+          {
+            name: 'skills',
+            description: 'Search and reference an available OpenCode skill',
+            args: [],
+          },
+          ...commands,
+        ],
+        query,
+      ),
     [commands, query],
   );
+
+  const filteredSkills = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return skills;
+    return skills.filter(
+      (skill) =>
+        skill.name.toLowerCase().includes(needle) ||
+        skill.description.toLowerCase().includes(needle),
+    );
+  }, [query, skills]);
 
   // Reset selection when query changes
   useEffect(() => {
@@ -104,6 +131,24 @@ export default function CommandPalette({
     setQuery(initialQuery);
   }, [initialQuery]);
 
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const all = await window.api.listNativeOpenCodeSkills(
+          baseDirectory ?? undefined,
+        );
+        if (!cancelled) setSkills(all);
+      } catch {
+        if (!cancelled) setSkills([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [baseDirectory, open]);
+
   // Focus input when palette opens
   useEffect(() => {
     if (open && inputRef.current) {
@@ -113,13 +158,21 @@ export default function CommandPalette({
 
   // Scroll selected item into view
   useEffect(() => {
-    if (listRef.current && filteredCommands.length > 0) {
+    const count = showSkillPicker
+      ? filteredSkills.length
+      : filteredCommands.length;
+    if (listRef.current && count > 0) {
       const selectedEl = listRef.current.children[selectedIndex] as HTMLElement;
       if (selectedEl) {
         selectedEl.scrollIntoView({ block: 'nearest' });
       }
     }
-  }, [selectedIndex, filteredCommands.length]);
+  }, [
+    selectedIndex,
+    filteredCommands.length,
+    filteredSkills.length,
+    showSkillPicker,
+  ]);
 
   // Handle keyboard navigation
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -127,7 +180,11 @@ export default function CommandPalette({
       case 'ArrowDown':
         e.preventDefault();
         setSelectedIndex((prev) =>
-          prev < filteredCommands.length - 1 ? prev + 1 : prev,
+          prev <
+          (showSkillPicker ? filteredSkills.length : filteredCommands.length) -
+            1
+            ? prev + 1
+            : prev,
         );
         break;
       case 'ArrowUp':
@@ -136,7 +193,9 @@ export default function CommandPalette({
         break;
       case 'Enter':
         e.preventDefault();
-        if (filteredCommands[selectedIndex]) {
+        if (showSkillPicker && filteredSkills[selectedIndex]) {
+          handleSelectSkill(filteredSkills[selectedIndex]);
+        } else if (filteredCommands[selectedIndex]) {
           handleExecute(filteredCommands[selectedIndex]);
         }
         break;
@@ -149,11 +208,21 @@ export default function CommandPalette({
         e.preventDefault();
         if (e.shiftKey) {
           setSelectedIndex((prev) =>
-            prev > 0 ? prev - 1 : filteredCommands.length - 1,
+            prev > 0
+              ? prev - 1
+              : (showSkillPicker
+                  ? filteredSkills.length
+                  : filteredCommands.length) - 1,
           );
         } else {
           setSelectedIndex((prev) =>
-            prev < filteredCommands.length - 1 ? prev + 1 : 0,
+            prev <
+            (showSkillPicker
+              ? filteredSkills.length
+              : filteredCommands.length) -
+              1
+              ? prev + 1
+              : 0,
           );
         }
         break;
@@ -169,6 +238,13 @@ export default function CommandPalette({
 
     if (isExecuting) return;
 
+    if (command.name === 'skills') {
+      setShowSkillPicker(true);
+      setQuery('');
+      setSelectedIndex(0);
+      return;
+    }
+
     setExecutionError(null);
 
     // For now, execute without args (could extend to show arg input dialog)
@@ -180,6 +256,11 @@ export default function CommandPalette({
     } else {
       setExecutionError(result.error ?? 'Command failed');
     }
+  };
+
+  const handleSelectSkill = (skill: NativeOpenCodeSkill) => {
+    onSkillSelected?.(skill.name);
+    onClose();
   };
 
   if (!open) return null;
@@ -223,7 +304,9 @@ export default function CommandPalette({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Search commands..."
+            placeholder={
+              showSkillPicker ? 'Search skills...' : 'Search commands...'
+            }
             className="flex-1 bg-transparent text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] outline-none"
             autoComplete="off"
             spellCheck={false}
@@ -240,23 +323,55 @@ export default function CommandPalette({
 
         {/* Command list */}
         <div ref={listRef} className="flex-1 overflow-y-auto">
-          {isLoading && commands.length === 0 ? (
+          {isLoading && commands.length === 0 && !showSkillPicker ? (
             <div className="flex items-center justify-center py-8 text-[var(--color-text-faint)]">
               <Spinner />
             </div>
-          ) : filteredCommands.length === 0 ? (
+          ) : (showSkillPicker
+              ? filteredSkills.length
+              : filteredCommands.length) === 0 ? (
             <div className="px-3 py-4 text-center text-sm text-[var(--color-text-faint)]">
               {query
-                ? `No commands matching "${query}"`
-                : 'No commands available'}
-              <button
-                type="button"
-                onClick={() => void refresh()}
-                className="block mx-auto mt-2 text-xs text-[var(--color-agent)] hover:underline"
-              >
-                Refresh
-              </button>
+                ? `No ${showSkillPicker ? 'skills' : 'commands'} matching "${query}"`
+                : showSkillPicker
+                  ? 'No skills available'
+                  : 'No commands available'}
+              {!showSkillPicker && (
+                <button
+                  type="button"
+                  onClick={() => void refresh()}
+                  className="block mx-auto mt-2 text-xs text-[var(--color-agent)] hover:underline"
+                >
+                  Refresh
+                </button>
+              )}
             </div>
+          ) : showSkillPicker ? (
+            filteredSkills.map((skill, index) => (
+              <button
+                key={skill.name}
+                type="button"
+                onClick={() => handleSelectSkill(skill)}
+                onMouseEnter={() => setSelectedIndex(index)}
+                className={`w-full px-3 py-2 text-left flex flex-col gap-0.5 transition-colors ${
+                  index === selectedIndex
+                    ? 'bg-[var(--color-agent)]/10'
+                    : 'hover:bg-[var(--color-surface-alt)]'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-[var(--color-agent)]">
+                    /{skill.name}
+                  </span>
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-[var(--color-agent)]/10 text-[var(--color-agent)]">
+                    skill
+                  </span>
+                </div>
+                <span className="text-xs text-[var(--color-text-muted)] line-clamp-2">
+                  {skill.description}
+                </span>
+              </button>
+            ))
           ) : (
             filteredCommands.map((command, index) => (
               <button

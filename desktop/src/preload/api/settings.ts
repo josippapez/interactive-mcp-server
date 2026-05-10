@@ -1,12 +1,47 @@
 import { ipcRenderer } from 'electron';
 import type { AppSettings } from './types';
 
+export type ResolvedPortsPayload = {
+  mcpRequestedPort: number;
+  mcpResolvedPort: number;
+  openCodeRequestedPort: number;
+  openCodeResolvedPort: number;
+};
+
 export function createSettingsApi() {
   return {
     // Settings
     getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('get-settings'),
     saveSettings: (settings: AppSettings): Promise<boolean> =>
       ipcRenderer.invoke('save-settings', settings),
+
+    /**
+     * Returns the actually-bound MCP and OpenCode ports plus the
+     * user-requested values from disk. Renderer Settings UI surfaces the
+     * resolved value as a read-only hint when it differs from the request
+     * (e.g. another Eden instance occupied the configured port and the
+     * resolver probed upward).
+     */
+    getResolvedPorts: (): Promise<ResolvedPortsPayload> =>
+      ipcRenderer.invoke('get-resolved-ports'),
+
+    /**
+     * Subscribe to resolved-port changes pushed from main. Fires after
+     * MCP/OpenCode start, save-settings restarts, and supervisor rebinds.
+     * The event carries the **full payload** (requested + resolved
+     * values) — renderer does NOT need to follow up with a
+     * `getResolvedPorts()` invoke. Returns an unsubscribe function.
+     */
+    onResolvedPortsChanged: (
+      callback: (payload: ResolvedPortsPayload) => void,
+    ): (() => void) => {
+      const listener = (_e: unknown, payload: ResolvedPortsPayload) =>
+        callback(payload);
+      ipcRenderer.on('resolved-ports:changed', listener);
+      return () => {
+        ipcRenderer.removeListener('resolved-ports:changed', listener);
+      };
+    },
 
     // Pinned projects management
     getPinnedProjects: (): Promise<

@@ -222,17 +222,19 @@ const ContextToolGroup = memo(function ContextToolGroup({
       defaultOpen={forceExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button type="button" data-component="context-tool-group-trigger">
-          <span className="text-[var(--text-base)]">
-            {GATHER_CONTEXT_TOOL_NAME}
-          </span>
-          <span className="text-[var(--text-weaker)] truncate flex-1">
-            {summary}
-          </span>
-          {anyRunning ? <RunningSpinner /> : <Chevron />}
-        </button>
-      </CollapsibleTrigger>
+      <CollapsibleTrigger
+        render={
+          <button type="button" data-component="context-tool-group-trigger">
+            <span className="text-[var(--text-base)]">
+              {GATHER_CONTEXT_TOOL_NAME}
+            </span>
+            <span className="text-[var(--text-weaker)] truncate flex-1">
+              {summary}
+            </span>
+            {anyRunning ? <RunningSpinner /> : <Chevron />}
+          </button>
+        }
+      />
 
       <CollapsibleContent data-component="context-tool-group-list">
         {tools.map((tool) => (

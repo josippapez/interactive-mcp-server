@@ -14,12 +14,20 @@ function bridge() {
   return getUtilitySupervisor().getBridge();
 }
 
-/** Start the MCP Express server inside the utility process. */
-export async function startMcpServer(): Promise<void> {
-  await bridge().request<{ ok: boolean; error?: string }>(
-    'mcp.server.start',
-    {},
-  );
+/**
+ * Start the MCP Express server inside the utility process.
+ *
+ * Returns the actually-bound port. The utility probes upward from
+ * `settings.mcpPort` if that port is in use (e.g. another Eden instance),
+ * so the resolved port may differ from the one passed in settings.
+ */
+export async function startMcpServer(): Promise<number | null> {
+  const result = await bridge().request<{
+    ok: boolean;
+    error?: string;
+    port?: number;
+  }>('mcp.server.start', {});
+  return typeof result?.port === 'number' ? result.port : null;
 }
 
 /** Stop the HTTP listener and tear down all session state. */
@@ -47,9 +55,14 @@ export async function softRestartMcpServer(): Promise<number> {
   }
 }
 
-/** Full stop/start cycle against the utility-owned server. */
-export async function restartMcpServer(): Promise<void> {
-  await bridge().request<{ ok: boolean }>('mcp.server.restart', {});
+/** Full stop/start cycle against the utility-owned server. Returns the
+ * resolved port (may differ from settings.mcpPort after probing). */
+export async function restartMcpServer(): Promise<number | null> {
+  const result = await bridge().request<{ ok: boolean; port?: number }>(
+    'mcp.server.restart',
+    {},
+  );
+  return typeof result?.port === 'number' ? result.port : null;
 }
 
 export async function closeSessionByConnectionId(

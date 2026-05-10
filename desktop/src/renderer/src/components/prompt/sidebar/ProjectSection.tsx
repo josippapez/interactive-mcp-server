@@ -13,6 +13,7 @@ type ProjectSectionProps = {
   isCollapsed: boolean;
   onToggle: () => void;
   onRemove?: () => void;
+  onPin?: () => void;
   activeConnectionId: string | null;
   onSelect: (id: string) => void;
   getStatus: (sessionId: string) => SessionStatusType | null;
@@ -29,6 +30,7 @@ export const ProjectSection = memo(function ProjectSection({
   isCollapsed,
   onToggle,
   onRemove,
+  onPin,
   activeConnectionId,
   onSelect,
   getStatus,
@@ -43,98 +45,102 @@ export const ProjectSection = memo(function ProjectSection({
     <div className="group mb-2 min-w-0 rounded-2xl border border-[var(--color-border-weak)]/75 bg-[var(--color-surface)]/35 p-1.5">
       <div className="relative flex min-w-0 items-center">
         <SidebarMenuButton
-          asChild
           isActive={hasActive}
-          className={`h-auto min-w-0 rounded-xl px-3 py-2.5 hover:bg-[var(--color-border)]/55 ${
+          className={`h-auto min-w-0 rounded-xl px-3 py-2.5 hover:bg-[var(--color-border)]/55 flex min-w-0 w-full items-center gap-2.5 overflow-hidden text-left ${
             hasActive
               ? 'bg-[var(--color-agent)]/6 text-[var(--color-text)] ring-1 ring-[var(--color-agent)]/12'
               : ''
           }`}
+          render={<button type="button" onClick={onToggle} />}
         >
-          <button
-            type="button"
-            onClick={onToggle}
-            className="flex min-w-0 w-full items-center gap-2.5 overflow-hidden text-left"
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="10"
+            height="10"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`shrink-0 text-[var(--color-text-faint)] transition-transform ${
+              isCollapsed ? '' : 'rotate-90'
+            }`}
+            aria-hidden="true"
           >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="10"
-              height="10"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={`shrink-0 text-[var(--color-text-faint)] transition-transform ${
-                isCollapsed ? '' : 'rotate-90'
-              }`}
-              aria-hidden="true"
-            >
-              <path d="m9 18 6-6-6-6" />
-            </svg>
+            <path d="m9 18 6-6-6-6" />
+          </svg>
 
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className={`shrink-0 ${
-                project.isRunning
-                  ? 'text-[var(--color-agent)]'
-                  : project.isPinned && sessionCount === 0
-                    ? 'text-[var(--color-text-faint)] opacity-50'
-                    : 'text-[var(--color-text-faint)]'
-              }`}
-              aria-hidden="true"
-            >
-              <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-            </svg>
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={`shrink-0 ${
+              project.isRunning
+                ? 'text-[var(--color-agent)]'
+                : project.isPinned && sessionCount === 0
+                  ? 'text-[var(--color-text-faint)] opacity-50'
+                  : 'text-[var(--color-text-faint)]'
+            }`}
+            aria-hidden="true"
+          >
+            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+          </svg>
 
-            <span
-              className={`block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm ${
-                project.isRunning
-                  ? 'font-medium text-[var(--color-text)]'
-                  : project.isPinned && sessionCount === 0
-                    ? 'text-[var(--color-text-faint)] opacity-70'
-                    : 'text-[var(--color-text-muted)]'
-              }`}
-              title={project.path}
-            >
-              {project.name}
+          <span
+            className={`block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm ${
+              project.isRunning
+                ? 'font-medium text-[var(--color-text)]'
+                : project.isPinned && sessionCount === 0
+                  ? 'text-[var(--color-text-faint)] opacity-70'
+                  : 'text-[var(--color-text-muted)]'
+            }`}
+            title={project.path}
+          >
+            {project.name}
+          </span>
+
+          {sessionCount > 0 && (
+            <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-faint)]">
+              {sessionCount}
             </span>
+          )}
 
-            {sessionCount > 0 && (
-              <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-faint)]">
-                {sessionCount}
-              </span>
-            )}
-
-            {project.isRunning && (
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-agent)] animate-pulse" />
-            )}
-            {project.hasUnread && !project.isRunning && (
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-user)]" />
-            )}
-          </button>
+          {project.isRunning && (
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-agent)] animate-pulse" />
+          )}
+          {project.hasUnread && !project.isRunning && (
+            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-user)]" />
+          )}
         </SidebarMenuButton>
 
-        {onRemove && (
+        {(onRemove || onPin) && (
           <SidebarMenuAction
             showOnHover
             onClick={(e) => {
               e.stopPropagation();
-              onRemove();
+              if (onRemove) {
+                onRemove();
+              } else {
+                onPin?.();
+              }
             }}
-            title="Remove project folder"
-            className="text-[var(--color-text-faint)] hover:text-[var(--color-error)]"
+            title={onRemove ? 'Remove project folder' : 'Pin project folder'}
+            className={`text-[var(--color-text-faint)] ${
+              onRemove
+                ? 'hover:text-[var(--color-error)]'
+                : 'hover:text-[var(--color-agent)]'
+            }`}
           >
-            <span className="sr-only">Remove project folder</span>
+            <span className="sr-only">
+              {onRemove ? 'Remove project folder' : 'Pin project folder'}
+            </span>
             <svg
               xmlns="http://www.w3.org/2000/svg"
               width="12"
@@ -147,7 +153,11 @@ export const ProjectSection = memo(function ProjectSection({
               strokeLinejoin="round"
               aria-hidden="true"
             >
-              <path d="M18 6 6 18M6 6l12 12" />
+              {onRemove ? (
+                <path d="M18 6 6 18M6 6l12 12" />
+              ) : (
+                <path d="M12 17v5M5 7l14 0M7 7l1 10h8l1-10M9 7V4h6v3" />
+              )}
             </svg>
           </SidebarMenuAction>
         )}
@@ -190,7 +200,7 @@ export const ProjectSection = memo(function ProjectSection({
             .filter((node) => {
               if (!node.openCodeParentId) return true;
 
-              let parentId = node.openCodeParentId;
+              let parentId: string | null = node.openCodeParentId;
               while (parentId) {
                 if (collapsedSessions.has(parentId)) return false;
                 const parent = project.sessions.find(

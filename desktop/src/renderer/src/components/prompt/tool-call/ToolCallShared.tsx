@@ -1,4 +1,12 @@
-import React, { memo } from 'react';
+import React, {
+  memo,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
+import type { BundledLanguage, ThemedToken } from 'shiki';
+import { highlightCode } from '@/components/ai-elements/code-block';
 import type { ToolCallInfo } from '../../../types/unified-message';
 import { useMessageCopy } from '../useMessageCopy';
 import { useSettings, useUpdateSettings } from '../../../store';
@@ -6,6 +14,7 @@ import {
   getToolCallLabelTextClass,
   getToolCallMonoTextClass,
 } from '../chat-text-size';
+import { getDisplayToolName } from './tool-name-display';
 
 /**
  * Shared inline quarter-arc spinner. Used by `TaskToolCard` and by the
@@ -42,6 +51,23 @@ const STATUS_PILL_BASE =
 
 export const TOOL_CALL_LABEL_TEXT_CLASS = getToolCallLabelTextClass();
 export const TOOL_CALL_MONO_TEXT_CLASS = getToolCallMonoTextClass();
+
+export const ToolNameBadge = memo(function ToolNameBadge({
+  name,
+}: {
+  name: string;
+}): React.ReactElement {
+  const displayName = getDisplayToolName(name);
+  return (
+    <span
+      data-slot="tool-name-badge"
+      className={`inline-flex shrink-0 items-center rounded-full border border-[var(--border-weak-base)] bg-[var(--background-stronger)] px-1.5 py-0.5 text-[var(--text-weak)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+      title={name}
+    >
+      {displayName}
+    </span>
+  );
+});
 
 /**
  * Status indicator rendered inside the tool-trigger row.
@@ -641,16 +667,32 @@ export const WrapToggleCodeBlock = memo(function WrapToggleCodeBlock({
   preClassName,
   containerClassName,
   copySlot = 'bash-copy',
+  autoScroll = false,
 }: {
   text: string;
   maxHeightClass?: string;
   preClassName?: string;
   containerClassName?: string;
   copySlot?: string;
+  autoScroll?: boolean;
 }): React.ReactElement {
   const settings = useSettings();
   const updateSettings = useUpdateSettings();
   const wrapLines = settings.wrapCodeBlocks;
+  const preRef = useRef<HTMLPreElement | null>(null);
+
+  useLayoutEffect(() => {
+    if (!autoScroll) return;
+    const pre = preRef.current;
+    if (!pre) return;
+    const frame = window.requestAnimationFrame(() => {
+      pre.scrollTop = pre.scrollHeight;
+      if (pre.parentElement) {
+        pre.parentElement.scrollTop = pre.parentElement.scrollHeight;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [autoScroll, text]);
 
   const onToggle = async () => {
     const next = !wrapLines;
@@ -686,6 +728,7 @@ export const WrapToggleCodeBlock = memo(function WrapToggleCodeBlock({
         data-wrap={wrapLines ? 'true' : 'false'}
       >
         <pre
+          ref={preRef}
           data-slot="bash-pre"
           className={preClassName}
           data-wrap={wrapLines ? 'true' : 'false'}
@@ -697,3 +740,159 @@ export const WrapToggleCodeBlock = memo(function WrapToggleCodeBlock({
     </div>
   );
 });
+
+/**
+ * Render a single Shiki-tokenized line. Falls back to plain text while
+ * the highlighter warms up so the layout stays stable.
+ */
+const HighlightedCodeLine = memo(function HighlightedCodeLine({
+  tokens,
+  fallback,
+}: {
+  tokens: ThemedToken[] | undefined;
+  fallback: string;
+}): React.ReactElement {
+  if (!tokens || tokens.length === 0) {
+    return <>{fallback.length > 0 ? fallback : '\u00A0'}</>;
+  }
+  return (
+    <>
+      {tokens.map((tok, idx) => (
+        // Shiki tokens within a single line are positional and stable
+        // for the same source line — index keys are acceptable here.
+        // oxlint-disable-next-line eslint(react/no-array-index-key)
+        <span
+          key={`t-${idx}`}
+          className="dark:!text-[var(--shiki-dark)]"
+          style={
+            {
+              color: tok.color,
+              ...(tok.htmlStyle as React.CSSProperties | undefined),
+            } as React.CSSProperties
+          }
+        >
+          {tok.content}
+        </span>
+      ))}
+    </>
+  );
+});
+
+/**
+ * Variant of `WrapToggleCodeBlock` that runs the source through Shiki
+ * for syntax highlighting. Keeps the same wrap-lines toggle, copy
+ * button and max-height affordances. Used by tools that show full
+ * file content (e.g. Write) so the body matches the Edit/ApplyPatch
+ * highlighting style.
+ */
+export const HighlightedCodeBlock = memo(function HighlightedCodeBlock({
+  text,
+  language,
+  maxHeightClass,
+  preClassName,
+  containerClassName,
+  copySlot = 'bash-copy',
+}: {
+  text: string;
+  language: BundledLanguage;
+  maxHeightClass?: string;
+  preClassName?: string;
+  containerClassName?: string;
+  copySlot?: string;
+}): React.ReactElement {
+  const settings = useSettings();
+  const updateSettings = useUpdateSettings();
+  const wrapLines = settings.wrapCodeBlocks;
+
+  const [tokenized, setTokenized] = useState<ThemedToken[][] | null>(() => {
+    const cached = highlightCode(text, language);
+    return cached ? cached.tokens : null;
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const cached = highlightCode(text, language, (result) => {
+      if (!cancelled) setTokenized(result.tokens);
+    });
+    setTokenized(cached ? cached.tokens : null);
+    return () => {
+      cancelled = true;
+    };
+  }, [text, language]);
+
+  const onToggle = async () => {
+    const next = !wrapLines;
+    updateSettings({ wrapCodeBlocks: next });
+    try {
+      const current = await window.api.getSettings();
+      await window.api.saveSettings({ ...current, wrapCodeBlocks: next });
+    } catch {
+      // Non-fatal: optimistic state still applied this session.
+    }
+  };
+
+  const lines = text.split('\n');
+
+  return (
+    <div
+      data-component="wrap-toggle-code-block"
+      data-wrap={wrapLines ? 'true' : 'false'}
+      className={containerClassName}
+    >
+      <div className="mb-1 flex items-center justify-end gap-2">
+        <WrapToggleButton
+          wrapLines={wrapLines}
+          onToggle={() => {
+            void onToggle();
+          }}
+        />
+      </div>
+      <div
+        data-component="bash-output"
+        className={maxHeightClass}
+        data-wrap={wrapLines ? 'true' : 'false'}
+      >
+        <pre
+          data-slot="bash-pre"
+          className={preClassName}
+          data-wrap={wrapLines ? 'true' : 'false'}
+        >
+          {lines.map((line, idx) => (
+            // Lines are positional within the source — index keys are
+            // stable for an identical `text` value.
+            // oxlint-disable-next-line eslint(react/no-array-index-key)
+            <React.Fragment key={`l-${idx}`}>
+              <HighlightedCodeLine
+                tokens={tokenized ? tokenized[idx] : undefined}
+                fallback={line}
+              />
+              {idx < lines.length - 1 ? '\n' : null}
+            </React.Fragment>
+          ))}
+        </pre>
+        <CopyButton text={text} slot={copySlot} />
+      </div>
+    </div>
+  );
+});
+
+/**
+ * Heuristic language detection for arbitrary tool output strings.
+ * Returns `null` when no useful guess can be made — callers should
+ * fall back to `WrapToggleCodeBlock` (plain text) in that case.
+ */
+export function guessOutputLanguage(text: string): BundledLanguage | null {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return null;
+  const first = trimmed.charCodeAt(0);
+  // JSON object / array
+  if (first === 0x7b /* { */ || first === 0x5b /* [ */) {
+    try {
+      JSON.parse(trimmed);
+      return 'json';
+    } catch {
+      // fallthrough
+    }
+  }
+  return null;
+}

@@ -1,10 +1,28 @@
 # Interactive MCP Desktop — Tool Reference
 
-This document is the authoritative reference for all MCP tools registered by the Interactive MCP Desktop app. Each tool is registered once per MCP connection and is scoped to that connection's `connectionId` and `connectionName`.
+This document is the reference for the Interactive MCP Desktop MCP tools.
+Desktop MCP tools are registered so existing OpenCode sessions can call them
+directly. Prompt/channel tools are hidden from `tools/list` discovery because
+in-repo agents should use the built-in harness tools instead of the desktop
+prompt tools. Eden includes a built-in `repo_docs_libs` surface for
+OpenCode/Oh My OpenCode, separate from the standalone local `repo-docs-libs`
+MCP used by other AI harnesses.
 
 ---
 
 ## Overview
+
+Current discoverable desktop MCP tool surface:
+
+| Tool                                | Purpose                                         | Blocking                 |
+| ----------------------------------- | ----------------------------------------------- | ------------------------ |
+| [`find_docs`](#find_docs)           | Search repository documentation by query        | No — returns immediately |
+| [`read_doc`](#read_doc)             | Read a discovered repository documentation file | No — returns immediately |
+| [`list_docs`](#list_docs)           | List available repository documentation paths   | No — returns immediately |
+| [`find_libs`](#find_libs)           | Search package.json dependencies                | No — returns immediately |
+| [`find_repo_docs`](#find_repo_docs) | Backward-compatible alias for `find_docs`       | No — returns immediately |
+
+Hidden but callable tool handlers:
 
 | Tool                                                                | Purpose                                                                | Blocking                            |
 | ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ----------------------------------- |
@@ -15,7 +33,6 @@ This document is the authoritative reference for all MCP tools registered by the
 | [`stop_intensive_chat`](#stop_intensive_chat)                       | Close an active intensive chat session                                 | No — returns immediately            |
 | [`push_session_status`](#push_session_status)                       | Display a live status indicator in the UI                              | No — returns immediately            |
 | [`send_message`](#send_message)                                     | Send a persistent informational message into the channel               | No — returns immediately            |
-| [`find_repo_docs`](#find_repo_docs)                                 | Search repository documentation by query                               | No — returns immediately            |
 | [`poll_context_injections`](#poll_context_injections)               | Check for pending context messages from the desktop app                | No — returns immediately            |
 | [`manage_skills_and_instructions`](#manage_skills_and_instructions) | Register, list, retrieve, or delete persistent skills and instructions | No — returns immediately            |
 
@@ -489,9 +506,23 @@ await mcp.callTool('send_message', {
 
 ---
 
-### `find_repo_docs`
+### Built-in `repo_docs_libs` tools
 
-**File:** `desktop/src/main/tools/find-repo-docs.ts`
+**File:** `desktop/src/main/utility/backend/tools/find-repo-docs.ts`
+
+Eden exposes the same practical docs/libs surface as the standalone local
+`repo-docs-libs` MCP used by other AI harnesses, but through Eden's own MCP
+server and per-session `baseDirectory` routing:
+
+- `find_docs`
+- `read_doc`
+- `list_docs`
+- `find_libs`
+
+`find_repo_docs` remains available as a backward-compatible alias for
+`find_docs`.
+
+#### `find_docs` / `find_repo_docs`
 
 **Description:** Search repository documentation files by query. Uses hybrid keyword + semantic search to find the most relevant docs. Returns file paths, scores, and snippet previews. Use the Read tool to access the full content of any returned file.
 
@@ -1066,7 +1097,8 @@ All tools operate within the scope of a single MCP connection. The `connectionId
 - `request_user_input`: uses `connectionId` + `connectionName` for prompt tracking and persistence.
 - `start_intensive_chat` / `ask_intensive_chat` / `stop_intensive_chat`: use `connectionId` + `connectionName` for prompt tracking; `activeChatSessions` is a module-level Map shared across all connections.
 - `push_session_status`: uses `connectionId` to route the status update to the correct UI channel.
-- `find_repo_docs`: uses `connectionId` to look up the registered `baseDirectory` for document search.
+- `find_docs` / `read_doc` / `list_docs` / `find_libs`: use `connectionId` to look up the registered `baseDirectory` for repository docs/libs access.
+- `find_repo_docs`: backward-compatible alias for `find_docs`.
 
 If the user explicitly removes a session, subsequent tool calls on that `connectionId` are expected to return a structured stale-connection error instructing the agent to call `register_connection` again.
 

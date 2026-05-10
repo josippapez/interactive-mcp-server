@@ -7,7 +7,12 @@ import {
   CollapsibleTrigger,
 } from '../../ui/collapsible';
 import { TaskOutputSection, parseTaskId } from './DefaultToolCard';
-import { ToolDurationBadge, ToolSpinner } from './ToolCallShared';
+import {
+  ToolDurationBadge,
+  ToolNameBadge,
+  ToolSpinner,
+} from './ToolCallShared';
+import { resolveNextToolExpandedState } from './tool-expanded-state';
 
 /**
  * Task tool card — mirrors opencode's Task registry entry.
@@ -76,17 +81,23 @@ export const TaskToolCard = memo(function TaskToolCard({
   forceExpanded: boolean;
   onNavigateToSession?: (sessionId: string) => void;
 }): React.ReactElement {
-  const [isExpanded, setIsExpanded] = useState(forceExpanded);
+  const isPending = tool.status === 'pending';
+  const [isExpanded, setIsExpanded] = useState(forceExpanded || isPending);
 
   useEffect(() => {
-    setIsExpanded(forceExpanded);
-  }, [forceExpanded]);
+    setIsExpanded((currentExpanded) =>
+      resolveNextToolExpandedState({
+        currentExpanded,
+        forceExpanded,
+        isPending,
+      }),
+    );
+  }, [forceExpanded, isPending]);
 
   const sessionId = resolveSessionId(tool);
   const title = resolveAgentName(tool);
   const subtitle = resolveSubtitle(tool, sessionId);
   const isRunning = tool.status === 'running';
-  const isPending = tool.status === 'pending';
   const isError = tool.status === 'error';
   const clickable = Boolean(sessionId && onNavigateToSession);
 
@@ -125,6 +136,7 @@ export const TaskToolCard = memo(function TaskToolCard({
       >
         {title}
       </span>
+      <ToolNameBadge name={tool.name} />
       {subtitle && (
         <span data-slot="tool-subtitle" title={subtitle}>
           {subtitle}
@@ -207,17 +219,19 @@ export const TaskToolCard = memo(function TaskToolCard({
       onOpenChange={setIsExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-component="tool-trigger"
-          data-pending={isPending ? 'true' : undefined}
-          aria-disabled={!canExpand || undefined}
-          disabled={!canExpand}
-        >
-          {headerContent}
-        </button>
-      </CollapsibleTrigger>
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            data-component="tool-trigger"
+            data-pending={isPending ? 'true' : undefined}
+            aria-disabled={!canExpand || undefined}
+            disabled={!canExpand}
+          >
+            {headerContent}
+          </button>
+        }
+      />
 
       {hasOutput && tool.output && (
         <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">

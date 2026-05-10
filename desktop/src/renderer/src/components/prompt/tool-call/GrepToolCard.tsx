@@ -11,10 +11,12 @@ import {
   TOOL_CALL_MONO_TEXT_CLASS,
   ToolChevron,
   ToolDurationBadge,
+  ToolNameBadge,
   ToolStatusBadge,
   splitPath,
 } from './ToolCallShared';
 import { classifyTool } from './tool-registry';
+import { resolveNextToolExpandedState } from './tool-expanded-state';
 
 type GrepResultItem = {
   file: string;
@@ -79,6 +81,21 @@ function getStringInput(
   return typeof value === 'string' && value ? value : undefined;
 }
 
+function getNumberMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): number | null {
+  const value = metadata?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function getBooleanMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): boolean {
+  return metadata?.[key] === true;
+}
+
 const FileBlock = memo(function FileBlock({
   result,
 }: {
@@ -126,14 +143,23 @@ const GrepToolCard = memo(function GrepToolCard({
   const [showAllFiles, setShowAllFiles] = useState(false);
 
   useEffect(() => {
-    setIsExpanded(forceExpanded || isPending);
+    setIsExpanded((currentExpanded) =>
+      resolveNextToolExpandedState({
+        currentExpanded,
+        forceExpanded,
+        isPending,
+      }),
+    );
   }, [forceExpanded, isPending]);
 
   const results = useMemo(() => parseGrepOutput(tool.output), [tool.output]);
-  const totalMatches = useMemo(() => {
+  const parsedTotalMatches = useMemo(() => {
     if (!results) return 0;
     return results.reduce((acc, r) => acc + r.lines.length, 0);
   }, [results]);
+  const totalMatches =
+    getNumberMetadata(tool.metadata, 'matches') ?? parsedTotalMatches;
+  const truncated = getBooleanMetadata(tool.metadata, 'truncated');
 
   const pattern = getStringInput(tool.input, 'pattern');
   const searchPath = getStringInput(tool.input, 'path');
@@ -166,55 +192,65 @@ const GrepToolCard = memo(function GrepToolCard({
       onOpenChange={setIsExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-component="grep-trigger"
-          data-pending={isPending ? 'true' : undefined}
-        >
-          <SearchCode
-            data-slot="tool-icon"
-            aria-hidden="true"
-            className="shrink-0"
-          />
-          <span data-slot="tool-title">Search</span>
-          {pattern && (
-            <span
-              data-slot="tool-subtitle"
-              title={pattern}
-              className="font-mono"
-            >
-              {truncatePattern(pattern)}
-            </span>
-          )}
-          {searchPath && (
-            <span
-              data-slot="tool-path-suffix"
-              className="text-[var(--text-weak)]"
-              title={searchPath}
-            >
-              in {searchPath}
-            </span>
-          )}
-          {results ? (
-            <span
-              data-slot="tool-count-pill"
-              className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium bg-[var(--color-success-surface)] text-[var(--color-success)] shrink-0 ${TOOL_CALL_MONO_TEXT_CLASS}`}
-            >
-              {totalMatches} {totalMatches === 1 ? 'match' : 'matches'}
-            </span>
-          ) : tool.output ? (
-            <span
-              className={`${TOOL_CALL_MONO_TEXT_CLASS} text-[var(--text-weak)]`}
-            >
-              No matches
-            </span>
-          ) : null}
-          <ToolDurationBadge tool={tool} />
-          <ToolStatusBadge status={tool.status} />
-          <ToolChevron />
-        </button>
-      </CollapsibleTrigger>
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            data-component="grep-trigger"
+            data-pending={isPending ? 'true' : undefined}
+          >
+            <SearchCode
+              data-slot="tool-icon"
+              aria-hidden="true"
+              className="shrink-0"
+            />
+            <span data-slot="tool-title">Search</span>
+            <ToolNameBadge name={tool.name} />
+            {pattern && (
+              <span
+                data-slot="tool-subtitle"
+                title={pattern}
+                className="font-mono"
+              >
+                {truncatePattern(pattern)}
+              </span>
+            )}
+            {searchPath && (
+              <span
+                data-slot="tool-path-suffix"
+                className="text-[var(--text-weak)]"
+                title={searchPath}
+              >
+                in {searchPath}
+              </span>
+            )}
+            {results ? (
+              <span
+                data-slot="tool-count-pill"
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium bg-[var(--color-success-surface)] text-[var(--color-success)] shrink-0 ${TOOL_CALL_MONO_TEXT_CLASS}`}
+              >
+                {totalMatches} {totalMatches === 1 ? 'match' : 'matches'}
+              </span>
+            ) : tool.output ? (
+              <span
+                className={`${TOOL_CALL_MONO_TEXT_CLASS} text-[var(--text-weak)]`}
+              >
+                No matches
+              </span>
+            ) : null}
+            {truncated && (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium uppercase tracking-wide shrink-0 bg-[var(--background-stronger)] text-[var(--text-weak)] border border-[var(--border-weak-base)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+              >
+                truncated
+              </span>
+            )}
+            <ToolDurationBadge tool={tool} />
+            <ToolStatusBadge status={tool.status} />
+            <ToolChevron />
+          </button>
+        }
+      />
 
       <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">
         {chips.length > 0 && (

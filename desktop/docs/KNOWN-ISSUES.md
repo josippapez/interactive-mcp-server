@@ -72,23 +72,15 @@ No user action required.
 
 ---
 
-## 3. Wasm copy layout sensitivity
+## 3. Wasm copy layout sensitivity (resolved — Mode A bundle no longer packaged)
 
-The `opencode:copy-server-assets` plugin in `electron.vite.config.ts` copies `tree-sitter-*.wasm` into `out/main/` — **not** `out/main/chunks/`. The OpenCode Node bundle resolves wasm files via `new URL('tree-sitter.wasm', import.meta.url)`, which is relative to the chunk's own path.
-
-Our current Rollup config keeps the main-process chunk at the default location (`out/main/`), so the wasm files have to land there. Upstream `packages/desktop-electron` emits the chunk under `out/main/chunks/` and copies the wasm files there instead.
-
-**If the chunk layout ever changes** (e.g. chunks are moved under `out/main/chunks/`), the copy target in the plugin must move with it. Otherwise the OpenCode server will fail at runtime when it tries to load tree-sitter grammars.
-
-No user-facing symptom yet — documented here so the next engineer to touch rollup output options does not silently regress wasm loading.
+> **Resolved:** the `opencode:copy-server-assets` Vite plugin and the `resources/opencode-node/` directory were removed when the app committed to Mode C (`RUNTIME_KIND = 'native-subprocess'`). The native `opencode` binary loads its own tree-sitter grammars internally; the Electron main bundle no longer ships them. Kept here as historical context: if Mode A is ever reactivated (see `desktop/src/main/opencode/runtime-mode.ts`), the wasm-copy plugin must be restored and its target directory must match the chunk layout — upstream `packages/desktop-electron` emits chunks under `out/main/chunks/` and copies wasm there, while our previous layout kept the chunk and wasm both at `out/main/`.
 
 ---
 
-## 4. Legacy `copy:opencode*` still wired into packaging
+## 4. Legacy `copy:opencode*` still wired into packaging (resolved)
 
-The Phase C migration replaced the spawned `opencode serve` subprocess with an in-process `Server.listen()` call (see `desktop/src/main/opencode/server.ts:46`), but the packaging scripts in `desktop/package.json` still chain `copy:opencode:mac` / `copy:opencode:win` / `copy:opencode:linux` into each `package:*` target. This ships **both** the 99 MB per-platform native `opencode` binary (under `resources/bin/opencode`) **and** the ~18 MB platform-agnostic Node bundle (under `resources/opencode-node/`).
-
-The legacy copy is currently redundant — nothing in the main-process code reads from `resources/bin/opencode` anymore. It is kept as a rollback safety net until a signed/packaged smoke-test confirms the in-process path works across every distribution channel. The expected follow-up is to drop `copy:opencode*` from the `package:*` scripts and delete `resources/bin/opencode` entirely.
+> **Resolved:** the app committed to Mode C (`RUNTIME_KIND = 'native-subprocess'`). The Mode A Node bundle (`resources/opencode-node/`) and the `copy:opencode-node` script are no longer packaged; the `opencode:copy-server-assets` and Mode A path-rewrite Vite plugins have been removed/stubbed. Only the per-platform native binary (now under `resources/opencode-bin/<platform>-<arch>/`, copied by `copy:opencode-bin`) is shipped. To reactivate Mode A, see the stub error message in `electron.vite.config.ts` and the reactivation hint at `desktop/src/main/opencode/runtime-mode.ts`.
 
 ---
 

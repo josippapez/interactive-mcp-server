@@ -5,252 +5,45 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '../../ui/collapsible';
+import { DIFF_MAX_LINES, SideBySideDiffGrid, inferLanguage } from '../DiffView';
 import {
-  DIFF_MAX_LINES,
-  SideBySideDiffGrid,
-  inferLanguage,
-  pairGenericDiffLines,
-} from '../DiffView';
-import { DiffChanges, ToolDurationBadge, splitPath } from './ToolCallShared';
-import { pruneDiffWrapState, toggleDiffWrapState } from './diff-wrap-state';
+  parseApplyPatchFileDiffs,
+  parseApplyPatchMetadataFileDiffs,
+  pairApplyPatchDiffLines,
+  type ApplyPatchFileDiff,
+  type PatchAction,
+} from './apply-patch-diff';
+import {
+  DiagnosticsBadge,
+  DiagnosticsList,
+  DiffChanges,
+  ToolDurationBadge,
+  countDiagnostics,
+  extractDiagnosticsForFile,
+} from './ToolCallShared';
+import { useWrapCodeBlocks } from './use-wrap-code-blocks';
 
-type PatchAction = 'add' | 'update' | 'delete' | 'move';
-type PatchLineType = 'context' | 'addition' | 'removal';
-
-type PatchLine = {
-  type: PatchLineType;
-  content: string;
-  oldLineNumber: number | null;
-  newLineNumber: number | null;
-};
-
-export type ApplyPatchFileDiff = {
-  id: string;
-  action: PatchAction;
-  filePath: string;
-  fromPath?: string;
-  additions: number;
-  deletions: number;
-  lines: PatchLine[];
-};
-
-type BuildFileDraft = {
-  action: PatchAction;
-  filePath: string;
-  fromPath?: string;
-  moveToPath?: string;
-  rawLines: string[];
-};
+function getPatchActionLabel(action: PatchAction): string {
+  switch (action) {
+    case 'add':
+      return 'Created';
+    case 'delete':
+      return 'Deleted';
+    case 'move':
+      return 'Moved';
+    case 'update':
+      return 'Updated';
+  }
+}
 
 // The assembled patch lines are rendered as a side-by-side diff via
 // `SideBySideDiffGrid`, which tokenizes each side with Shiki in the
 // inferred source language (TS, JS, Python, etc.) — not the generic
 // `diff` grammar — so keywords, strings, and comments get real colors.
 
-function getStringField(
-  input: Record<string, unknown> | undefined,
-  key: string,
-): string | null {
-  const value = input?.[key];
-  if (typeof value !== 'string') return null;
-  if (!value.trim()) return null;
-  return value;
-}
-
-function getPatchText(input?: Record<string, unknown>): string | null {
-  const patchText =
-    getStringField(input, 'patchText') ??
-    getStringField(input, 'patch') ??
-    getStringField(input, 'text');
-
-  if (!patchText) return null;
-  return patchText;
-}
-
-function startsWithHeader(line: string): boolean {
-  return (
-    line.startsWith('*** Add File: ') ||
-    line.startsWith('*** Update File: ') ||
-    line.startsWith('*** Delete File: ')
-  );
-}
-
-function parseHeader(
-  line: string,
-): { action: PatchAction; filePath: string } | null {
-  if (line.startsWith('*** Add File: ')) {
-    return {
-      action: 'add',
-      filePath: line.replace('*** Add File: ', '').trim(),
-    };
-  }
-
-  if (line.startsWith('*** Update File: ')) {
-    return {
-      action: 'update',
-      filePath: line.replace('*** Update File: ', '').trim(),
-    };
-  }
-
-  if (line.startsWith('*** Delete File: ')) {
-    return {
-      action: 'delete',
-      filePath: line.replace('*** Delete File: ', '').trim(),
-    };
-  }
-
-  return null;
-}
-
-function toPatchLines(rawLines: string[]): {
-  lines: PatchLine[];
-  additions: number;
-  deletions: number;
-} {
-  const lines: PatchLine[] = [];
-  let additions = 0;
-  let deletions = 0;
-  let oldLine = 1;
-  let newLine = 1;
-
-  for (const rawLine of rawLines) {
-    if (rawLine.startsWith('@@')) {
-      const match = rawLine.match(
-        /@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/,
-      );
-      if (!match) continue;
-
-      oldLine = Number(match[1]);
-      newLine = Number(match[2]);
-      continue;
-    }
-
-    if (rawLine.startsWith('+') && !rawLine.startsWith('+++')) {
-      additions += 1;
-      lines.push({
-        type: 'addition',
-        content: rawLine.slice(1),
-        oldLineNumber: null,
-        newLineNumber: newLine,
-      });
-      newLine += 1;
-      continue;
-    }
-
-    if (rawLine.startsWith('-') && !rawLine.startsWith('---')) {
-      deletions += 1;
-      lines.push({
-        type: 'removal',
-        content: rawLine.slice(1),
-        oldLineNumber: oldLine,
-        newLineNumber: null,
-      });
-      oldLine += 1;
-      continue;
-    }
-
-    if (!rawLine.startsWith(' ')) continue;
-
-    lines.push({
-      type: 'context',
-      content: rawLine.slice(1),
-      oldLineNumber: oldLine,
-      newLineNumber: newLine,
-    });
-    oldLine += 1;
-    newLine += 1;
-  }
-
-  return { lines, additions, deletions };
-}
-
-function toFileDiff(draft: BuildFileDraft, index: number): ApplyPatchFileDiff {
-  const normalizedAction =
-    draft.moveToPath && draft.action === 'update' ? 'move' : draft.action;
-
-  const { lines, additions, deletions } = toPatchLines(draft.rawLines);
-
-  const filePath = draft.moveToPath ?? draft.filePath;
-  const fromPath = draft.moveToPath ? draft.filePath : draft.fromPath;
-
-  return {
-    id: `${normalizedAction}:${filePath}:${index}`,
-    action: normalizedAction,
-    filePath,
-    fromPath,
-    additions,
-    deletions,
-    lines,
-  };
-}
-
 export function isApplyPatchToolCall(toolName: string): boolean {
   const lower = toolName.toLowerCase();
   return lower === 'apply_patch' || lower.includes('apply_patch');
-}
-
-export function parseApplyPatchFileDiffs(
-  input?: Record<string, unknown>,
-): ApplyPatchFileDiff[] | null {
-  const patchText = getPatchText(input);
-  if (!patchText) return null;
-
-  const rawLines = patchText.split('\n');
-  const beginIndex = rawLines.findIndex(
-    (line) => line.trim() === '*** Begin Patch',
-  );
-  const endIndex = rawLines.findIndex(
-    (line) => line.trim() === '*** End Patch',
-  );
-
-  if (beginIndex < 0 || endIndex <= beginIndex) return null;
-
-  const patchLines = rawLines.slice(beginIndex + 1, endIndex);
-  const files: ApplyPatchFileDiff[] = [];
-  let draft: BuildFileDraft | null = null;
-
-  const flushDraft = () => {
-    if (!draft) return;
-    files.push(toFileDiff(draft, files.length));
-    draft = null;
-  };
-
-  for (const line of patchLines) {
-    if (startsWithHeader(line)) {
-      flushDraft();
-
-      const header = parseHeader(line);
-      if (!header) continue;
-
-      draft = {
-        action: header.action,
-        filePath: header.filePath,
-        rawLines: [],
-      };
-      continue;
-    }
-
-    if (!draft) continue;
-
-    if (line.startsWith('*** Move to: ')) {
-      draft.moveToPath = line.replace('*** Move to: ', '').trim();
-      continue;
-    }
-
-    if (
-      line.startsWith('@@') ||
-      (line.startsWith('+') && !line.startsWith('+++')) ||
-      (line.startsWith('-') && !line.startsWith('---')) ||
-      line.startsWith(' ')
-    ) {
-      draft.rawLines.push(line);
-    }
-  }
-
-  flushDraft();
-
-  if (files.length === 0) return null;
-  return files;
 }
 
 // Rebuild a unified-diff-style source string that shiki's `diff` grammar
@@ -268,52 +61,20 @@ export function parseApplyPatchFileDiffs(
 const FileDiffBody = memo(function FileDiffBody({
   file,
   wrapLines,
-  onToggleWrap,
+  diagnostics,
 }: {
   file: ApplyPatchFileDiff;
   wrapLines: boolean;
-  onToggleWrap: () => void;
+  diagnostics: ReturnType<typeof extractDiagnosticsForFile>;
 }): React.ReactElement {
-  const extension = file.filePath.split('.').pop() ?? '';
   const language = useMemo(() => inferLanguage(file.filePath), [file.filePath]);
   const paired = useMemo(
-    () => pairGenericDiffLines(file.lines, DIFF_MAX_LINES),
+    () => pairApplyPatchDiffLines(file.lines, DIFF_MAX_LINES),
     [file.lines],
   );
 
   return (
     <div>
-      <div
-        data-component="diff-view"
-        data-variant="side-by-side"
-        data-embedded="header-only"
-      >
-        <div data-slot="diff-header">
-          <span data-slot="diff-filepath" title={file.filePath}>
-            {file.filePath}
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              aria-pressed={wrapLines}
-              onClick={onToggleWrap}
-              className={`rounded border px-1.5 py-0.5 text-[9px] uppercase tracking-wide transition-colors ${
-                wrapLines
-                  ? 'border-[var(--color-agent)]/40 bg-[var(--color-agent)]/12 text-[var(--color-agent)]'
-                  : 'border-[var(--border-weaker-base)] text-[var(--text-weaker)] hover:bg-[var(--background-base)]'
-              }`}
-            >
-              Wrap lines
-            </button>
-            {extension && (
-              <span className="font-mono text-[var(--text-weaker)]">
-                {extension}
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
       {file.lines.length > 0 && paired.rows.length > 0 ? (
         <SideBySideDiffGrid
           rows={paired.rows}
@@ -340,6 +101,12 @@ const FileDiffBody = memo(function FileDiffBody({
           </div>
         </div>
       )}
+
+      {diagnostics.length > 0 && (
+        <div className="px-2 py-1.5 border-t border-[var(--border-weaker-base)]">
+          <DiagnosticsList diagnostics={diagnostics} />
+        </div>
+      )}
     </div>
   );
 });
@@ -355,47 +122,77 @@ const FileDiffAccordionItem = memo(function FileDiffAccordionItem({
   onToggle,
   wrapLines,
   onToggleWrap,
+  metadata,
 }: {
   file: ApplyPatchFileDiff;
   expanded: boolean;
   onToggle: (open: boolean) => void;
   wrapLines: boolean;
   onToggleWrap: () => void;
+  metadata: Record<string, unknown> | undefined;
 }): React.ReactElement {
-  // For moves, show the destination path (the file's current identity).
-  // `fromPath → filePath` is still useful context; keep it visible inside
-  // the filename slot so RTL-truncation of the directory still works.
-  const { directory, filename } = splitPath(file.filePath);
+  const diagnostics = useMemo(
+    () => extractDiagnosticsForFile(metadata, file.filePath),
+    [metadata, file.filePath],
+  );
+  const diagnosticCounts = useMemo(
+    () => countDiagnostics(diagnostics),
+    [diagnostics],
+  );
 
   return (
-    <Collapsible open={expanded} onOpenChange={onToggle} asChild>
-      <div data-slot="apply-patch-item">
-        <CollapsibleTrigger asChild>
-          <button type="button" data-slot="apply-patch-trigger">
-            {directory && (
-              <span data-slot="apply-patch-directory">{directory}</span>
-            )}
-            <span data-slot="apply-patch-filename">
-              {file.fromPath ? `${file.fromPath} → ${filename}` : filename}
-            </span>
-            <span data-slot="apply-patch-summary">
-              <DiffChanges
-                additions={file.additions}
-                deletions={file.deletions}
-              />
-            </span>
-          </button>
-        </CollapsibleTrigger>
+    <Collapsible
+      open={expanded}
+      onOpenChange={onToggle}
+      render={
+        <div data-slot="apply-patch-item">
+          <div data-slot="apply-patch-trigger-row">
+            <CollapsibleTrigger
+              render={
+                <button type="button" data-slot="apply-patch-trigger">
+                  <span
+                    data-slot="apply-patch-action"
+                    data-action={file.action}
+                  >
+                    {getPatchActionLabel(file.action)}
+                  </span>
+                  <span data-slot="apply-patch-path" title={file.filePath}>
+                    {file.fromPath
+                      ? `${file.fromPath} → ${file.filePath}`
+                      : file.filePath}
+                  </span>
+                  <span data-slot="apply-patch-summary">
+                    <DiffChanges
+                      additions={file.additions}
+                      deletions={file.deletions}
+                    />
+                    <DiagnosticsBadge counts={diagnosticCounts} />
+                  </span>
+                </button>
+              }
+            />
+            <button
+              type="button"
+              aria-pressed={wrapLines}
+              onClick={() => {
+                void onToggleWrap();
+              }}
+              data-slot="apply-patch-wrap-toggle"
+            >
+              Wrap lines
+            </button>
+          </div>
 
-        <CollapsibleContent>
-          <FileDiffBody
-            file={file}
-            wrapLines={wrapLines}
-            onToggleWrap={onToggleWrap}
-          />
-        </CollapsibleContent>
-      </div>
-    </Collapsible>
+          <CollapsibleContent>
+            <FileDiffBody
+              file={file}
+              wrapLines={wrapLines}
+              diagnostics={diagnostics}
+            />
+          </CollapsibleContent>
+        </div>
+      }
+    />
   );
 });
 
@@ -407,11 +204,17 @@ const ApplyPatchToolCard = memo(function ApplyPatchToolCard({
   forceExpanded?: boolean;
 }): React.ReactElement {
   const files = useMemo(
-    () => parseApplyPatchFileDiffs(tool.input) ?? [],
-    [tool.input],
+    () =>
+      parseApplyPatchMetadataFileDiffs(tool.metadata) ??
+      parseApplyPatchFileDiffs(tool.input) ??
+      [],
+    [tool.input, tool.metadata],
   );
   const [expandedIds, setExpandedIds] = useState<string[]>([]);
-  const [wrappedById, setWrappedById] = useState<Record<string, boolean>>({});
+  const { wrapLines, toggleWrap } = useWrapCodeBlocks();
+  const handleToggleWrap = () => {
+    void toggleWrap();
+  };
 
   useEffect(() => {
     if (files.length === 0) {
@@ -428,15 +231,6 @@ const ApplyPatchToolCard = memo(function ApplyPatchToolCard({
       files.find((file) => file.action !== 'delete') ?? files[0];
     setExpandedIds([firstExpandable.id]);
   }, [files, forceExpanded]);
-
-  useEffect(() => {
-    setWrappedById((prev) =>
-      pruneDiffWrapState(
-        prev,
-        files.map((file) => file.id),
-      ),
-    );
-  }, [files]);
 
   const toggleExpanded = (id: string, open: boolean) => {
     setExpandedIds((prev) => {
@@ -477,10 +271,9 @@ const ApplyPatchToolCard = memo(function ApplyPatchToolCard({
           file={file}
           expanded={expandedIds.includes(file.id)}
           onToggle={(open) => toggleExpanded(file.id, open)}
-          wrapLines={Boolean(wrappedById[file.id])}
-          onToggleWrap={() =>
-            setWrappedById((prev) => toggleDiffWrapState(prev, file.id))
-          }
+          wrapLines={wrapLines}
+          onToggleWrap={handleToggleWrap}
+          metadata={tool.metadata}
         />
       </div>
     );
@@ -510,10 +303,9 @@ const ApplyPatchToolCard = memo(function ApplyPatchToolCard({
           file={file}
           expanded={expandedIds.includes(file.id)}
           onToggle={(open) => toggleExpanded(file.id, open)}
-          wrapLines={Boolean(wrappedById[file.id])}
-          onToggleWrap={() =>
-            setWrappedById((prev) => toggleDiffWrapState(prev, file.id))
-          }
+          wrapLines={wrapLines}
+          onToggleWrap={handleToggleWrap}
+          metadata={tool.metadata}
         />
       ))}
     </div>

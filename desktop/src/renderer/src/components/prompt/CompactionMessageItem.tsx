@@ -30,7 +30,7 @@ export default function CompactionMessageItem({
         </span>
         <MessageTimestamp timestamp={new Date(msg.timestamp)} />
       </div>
-      <div className="px-3 py-2 text-sm">
+      <div className="min-w-0 overflow-hidden px-3 py-2 text-sm">
         {msg.text && <MarkdownContent content={msg.text} streaming={false} />}
       </div>
     </div>

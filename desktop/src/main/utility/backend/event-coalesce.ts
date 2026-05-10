@@ -60,6 +60,15 @@ export function semanticKey(event: ConversationEvent): string | null {
       return `ctx:${event.sessionId}`;
     case 'session.compaction-done':
       return `cdone:${event.sessionId}`;
+    case 'session.next.model.switched':
+      return `next.model:${event.sessionId}`;
+    case 'session.next.retried':
+      return `next.retry:${event.sessionId}`;
+    case 'session.next.compaction.started':
+    case 'session.next.compaction.ended':
+      return `next.compaction:${event.sessionId}`;
+    case 'session.next.tool.progress':
+      return `next.tool.progress:${event.sessionId}:${event.callId}`;
     case 'file.edited':
       return `file:${event.directory ?? ''}:${event.file}`;
     case 'message.part.removed':

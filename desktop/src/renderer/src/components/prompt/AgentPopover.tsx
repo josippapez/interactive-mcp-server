@@ -1,8 +1,17 @@
 import React, { memo, useState, useRef, useEffect, useMemo } from 'react';
 
 import type { AgentDefinition } from '../../../../preload';
-import { Popover, PopoverContent, PopoverAnchor } from '../ui/popover';
-import { filterAgents, groupAgentsByScope } from './agent-picker-filter';
+import {
+  Popover,
+  PopoverContent,
+  PopoverAnchor,
+  PopoverPositioner,
+} from '../ui/popover';
+import {
+  filterAgents,
+  getDefaultNativeAgentName,
+  groupAgentsByScope,
+} from './agent-picker-filter';
 
 interface AgentPopoverProps {
   /** Whether the popover is open */
@@ -11,6 +20,10 @@ interface AgentPopoverProps {
   onOpenChange: (open: boolean) => void;
   /** Currently selected agent name, or null for the default agent */
   selectedAgent: string | null;
+  /** The OpenCode-native default primary agent name. */
+  defaultAgentName?: string | null;
+  /** Reports the resolved native default agent after loading options. */
+  onDefaultAgentResolved?: (agent: string | null) => void;
   /** Callback when an agent is selected (null = default) */
   onSelect: (agent: string | null) => void;
   /** Current base directory — agents are fetched for this directory */
@@ -21,14 +34,16 @@ interface AgentPopoverProps {
 function ScopeBadge({
   scope,
 }: {
-  scope: 'project' | 'global';
+  scope: 'project' | 'global' | 'native';
 }): React.ReactElement {
   return (
     <span
       className={`text-[9px] px-1.5 py-0.5 rounded-full border whitespace-nowrap ${
-        scope === 'project'
+        scope === 'native'
           ? 'border-[var(--color-agent)]/40 text-[var(--color-agent)] bg-[var(--color-agent)]/10'
-          : 'border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-surface-alt)]'
+          : scope === 'project'
+            ? 'border-[var(--color-agent)]/40 text-[var(--color-agent)] bg-[var(--color-agent)]/10'
+            : 'border-[var(--color-border)] text-[var(--color-text-muted)] bg-[var(--color-surface-alt)]'
       }`}
     >
       {scope}
@@ -40,6 +55,8 @@ function AgentPopover({
   open,
   onOpenChange,
   selectedAgent,
+  defaultAgentName,
+  onDefaultAgentResolved,
   onSelect,
   baseDirectory,
 }: AgentPopoverProps): React.ReactElement {
@@ -117,14 +134,22 @@ function AgentPopover({
     [agents, searchQuery],
   );
   const grouped = useMemo(() => groupAgentsByScope(filtered), [filtered]);
+  const resolvedDefaultAgentName = useMemo(
+    () => getDefaultNativeAgentName(agents, defaultAgentName),
+    [agents, defaultAgentName],
+  );
 
-  // Flat list used for keyboard navigation: default first, then project, then global.
-  type FlatItem =
-    | { kind: 'default' }
-    | { kind: 'agent'; agent: AgentDefinition };
+  useEffect(() => {
+    onDefaultAgentResolved?.(resolvedDefaultAgentName);
+  }, [onDefaultAgentResolved, resolvedDefaultAgentName]);
+
+  // Flat list used for keyboard navigation: native/default OpenCode agents,
+  // then project, then global custom agents.
+  type FlatItem = { kind: 'agent'; agent: AgentDefinition };
 
   const flatItems = useMemo<FlatItem[]>(() => {
-    const items: FlatItem[] = [{ kind: 'default' }];
+    const items: FlatItem[] = [];
+    for (const a of grouped.builtIn) items.push({ kind: 'agent', agent: a });
     for (const a of grouped.project) items.push({ kind: 'agent', agent: a });
     for (const a of grouped.global) items.push({ kind: 'agent', agent: a });
     return items;
@@ -147,11 +172,9 @@ function AgentPopover({
   };
 
   const selectItem = (item: FlatItem): void => {
-    if (item.kind === 'default') {
-      handleSelect(null);
-    } else {
-      handleSelect(item.agent.name);
-    }
+    handleSelect(
+      item.agent.name === resolvedDefaultAgentName ? null : item.agent.name,
+    );
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -176,13 +199,19 @@ function AgentPopover({
     agent: AgentDefinition,
     flatIdx: number,
   ): React.ReactElement => {
-    const isSelected = agent.name === selectedAgent;
+    const isSelected =
+      agent.name === selectedAgent ||
+      (!selectedAgent && agent.name === resolvedDefaultAgentName);
     const isActive = flatIdx === activeIndex;
     return (
       <button
         key={`${agent.scope}:${agent.filePath}`}
         type="button"
-        onClick={() => handleSelect(agent.name)}
+        onClick={() =>
+          handleSelect(
+            agent.name === resolvedDefaultAgentName ? null : agent.name,
+          )
+        }
         onMouseEnter={() => setActiveIndex(flatIdx)}
         className={`w-full px-2 py-1.5 text-left text-[11px] flex items-center justify-between gap-2 transition-colors ${
           isSelected
@@ -200,7 +229,15 @@ function AgentPopover({
             </span>
           )}
         </span>
-        <ScopeBadge scope={agent.scope === 'project' ? 'project' : 'global'} />
+        <ScopeBadge
+          scope={
+            agent.native
+              ? 'native'
+              : agent.scope === 'project'
+                ? 'project'
+                : 'global'
+          }
+        />
       </button>
     );
   };
@@ -209,121 +246,108 @@ function AgentPopover({
   const flatIndexByKey = useMemo(() => {
     const m = new Map<string, number>();
     flatItems.forEach((item, idx) => {
-      if (item.kind === 'agent') {
-        m.set(`${item.agent.scope}:${item.agent.filePath}`, idx);
-      }
+      m.set(`${item.agent.scope}:${item.agent.filePath}`, idx);
     });
     return m;
   }, [flatItems]);
 
-  const defaultIsActive = activeIndex === 0;
-  const defaultIsSelected = selectedAgent === null;
-
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverAnchor asChild>
-        <div className="absolute left-0 bottom-0" />
-      </PopoverAnchor>
-      <PopoverContent
-        side="top"
-        align="start"
-        sideOffset={4}
-        className="min-w-[260px] max-w-[340px] p-0"
-        onEscapeKeyDown={() => onOpenChange(false)}
-        onKeyDown={handleKeyDown}
-      >
-        {/* Search input */}
-        <div className="px-2 py-2 border-b border-[var(--color-border)]">
-          <input
-            ref={searchInputRef}
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search agents..."
-            aria-label="Search agents"
-            className="w-full text-[11px] px-2 py-1.5 rounded-md bg-[var(--color-surface-alt)] border border-[var(--color-border)] text-[var(--color-text)] placeholder-[var(--color-text-faint)] outline-none focus:border-[var(--color-agent)]/40"
-          />
-        </div>
-        <div ref={listRef} className="max-h-[300px] overflow-y-auto">
-          {/* Default option */}
-          <button
-            type="button"
-            onClick={() => handleSelect(null)}
-            onMouseEnter={() => setActiveIndex(0)}
-            className={`w-full px-2 py-1.5 text-left text-[11px] flex items-center justify-between gap-2 transition-colors border-b border-[var(--color-border)] ${
-              defaultIsSelected
-                ? 'bg-[var(--color-agent)]/10 text-[var(--color-agent)]'
-                : defaultIsActive
-                  ? 'bg-[var(--color-surface-alt)] text-[var(--color-text)]'
-                  : 'text-[var(--color-text)] hover:bg-[var(--color-surface-alt)]'
-            }`}
-          >
-            <span className="flex flex-col min-w-0 flex-1">
-              <span className="truncate font-medium">Default</span>
-              <span className="truncate text-[10px] text-[var(--color-text-faint)]">
-                No custom agent
-              </span>
-            </span>
-          </button>
-
-          {isLoading && (
-            <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)] text-center">
-              Loading agents…
-            </div>
-          )}
-
-          {error && !isLoading && (
-            <div className="px-3 py-2 text-[11px] text-[var(--color-danger,#c33)] border-b border-[var(--color-border)]">
-              Failed to load agents: {error}
-            </div>
-          )}
-
-          {!isLoading && !error && grouped.project.length > 0 && (
-            <div>
-              <div className="px-2 py-1.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-alt)] border-b border-[var(--color-border)] sticky top-0">
-                Project
-              </div>
-              {grouped.project.map((agent) => {
-                const flatIdx =
-                  flatIndexByKey.get(`${agent.scope}:${agent.filePath}`) ?? -1;
-                return renderAgentRow(agent, flatIdx);
-              })}
-            </div>
-          )}
-
-          {!isLoading && !error && grouped.global.length > 0 && (
-            <div>
-              <div className="px-2 py-1.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-alt)] border-b border-[var(--color-border)] sticky top-0">
-                Global
-              </div>
-              {grouped.global.map((agent) => {
-                const flatIdx =
-                  flatIndexByKey.get(`${agent.scope}:${agent.filePath}`) ?? -1;
-                return renderAgentRow(agent, flatIdx);
-              })}
-            </div>
-          )}
-
-          {!isLoading &&
-            !error &&
-            grouped.project.length === 0 &&
-            grouped.global.length === 0 &&
-            searchQuery.trim() && (
+      <PopoverAnchor render={<div className="absolute left-0 bottom-0" />} />
+      <PopoverPositioner side="top" align="start" sideOffset={4}>
+        <PopoverContent
+          className="min-w-[260px] max-w-[340px] p-0"
+          onKeyDown={handleKeyDown}
+        >
+          {/* Search input */}
+          <div className="px-2 py-2 border-b border-[var(--color-border)]">
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search agents..."
+              aria-label="Search agents"
+              className="w-full text-[11px] px-2 py-1.5 rounded-md bg-[var(--color-surface-alt)] border border-[var(--color-border)] text-[var(--color-text)] placeholder-[var(--color-text-faint)] outline-none focus:border-[var(--color-agent)]/40"
+            />
+          </div>
+          <div ref={listRef} className="max-h-[300px] overflow-y-auto">
+            {isLoading && (
               <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)] text-center">
-                No agents match &ldquo;{searchQuery}&rdquo;
+                Loading agents…
               </div>
             )}
 
-          {!isLoading &&
-            !error &&
-            agents.length === 0 &&
-            !searchQuery.trim() && (
-              <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)] text-center">
-                No custom agents found
+            {error && !isLoading && (
+              <div className="px-3 py-2 text-[11px] text-[var(--color-danger,#c33)] border-b border-[var(--color-border)]">
+                Failed to load agents: {error}
               </div>
             )}
-        </div>
-      </PopoverContent>
+
+            {!isLoading && !error && grouped.builtIn.length > 0 && (
+              <div>
+                <div className="px-2 py-1.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-alt)] border-b border-[var(--color-border)] sticky top-0">
+                  Built-in
+                </div>
+                {grouped.builtIn.map((agent) => {
+                  const flatIdx =
+                    flatIndexByKey.get(`${agent.scope}:${agent.filePath}`) ??
+                    -1;
+                  return renderAgentRow(agent, flatIdx);
+                })}
+              </div>
+            )}
+
+            {!isLoading && !error && grouped.project.length > 0 && (
+              <div>
+                <div className="px-2 py-1.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-alt)] border-b border-[var(--color-border)] sticky top-0">
+                  Project
+                </div>
+                {grouped.project.map((agent) => {
+                  const flatIdx =
+                    flatIndexByKey.get(`${agent.scope}:${agent.filePath}`) ??
+                    -1;
+                  return renderAgentRow(agent, flatIdx);
+                })}
+              </div>
+            )}
+
+            {!isLoading && !error && grouped.global.length > 0 && (
+              <div>
+                <div className="px-2 py-1.5 text-[10px] font-medium text-[var(--color-text-muted)] bg-[var(--color-surface-alt)] border-b border-[var(--color-border)] sticky top-0">
+                  Global
+                </div>
+                {grouped.global.map((agent) => {
+                  const flatIdx =
+                    flatIndexByKey.get(`${agent.scope}:${agent.filePath}`) ??
+                    -1;
+                  return renderAgentRow(agent, flatIdx);
+                })}
+              </div>
+            )}
+
+            {!isLoading &&
+              !error &&
+              grouped.builtIn.length === 0 &&
+              grouped.project.length === 0 &&
+              grouped.global.length === 0 &&
+              searchQuery.trim() && (
+                <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)] text-center">
+                  No agents match &ldquo;{searchQuery}&rdquo;
+                </div>
+              )}
+
+            {!isLoading &&
+              !error &&
+              agents.length === 0 &&
+              !searchQuery.trim() && (
+                <div className="px-3 py-3 text-[11px] text-[var(--color-text-faint)] text-center">
+                  No custom agents found
+                </div>
+              )}
+          </div>
+        </PopoverContent>
+      </PopoverPositioner>
     </Popover>
   );
 }

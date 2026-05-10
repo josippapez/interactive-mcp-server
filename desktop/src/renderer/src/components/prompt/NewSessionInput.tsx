@@ -1,5 +1,9 @@
-import { memo, useState, useCallback, useRef, useEffect } from 'react';
+import { memo, useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import type { Attachment } from '../../types';
+import type {
+  AgentDefinition,
+  OpenCodeConfigDefaults,
+} from '../../../../preload';
 import { useAttachments } from '../../hooks/useAttachments';
 import { useProviders, type Model } from '../../hooks/useProviders';
 import AgentChip from './AgentChip';
@@ -9,6 +13,8 @@ import ModelChip from './ModelChip';
 import ModelPopover from './ModelPopover';
 import VariantSelector from './VariantSelector';
 import { AttachIcon } from './composer/ComposerIcons';
+import { getDefaultNativeAgentName } from './agent-picker-filter';
+import { resolveCurrentModel } from './model-resolution';
 
 const SELECTED_PROJECT_KEY = 'sidebar-selected-project';
 
@@ -96,6 +102,9 @@ function NewSessionInput({
   // Agent selector state
   const [agentPopoverOpen, setAgentPopoverOpen] = useState(false);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [configDefaults, setConfigDefaults] =
+    useState<OpenCodeConfigDefaults | null>(null);
+  const [availableAgents, setAvailableAgents] = useState<AgentDefinition[]>([]);
   const {
     providers,
     models,
@@ -106,6 +115,27 @@ function NewSessionInput({
   // Only show models from connected providers
   const connectedModels = models.filter((m) => isConnected(m.providerId));
   const connectedProviders = providers.filter((p) => isConnected(p.id));
+  const configuredDefaultModel = useMemo(
+    () =>
+      resolveCurrentModel(
+        connectedModels,
+        configDefaults?.modelId,
+        configDefaults?.providerId,
+      ),
+    [connectedModels, configDefaults?.modelId, configDefaults?.providerId],
+  );
+  const displayedModel = selectedModel ?? configuredDefaultModel;
+  const displayedVariant = selectedModel
+    ? selectedVariant
+    : (configDefaults?.variant ?? configuredDefaultModel?.defaultVariant);
+  const defaultAgentName = useMemo(
+    () =>
+      getDefaultNativeAgentName(
+        availableAgents,
+        configDefaults?.defaultAgentName,
+      ),
+    [availableAgents, configDefaults?.defaultAgentName],
+  );
 
   // Attachment handling
   const {
@@ -155,6 +185,29 @@ function NewSessionInput({
       persistProjectSelection(preSelectedProject);
     }
   }, [preSelectedProject]);
+
+  useEffect(() => {
+    if (!selectedProject) {
+      setConfigDefaults(null);
+      setAvailableAgents([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const [defaultsResult, agentsResult] = await Promise.all([
+        window.api.fetchOpenCodeConfigDefaults(selectedProject),
+        window.api.listAgents(selectedProject),
+      ]);
+      if (cancelled) return;
+      setConfigDefaults(defaultsResult.ok ? defaultsResult.data : null);
+      setAvailableAgents(agentsResult.ok ? agentsResult.data : []);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedProject]);
 
   useEffect(() => {
     if (!selectedProject) {
@@ -242,9 +295,15 @@ function NewSessionInput({
   }, []);
 
   // Handle variant selection
-  const handleVariantSelect = useCallback((variant: string | undefined) => {
-    setSelectedVariant(variant);
-  }, []);
+  const handleVariantSelect = useCallback(
+    (variant: string | undefined) => {
+      if (!selectedModel && configuredDefaultModel) {
+        setSelectedModel(configuredDefaultModel);
+      }
+      setSelectedVariant(variant);
+    },
+    [configuredDefaultModel, selectedModel],
+  );
 
   const handleAddNewProject = useCallback(async () => {
     setIsAddingProject(true);
@@ -358,7 +417,7 @@ function NewSessionInput({
             onClose={() => setPopoverOpen(false)}
             models={connectedModels}
             providers={connectedProviders}
-            currentModelId={selectedModel?.id}
+            currentModelId={displayedModel?.id}
             onSelectModel={handleModelSelect}
           />
 
@@ -367,6 +426,7 @@ function NewSessionInput({
             open={agentPopoverOpen}
             onOpenChange={setAgentPopoverOpen}
             selectedAgent={selectedAgent}
+            defaultAgentName={defaultAgentName}
             onSelect={(agent) => setSelectedAgent(agent)}
             baseDirectory={selectedProject || undefined}
           />
@@ -377,24 +437,25 @@ function NewSessionInput({
               {/* Model selector */}
               <div className="flex items-center gap-1.5">
                 <ModelChip
-                  currentModel={selectedModel}
-                  currentVariant={selectedVariant}
+                  currentModel={displayedModel}
+                  currentVariant={displayedVariant}
                   isOpen={popoverOpen}
                   onClick={() => !modelsLoading && setPopoverOpen(!popoverOpen)}
                   disabled={isCreating}
                   isLoading={modelsLoading && connectedModels.length === 0}
                 />
-                {selectedModel?.variants &&
-                  selectedModel.variants.length > 0 && (
+                {displayedModel?.variants &&
+                  displayedModel.variants.length > 0 && (
                     <VariantSelector
-                      variants={selectedModel.variants}
-                      currentVariant={selectedVariant}
+                      variants={displayedModel.variants}
+                      currentVariant={displayedVariant}
                       onSelectVariant={handleVariantSelect}
                       disabled={isCreating}
                     />
                   )}
                 <AgentChip
                   selectedAgent={selectedAgent}
+                  defaultAgentName={defaultAgentName}
                   isOpen={agentPopoverOpen}
                   onClick={() => setAgentPopoverOpen((prev) => !prev)}
                   disabled={isCreating}

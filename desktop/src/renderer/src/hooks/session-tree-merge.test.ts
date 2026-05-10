@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionNode } from '../types';
 import {
+  groupByProject,
   mergeSessionTreeSnapshot,
   type SnapshotNode,
 } from './session-tree-merge';
@@ -91,5 +92,80 @@ describe('mergeSessionTreeSnapshot', () => {
       sessionChannel: { sessionId: 'ses_inactive' },
     });
     expect(next.get('ses_live')?.title).toBe('Live Session');
+  });
+});
+
+describe('groupByProject', () => {
+  it('sorts pinned projects first, then unpinned projects by latest session creation date', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'older_pinned',
+        makeNode({
+          id: 'older_pinned',
+          providerSessionId: 'older_pinned',
+          baseDirectory: '/tmp/pinned-project',
+          directory: '/tmp/pinned-project',
+          createdAt: 10,
+        }),
+      ],
+      [
+        'newest_unpinned',
+        makeNode({
+          id: 'newest_unpinned',
+          providerSessionId: 'newest_unpinned',
+          baseDirectory: '/tmp/newest-project',
+          directory: '/tmp/newest-project',
+          createdAt: 30,
+        }),
+      ],
+      [
+        'older_unpinned',
+        makeNode({
+          id: 'older_unpinned',
+          providerSessionId: 'older_unpinned',
+          baseDirectory: '/tmp/older-project',
+          directory: '/tmp/older-project',
+          createdAt: 20,
+        }),
+      ],
+      [
+        'newer_pinned',
+        makeNode({
+          id: 'newer_pinned',
+          providerSessionId: 'newer_pinned',
+          baseDirectory: '/tmp/pinned-project',
+          directory: '/tmp/pinned-project',
+          createdAt: 40,
+        }),
+      ],
+    ]);
+
+    const projects = groupByProject(nodes, ['/tmp/pinned-project']);
+
+    expect(projects.map((project) => project.path)).toEqual([
+      '/tmp/pinned-project',
+      '/tmp/newest-project',
+      '/tmp/older-project',
+    ]);
+    expect(projects[0].latestSessionCreatedAt).toBe(40);
+  });
+
+  it('skips empty/whitespace-only pinned paths so no phantom rail tile is produced', () => {
+    const nodes = new Map<string, SessionNode>();
+
+    const projects = groupByProject(nodes, ['', '   ', '/tmp/real-project']);
+
+    expect(projects).toHaveLength(1);
+    expect(projects[0].path).toBe('/tmp/real-project');
+    expect(projects[0].name).toBe('real-project');
+    expect(projects[0].isPinned).toBe(true);
+  });
+
+  it('returns empty when all pinned paths are empty and no sessions exist', () => {
+    const nodes = new Map<string, SessionNode>();
+
+    const projects = groupByProject(nodes, ['', '\t', ' ']);
+
+    expect(projects).toEqual([]);
   });
 });

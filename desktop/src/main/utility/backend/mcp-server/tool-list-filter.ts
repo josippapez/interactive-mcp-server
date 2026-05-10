@@ -2,10 +2,19 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 
-export const HIDDEN_TOOL_NAMES = new Set([
+export const DISABLED_DESKTOP_TOOL_NAMES = new Set([
   'register_connection',
+  'request_user_input',
+  'start_intensive_chat',
+  'ask_intensive_chat',
+  'stop_intensive_chat',
+  'push_session_status',
+  'send_message',
   'poll_context_injections',
+  'manage_skills_and_instructions',
 ]);
+
+export const HIDDEN_TOOL_NAMES = DISABLED_DESKTOP_TOOL_NAMES;
 
 /**
  * Override the default ListTools handler to filter out tools whose names

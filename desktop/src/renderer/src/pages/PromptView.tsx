@@ -1,4 +1,3 @@
-import PromptMessage from '../components/prompt/PromptMessage';
 import ChatHistoryView from '../components/prompt/ChatHistoryView';
 import ChannelSidebar from '../components/prompt/ChannelSidebar';
 import { SidebarInset, SidebarProvider } from '../components/ui/sidebar';
@@ -6,7 +5,7 @@ import ChannelHeader from '../components/prompt/ChannelHeader';
 import IdleStateView from '../components/prompt/IdleStateView';
 import ActiveSessionBanner from '../components/prompt/ActiveSessionBanner';
 import RemoveErrorBanner from '../components/prompt/RemoveErrorBanner';
-import TasksSidebar from '../components/prompt/TasksSidebar';
+import TasksOverlay from '../components/prompt/TasksOverlay';
 import McpStatusPanel from '../components/prompt/McpStatusPanel';
 import McpSettingsModal from '../components/prompt/McpSettingsModal';
 import QuestionDock from '../components/prompt/QuestionDock';
@@ -41,6 +40,11 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
     onToggleDocContext,
     onReplyQuestion,
     onRejectQuestion,
+    activeTab,
+    onNavigate,
+    onNewChat,
+    onOpenSearch,
+    rightPaneOverride,
   } = props;
 
   const view = usePromptViewState(props);
@@ -73,19 +77,26 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
         <ChannelSidebar
           activeConnectionId={activeConnectionId}
           onSelect={onSelectConnection}
-          onSelectProjectSession={view.handleSelectProjectSession}
           onCreateSession={
             view.isOpenCodeBackendAvailable
               ? view.handleNavigateToNewSession
               : undefined
           }
+          activeTab={activeTab}
+          onNavigate={onNavigate}
+          onNewChat={onNewChat}
+          onOpenSearch={onOpenSearch}
         />
       </div>
 
       <SidebarInset className="anim-prompt-main flex-1 min-w-0 h-full min-h-0 bg-transparent">
-        {/* flex-row wrapper: main content column + TasksSidebar */}
-        <div className="flex flex-row flex-1 min-w-0 h-full min-h-0">
-          <div className="flex-1 flex flex-col min-w-0 h-full min-h-0">
+        {rightPaneOverride ? (
+          <div className="flex flex-1 min-w-0 h-full min-h-0 overflow-hidden">
+            {rightPaneOverride}
+          </div>
+        ) : (
+          /* Single content column; TasksOverlay is absolutely positioned over the chat area. */
+          <div className="relative flex flex-1 min-w-0 h-full min-h-0 flex-col">
             {activeConnectionId ? (
               <>
                 <ChannelHeader
@@ -122,6 +133,22 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                   onSearchNext={view.handleChannelSearchNext}
                   onSearchPrevious={view.handleChannelSearchPrevious}
                   onSearchClear={view.handleChannelSearchClear}
+                  tasksOpen={
+                    view.providerSessionId && view.isOpenCodeSession
+                      ? view.tasksOverlayOpen
+                      : undefined
+                  }
+                  onToggleTasks={
+                    view.providerSessionId && view.isOpenCodeSession
+                      ? view.handleToggleTasksOverlay
+                      : undefined
+                  }
+                  activeTaskCount={
+                    view.todos.filter(
+                      (t) =>
+                        t.status === 'pending' || t.status === 'in_progress',
+                    ).length
+                  }
                 />
 
                 {view.removeError && (
@@ -138,45 +165,59 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                       connectionId={connectionId}
                     />
                   )}
-                  {prompt && !activeSession && (
-                    <PromptMessage
-                      prompt={prompt}
-                      secondsLeft={view.secondsLeft}
-                    />
-                  )}
-                  {pendingQuestions[0] && (
-                    <QuestionDock
-                      question={pendingQuestions[0]}
-                      onReply={onReplyQuestion}
-                      onReject={onRejectQuestion}
-                    />
-                  )}
                   {!view.idle && (
-                    <ChatHistoryView
-                      key={view.providerSessionId ?? activeConnectionId}
-                      messages={channelMessages}
-                      chatEndRef={view.chatEndRef}
-                      activePromptId={view.activePromptId}
-                      predefinedOptions={prompt?.predefinedOptions}
-                      onSelectOption={onSelectOption}
-                      lastReadMessageId={view.activeNode?.lastReadMessageId}
-                      conversationMessages={view.conversationMessages}
-                      showConversation={
-                        view.isOpenCodeSession && view.conversationAvailable
+                    <div
+                      className="flex min-h-0 flex-1 overflow-hidden"
+                      data-questions-open={
+                        pendingQuestions[0] ? 'true' : 'false'
                       }
-                      isSeeding={view.conversationIsSeeding}
-                      expandAllTools={view.expandAllTools}
-                      toolAutoExpandExclusions={view.toolAutoExpandExclusions}
-                      onNavigateToSession={view.handleNavigateToSession}
-                      showThinking={view.showThinking}
-                      chatTextSize={view.chatTextSize}
-                      fullWidth={view.chatFullWidth}
-                      isBusy={view.sessionBusy && view.isOpenCodeSession}
-                      channelId={activeConnectionId}
-                      searchQuery={view.channelSearchQuery}
-                      activeSearchMatchIndex={view.activeSearchMatchIndex}
-                      onSearchMatchesChange={view.setChannelSearchMatchCount}
-                    />
+                    >
+                      {pendingQuestions[0] && (
+                        <aside className="hidden min-h-0 w-[min(420px,38vw)] flex-none border-r border-[var(--color-border)] bg-[var(--color-surface-alt)]/70 md:flex">
+                          <QuestionDock
+                            question={pendingQuestions[0]}
+                            onReply={onReplyQuestion}
+                            onReject={onRejectQuestion}
+                            fill
+                          />
+                        </aside>
+                      )}
+                      {pendingQuestions[0] && (
+                        <div className="absolute inset-x-0 top-0 z-20 md:hidden">
+                          <QuestionDock
+                            question={pendingQuestions[0]}
+                            onReply={onReplyQuestion}
+                            onReject={onRejectQuestion}
+                            className="shadow-lg"
+                          />
+                        </div>
+                      )}
+                      <ChatHistoryView
+                        key={view.providerSessionId ?? activeConnectionId}
+                        messages={channelMessages}
+                        chatEndRef={view.chatEndRef}
+                        activePromptId={view.activePromptId}
+                        predefinedOptions={prompt?.predefinedOptions}
+                        onSelectOption={onSelectOption}
+                        lastReadMessageId={view.activeNode?.lastReadMessageId}
+                        conversationMessages={view.conversationMessages}
+                        showConversation={
+                          view.isOpenCodeSession && view.conversationAvailable
+                        }
+                        isSeeding={view.conversationIsSeeding}
+                        expandAllTools={view.expandAllTools}
+                        toolAutoExpandExclusions={view.toolAutoExpandExclusions}
+                        onNavigateToSession={view.handleNavigateToSession}
+                        showThinking={view.showThinking}
+                        chatTextSize={view.chatTextSize}
+                        fullWidth={view.chatFullWidth}
+                        isBusy={view.sessionBusy && view.isOpenCodeSession}
+                        channelId={activeConnectionId}
+                        searchQuery={view.channelSearchQuery}
+                        activeSearchMatchIndex={view.activeSearchMatchIndex}
+                        onSearchMatchesChange={view.setChannelSearchMatchCount}
+                      />
+                    </div>
                   )}
                   {view.idle && (
                     <IdleStateView
@@ -233,8 +274,9 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     commandPaletteOpen={view.commandPaletteOpen}
                     modelId={view.sessionModelSelection.modelId}
                     providerId={view.sessionModelSelection.providerId}
-                    variant={view.sessionModelSelection.variant}
+                    variant={view.sessionModelSelection.variant ?? undefined}
                     latestStatus={view.latestStatus}
+                    activeSkills={view.activeSkills}
                     connectionId={activeConnectionId}
                     isBusy={view.sessionBusy && view.isOpenCodeSession}
                     docContextEnabled={docContextEnabled}
@@ -279,21 +321,20 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                 No channels yet.
               </div>
             )}
+            {activeConnectionId &&
+              view.providerSessionId &&
+              view.isOpenCodeSession && (
+                <TasksOverlay
+                  open={view.tasksOverlayOpen}
+                  onClose={view.handleCloseTasksOverlay}
+                  todos={view.todos}
+                  isLoading={view.todosLoading}
+                  error={view.todosError}
+                  onRefresh={view.refreshTodos}
+                />
+              )}
           </div>
-
-          {activeConnectionId &&
-            view.providerSessionId &&
-            view.isOpenCodeSession && (
-              <TasksSidebar
-                todos={view.todos}
-                isLoading={view.todosLoading}
-                error={view.todosError}
-                onRefresh={view.refreshTodos}
-                collapsed={view.tasksSidebarCollapsed}
-                onToggleCollapsed={view.handleToggleTasksSidebar}
-              />
-            )}
-        </div>
+        )}
       </SidebarInset>
 
       <McpSettingsModal

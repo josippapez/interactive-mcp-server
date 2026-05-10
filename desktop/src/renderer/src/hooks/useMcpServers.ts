@@ -67,8 +67,16 @@ export function useMcpServers(
   const fetchStatus = useCallback(async () => {
     if (!enabled) return;
 
+    let ignoreResult = false;
+    const uiTimeout = window.setTimeout(() => {
+      ignoreResult = true;
+      setError('MCP status request timed out');
+    }, 12_000);
+
     try {
       const result = await window.api.fetchMcpStatus(directory);
+      window.clearTimeout(uiTimeout);
+      if (ignoreResult) return;
       if (result.ok && result.servers) {
         setServers(result.servers);
         setError(null);
@@ -76,6 +84,8 @@ export function useMcpServers(
         setError(result.error ?? 'Failed to fetch MCP status');
       }
     } catch (err) {
+      window.clearTimeout(uiTimeout);
+      if (ignoreResult) return;
       setError(err instanceof Error ? err.message : 'Unknown error');
     }
   }, [directory, enabled]);

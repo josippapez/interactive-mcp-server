@@ -1,19 +1,20 @@
 /**
  * Auto-injects project-specific MCP servers when a session registers with a baseDirectory.
  *
- * This module reads the `.opencode/opencode.jsonc` config from a project directory,
- * parses the MCP definitions, and calls OpenCode's SDK to register each
- * project-specific MCP server dynamically.
+ * This module calls OpenCode's SDK config endpoint to retrieve the merged project
+ * MCP definitions, then calls OpenCode's SDK to register each project-specific
+ * MCP server dynamically.
  *
  * This implements Option B from the MCP-DETECTION.md proposal: automatic MCP injection
  * based on the baseDirectory provided during `register_connection`.
  */
 
-import { existsSync, readFileSync } from 'fs';
+import {
+  type McpLocalConfig,
+  type McpRemoteConfig,
+} from '@opencode-ai/sdk/v2/client';
 import { createLogger, type Logger } from '../../utils/logger';
-import { stripJsonComments } from '../../utils/json-parse';
 import { errorMessage } from '../../utils/errors';
-import { getProjectOpencodeConfigPath } from '../../utils/opencode-paths';
 import { getClient } from './sdk-client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -51,7 +52,7 @@ export interface McpInjectionResult {
  * Result of the full MCP injection process.
  */
 export interface McpInjectionSummary {
-  /** Whether the config file was found and parsed */
+  /** Whether the config was found and parsed */
   configFound: boolean;
   /** Parse error if config exists but couldn't be parsed */
   parseError?: string;
@@ -80,41 +81,6 @@ export interface McpInjectionOptions {
 const DEFAULT_TIMEOUT_MS = 5000;
 const MCP_INJECTION_CONCURRENCY = 3;
 
-// ─── JSONC Parser ─────────────────────────────────────────────────────────────
-
-/**
- * Parse a JSONC file (JSON with comments).
- * Returns null if the file doesn't exist or can't be parsed.
- */
-function parseJsonc<T>(
-  filePath: string,
-  logger: Logger,
-): { data: T; error?: undefined } | { data?: undefined; error: string } {
-  if (!existsSync(filePath)) {
-    return { error: 'file-not-found' };
-  }
-
-  let raw: string;
-  try {
-    raw = readFileSync(filePath, 'utf-8');
-  } catch (err) {
-    const msg = errorMessage(err);
-    logger.error(`Failed to read ${filePath}: ${msg}`);
-    return { error: `read-error: ${msg}` };
-  }
-
-  const stripped = stripJsonComments(raw);
-
-  try {
-    const data = JSON.parse(stripped) as T;
-    return { data };
-  } catch (err) {
-    const msg = errorMessage(err);
-    logger.error(`Failed to parse ${filePath}: ${msg}`);
-    return { error: `parse-error: ${msg}` };
-  }
-}
-
 // ─── MCP Injection ────────────────────────────────────────────────────────────
 
 /**
@@ -122,7 +88,7 @@ function parseJsonc<T>(
  */
 async function registerSingleMcp(
   name: string,
-  config: McpServerConfig,
+  config: McpLocalConfig | McpRemoteConfig,
   openCodePort: number,
   baseDirectory: string,
   timeoutMs: number,
@@ -134,25 +100,6 @@ async function registerSingleMcp(
     return { name, status: 'skipped', error: 'disabled' };
   }
 
-  // Build the config payload matching OpenCode's expected format.
-  // Use a discriminated union so the SDK types narrow correctly.
-  const mcpConfig =
-    config.type === 'remote'
-      ? {
-          type: 'remote' as const,
-          url: config.url ?? '',
-          ...(config.args ? { args: config.args } : {}),
-          ...(config.environment ? { environment: config.environment } : {}),
-          ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
-        }
-      : {
-          type: 'local' as const,
-          command: config.command ?? [],
-          ...(config.args ? { args: config.args } : {}),
-          ...(config.environment ? { environment: config.environment } : {}),
-          ...(config.timeout !== undefined ? { timeout: config.timeout } : {}),
-        };
-
   logger.info(`Registering MCP: ${name} (type: ${config.type})`);
 
   try {
@@ -160,7 +107,7 @@ async function registerSingleMcp(
     const response = await client.mcp.add(
       {
         name,
-        config: mcpConfig,
+        config,
       },
       { signal: AbortSignal.timeout(timeoutMs) },
     );
@@ -208,14 +155,14 @@ async function mapWithConcurrency<T, R>(
 }
 
 /**
- * Inject project-specific MCPs from a baseDirectory's `.opencode/opencode.jsonc`.
+ * Inject project-specific MCPs by fetching the merged config from the running
+ * OpenCode server via `client.config.get({ directory })`.
  *
  * This function:
- * 1. Reads the config file from `<baseDirectory>/.opencode/opencode.jsonc`
- * 2. Parses the JSONC content (supports // and /* comments)
- * 3. Extracts the `mcp` object containing MCP server definitions
- * 4. Calls `POST /mcp` for each MCP server to register it with OpenCode
- * 5. Returns a summary of the injection results
+ * 1. Calls `GET /config?directory=<baseDirectory>` via the SDK
+ * 2. Extracts the `mcp` object containing MCP server definitions
+ * 3. Calls `POST /mcp` for each MCP server to register it with OpenCode
+ * 4. Returns a summary of the injection results
  *
  * @param options - Injection options including baseDirectory and openCodePort
  * @returns Summary of the injection process
@@ -230,38 +177,44 @@ export async function injectProjectMcps(
     logger = createLogger('mcp-inject'),
   } = options;
 
-  const configPath = getProjectOpencodeConfigPath(baseDirectory, 'jsonc');
+  logger.info(`Fetching project MCP config for: ${baseDirectory}`);
 
-  logger.info(`Checking for project MCPs in: ${configPath}`);
+  // Fetch merged config from the running OpenCode server
+  let mcpConfig:
+    | Record<string, McpLocalConfig | McpRemoteConfig | { enabled: boolean }>
+    | undefined;
+  try {
+    const client = getClient(openCodePort, baseDirectory);
+    const response = await client.config.get(
+      { directory: baseDirectory },
+      { signal: AbortSignal.timeout(timeoutMs) },
+    );
 
-  // Parse the config file
-  const parseResult = parseJsonc<{
-    mcp?: Record<string, McpServerConfig>;
-  }>(configPath, logger);
-
-  if (parseResult.error) {
-    if (parseResult.error === 'file-not-found') {
-      logger.info(`No config found at ${configPath}`);
+    if (response.error) {
+      const msg = `Config fetch error: ${JSON.stringify(response.error)}`;
+      logger.error(msg);
       return {
         configFound: false,
+        parseError: msg,
         results: [],
         injectedMcps: [],
       };
     }
 
+    mcpConfig = response.data?.mcp;
+  } catch (err) {
+    const msg = errorMessage(err);
+    logger.error(`Failed to fetch config: ${msg}`);
     return {
-      configFound: true,
-      parseError: parseResult.error,
+      configFound: false,
+      parseError: `fetch-error: ${msg}`,
       results: [],
       injectedMcps: [],
     };
   }
-
-  const config = parseResult.data;
-  const mcpConfig = config?.mcp;
 
   if (!mcpConfig || typeof mcpConfig !== 'object') {
-    logger.info(`No MCP section found in ${configPath}`);
+    logger.info(`No MCP section found in config for ${baseDirectory}`);
     return {
       configFound: true,
       results: [],
@@ -269,10 +222,18 @@ export async function injectProjectMcps(
     };
   }
 
-  const mcpEntries = Object.entries(mcpConfig);
+  // Filter out entries that are only { enabled: boolean } (no type field)
+  const mcpEntries = Object.entries(mcpConfig).filter(
+    (entry): entry is [string, McpLocalConfig | McpRemoteConfig] => {
+      const cfg = entry[1];
+      return 'type' in cfg;
+    },
+  );
 
   if (mcpEntries.length === 0) {
-    logger.info(`MCP section is empty in ${configPath}`);
+    logger.info(
+      `MCP section is empty or has no typed entries for ${baseDirectory}`,
+    );
     return {
       configFound: true,
       results: [],
@@ -280,7 +241,9 @@ export async function injectProjectMcps(
     };
   }
 
-  logger.info(`Found ${mcpEntries.length} MCP(s) to inject from ${configPath}`);
+  logger.info(
+    `Found ${mcpEntries.length} MCP(s) to inject for ${baseDirectory}`,
+  );
 
   const results = await mapWithConcurrency(
     mcpEntries,

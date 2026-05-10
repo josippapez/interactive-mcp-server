@@ -6,7 +6,7 @@ import AgentPopover from '../AgentPopover';
 import ModelChip from '../ModelChip';
 import ModelPopover from '../ModelPopover';
 import VariantSelector from '../VariantSelector';
-import { SendIcon, AttachIcon, DocIcon } from './ComposerIcons';
+import { ArrowUpIcon, AttachIcon, DocIcon } from './ComposerIcons';
 import { ReplyToggle } from './ReplyToggle';
 import { StatusDisplay } from './StatusDisplay';
 import type { Provider } from '../../../hooks/useProviders';
@@ -28,10 +28,12 @@ type ComposerBottomBarProps = {
   // Agent selector props (OpenCode only — sticky in-session)
   showAgentChip: boolean;
   selectedAgent: string | null;
+  defaultAgentName?: string | null;
   agentPopoverOpen: boolean;
   onAgentPopoverToggle: () => void;
   onAgentPopoverChange: (open: boolean) => void;
   onAgentSelect: (agent: string | null) => void;
+  onDefaultAgentResolved?: (agent: string | null) => void;
   agentBaseDirectory: string | undefined;
   // Status props
   isBusy: boolean;
@@ -72,10 +74,12 @@ function ComposerBottomBarComponent({
   onVariantSelect,
   showAgentChip,
   selectedAgent,
+  defaultAgentName,
   agentPopoverOpen,
   onAgentPopoverToggle,
   onAgentPopoverChange,
   onAgentSelect,
+  onDefaultAgentResolved,
   agentBaseDirectory,
   isBusy,
   latestStatus,
@@ -119,6 +123,7 @@ function ComposerBottomBarComponent({
         {showAgentChip && (
           <AgentChip
             selectedAgent={selectedAgent}
+            defaultAgentName={defaultAgentName}
             isOpen={agentPopoverOpen}
             onClick={onAgentPopoverToggle}
             disabled={!enabled}
@@ -142,6 +147,8 @@ function ComposerBottomBarComponent({
           open={agentPopoverOpen}
           onOpenChange={onAgentPopoverChange}
           selectedAgent={selectedAgent}
+          defaultAgentName={defaultAgentName}
+          onDefaultAgentResolved={onDefaultAgentResolved}
           onSelect={onAgentSelect}
           baseDirectory={agentBaseDirectory}
         />
@@ -151,7 +158,7 @@ function ComposerBottomBarComponent({
       <div className="flex-1 flex items-center justify-center min-w-0 overflow-hidden">
         <StatusDisplay
           isBusy={isBusy}
-          latestStatus={latestStatus}
+          latestStatus={latestStatus ?? undefined}
           connectionId={connectionId}
           onDismissStatus={onDismissStatus}
           sendShortcut={sendShortcut}
@@ -159,8 +166,8 @@ function ComposerBottomBarComponent({
       </div>
 
       {/* Right side - Actions */}
-      <div className="flex items-center gap-1 shrink-0">
-        {/* Doc context toggle */}
+      <div className="flex items-center gap-1.5 shrink-0">
+        {/* Doc context toggle — small circular icon button */}
         {onToggleDocContext && (
           <button
             type="button"
@@ -169,24 +176,24 @@ function ComposerBottomBarComponent({
             aria-label={
               docContextEnabled ? 'Disable doc context' : 'Enable doc context'
             }
-            className={`p-1.5 rounded-md transition-colors ${
+            className={`flex h-8 w-8 items-center justify-center rounded-full transition-colors ${
               docContextEnabled
-                ? 'text-[var(--color-agent)] bg-[var(--color-agent)]/10'
-                : 'text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-alt)]'
+                ? 'text-[var(--color-agent)] bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-agent)_22%,transparent)]'
+                : 'text-[var(--color-text-muted)] bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)] hover:bg-[color-mix(in_srgb,var(--color-text)_10%,transparent)] hover:text-[var(--color-text)]'
             }`}
           >
             <DocIcon />
           </button>
         )}
 
-        {/* Attachment button */}
+        {/* Attachment button — small circular icon button */}
         <button
           type="button"
           onClick={onFilePicker}
           disabled={!enabled}
           title="Attach file"
           aria-label="Attach file"
-          className="p-1.5 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface-alt)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+          className="flex h-8 w-8 items-center justify-center rounded-full bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)] text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-text)_10%,transparent)] hover:text-[var(--color-text)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
         >
           <AttachIcon />
         </button>
@@ -200,7 +207,7 @@ function ComposerBottomBarComponent({
           />
         )}
 
-        {/* Send button — circular IconButton (opencode parity, GAP_REPORT §4.3). */}
+        {/* Send button — solid sky-blue circle with white up-arrow. */}
         <button
           type="button"
           onClick={onSubmit}
@@ -213,13 +220,13 @@ function ComposerBottomBarComponent({
               : `${submitLabel} (${sendShortcut})`
           }
           aria-label={submitLabel}
-          className={`flex size-8 items-center justify-center rounded-full text-white transition-all disabled:opacity-30 disabled:cursor-not-allowed ${
+          className={`flex h-8 w-8 items-center justify-center rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
             showReplyButton && !noReply
-              ? 'bg-[var(--color-user)] hover:opacity-90'
-              : 'bg-[var(--color-agent)] hover:opacity-90'
+              ? 'bg-[var(--color-user)] hover:bg-[color-mix(in_srgb,var(--color-user)_85%,black)]'
+              : 'bg-[var(--color-agent)] hover:bg-[color-mix(in_srgb,var(--color-agent)_85%,black)]'
           }`}
         >
-          <SendIcon />
+          <ArrowUpIcon />
         </button>
       </div>
     </div>

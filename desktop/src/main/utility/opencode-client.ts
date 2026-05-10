@@ -77,8 +77,12 @@ function bridge(): Bridge {
   return getUtilitySupervisor().getBridge();
 }
 
-function call<T>(name: string, args: unknown[]): Promise<T> {
-  return bridge().request<T>(name, { args });
+function call<T>(
+  name: string,
+  args: unknown[],
+  opts?: { timeoutMs?: number },
+): Promise<T> {
+  return bridge().request<T>(name, { args }, opts);
 }
 
 // ─── session-api ────────────────────────────────────────────────────────────
@@ -522,7 +526,9 @@ export function fetchMcpStatus(
   openCodePort: number,
   directory?: string,
 ): Promise<McpStatusResult> {
-  return call('opencode.fetchMcpStatus', [openCodePort, directory]);
+  return call('opencode.fetchMcpStatus', [openCodePort, directory], {
+    timeoutMs: 30_000,
+  });
 }
 
 export function connectMcp(
@@ -597,6 +603,7 @@ export function removeMcpAuth(
 // ─── config-io ──────────────────────────────────────────────────────────────
 
 import type { ReadConfigResult, WriteConfigResult } from './backend/config-io';
+import type { OpenCodeConfigDefaults } from './backend/config-defaults';
 
 export function readGlobalConfig(): Promise<ReadConfigResult> {
   return call('opencode.readGlobalConfig', []);
@@ -606,6 +613,16 @@ export function readProjectConfig(
   baseDirectory: string,
 ): Promise<ReadConfigResult> {
   return call('opencode.readProjectConfig', [baseDirectory]);
+}
+
+export function fetchOpenCodeConfigDefaults(
+  openCodePort: number,
+  baseDirectory?: string,
+): Promise<OpenCodeConfigDefaults> {
+  return call('opencode.fetchOpenCodeConfigDefaults', [
+    openCodePort,
+    baseDirectory,
+  ]);
 }
 
 export function writeGlobalConfig(data: unknown): Promise<WriteConfigResult> {
@@ -631,9 +648,13 @@ export function syncRemoteConfig(
 // ─── agents ─────────────────────────────────────────────────────────────────
 
 import type { AgentDefinition, WriteAgentParams } from './backend/agents';
+import type { NativeOpenCodeSkill } from './backend/native-skills';
 
-export function listAgents(baseDirectory?: string): Promise<AgentDefinition[]> {
-  return call('opencode.listAgents', [baseDirectory]);
+export function listAgents(
+  openCodePort?: number,
+  baseDirectory?: string,
+): Promise<AgentDefinition[]> {
+  return call('opencode.listAgents', [openCodePort, baseDirectory]);
 }
 
 export function readAgent(filePath: string): Promise<AgentDefinition | null> {
@@ -646,4 +667,16 @@ export function writeAgent(params: WriteAgentParams): Promise<AgentDefinition> {
 
 export function deleteAgent(filePath: string): Promise<void> {
   return call('opencode.deleteAgent', [filePath]);
+}
+
+export type { NativeOpenCodeSkill };
+
+export function listNativeOpenCodeSkills(
+  openCodePort: number,
+  baseDirectory?: string,
+): Promise<NativeOpenCodeSkill[]> {
+  return call('opencode.listNativeOpenCodeSkills', [
+    openCodePort,
+    baseDirectory,
+  ]);
 }

@@ -28,5 +28,5 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   registerConversationHandlers(deps);
   registerProviderHandlers(deps);
   registerMcpStatusHandlers(deps);
-  registerAgentsHandlers();
+  registerAgentsHandlers(deps);
 }

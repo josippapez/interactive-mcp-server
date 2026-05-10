@@ -1,0 +1,328 @@
+================================================================================
+@opencode-ai/sdk v2 — AUTHORITATIVE CAPABILITY MAP
+================================================================================
+
+GENERATED: May 10, 2026
+SOURCE: /Users/josippapez/Desktop/interactive-mcp-server/desktop/node_modules/@opencode-ai/sdk/dist/v2/
+PURPOSE: Complete enumeration for migration planning against custom Eden modules
+
+================================================================================
+EXECUTIVE SUMMARY
+================================================================================
+
+SDK v2 exposes 40 namespaces with 150+ methods covering:
+  ✅ Session lifecycle (create, list, get, delete, update, abort, share, fork)
+  ✅ Message operations (list, get, delete, revert, unrevert, parts)
+  ✅ Streaming prompts/commands with SSE events (24 event types)
+  ✅ Permission & question handling
+  ✅ File operations (list, read, status)
+  ✅ Search (files, text, symbols)
+  ✅ MCP server management (connect, disconnect, add)
+  ✅ Tool enumeration
+  ✅ Provider & model listing
+  ✅ Auth (OAuth, API key, well-known)
+  ✅ Project & VCS info
+  ✅ Workspace & worktree management
+  ✅ PTY/shell operations
+  ✅ TUI interaction (prompts, toasts, commands)
+  ✅ LSP & formatter status
+  ✅ Global config & upgrade
+  ✅ Comprehensive SSE event stream (70+ topics)
+
+MUST STAY CUSTOM (Desktop-specific):
+  ❌ Window management (minimize, maximize, close)
+  ❌ Tray icon control
+  ❌ Native notifications (beyond TUI toasts)
+  ❌ Clipboard integration
+  ❌ File dialogs
+  ❌ Electron auto-update
+  ❌ SQLite session persistence
+  ❌ UI state management (sidebar, panels, theme)
+  ❌ Keyboard shortcuts (OS-level)
+
+================================================================================
+NAMESPACE INVENTORY (40 namespaces)
+================================================================================
+
+PRIMARY NAMESPACES (High-value migration targets):
+  1. Session2 (18 methods) — Session lifecycle, prompts, commands, messages
+  2. Part (2 methods) — Message part operations
+  3. File (3 methods) — File operations
+  4. Find (3 methods) — Search (files, text, symbols)
+  5. Permission (3 methods) — Permission handling
+  6. Auth (2 methods) — Auth credentials
+  7. Auth2 (4 methods) — OAuth flow
+  8. Config (2 methods) — Global config
+  9. Config2 (3 methods) — Project config
+  10. Provider (3 methods) — Model providers
+  11. Project (3 methods) — Project info
+  12. Mcp (5 methods) — MCP server management
+  13. Tool (2 methods) — Tool enumeration
+  14. Tui (11 methods) — Terminal UI interaction
+
+SECONDARY NAMESPACES (Medium-value):
+  15. Question (3 methods) — Prompt/question handling
+  16. Workspace (5 methods) — Workspace management
+  17. Worktree (4 methods) — Git worktree management
+  18. Pty (8 methods) — Pseudo-terminal operations
+  19. Sync (4 methods) — Session sync/replay
+  20. Path (1 method) — Path resolution
+  21. VCS (2 methods) — Version control info
+  22. Lsp (1 method) — LSP status
+  23. Formatter (1 method) — Formatter status
+  24. App (3 methods) — App info (agents, skills, logging)
+  25. Command (1 method) — Command listing
+  26. Event (1 method) — Event subscription
+  27. Global (5 methods) — Server operations
+  28. Instance (1 method) — Instance management
+
+EXPERIMENTAL/UTILITY NAMESPACES:
+  29. Experimental (4 methods) — Experimental features
+  30. Console (3 methods) — Console operations
+  31. Resource (1 method) — MCP resources
+  32. Adapter (1 method) — Workspace adapters
+  33. Control (2 methods) — TUI control
+  34. Oauth (2 methods) — OAuth utilities
+  35. History (1 method) — History operations
+  36. V2 (1 method) — V2 namespace wrapper
+  37. OpencodeClient (24 methods) — Main client (all namespaces)
+
+================================================================================
+TOP 10 MOST-USED METHODS
+================================================================================
+
+1. client.session.list()
+   → List all sessions with optional filtering
+   → Returns: SessionListResponses
+
+2. client.session.create()
+   → Create new session with optional agent/model defaults
+   → Returns: SessionCreateResponses
+   → Emits: session.created event
+
+3. client.session.prompt()
+   → Send prompt to session (streams SSE events)
+   → Returns: ServerSentEventsResult<SessionPromptResponses>
+   → Emits: session.next.* events (text, tool, reasoning, etc.)
+
+4. client.session.command()
+   → Send command to session (streams SSE events)
+   → Returns: ServerSentEventsResult<SessionCommandResponses>
+   → Emits: session.next.* events
+
+5. client.session.get()
+   → Get session details
+   → Returns: SessionGetResponses
+
+6. client.session.delete()
+   → Delete session
+   → Returns: SessionDeleteResponses
+   → Emits: session.deleted event
+
+7. client.session.message()
+   → Get specific message
+   → Returns: SessionMessageResponses
+
+8. client.session.messages()
+   → List messages in session
+   → Returns: SessionMessagesResponses
+
+9. client.permission.list()
+   → List pending permission requests
+   → Returns: PermissionListResponses
+
+10. client.permission.reply()
+    → Grant/deny permission
+    → Returns: PermissionReplyResponses
+    → Emits: permission.replied event
+
+================================================================================
+EVENT STREAM (SSE TOPICS) — 70+ EVENTS
+================================================================================
+
+SESSION EVENTS (8):
+  session.created, session.updated, session.deleted, session.status,
+  session.idle, session.diff, session.error, session.compacted
+
+SESSION.NEXT EVENTS (24) — Streaming during prompt/command:
+  session.next.prompted, session.next.agent_switched, session.next.model_switched,
+  session.next.synthetic, session.next.shell_started, session.next.shell_ended,
+  session.next.step_started, session.next.step_ended, session.next.step_failed,
+  session.next.text_started, session.next.text_delta, session.next.text_ended,
+  session.next.reasoning_started, session.next.reasoning_delta, session.next.reasoning_ended,
+  session.next.tool_input_started, session.next.tool_input_delta, session.next.tool_input_ended,
+  session.next.tool_called, session.next.tool_progress, session.next.tool_success,
+  session.next.tool_failed, session.next.retried,
+  session.next.compaction_started, session.next.compaction_delta, session.next.compaction_ended
+
+MESSAGE EVENTS (5):
+  message.updated, message.removed, message.part.delta, message.part.updated, message.part.removed
+
+PERMISSION & QUESTION EVENTS (5):
+  permission.asked, permission.replied, question.asked, question.replied, question.rejected
+
+TUI EVENTS (4):
+  tui.prompt.append, tui.command.execute, tui.toast.show, tui.session.select
+
+WORKSPACE & WORKTREE EVENTS (5):
+  workspace.ready, workspace.failed, workspace.status, worktree.ready, worktree.failed
+
+PTY EVENTS (4):
+  pty.created, pty.updated, pty.exited, pty.deleted
+
+FILE & LSP EVENTS (4):
+  file.edited, file.watcher.updated, lsp.updated, lsp.client.diagnostics
+
+MCP & TOOL EVENTS (2):
+  mcp.tools.changed, mcp.browser.open_failed
+
+PROJECT & VCS EVENTS (2):
+  project.updated, vcs.branch.updated
+
+SYSTEM EVENTS (5):
+  server.connected, server.instance.disposed, global.disposed, command.executed, todo.updated
+
+INSTALLATION EVENTS (2):
+  installation.updated, installation.update_available
+
+================================================================================
+MIGRATION PRIORITY MATRIX
+================================================================================
+
+🔴 HIGH PRIORITY (Replace First):
+  - Session management (list, create, delete, update)
+  - Message operations (list, delete, revert)
+  - Prompt/command sending (with SSE streaming)
+  - Permission handling
+  Estimated effort: 2-3 weeks
+
+🟡 MEDIUM PRIORITY (Replace Next):
+  - File operations (list, read)
+  - Search (files, text, symbols)
+  - MCP management (connect, disconnect, add)
+  - Auth (OAuth, API key)
+  Estimated effort: 1-2 weeks
+
+🟢 LOW PRIORITY (Replace Last):
+  - Project info (current, list)
+  - VCS info (get, diff)
+  - Workspace management
+  - Worktree management
+  - PTY operations
+  Estimated effort: 1 week
+
+⚫ KEEP CUSTOM (Don't Replace):
+  - IPC handlers (window management, tray, notifications)
+  - Electron auto-update
+  - SQLite session persistence
+  - UI state (sidebar, panels, theme)
+  - Native dialogs
+  - Keyboard shortcuts (OS-level)
+
+================================================================================
+MIGRATION CHECKLIST
+================================================================================
+
+PHASE 1: Session Management (Week 1-2)
+  [ ] Replace custom session list with client.session.list()
+  [ ] Replace session create with client.session.create()
+  [ ] Replace session delete with client.session.delete()
+  [ ] Replace session update with client.session.update()
+  [ ] Replace message list with client.session.messages()
+  [ ] Replace message delete with client.session.deleteMessage()
+  [ ] Replace revert logic with client.session.revert()
+  [ ] Replace unrevert logic with client.session.unrevert()
+
+PHASE 2: Prompt/Command Handling (Week 2-3)
+  [ ] Replace prompt sending with client.session.prompt()
+  [ ] Replace command execution with client.session.command()
+  [ ] Replace shell execution with client.session.shell()
+  [ ] Wire SSE event handlers for session.next.* events
+  [ ] Implement streaming text/tool/reasoning handlers
+  [ ] Test error handling and retries
+
+PHASE 3: Permission & Auth (Week 3)
+  [ ] Replace permission handling with client.permission.list()
+  [ ] Replace permission reply with client.permission.reply()
+  [ ] Replace auth management with client.auth.set()
+  [ ] Replace auth removal with client.auth.remove()
+  [ ] Replace OAuth flow with client.auth.oauth()
+
+PHASE 4: File & Search (Week 4)
+  [ ] Replace file listing with client.file.list()
+  [ ] Replace file reading with client.file.read()
+  [ ] Replace search with client.find.files()
+  [ ] Replace text search with client.find.text()
+  [ ] Replace symbol search with client.find.symbols()
+
+PHASE 5: MCP & Tools (Week 4-5)
+  [ ] Replace tool enumeration with client.tool.list()
+  [ ] Replace MCP management with client.mcp.connect()
+  [ ] Replace MCP disconnect with client.mcp.disconnect()
+  [ ] Replace MCP add with client.mcp.add()
+
+PHASE 6: Keep Custom (Ongoing)
+  [ ] Maintain IPC handlers for window management
+  [ ] Keep Electron auto-update logic
+  [ ] Keep SQLite session persistence layer
+  [ ] Keep UI state management (sidebar, panels, theme)
+  [ ] Keep native notification system
+
+================================================================================
+KNOWN LIMITATIONS (SDK v2)
+================================================================================
+
+1. No offline mode — SDK requires active server connection
+2. No local caching — All data fetched from server
+3. No session export — Can't export sessions to file
+4. No custom metadata — Limited session metadata support
+5. No batch operations — Must call methods individually
+6. No webhooks — Only SSE for real-time updates
+7. No rate limiting — Client must implement own throttling
+8. No request cancellation — No built-in abort support
+9. No streaming file uploads — File parts must be pre-uploaded
+10. No session snapshots in v1 — SDK v2 only feature
+
+================================================================================
+DOCUMENTATION REFERENCES
+================================================================================
+
+Full Spec: SDK_v2_CAPABILITY_MAP.md (651 lines)
+  → Complete namespace reference with all methods
+  → Detailed parameter and return type information
+  → SSE event topics and payloads
+  → Notable gaps vs desktop needs
+
+Quick Reference: SDK_v2_QUICK_REFERENCE.md
+  → 40 namespaces at a glance
+  → Top 10 most-used methods
+  → Event stream highlights
+  → Migration priority matrix
+  → Code examples
+
+Method Signatures: SDK_v2_METHOD_SIGNATURES.md
+  → All 150+ methods with full signatures
+  → Parameter types and return types
+  → Type definitions (Auth, Permission, Model, etc.)
+  → Error handling patterns
+
+OpenCode Docs:
+  → https://opencode.ai/docs/server/
+  → https://opencode.ai/docs/sdk/
+  → https://opencode.ai/docs/agents/
+  → https://opencode.ai/docs/config/
+
+================================================================================
+NEXT STEPS
+================================================================================
+
+1. Read full spec: SDK_v2_CAPABILITY_MAP.md
+2. Identify custom modules to replace (session, message, permission, auth, file, search)
+3. Create detailed migration plan with phases
+4. Start with Phase 1 (session management)
+5. Wire SSE event handlers for streaming
+6. Keep desktop-specific code (IPC, persistence, UI state)
+7. Run integration tests after each phase
+8. Update documentation as you migrate
+
+================================================================================

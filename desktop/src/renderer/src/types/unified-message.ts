@@ -71,6 +71,8 @@ export interface ToolCallInfo {
   name: string;
   /** Current execution status of the tool call */
   status?: 'pending' | 'running' | 'completed' | 'error';
+  /** Human-readable tool title from OpenCode tool state. */
+  title?: string;
   /** Input parameters passed to the tool */
   input?: Record<string, unknown>;
   /** Output/result from the tool execution */
@@ -109,6 +111,8 @@ export interface UnifiedMessage {
   timestamp: number;
   /** File attachments (only present for channel messages) */
   attachments?: Attachment[];
+  /** File/context parts that are not previewable as inline attachments. */
+  fileParts?: Array<{ name: string; mimeType?: string; url?: string }>;
   /** Tool calls made in this message (only present for conversation messages) */
   toolCalls?: ToolCallInfo[];
   /** Model ID used to generate the response (for assistant messages) */
@@ -117,6 +121,16 @@ export interface UnifiedMessage {
   variant?: string;
   /** Agent name/mode that generated this message */
   agent?: string;
+  /** OpenCode assistant mode, e.g. build, plan, or compaction. */
+  mode?: string;
+  /** Provider finish reason for assistant messages. */
+  finish?: string;
+  /** User-visible assistant error, if OpenCode reports one. */
+  error?: string;
+  /** OpenCode assistant error name, e.g. MessageAbortedError. */
+  errorName?: string;
+  /** Completion timestamp in milliseconds since epoch. */
+  completedAt?: number;
   /** Token usage statistics for this message */
   tokens?: {
     input?: number;
@@ -138,6 +152,32 @@ export interface UnifiedMessage {
   isCompaction?: boolean;
   /** Source URLs referenced in this message */
   sourceUrls?: Array<{ url: string; title?: string }>;
+  /** Number of synthetic/ignored text parts hidden from the rendered body. */
+  hiddenTextPartCount?: number;
+  /** Parent OpenCode message id, used to relate assistant replies to user turns. */
+  parentId?: string | null;
+}
+
+function fileUrlToAttachment(
+  part: ConversationMessage['parts'][number],
+): Attachment | null {
+  if (part.type !== 'file' || !part.fileUrl) return null;
+  if (!part.fileUrl.startsWith('data:')) return null;
+
+  const commaIndex = part.fileUrl.indexOf(',');
+  const meta = part.fileUrl.slice(5, commaIndex);
+  if (commaIndex === -1 || !meta.endsWith(';base64')) return null;
+
+  const data = part.fileUrl.slice(commaIndex + 1);
+  const mimeType = meta.slice(0, -';base64'.length) || part.mediaType;
+  if (!mimeType || !data) return null;
+
+  return {
+    data,
+    mimeType,
+    name: part.filename ?? 'attachment',
+    size: data.length,
+  };
 }
 
 /**
@@ -227,8 +267,17 @@ export function conversationToUnified(
 
   // Extract text content from parts (including compaction text)
   const extractedTextParts = msg.parts
-    .filter((p) => (p.type === 'text' || p.type === 'compaction') && p.text)
+    .filter(
+      (p) =>
+        (p.type === 'text' || p.type === 'compaction') &&
+        p.text &&
+        !p.synthetic &&
+        !p.ignored,
+    )
     .map((p) => extractThinkingFromText(p.text!));
+  const hiddenTextPartCount = msg.parts.filter(
+    (p) => p.type === 'text' && p.text && (p.synthetic || p.ignored),
+  ).length;
 
   const textParts = extractedTextParts
     .map((part) => part.text)
@@ -264,6 +313,7 @@ export function conversationToUnified(
         id: p.id,
         name: p.toolName ?? 'Unknown tool',
         status: p.toolStatus,
+        title: p.toolTitle,
         input: p.toolInput,
         output: p.toolOutput,
         metadata: p.toolMetadata,
@@ -287,6 +337,17 @@ export function conversationToUnified(
       title: p.sourceTitle,
     }));
 
+  const fileAttachments = msg.parts
+    .map(fileUrlToAttachment)
+    .filter((attachment): attachment is Attachment => attachment !== null);
+  const fileParts = msg.parts
+    .filter((p) => p.type === 'file')
+    .map((p) => ({
+      name: p.filename ?? 'attachment',
+      mimeType: p.mediaType,
+      url: p.fileUrl,
+    }));
+
   const unified: UnifiedMessage = {
     id: msg.id,
     source: 'conversation',
@@ -299,14 +360,24 @@ export function conversationToUnified(
     text: textParts,
     reasoning: reasoningParts || undefined,
     timestamp: msg.createdAt,
+    attachments: fileAttachments.length > 0 ? fileAttachments : undefined,
+    fileParts: fileParts.length > 0 ? fileParts : undefined,
     toolCalls: toolCalls.length > 0 ? toolCalls : undefined,
     modelId: msg.modelId,
     variant: msg.variant,
     agent: msg.agent,
+    mode: msg.mode,
+    finish: msg.finish,
+    error: msg.error,
+    errorName: msg.errorName,
+    completedAt: msg.completedAt,
+    parentId: msg.parentId,
     tokens: msg.tokens,
     cost: msg.cost,
     isCompaction: isCompactionMessage,
     sourceUrls: sourceUrls.length > 0 ? sourceUrls : undefined,
+    hiddenTextPartCount:
+      hiddenTextPartCount > 0 ? hiddenTextPartCount : undefined,
   };
 
   return unified;
@@ -320,6 +391,7 @@ type CachedUnifiedEntry = {
 const channelUnifiedCache = new Map<string, CachedUnifiedEntry>();
 const conversationUnifiedCache = new Map<string, CachedUnifiedEntry>();
 const CACHE_PRUNE_THRESHOLD = 200;
+const HUMAN_READABLE_TOOL_DEDUPE_WINDOW_MS = 120_000;
 
 type PartCacheEntry = {
   signature: string;
@@ -377,7 +449,39 @@ function toSafeText(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
-function isHumanReadableToolCoveredByChannel(msg: UnifiedMessage): boolean {
+type HumanReadableChannelMarker = {
+  kind: ChannelMessage['kind'];
+  text: string;
+  timestamp: number;
+};
+
+function getStringInput(
+  input: Record<string, unknown> | undefined,
+  key: string,
+): string | null {
+  const value = input?.[key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function getHumanReadableToolCover(
+  toolCall: ToolCallInfo,
+): Pick<HumanReadableChannelMarker, 'kind' | 'text'> | null {
+  const name = toolCall.name.toLowerCase();
+  if (name.includes('send_message')) {
+    const text = getStringInput(toolCall.input, 'message');
+    return text ? { kind: 'agent_message', text } : null;
+  }
+  if (name.includes('request_user_input')) {
+    const text = getStringInput(toolCall.input, 'message');
+    return text ? { kind: 'question', text } : null;
+  }
+  return null;
+}
+
+function isHumanReadableToolCoveredByChannel(
+  msg: UnifiedMessage,
+  channelMarkers: readonly HumanReadableChannelMarker[],
+): boolean {
   if (msg.source !== 'conversation') {
     return false;
   }
@@ -391,11 +495,14 @@ function isHumanReadableToolCoveredByChannel(msg: UnifiedMessage): boolean {
   }
 
   return msg.toolCalls.every((toolCall) => {
-    const name = toolCall.name.toLowerCase();
-    return (
-      name.includes('request_user_input') ||
-      name.includes('send_message') ||
-      name.includes('push_session_status')
+    const cover = getHumanReadableToolCover(toolCall);
+    if (!cover) return false;
+    return channelMarkers.some(
+      (marker) =>
+        marker.kind === cover.kind &&
+        marker.text.trim() === cover.text &&
+        Math.abs(marker.timestamp - msg.timestamp) <=
+          HUMAN_READABLE_TOOL_DEDUPE_WINDOW_MS,
     );
   });
 }
@@ -565,6 +672,7 @@ function buildConversationSignature(msg: ConversationMessage): string {
 
   return [
     msg.id,
+    msg.parentId ?? '',
     msg.role,
     msg.createdAt,
     msg.mode ?? '',
@@ -699,32 +807,56 @@ export function mergeMessages(
   const unified: UnifiedMessage[] = [];
   const validChannelIds = new Set<string>();
   const validConversationIds = new Set<string>();
-  const channelPromptTimestamps = new Set<number>();
+  const humanReadableChannelMarkers: HumanReadableChannelMarker[] = [];
+  const userTurnMeta = new Map<
+    string,
+    Pick<ConversationMessage, 'modelId' | 'variant' | 'agent'>
+  >();
+
+  for (const msg of conversationMessages) {
+    if (msg.role !== 'user') continue;
+    userTurnMeta.set(msg.id, {
+      modelId: msg.modelId,
+      variant: msg.variant,
+      agent: msg.agent,
+    });
+  }
+
+  // Build a set of normalized text signatures for user-role conversation
+  // messages. Used to dedupe the optimistic local outbound echo against
+  // the server-confirmed echo OpenCode emits via `message.updated`. Once
+  // the server echo arrives the outbound is dropped so a single bubble
+  // remains. Until then the outbound renders with SENDING/QUEUED/SENT.
+  const conversationUserTexts = new Set<string>();
+  for (const cmsg of conversationMessages) {
+    if (cmsg.role !== 'user') continue;
+    const text = cmsg.parts
+      .filter((p) => p.type === 'text' && p.text)
+      .map((p) => p.text as string)
+      .join('\n\n')
+      .trim();
+    if (text) conversationUserTexts.add(text);
+  }
 
   // Convert channel messages
   //
-  // Outbound (user-sent) channel messages are NOT rendered in the chat
-  // history. They exist as a local echo for optimistic UX, but OpenCode
-  // echoes every accepted user message back via a `message.updated` event
-  // which lands in `conversationMessages`. Rendering both caused duplicate
-  // bubbles, stale "QUEUED" badges on already-sent messages, and lost
-  // server-confirmed content when the echo failed to match the local
-  // text signature. Source-of-truth is the conversation store.
-  //
-  // Queued/sending state for pending user input is surfaced outside of
-  // the chat flow (composer-level indicator), which reads the raw
-  // `channelMessages` list directly and is unaffected by this filter.
+  // Outbound (user-sent) channel messages render in the timeline so the
+  // SENDING/QUEUED/SENT badge is visible on the user bubble. Once the
+  // OpenCode server echoes the same text via `message.updated`, the
+  // outbound is dropped (matched by normalized text) and the server
+  // message becomes the single source of truth for that bubble.
   for (const msg of channelMessages) {
-    if (msg.kind === 'outbound') {
-      // Still track as a "valid" id so the cache-prune pass doesn't
-      // evict entries other pipelines might cache. Do not push into the
-      // unified output.
+    if (msg.kind === 'outbound' && conversationUserTexts.has(msg.text.trim())) {
       validChannelIds.add(msg.id);
       continue;
     }
 
     if (msg.kind === 'question' || msg.kind === 'agent_message') {
-      channelPromptTimestamps.add(msg.timestamp.getTime());
+      humanReadableChannelMarkers.push({
+        kind: msg.kind,
+        text: msg.text.trim(),
+        timestamp: msg.timestamp.getTime(),
+      });
     }
 
     validChannelIds.add(msg.id);
@@ -742,8 +874,10 @@ export function mergeMessages(
     validConversationIds.add(msg.id);
     const unifiedMessage = getCachedConversationUnified(msg);
     if (
-      isHumanReadableToolCoveredByChannel(unifiedMessage) &&
-      channelPromptTimestamps.has(unifiedMessage.timestamp)
+      isHumanReadableToolCoveredByChannel(
+        unifiedMessage,
+        humanReadableChannelMarkers,
+      )
     ) {
       continue;
     }
@@ -761,6 +895,39 @@ export function mergeMessages(
 
   // Sort by timestamp
   unified.sort((a, b) => a.timestamp - b.timestamp);
+
+  let latestPriorUserTurnMeta:
+    | Pick<ConversationMessage, 'modelId' | 'variant' | 'agent'>
+    | undefined;
+  for (let index = 0; index < unified.length; index += 1) {
+    const msg = unified[index];
+    if (msg.source !== 'conversation') {
+      continue;
+    }
+    if (msg.role === 'user') {
+      latestPriorUserTurnMeta = {
+        modelId: msg.modelId,
+        variant: msg.variant,
+        agent: msg.agent,
+      };
+      continue;
+    }
+    if (msg.role !== 'assistant') {
+      continue;
+    }
+    const parentMeta = msg.parentId
+      ? userTurnMeta.get(msg.parentId)
+      : undefined;
+    const fallbackMeta = parentMeta ?? latestPriorUserTurnMeta;
+    if (fallbackMeta && !msg.variant) {
+      unified[index] = {
+        ...msg,
+        modelId: msg.modelId ?? fallbackMeta.modelId,
+        variant: fallbackMeta.variant,
+        agent: msg.agent ?? fallbackMeta.agent,
+      };
+    }
+  }
 
   return unified;
 }

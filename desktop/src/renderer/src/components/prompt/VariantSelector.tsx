@@ -1,5 +1,10 @@
 import React, { memo, useMemo, useState } from 'react';
-import { Popover, PopoverTrigger, PopoverContent } from '../ui/popover';
+import {
+  Popover,
+  PopoverTrigger,
+  PopoverContent,
+  PopoverPositioner,
+} from '../ui/popover';
 import {
   formatReasoningVariant,
   normalizeReasoningVariant,
@@ -90,59 +95,59 @@ function VariantSelector({
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild disabled={disabled}>
-        <button
-          type="button"
-          disabled={disabled}
-          className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md border select-none transition-colors ${
-            disabled
-              ? 'bg-[var(--color-surface-alt)] border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
-              : open
-                ? 'bg-[var(--color-agent)]/20 border-[var(--color-agent)]/40 text-[var(--color-agent)]'
-                : 'bg-[var(--color-surface-alt)] border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-agent)]/40 hover:text-[var(--color-agent)] cursor-pointer'
-          }`}
-          title={`Effort level: ${formatReasoningVariant(normalizedCurrentVariant)}`}
-        >
-          <EffortIcon />
-          <span>{formatReasoningVariant(normalizedCurrentVariant)}</span>
-          <ChevronIcon open={open} />
-        </button>
-      </PopoverTrigger>
-
-      <PopoverContent
-        side="top"
-        align="start"
-        sideOffset={4}
-        className="min-w-[100px] p-1"
-      >
-        {/* Default option */}
-        <button
-          type="button"
-          onClick={() => handleSelect(undefined)}
-          className={`w-full px-3 py-1.5 text-left text-[11px] rounded-sm transition-colors ${
-            !normalizedCurrentVariant
-              ? 'bg-[var(--color-agent)]/10 text-[var(--color-agent)]'
-              : 'text-[var(--color-text)] hover:bg-[var(--color-surface-alt)]'
-          }`}
-        >
-          Default
-        </button>
-        {/* Variant options */}
-        {effectiveVariants.map((variant) => (
+      <PopoverTrigger
+        disabled={disabled}
+        render={
           <button
-            key={variant}
             type="button"
-            onClick={() => handleSelect(variant)}
+            disabled={disabled}
+            className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md border select-none transition-colors ${
+              disabled
+                ? 'bg-[var(--color-surface-alt)] border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
+                : open
+                  ? 'bg-[var(--color-agent)]/20 border-[var(--color-agent)]/40 text-[var(--color-agent)]'
+                  : 'bg-[var(--color-surface-alt)] border-[var(--color-border)] text-[var(--color-text)] hover:border-[var(--color-agent)]/40 hover:text-[var(--color-agent)] cursor-pointer'
+            }`}
+            title={`Effort level: ${formatReasoningVariant(normalizedCurrentVariant)}`}
+          >
+            <EffortIcon />
+            <span>{formatReasoningVariant(normalizedCurrentVariant)}</span>
+            <ChevronIcon open={open} />
+          </button>
+        }
+      />
+
+      <PopoverPositioner side="top" align="start" sideOffset={4}>
+        <PopoverContent className="min-w-[100px] p-1">
+          {/* Default option */}
+          <button
+            type="button"
+            onClick={() => handleSelect(undefined)}
             className={`w-full px-3 py-1.5 text-left text-[11px] rounded-sm transition-colors ${
-              normalizedCurrentVariant === variant
+              !normalizedCurrentVariant
                 ? 'bg-[var(--color-agent)]/10 text-[var(--color-agent)]'
                 : 'text-[var(--color-text)] hover:bg-[var(--color-surface-alt)]'
             }`}
           >
-            {formatReasoningVariant(variant)}
+            Default
           </button>
-        ))}
-      </PopoverContent>
+          {/* Variant options */}
+          {effectiveVariants.map((variant) => (
+            <button
+              key={variant}
+              type="button"
+              onClick={() => handleSelect(variant)}
+              className={`w-full px-3 py-1.5 text-left text-[11px] rounded-sm transition-colors ${
+                normalizedCurrentVariant === variant
+                  ? 'bg-[var(--color-agent)]/10 text-[var(--color-agent)]'
+                  : 'text-[var(--color-text)] hover:bg-[var(--color-surface-alt)]'
+              }`}
+            >
+              {formatReasoningVariant(variant)}
+            </button>
+          ))}
+        </PopoverContent>
+      </PopoverPositioner>
     </Popover>
   );
 }

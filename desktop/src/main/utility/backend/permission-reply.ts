@@ -5,12 +5,12 @@
  * Runs inside the utility process. When the caller doesn't supply a
  * `directory`, we resolve the registered connection's `baseDirectory`
  * directly from the utility-local DB.
+ *
+ * Goes through the shared `getClient()` cache (`shared/opencode-sdk-cache.ts`)
+ * so Mode C's `Authorization: Basic` interceptor is automatically applied.
  */
 
-import {
-  createOpencodeClient,
-  type OpencodeClient,
-} from '@opencode-ai/sdk/v2/client';
+import { getClient } from './sdk-client';
 import { createLogger } from '../../utils/logger';
 import { errorMessage } from '../../utils/errors';
 import { getRegisteredConnectionBySessionId } from './database';
@@ -18,29 +18,6 @@ import { getRegisteredConnectionBySessionId } from './database';
 export type PermissionReply = 'once' | 'always' | 'reject';
 
 const permissionLog = createLogger('permission');
-
-let _permissionClientFactory: (
-  openCodePort: number,
-  directory?: string,
-) => OpencodeClient = (openCodePort: number, directory?: string) =>
-  createOpencodeClient({
-    baseUrl: `http://localhost:${openCodePort}`,
-    directory,
-  });
-
-export function _setPermissionClientFactory(
-  factory: (openCodePort: number, directory?: string) => OpencodeClient,
-): void {
-  _permissionClientFactory = factory;
-}
-
-export function _resetPermissionClientFactory(): void {
-  _permissionClientFactory = (openCodePort: number, directory?: string) =>
-    createOpencodeClient({
-      baseUrl: `http://localhost:${openCodePort}`,
-      directory,
-    });
-}
 
 export async function replyToOpenCodePermission(
   openCodePort: number,
@@ -67,7 +44,7 @@ export async function replyToOpenCodePermission(
       }
     }
 
-    const client = _permissionClientFactory(openCodePort, effectiveDirectory);
+    const client = getClient(openCodePort, effectiveDirectory);
     permissionLog.info(
       `reply start session=${sessionID} request=${requestID} reply=${reply} directory=${effectiveDirectory ?? '(none)'} baseDirectory=${registeredBaseDirectory ?? '(none)'}`,
     );

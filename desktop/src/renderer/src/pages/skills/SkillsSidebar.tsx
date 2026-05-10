@@ -1,6 +1,19 @@
+import { ChevronDown, Filter, Plus, Search, X } from 'lucide-react';
 import type { Folder, SkillOrInstruction, TabType } from './skills-types';
 import { SkillsTree } from './SkillsTree';
+import { SkillsDndProvider } from './dnd/SkillsDndContext';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import { cn } from '@/lib/utils';
 
 type SkillsSidebarProps = {
   tab: TabType;
@@ -58,119 +71,189 @@ export function SkillsSidebar({
   onMoveEntry,
   hasActiveFilters,
 }: SkillsSidebarProps): React.ReactElement {
+  const handleClearFilters = (): void => {
+    setSearch('');
+    setCategoryFilter('');
+  };
+
   return (
-    <aside className="w-64 border-r border-[var(--color-border)] flex flex-col shrink-0">
-      {/* Header: title row + action buttons row */}
-      <div className="px-3 pt-3 pb-2 border-b border-[var(--color-border)]">
-        <h2 className="text-sm font-medium text-[var(--color-text)] mb-1.5">
-          Skills &amp; Instructions
-        </h2>
-        <div className="flex items-center justify-end gap-1 mb-2">
-          <button
-            type="button"
-            onClick={onExport}
-            title="Export all as ZIP"
-            className="px-2.5 py-1 text-[10px] rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
-          >
-            Export all
-          </button>
-          <button
-            type="button"
-            onClick={onCreate}
-            className="px-2.5 py-1 text-[10px] rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:bg-[var(--color-surface)] transition-colors cursor-pointer"
-          >
-            + New
-          </button>
+    <aside className="bg-background border-border flex w-72 shrink-0 flex-col border-r">
+      {/* Header */}
+      <div className="border-border space-y-3 border-b px-3 pt-3 pb-3">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
+            <h2 className="text-foreground truncate text-sm font-semibold">
+              Skills &amp; Instructions
+            </h2>
+            <p className="text-muted-foreground text-xs">
+              {allCount} {allCount === 1 ? 'item' : 'items'}
+            </p>
+          </div>
+
+          {/* Split "+ New" button */}
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  size="sm"
+                  className="h-7 shrink-0 gap-1 px-2.5 text-xs"
+                >
+                  <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                  New
+                  <ChevronDown
+                    className="h-3 w-3 opacity-70"
+                    aria-hidden="true"
+                  />
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="min-w-[160px]">
+              <DropdownMenuItem onClick={onCreate}>New Skill</DropdownMenuItem>
+              <DropdownMenuItem onClick={onCreate}>
+                New Instruction
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onExport}>
+                Export all as ZIP
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
-        {/* Tab bar */}
-        <div className="flex gap-0.5 mb-2">
-          {(
-            [
-              { key: 'all', label: 'All', count: allCount },
-              { key: 'skill', label: 'Skills', count: skillCount },
-              {
-                key: 'instruction',
-                label: 'Instructions',
-                count: instructionCount,
-              },
-            ] as { key: TabType; label: string; count: number }[]
-          ).map(({ key, label, count }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={`flex-1 flex items-center justify-center gap-1 px-1.5 py-1 text-[10px] rounded-sm transition-colors cursor-pointer ${
-                tab === key
-                  ? 'bg-[var(--color-surface)] text-[var(--color-text)] border border-[var(--color-border)]'
-                  : 'text-[var(--color-text-faint)] hover:text-[var(--color-text-muted)] hover:bg-[var(--color-surface)]/50'
-              }`}
-            >
-              {label}
-              <span
-                className={`text-[9px] px-1 rounded-full ${
-                  tab === key
-                    ? 'bg-[var(--color-border)] text-[var(--color-text-muted)]'
-                    : 'text-[var(--color-text-faint)]'
-                }`}
-              >
-                {count}
-              </span>
-            </button>
-          ))}
-        </div>
-
-        {/* Category filter dropdown */}
-        <select
-          value={categoryFilter}
-          onChange={(e) => setCategoryFilter(e.target.value)}
-          className="w-full mb-2 bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-2 py-1 text-xs text-[var(--color-text)]"
+        {/* Tabs */}
+        <Tabs
+          value={tab}
+          onValueChange={(value) => setTab(value as TabType)}
+          className="w-full"
         >
-          <option value="">All Categories</option>
-          {availableCategories.map((cat) => (
-            <option key={cat} value={cat}>
-              {cat}
-            </option>
-          ))}
-        </select>
+          <TabsList className="grid h-8 w-full grid-cols-3">
+            <TabsTrigger value="all" className="gap-1.5 text-xs">
+              All
+              <Badge
+                variant="secondary"
+                className="h-4 px-1 text-[10px] tabular-nums"
+              >
+                {allCount}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="skill" className="gap-1.5 text-xs">
+              Skills
+              <Badge
+                variant="secondary"
+                className="h-4 px-1 text-[10px] tabular-nums"
+              >
+                {skillCount}
+              </Badge>
+            </TabsTrigger>
+            <TabsTrigger value="instruction" className="gap-1.5 text-xs">
+              Instr.
+              <Badge
+                variant="secondary"
+                className="h-4 px-1 text-[10px] tabular-nums"
+              >
+                {instructionCount}
+              </Badge>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-        {/* Search input */}
-        <Input
-          type="search"
-          value={search}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setSearch(e.target.value)
-          }
-          placeholder="Search…"
-          className="h-7 px-2 py-1 text-xs"
-        />
+        {/* Search + filter row */}
+        <div className="flex items-center gap-1.5">
+          <div className="relative flex-1">
+            <Search
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-2 h-3.5 w-3.5 -translate-y-1/2"
+              aria-hidden="true"
+            />
+            <Input
+              type="search"
+              value={search}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSearch(e.target.value)
+              }
+              placeholder="Search…"
+              className="h-8 pl-7 text-xs"
+            />
+          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className={cn(
+                    'h-8 shrink-0 gap-1 px-2 text-xs',
+                    categoryFilter && 'border-primary/40 text-primary',
+                  )}
+                  aria-label="Filter by category"
+                >
+                  <Filter className="h-3.5 w-3.5" aria-hidden="true" />
+                  {categoryFilter || 'All'}
+                </Button>
+              }
+            />
+            <DropdownMenuContent align="end" className="min-w-[180px]">
+              <DropdownMenuItem
+                onClick={() => setCategoryFilter('')}
+                className={cn(!categoryFilter && 'bg-accent')}
+              >
+                All categories
+              </DropdownMenuItem>
+              {availableCategories.length > 0 && <DropdownMenuSeparator />}
+              {availableCategories.map((cat) => (
+                <DropdownMenuItem
+                  key={cat}
+                  onClick={() => setCategoryFilter(cat)}
+                  className={cn(categoryFilter === cat && 'bg-accent')}
+                >
+                  {cat}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {hasActiveFilters && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={handleClearFilters}
+            className="text-muted-foreground hover:text-foreground h-6 w-full justify-start gap-1 px-2 text-xs"
+          >
+            <X className="h-3 w-3" aria-hidden="true" />
+            Clear filters
+          </Button>
+        )}
 
         {exportStatus && (
-          <p className="mt-1.5 text-[10px] text-[var(--color-text-faint)]">
-            {exportStatus}
-          </p>
+          <p className="text-muted-foreground text-[11px]">{exportStatus}</p>
         )}
       </div>
 
-      {/* Tree: unfiled at root, folders with nested children */}
-      <SkillsTree
-        folders={folders}
-        unfiledEntries={unfiledEntries}
-        entriesByFolder={entriesByFolder}
-        selected={selected}
-        onSelect={onSelect}
-        onDelete={onDelete}
-        onToggleEnabled={onToggleEnabled}
-        onCreateFolder={onCreateFolder}
-        onRenameFolder={onRenameFolder}
-        onDeleteFolder={onDeleteFolder}
-        onMoveEntry={onMoveEntry}
-        emptyLabel={
-          hasActiveFilters
-            ? 'No matches.'
-            : 'No entries yet. Click "+ New" to create one, or use the manage_skills_and_instructions tool from an agent.'
-        }
-      />
+      {/* DnD-wrapped scrollable folder list */}
+      <SkillsDndProvider onDropEntryToFolder={onMoveEntry}>
+        <SkillsTree
+          folders={folders}
+          unfiledEntries={unfiledEntries}
+          entriesByFolder={entriesByFolder}
+          selected={selected}
+          onSelect={onSelect}
+          onDelete={onDelete}
+          onToggleEnabled={onToggleEnabled}
+          onCreateFolder={onCreateFolder}
+          onRenameFolder={onRenameFolder}
+          onDeleteFolder={onDeleteFolder}
+          onMoveEntry={onMoveEntry}
+          emptyLabel={
+            hasActiveFilters
+              ? 'No matches for your filters.'
+              : 'No entries yet. Click "+ New" to create one, or use the manage_skills_and_instructions tool from an agent.'
+          }
+        />
+      </SkillsDndProvider>
     </aside>
   );
 }

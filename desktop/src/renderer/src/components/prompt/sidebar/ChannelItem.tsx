@@ -1,5 +1,6 @@
 import { memo } from 'react';
 import { SidebarMenuButton } from '@/components/ui/sidebar';
+import { cn } from '@/lib/utils';
 import type { SessionNode } from '../../../types';
 import type { SessionStatusType } from '../../../hooks/useSessionStatus';
 import {
@@ -107,51 +108,46 @@ export const ChannelItem = memo(function ChannelItem({
       )}
 
       <SidebarMenuButton
-        asChild
         isActive={isActive}
-        className={`h-auto min-w-0 flex-1 rounded-lg px-2.5 py-2 pr-2 ${
-          isChild ? 'text-xs' : 'text-sm'
-        } ${
-          showPendingPrompt
-            ? 'bg-[var(--color-user)]/15 text-[var(--color-user)] font-medium ring-1 ring-[var(--color-user)]/30'
-            : isActive
-              ? 'bg-[var(--color-agent)]/12 text-[var(--color-agent)] ring-1 ring-[var(--color-agent)]/12'
-              : isRunning
-                ? 'font-medium text-[var(--color-text)] hover:bg-[var(--color-border)]/75'
-                : 'text-[var(--color-text-muted)] hover:bg-[var(--color-border)]/75 hover:text-[var(--color-text)]'
-        }`}
+        className={cn(
+          'flex items-center gap-2 px-3 py-1.5 mx-0 rounded-md cursor-pointer truncate min-w-0 flex-1 h-auto border-0 transition-colors',
+          isChild ? 'text-xs' : 'text-sm',
+          'text-[var(--color-text)] hover:bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)]',
+          showPendingPrompt &&
+            'bg-[color-mix(in_srgb,var(--color-user)_14%,transparent)] text-[var(--color-user)] font-medium',
+          isActive &&
+            !showPendingPrompt &&
+            'bg-[color-mix(in_srgb,var(--color-agent)_12%,transparent)] text-[var(--color-agent)]',
+          !isActive && !showPendingPrompt && isRunning && 'font-medium',
+          'flex min-w-0 w-full items-center gap-2 overflow-hidden',
+        )}
+        render={<button type="button" onClick={() => onSelect(node.id)} />}
       >
-        <button
-          type="button"
-          onClick={() => onSelect(node.id)}
-          className="flex min-w-0 w-full items-center gap-2 overflow-hidden"
-        >
-          {isDeepChild || isChild ? (
-            <span className="shrink-0 text-[var(--color-text-faint)]">↳</span>
-          ) : (
-            <ProviderBadge providerType={node.providerType} />
-          )}
-          <span className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
-            {label}
+        {isDeepChild || isChild ? (
+          <span className="shrink-0 text-[var(--color-text-faint)]">↳</span>
+        ) : (
+          <ProviderBadge providerType={node.providerType} />
+        )}
+        <span className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap">
+          {label}
+        </span>
+        {showPendingPrompt && (
+          <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-user)] animate-pulse" />
+        )}
+        {showUnread && (
+          <span className="shrink-0 rounded-full bg-[var(--color-user)]/15 px-1.5 py-0.5 text-[10px] text-[var(--color-user)]">
+            {node.unreadCount}
           </span>
-          {showPendingPrompt && (
-            <span className="h-2 w-2 shrink-0 rounded-full bg-[var(--color-user)] animate-pulse" />
-          )}
-          {showUnread && (
-            <span className="shrink-0 rounded-full bg-[var(--color-user)]/15 px-1.5 py-0.5 text-[10px] text-[var(--color-user)]">
-              {node.unreadCount}
-            </span>
-          )}
-          {showBusy && <SessionStatusBadge status={sessionStatus} />}
-          {showLegacyStatus && (
-            <StatusDot sessionStatuses={node.sessionStatuses} />
-          )}
-          {startTimeLabel ? (
-            <span className="ml-1 shrink-0 text-[11px] text-[var(--color-text-faint)]">
-              {startTimeLabel}
-            </span>
-          ) : null}
-        </button>
+        )}
+        {showBusy && <SessionStatusBadge status={sessionStatus} />}
+        {showLegacyStatus && (
+          <StatusDot sessionStatuses={node.sessionStatuses} />
+        )}
+        {startTimeLabel ? (
+          <span className="ml-1 shrink-0 text-[11px] text-[var(--color-text-faint)]">
+            {startTimeLabel}
+          </span>
+        ) : null}
       </SidebarMenuButton>
     </div>
   );

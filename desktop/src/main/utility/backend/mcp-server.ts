@@ -30,6 +30,7 @@ import { emitToRenderer } from './renderer-emit';
 import { getEffectiveProvider } from './mcp-server/provider-detection';
 import { createMcpServerWithTools } from './mcp-server/server-factory';
 import { createNoopResponse } from './mcp-server/noop-response';
+import { resolveMcpPort } from './mcp-server/port-probe';
 import {
   autoRegisterDefaultConnection,
   DEFAULT_MAIN_CHANNEL_NAME,
@@ -42,6 +43,12 @@ let httpServer: Server | null = null;
 let _sessionCleanup: ((connectionId: string) => Promise<boolean>) | null = null;
 let _clearAllSessions: (() => Promise<number>) | null = null;
 let _activeSessionCountGetter: (() => number) | null = null;
+/**
+ * Port the listener actually bound to. May differ from `mcpPort` in
+ * settings if the requested port was in use and the resolver probed
+ * upward. `null` while the server is stopped.
+ */
+const _resolvedMcpPort: { value: number | null } = { value: null };
 
 let _attachmentCleanupInterval: ReturnType<typeof setInterval> | null = null;
 
@@ -51,7 +58,20 @@ export async function startMcpServer(): Promise<void> {
   if (_started) return;
   _started = true;
   const snapshot = getSettingsSnapshot();
-  const port = snapshot.mcpPort;
+  const requestedPort = snapshot.mcpPort;
+  // Probe upward from the configured port. Two Eden instances on the same
+  // machine (dev + prod) used to fight over 3100; now the second one
+  // peacefully takes 3101 and we surface the resolved port to consumers.
+  const { port } = await resolveMcpPort(requestedPort, (msg) => {
+    mcpLog.info(msg);
+    console.log(msg);
+  });
+  if (port !== requestedPort) {
+    mcpLog.info(
+      `MCP server requested port=${requestedPort}, bound on port=${port}`,
+    );
+  }
+  _resolvedMcpPort.value = port;
   const getSoundEnabled = () => getSettingsSnapshot().soundEnabled;
   const getPromptTimeoutMs = () =>
     getSettingsSnapshot().promptTimeoutSeconds * 1000;
@@ -595,17 +615,7 @@ export async function startMcpServer(): Promise<void> {
       status: 'ok',
       activeClients,
       mcpConfigFile: MCP_CONFIG_FILE,
-      tools: [
-        'register_connection',
-        'request_user_input',
-        'start_intensive_chat',
-        'ask_intensive_chat',
-        'stop_intensive_chat',
-        'push_session_status',
-        'send_message',
-        'find_repo_docs',
-        'manage_skills_and_instructions',
-      ],
+      tools: [],
     });
   });
 
@@ -665,7 +675,16 @@ export function stopMcpServer(): void {
   _sessionCleanup = null;
   _clearAllSessions = null;
   _activeSessionCountGetter = null;
+  _resolvedMcpPort.value = null;
   _started = false;
+}
+
+/**
+ * Actually-bound port of the MCP HTTP listener, or `null` when stopped.
+ * May differ from `settings.mcpPort` if the probe rolled upward.
+ */
+export function getResolvedMcpPort(): number | null {
+  return _resolvedMcpPort.value;
 }
 
 export async function restartMcpServer(): Promise<void> {

@@ -254,9 +254,6 @@ export async function fetchMcpStatus(
           url: mcpConfig?.type === 'remote' ? mcpConfig.url : undefined,
           command: mcpConfig?.type === 'local' ? mcpConfig.command : undefined,
           environmentKeys: getEnvironmentKeys(mcpConfig),
-          tools: undefined,
-          resources: undefined,
-          prompts: undefined,
         };
       },
     );

@@ -29,6 +29,7 @@ export interface Command {
   name: string;
   description: string;
   args: CommandArg[];
+  source?: 'command' | 'mcp' | 'skill';
 }
 
 /** Result of executing a command. */

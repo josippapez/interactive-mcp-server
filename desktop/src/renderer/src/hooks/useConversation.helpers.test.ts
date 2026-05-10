@@ -30,13 +30,12 @@ function makeState(message: ConversationMessage): ConversationState {
     messages: { [message.sessionId]: [message] },
     parts: {},
     status: { [message.sessionId]: 'idle' },
-    errors: {},
-    currentSessionId: null,
-    contextUsage: {},
-    modelLimits: {},
-    contextWindowBySession: {},
-    contextUsageBySession: {},
     todos: {},
+    contextUsage: {},
+    sessionSideChannels: {},
+    vcsBranch: null,
+    lastFileEdit: null,
+    lastSeq: 0,
   };
 }
 

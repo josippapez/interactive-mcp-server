@@ -15,6 +15,13 @@ import {
   sessionAgentsAtom,
   setSessionAgentAtom,
 } from '../../store/session-agents';
+import {
+  buildComposerDraftKey,
+  clearComposerDraft,
+  getComposerDraft,
+  setComposerDraft,
+} from './composer/composer-drafts';
+import { getDefaultNativeAgentName } from './agent-picker-filter';
 
 type Props = {
   enabled: boolean;
@@ -93,7 +100,16 @@ function ChannelComposer({
   docContextEnabled = false,
   onToggleDocContext,
 }: Props): React.ReactElement {
-  const [value, setValue] = useState('');
+  const draftKey = useMemo(
+    () =>
+      buildComposerDraftKey({
+        sessionId,
+        connectionId,
+        mode: showReplyButton ? 'queue' : 'prompt',
+      }),
+    [connectionId, sessionId, showReplyButton],
+  );
+  const [value, setValue] = useState(() => getComposerDraft(draftKey));
   const [expandedImage, setExpandedImage] = useState<{
     src: string;
     name: string;
@@ -103,7 +119,6 @@ function ChannelComposer({
   const [commandQuery, setCommandQuery] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isFocused, setIsFocused] = useState(false);
 
   // Model selector state
   const [popoverOpen, setPopoverOpen] = useState(false);
@@ -122,6 +137,29 @@ function ChannelComposer({
     ? (sessionAgents.get(connectionId) ?? null)
     : null;
   const [agentPopoverOpen, setAgentPopoverOpen] = useState(false);
+  const [availableAgents, setAvailableAgents] = useState<
+    import('../../../../preload').AgentDefinition[]
+  >([]);
+  const defaultAgentName = useMemo(
+    () => getDefaultNativeAgentName(availableAgents),
+    [availableAgents],
+  );
+
+  useEffect(() => {
+    if (!isOpenCodeSession) {
+      setAvailableAgents([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      const result = await window.api.listAgents(baseDirectory);
+      if (!cancelled && result.ok) setAvailableAgents(result.data);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [baseDirectory, isOpenCodeSession]);
 
   const handleAgentSelect = useCallback(
     (agent: string | null) => {
@@ -134,6 +172,30 @@ function ChannelComposer({
   const handleAgentPopoverToggle = useCallback(() => {
     setAgentPopoverOpen((prev) => !prev);
   }, []);
+
+  const handleDefaultAgentResolved = useCallback((agent: string | null) => {
+    setAvailableAgents((prev) => {
+      if (!agent || prev.some((item) => item.name === agent)) return prev;
+      return [
+        {
+          name: agent,
+          filePath: `opencode-native:${agent}`,
+          scope: 'global',
+          description: 'OpenCode default agent',
+          mode: 'primary',
+          tools: {},
+          body: '',
+          rawContents: '',
+          native: true,
+        },
+        ...prev,
+      ];
+    });
+  }, []);
+
+  useEffect(() => {
+    setValue(getComposerDraft(draftKey));
+  }, [draftKey]);
 
   // Command palette can be opened externally (Cmd+K) or internally (/)
   const commandPaletteOpen = externalPaletteOpen || internalPaletteOpen;
@@ -161,15 +223,17 @@ function ChannelComposer({
     // Clear the "/" from input if it was typed
     if (value.startsWith('/')) {
       setValue('');
+      clearComposerDraft(draftKey);
     }
     // Refocus textarea
     textareaRef.current?.focus();
-  }, [value, onCommandPaletteChange]);
+  }, [draftKey, value, onCommandPaletteChange]);
 
   const handleCommandExecuted = useCallback(
     (commandName: string) => {
       // Clear input after successful command execution
       setValue('');
+      clearComposerDraft(draftKey);
       setCommandQuery('');
       setInternalPaletteOpen(false);
       onCommandPaletteChange?.(false);
@@ -177,7 +241,7 @@ function ChannelComposer({
         console.debug(`[ChannelComposer] Command /${commandName} executed`);
       }
     },
-    [onCommandPaletteChange],
+    [draftKey, onCommandPaletteChange],
   );
 
   // Handle model selection from popover
@@ -235,6 +299,19 @@ function ChannelComposer({
     ta.selectionEnd = cursorPos;
   }, []);
 
+  const handleSkillSelected = useCallback(
+    (skillName: string) => {
+      const next = `/${skillName} `;
+      setValue(next);
+      setComposerDraft(draftKey, next);
+      setCommandQuery('');
+      setInternalPaletteOpen(false);
+      onCommandPaletteChange?.(false);
+      requestAnimationFrame(() => focusTextarea(next.length));
+    },
+    [draftKey, focusTextarea, onCommandPaletteChange],
+  );
+
   // Stable callback for expanding images (passed to memoized AttachmentPreview)
   const handleExpandImage = useCallback((src: string, name: string) => {
     setExpandedImage({ src, name });
@@ -265,6 +342,7 @@ function ChannelComposer({
       onSubmit(text, attachments.length > 0 ? attachments : undefined);
     }
     setValue('');
+    clearComposerDraft(draftKey);
     setAttachments([]);
     clearSuggestions();
   }, [
@@ -277,6 +355,7 @@ function ChannelComposer({
     setAttachments,
     clearSuggestions,
     selectedAgent,
+    draftKey,
   ]);
 
   const disabled = useMemo(
@@ -308,14 +387,14 @@ function ChannelComposer({
   return (
     <>
       <div className="p-3" data-composer>
-        {/* Main composer container */}
+        {/* Main composer container — rounded-rectangle surface via global
+            `.composer-surface` utility (radius / border / background /
+            focus ring all owned by the global utility in main.css). */}
         <div
           ref={containerRef}
-          className={`relative flex flex-col rounded-[12px] border bg-[var(--color-surface)] transition-all duration-150 ${
-            isFocused
-              ? 'border-transparent shadow-xs-border-focus'
-              : 'border-[var(--color-border-weak)] shadow-sm'
-          } ${!enabled ? 'opacity-60' : ''}`}
+          className={`composer-surface relative flex flex-col transition-all duration-150 ${
+            !enabled ? 'opacity-60' : ''
+          }`}
         >
           {/* Autocomplete dropdown */}
           {showSuggestions && (
@@ -337,6 +416,7 @@ function ChannelComposer({
               onClose={handleClosePalette}
               initialQuery={commandQuery}
               onCommandExecuted={handleCommandExecuted}
+              onSkillSelected={handleSkillSelected}
               baseDirectory={baseDirectory}
             />
           )}
@@ -358,11 +438,10 @@ function ChannelComposer({
             value={value}
             disabled={!enabled}
             onPaste={handlePaste}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
             onChange={(e) => {
               const next = e.target.value;
               setValue(next);
+              setComposerDraft(draftKey, next);
 
               // Detect "/" at start of input to open command palette
               if (sessionId && next.startsWith('/') && !internalPaletteOpen) {
@@ -414,7 +493,7 @@ function ChannelComposer({
               }
             }}
             placeholder={placeholder}
-            className="w-full bg-transparent px-4 py-3 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none resize-none overflow-y-auto"
+            className="w-full bg-transparent px-5 pt-4 pb-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none resize-none overflow-y-auto"
             rows={1}
             style={{ height: '24px', maxHeight: '300px' }}
           />
@@ -435,10 +514,12 @@ function ChannelComposer({
             onVariantSelect={handleVariantSelect}
             showAgentChip={Boolean(isOpenCodeSession && connectionId)}
             selectedAgent={selectedAgent}
+            defaultAgentName={defaultAgentName}
             agentPopoverOpen={agentPopoverOpen}
             onAgentPopoverToggle={handleAgentPopoverToggle}
             onAgentPopoverChange={setAgentPopoverOpen}
             onAgentSelect={handleAgentSelect}
+            onDefaultAgentResolved={handleDefaultAgentResolved}
             agentBaseDirectory={baseDirectory}
             isBusy={isBusy}
             latestStatus={latestStatus}

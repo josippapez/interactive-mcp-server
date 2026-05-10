@@ -1,0 +1,37 @@
+{
+  "_comment": "Pin of the upstream anomalyco/opencode binary release that the desktop app bundles for Mode C. Bump `version` to upgrade. The download URL is computed as https://github.com/anomalyco/opencode/releases/download/<version>/<asset> by scripts/copy-opencode-bin.mjs. SHA-256 sums are verified against this manifest at download time; update them in the same commit as the version bump.",
+  "version": "v1.14.28",
+  "repo": "anomalyco/opencode",
+  "platforms": {
+    "darwin-arm64": {
+      "asset": "opencode-darwin-arm64.zip",
+      "sha256": "a0a97741cd6b27fb5558942b2d56460c85b76d3a03ad39690a3f928545c31cc3",
+      "size": 35121258
+    },
+    "darwin-x64": {
+      "asset": "opencode-darwin-x64-baseline.zip",
+      "sha256": "960edbd9a8370eea33e1f4a9f804b05667275b433d7e5ea8cf304887215001f6",
+      "size": 37291135
+    },
+    "linux-arm64": {
+      "asset": "opencode-linux-arm64.tar.gz",
+      "sha256": "",
+      "size": 0
+    },
+    "linux-x64": {
+      "asset": "opencode-linux-x64-baseline.tar.gz",
+      "sha256": "",
+      "size": 0
+    },
+    "win32-arm64": {
+      "asset": "opencode-windows-arm64.zip",
+      "sha256": "",
+      "size": 0
+    },
+    "win32-x64": {
+      "asset": "opencode-windows-x64-baseline.zip",
+      "sha256": "",
+      "size": 0
+    }
+  }
+}

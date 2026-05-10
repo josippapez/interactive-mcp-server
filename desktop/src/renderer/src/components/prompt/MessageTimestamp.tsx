@@ -23,11 +23,13 @@ const MessageTimestamp = memo(function MessageTimestamp({
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <time dateTime={timestamp.toISOString()} className="cursor-default">
-          {relativeTime}
-        </time>
-      </TooltipTrigger>
+      <TooltipTrigger
+        render={
+          <time dateTime={timestamp.toISOString()} className="cursor-default">
+            {relativeTime}
+          </time>
+        }
+      />
       <TooltipContent>{fullTimestamp}</TooltipContent>
     </Tooltip>
   );

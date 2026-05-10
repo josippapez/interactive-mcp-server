@@ -33,9 +33,19 @@ import {
   broadcastSkillsChanged,
   broadcastSessionScopeChanged,
 } from '../../utility/backend/tools/skills-broadcast';
+import { listNativeOpenCodeSkills } from '../../utility/opencode-client';
 import { IpcHandlerDeps } from './types';
 
 export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
+  ipcMain.handle(
+    'list-native-opencode-skills',
+    async (_event, baseDirectory?: string) => {
+      const settings = deps.getSettings();
+      if (settings.agentBackend !== 'opencode') return [];
+      return listNativeOpenCodeSkills(settings.openCodePort, baseDirectory);
+    },
+  );
+
   ipcMain.handle(
     'upsert-skill-or-instruction',
     async (

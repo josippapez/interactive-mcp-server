@@ -158,22 +158,22 @@ When **disabled** (`noReply: false`):
 
 ### `autoStartOpenCode`
 
-Controls whether the app boots the OpenCode HTTP API in-process on startup and runs the background health supervisor. Implemented in `desktop/src/main/opencode/server.ts` and `desktop/src/main/index.ts`.
+Controls whether the app boots the OpenCode HTTP API as a managed subprocess on startup and runs the background health supervisor. Implemented in `desktop/src/main/opencode/server-facade.ts` and `desktop/src/main/index.ts`.
 
 Default: `true`
 
 When **enabled** (default):
 
-1. On app startup (inside `runDeferredInit`), `startOpenCodeServer(openCodePort)` is called. It dynamically imports `virtual:opencode-server` (resolved at build time to the prebuilt Node bundle at `resources/opencode-node/node.js`) and calls `Server.listen({ port: openCodePort, hostname: '127.0.0.1' })` in the current process. See `desktop/src/main/opencode/server.ts:46`.
-2. Before the dynamic import, two environment variables are pinned for the OpenCode server: `XDG_STATE_HOME = app.getPath('userData')` and `OPENCODE_CLIENT = 'desktop'`. This matches the upstream `packages/desktop-electron` embedding pattern and keeps OpenCode state inside Electron's user-data directory.
+1. On app startup (inside `runDeferredInit`), `startOpenCodeServer(openCodePort)` is called. `desktop/src/main/opencode/server-facade.ts` delegates to `main-host-adapter.ts`, which uses the `NativeBinaryStrategy` (committed Mode C — `RUNTIME_KIND = 'native-subprocess'`) to spawn the platform-native `opencode` binary at the resolved port. See `desktop/src/main/opencode/server-facade.ts` and `desktop/src/main/opencode/runtime/strategies/native-binary.ts`.
+2. Before spawning the child, two environment variables are pinned for the OpenCode subprocess: `XDG_STATE_HOME = app.getPath('userData')` and `OPENCODE_CLIENT = 'desktop'`. This matches the upstream `packages/desktop-electron` embedding pattern and keeps OpenCode state inside Electron's user-data directory.
 3. `waitForOpenCodeHealthy` polls `GET /global/health` every 500 ms for up to 30 s (per-attempt timeout 1–10 s, adaptive to remaining budget). Once the server responds healthy, the cold-start warmup runs (session-tree seed + providers-info warmup).
 4. Once the cold-start probe succeeds, the background supervisor (`startOpenCodeSupervisor`) begins probing every 15 s. After 3 consecutive failures it calls `stopOpenCodeServer()` followed by `startOpenCodeServer()`. Restarts are concurrency-guarded so overlapping restarts never run. See `desktop/src/main/index.ts:107`.
 5. If the port changes in Settings, `startOpenCodeServer(newPort)` is idempotent: a listener on a different port is stopped first, then a fresh listener is started.
-6. On app `before-quit`, `stopOpenCodeSupervisor()` is called first, then `stopOpenCodeServer()` shuts down the in-process listener (fire-and-forget — Electron cannot await async cleanup there).
+6. On app `before-quit`, `stopOpenCodeSupervisor()` is called first, then `stopOpenCodeServer()` terminates the OpenCode subprocess (fire-and-forget — Electron cannot await async cleanup there).
 
 When **disabled**:
 
-- Neither the in-process server nor the supervisor runs. The user is expected to run `opencode serve` (or equivalent) externally on `openCodePort`.
+- Neither the managed subprocess nor the supervisor runs. The user is expected to run `opencode serve` (or equivalent) externally on `openCodePort`.
 - The renderer's health-store poll still hits `GET /global/health` so the UI shows whether OpenCode is up, but the main process takes no automatic action in response. In particular, the supervisor does **not** attempt to start or restart an externally-managed OpenCode instance — this is a deliberate guard so the app never interferes with a user-managed lifecycle.
 
 ### `autoRegisterSubagents`

@@ -189,6 +189,42 @@ export function isEntryActiveForSession(
   return selection.optedIn.has(entry.name);
 }
 
+export function countActiveSkillsForSession(
+  entries: readonly {
+    name: string;
+    type: 'skill' | 'instruction';
+    scope: 'global' | 'session-scoped';
+    enabled: boolean;
+  }[],
+  selection: Pick<SessionSkillsSelection, 'optedIn' | 'muted'>,
+): number {
+  return entries.filter(
+    (entry) =>
+      entry.enabled &&
+      entry.type === 'skill' &&
+      isEntryActiveForSession(entry, selection),
+  ).length;
+}
+
+export function getActiveSkillsForSession<
+  T extends {
+    name: string;
+    type: 'skill' | 'instruction';
+    scope: 'global' | 'session-scoped';
+    enabled: boolean;
+  },
+>(
+  entries: readonly T[],
+  selection: Pick<SessionSkillsSelection, 'optedIn' | 'muted'>,
+): T[] {
+  return entries.filter(
+    (entry) =>
+      entry.enabled &&
+      entry.type === 'skill' &&
+      isEntryActiveForSession(entry, selection),
+  );
+}
+
 // -----------------------------------------------------------------------------
 // Hooks
 // -----------------------------------------------------------------------------

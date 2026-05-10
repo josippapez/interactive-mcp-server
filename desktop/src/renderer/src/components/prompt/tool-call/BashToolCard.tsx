@@ -7,16 +7,18 @@ import {
   CollapsibleTrigger,
 } from '../../ui/collapsible';
 import {
-  CopyButton,
+  HighlightedCodeBlock,
   TOOL_CALL_LABEL_TEXT_CLASS,
   TOOL_CALL_MONO_TEXT_CLASS,
   ToolChevron,
   ToolDurationBadge,
+  ToolNameBadge,
   ToolStatusBadge,
   WrapToggleCodeBlock,
   getToolDurationMs,
 } from './ToolCallShared';
 import { classifyTool } from './tool-registry';
+import { resolveNextToolExpandedState } from './tool-expanded-state';
 
 const BASH_PREVIEW_MAX = 60;
 
@@ -85,8 +87,23 @@ function getCommand(input: Record<string, unknown> | undefined): string {
 function getExitCode(
   metadata: Record<string, unknown> | undefined,
 ): number | null {
-  const raw = metadata?.exitCode;
+  const raw = metadata?.exit ?? metadata?.exitCode;
   return typeof raw === 'number' && Number.isFinite(raw) ? raw : null;
+}
+
+function getMetadataString(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): string | null {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value ? value : null;
+}
+
+function getMetadataBoolean(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): boolean {
+  return metadata?.[key] === true;
 }
 
 export function isBashToolCall(name: string): boolean {
@@ -105,8 +122,14 @@ export const BashToolCard = memo(function BashToolCard({
   const [isExpanded, setIsExpanded] = useState(initialOpen);
 
   useEffect(() => {
-    if (forceExpanded) setIsExpanded(true);
-  }, [forceExpanded]);
+    setIsExpanded((currentExpanded) =>
+      resolveNextToolExpandedState({
+        currentExpanded,
+        forceExpanded,
+        isPending,
+      }),
+    );
+  }, [forceExpanded, isPending]);
 
   const command = getCommand(tool.input);
   const preview =
@@ -116,6 +139,9 @@ export const BashToolCard = memo(function BashToolCard({
 
   const durationMs = getToolDurationMs(tool);
   const exitCode = getExitCode(tool.metadata);
+  const description = getMetadataString(tool.metadata, 'description');
+  const outputPath = getMetadataString(tool.metadata, 'outputPath');
+  const truncated = getMetadataBoolean(tool.metadata, 'truncated');
   const parsedOutput = parseBashOutput(tool.output);
   const combinedOutput = parsedOutput
     ? parsedOutput.sections.map((s) => s.body).join('\n\n')
@@ -127,45 +153,62 @@ export const BashToolCard = memo(function BashToolCard({
       onOpenChange={setIsExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-component="tool-trigger"
-          data-variant="bash-trigger"
-          data-pending={isPending ? 'true' : undefined}
-        >
-          <Terminal
-            data-slot="tool-icon"
-            aria-hidden="true"
-            className="shrink-0"
-          />
-          <span data-slot="tool-title">Shell</span>
-          {durationMs !== null && <ToolDurationBadge tool={tool} />}
-          {preview && (
-            <span
-              data-slot="tool-subtitle"
-              title={command}
-              className="font-mono"
-            >
-              {preview}
-            </span>
-          )}
-          {exitCode !== null && exitCode !== 0 && (
-            <span
-              className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium uppercase tracking-wide shrink-0 bg-[var(--color-error-surface)] text-[var(--color-error)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
-            >
-              exit {exitCode}
-            </span>
-          )}
-          <ToolStatusBadge status={tool.status} />
-          <ToolChevron />
-        </button>
-      </CollapsibleTrigger>
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            data-component="tool-trigger"
+            data-variant="bash-trigger"
+            data-pending={isPending ? 'true' : undefined}
+          >
+            <Terminal
+              data-slot="tool-icon"
+              aria-hidden="true"
+              className="shrink-0"
+            />
+            <span data-slot="tool-title">Shell</span>
+            <ToolNameBadge name={tool.name} />
+            {durationMs !== null && <ToolDurationBadge tool={tool} />}
+            {preview && (
+              <span
+                data-slot="tool-subtitle"
+                title={command}
+                className="font-mono"
+              >
+                {preview}
+              </span>
+            )}
+            {description && !preview && (
+              <span data-slot="tool-subtitle" title={description}>
+                {description}
+              </span>
+            )}
+            {truncated && (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium uppercase tracking-wide shrink-0 bg-[var(--background-stronger)] text-[var(--text-weak)] border border-[var(--border-weak-base)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+                title={outputPath ?? undefined}
+              >
+                truncated
+              </span>
+            )}
+            {exitCode !== null && exitCode !== 0 && (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium uppercase tracking-wide shrink-0 bg-[var(--color-error-surface)] text-[var(--color-error)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+              >
+                exit {exitCode}
+              </span>
+            )}
+            <ToolStatusBadge status={tool.status} />
+            <ToolChevron />
+          </button>
+        }
+      />
 
       <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">
         {command && (
-          <WrapToggleCodeBlock
+          <HighlightedCodeBlock
             text={command}
+            language="bash"
             containerClassName="group relative"
             preClassName="whitespace-pre-wrap break-all"
           />
@@ -173,7 +216,9 @@ export const BashToolCard = memo(function BashToolCard({
 
         {parsedOutput && (
           <div className="flex flex-col gap-1.5">
-            {combinedOutput && <WrapToggleCodeBlock text={combinedOutput} />}
+            {combinedOutput && (
+              <WrapToggleCodeBlock text={combinedOutput} autoScroll={true} />
+            )}
 
             {parsedOutput.reminder && (
               <div className="rounded-[var(--radius-xs)] border border-[var(--color-warning)]/40 bg-[var(--color-warning)]/8 px-2 py-1.5">

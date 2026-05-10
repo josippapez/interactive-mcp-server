@@ -13,7 +13,6 @@ import { SkillsSidebar } from './skills/SkillsSidebar';
 import { SkillEditor } from './skills/SkillEditor';
 import { SkillDetailView } from './skills/SkillDetailView';
 import { SkillsEmptyState } from './skills/SkillsEmptyState';
-import { SkillEditorHeader } from './skills/SkillEditorHeader';
 
 export default function SkillsView(): React.ReactElement {
   const [entries, setEntries] = useState<SkillOrInstruction[]>([]);
@@ -356,8 +355,6 @@ export default function SkillsView(): React.ReactElement {
     };
   }, []);
 
-  const isFormMode = isEditing || isCreating;
-
   // Collect all unique categories from entries for the filter dropdown
   const availableCategories = useMemo(() => {
     const cats = new Set<string>();
@@ -453,76 +450,66 @@ export default function SkillsView(): React.ReactElement {
       />
 
       {/* Main content area */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {!selected && !isCreating ? (
+      <div className="flex-1 overflow-y-auto px-8 py-6 bg-[var(--color-bg)]">
+        {!selected ? (
           <SkillsEmptyState />
         ) : (
-          <div className="max-w-2xl space-y-4">
-            {/* Header for create/edit modes only */}
-            {isFormMode && (
-              <div className="flex items-center justify-between">
-                <SkillEditorHeader
-                  isCreating={isCreating}
-                  isEditing={isEditing}
-                  selected={selected}
-                />
-              </div>
-            )}
-
-            {isFormMode ? (
-              <SkillEditor
-                isCreating={isCreating}
-                formName={formName}
-                setFormName={setFormName}
-                formType={formType}
-                setFormType={setFormType}
-                formCategory={formCategory}
-                setFormCategory={setFormCategory}
-                formTags={formTags}
-                setFormTags={setFormTags}
-                formDescription={formDescription}
-                setFormDescription={setFormDescription}
-                formContent={formContent}
-                setFormContent={setFormContent}
-                formFolderId={formFolderId}
-                setFormFolderId={setFormFolderId}
-                formScope={formScope}
-                setFormScope={setFormScope}
-                formInjectionMode={formInjectionMode}
-                setFormInjectionMode={setFormInjectionMode}
-                alwaysModeWarning={formAlwaysModeWarning}
-                folders={folders}
-                availableCategories={availableCategories}
-                saveStatus={saveStatus}
-                onSave={() => void handleSave()}
-                onCancel={handleCancel}
-              />
-            ) : (
-              selected && (
-                <SkillDetailView
-                  selected={selected}
-                  folders={folders}
-                  singleExportStatus={singleExportStatus}
-                  onToggleEnabled={handleToggleEnabled}
-                  onExportSingle={(name) => void handleExportSingle(name)}
-                  onDuplicate={(name) => void handleDuplicate(name)}
-                  onEdit={handleEdit}
-                  onDelete={(name) => setDeleteTarget(name)}
-                  onChangeScope={(name, scope) =>
-                    void handleChangeScope(name, scope)
-                  }
-                  onChangeInjectionMode={(name, injectionMode) =>
-                    void handleChangeInjectionMode(name, injectionMode)
-                  }
-                  onChangeFolder={(name, folderId) =>
-                    void handleChangeFolder(name, folderId)
-                  }
-                />
-              )
-            )}
+          <div className="max-w-3xl space-y-6">
+            <SkillDetailView
+              selected={selected}
+              folders={folders}
+              singleExportStatus={singleExportStatus}
+              onToggleEnabled={handleToggleEnabled}
+              onExportSingle={(name) => void handleExportSingle(name)}
+              onDuplicate={(name) => void handleDuplicate(name)}
+              onEdit={handleEdit}
+              onDelete={(name) => setDeleteTarget(name)}
+              onChangeScope={(name, scope) =>
+                void handleChangeScope(name, scope)
+              }
+              onChangeInjectionMode={(name, injectionMode) =>
+                void handleChangeInjectionMode(name, injectionMode)
+              }
+              onChangeFolder={(name, folderId) =>
+                void handleChangeFolder(name, folderId)
+              }
+            />
           </div>
         )}
       </div>
+
+      <SkillEditor
+        open={isCreating || isEditing}
+        onOpenChange={(open) => {
+          if (!open) handleCancel();
+        }}
+        isCreating={isCreating}
+        selected={selected}
+        formName={formName}
+        setFormName={setFormName}
+        formType={formType}
+        setFormType={setFormType}
+        formCategory={formCategory}
+        setFormCategory={setFormCategory}
+        formTags={formTags}
+        setFormTags={setFormTags}
+        formDescription={formDescription}
+        setFormDescription={setFormDescription}
+        formContent={formContent}
+        setFormContent={setFormContent}
+        formFolderId={formFolderId}
+        setFormFolderId={setFormFolderId}
+        formScope={formScope}
+        setFormScope={setFormScope}
+        formInjectionMode={formInjectionMode}
+        setFormInjectionMode={setFormInjectionMode}
+        alwaysModeWarning={formAlwaysModeWarning}
+        folders={folders}
+        availableCategories={availableCategories}
+        saveStatus={saveStatus}
+        onSave={() => void handleSave()}
+        onCancel={handleCancel}
+      />
 
       <ConfirmDeleteModal
         open={deleteTarget !== null}

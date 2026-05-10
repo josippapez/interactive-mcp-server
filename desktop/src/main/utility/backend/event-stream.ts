@@ -103,6 +103,25 @@ const CHANNEL = 'conversation-batch';
 
 type GetPort = () => number;
 
+type RawEventPayload = {
+  id?: string;
+  type?: string;
+  name?: string;
+  properties?: unknown;
+  data?: unknown;
+  syncEvent?: {
+    id?: string;
+    type?: string;
+    data?: unknown;
+  };
+};
+
+type BridgeablePayload = {
+  id?: string;
+  type: string;
+  properties?: unknown;
+};
+
 type StreamState = {
   getPort: GetPort;
   /**
@@ -330,6 +349,33 @@ function getSessionLifecycleType(
   return null;
 }
 
+function stripSyncVersion(type: string): string {
+  return type.replace(/\.\d+$/, '');
+}
+
+function normalizeSessionNextPayload(
+  payload: RawEventPayload | undefined,
+): BridgeablePayload | null {
+  if (!payload?.type) return null;
+  if (payload.type !== 'sync') {
+    return payload.type.startsWith('session.next.')
+      ? { ...payload, type: payload.type }
+      : (payload as BridgeablePayload);
+  }
+
+  const syncType = payload.syncEvent?.type ?? payload.name;
+  if (!syncType) return null;
+
+  const type = stripSyncVersion(syncType);
+  if (!type.startsWith('session.next.')) return null;
+
+  return {
+    id: payload.syncEvent?.id ?? payload.id,
+    type,
+    properties: payload.syncEvent?.data ?? payload.data,
+  };
+}
+
 /**
  * Outer reconnect loop. Opens an SSE stream via the SDK, pumps events
  * through the coalescing queue, and reconnects on any termination (error,
@@ -370,13 +416,14 @@ async function runLoop(): Promise<void> {
         // message list on mount, and live events fill in from there.
         const typedEnvelope = envelope as {
           directory?: string | null;
-          payload?: {
-            type?: string;
-            properties?: { sessionID?: string; info?: unknown };
-          };
+          payload?: RawEventPayload;
         };
-        const payload = typedEnvelope?.payload;
-        if (!payload || payload.type === 'sync') continue;
+        const payload = normalizeSessionNextPayload(typedEnvelope?.payload) as
+          | (BridgeablePayload & {
+              properties?: { sessionID?: string; info?: unknown };
+            })
+          | null;
+        if (!payload) continue;
 
         // Session lifecycle events feed the session-tree manager cache.
         // These carry the authoritative `Session` shape and are distinct

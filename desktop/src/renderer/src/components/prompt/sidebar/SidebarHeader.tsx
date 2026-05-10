@@ -36,23 +36,19 @@ export const SidebarHeader = memo(function SidebarHeader({
       : 'Show inactive';
 
   return (
-    <div className="border-b border-[var(--color-border)] bg-[var(--color-surface)]/95">
-      <div className="flex flex-col gap-2 px-3 py-2.5">
+    <div className="border-b border-[var(--color-border-weak)]">
+      <div className="flex flex-col gap-1.5 px-3 py-2">
         <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
-              Sessions
-            </p>
-          </div>
+          <span className="section-label !px-0 !py-0">Sessions</span>
           <div className="flex min-w-0 items-center justify-end gap-1">
             <Button
               variant="ghost"
               onClick={onToggleInactive}
               title={inactiveLabel}
-              className={`h-7 shrink-0 px-2 text-[10px] ${
+              className={`h-6 shrink-0 rounded-full px-2 text-[10px] ${
                 showInactive
-                  ? 'bg-[var(--color-agent)]/15 text-[var(--color-agent)] hover:bg-[var(--color-agent)]/20 hover:text-[var(--color-agent)]'
-                  : 'text-[var(--color-text-faint)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]'
+                  ? 'bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] text-[var(--color-agent)] hover:bg-[color-mix(in_srgb,var(--color-agent)_22%,transparent)] hover:text-[var(--color-agent)]'
+                  : 'text-[var(--color-text-faint)] hover:bg-[color-mix(in_srgb,var(--color-text)_8%,transparent)] hover:text-[var(--color-text)]'
               }`}
             >
               {showInactive ? 'Hide inactive' : 'Show inactive'}
@@ -63,7 +59,7 @@ export const SidebarHeader = memo(function SidebarHeader({
               onClick={onRefresh}
               disabled={isRefreshing}
               title="Refresh sessions"
-              className="h-7 w-7 shrink-0 rounded-md text-[var(--color-text-faint)] hover:bg-[var(--color-border)] hover:text-[var(--color-text)]"
+              className="h-6 w-6 shrink-0 rounded-full text-[var(--color-text-faint)] hover:bg-[color-mix(in_srgb,var(--color-text)_8%,transparent)] hover:text-[var(--color-text)]"
               aria-label="Refresh sessions"
             >
               <svg
@@ -97,7 +93,7 @@ export const SidebarHeader = memo(function SidebarHeader({
                 key={provider}
                 value={provider}
                 title={`Show ${PROVIDER_LABELS[provider]} sessions`}
-                className="flex h-7 items-center gap-1 rounded-full border border-transparent px-2.5 py-1 text-[10px] font-normal whitespace-nowrap text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-text-muted)] data-[state=active]:border-[var(--color-agent)]/20 data-[state=active]:bg-[var(--color-agent)]/15 data-[state=active]:text-[var(--color-agent)] data-[state=active]:shadow-none"
+                className="flex h-6 items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[10px] font-normal whitespace-nowrap text-[var(--color-text-faint)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_8%,transparent)] hover:text-[var(--color-text-muted)] data-[state=active]:border-[color-mix(in_srgb,var(--color-agent)_22%,transparent)] data-[state=active]:bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] data-[state=active]:text-[var(--color-agent)] data-[state=active]:shadow-none"
               >
                 <span>{PROVIDER_ICONS[provider]}</span>
                 <span>{PROVIDER_LABELS[provider]}</span>

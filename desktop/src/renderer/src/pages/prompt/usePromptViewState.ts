@@ -90,8 +90,9 @@ export function usePromptViewState(props: PromptViewProps) {
     setMcpSettingsOpen,
     removeError,
     setRemoveError,
-    tasksSidebarCollapsed,
-    handleToggleTasksSidebar,
+    tasksOverlayOpen,
+    handleToggleTasksOverlay,
+    handleCloseTasksOverlay,
     commandPaletteOpen,
     setCommandPaletteOpen,
     chatFullWidth,
@@ -125,6 +126,7 @@ export function usePromptViewState(props: PromptViewProps) {
     disconnectMcpServer,
     authenticateMcpServer,
     removeMcpServerAuth,
+    activeSkills,
     latestStatus,
   } = usePromptConnectionData({
     providerSessionId,
@@ -253,31 +255,6 @@ export function usePromptViewState(props: PromptViewProps) {
     return () => document.removeEventListener('keydown', handler);
   }, [activeConnectionId]);
 
-  const handleSelectProjectSession = useCallback(
-    (projectPath: string | null) => {
-      if (!projectPath) {
-        return;
-      }
-
-      const matchingRoots = Array.from(connections.entries())
-        .filter(([, node]) => !node.isDirectConnection)
-        .filter(
-          ([, node]) => (node.baseDirectory ?? node.directory) === projectPath,
-        )
-        .sort(([, left], [, right]) => {
-          const rightUpdated = right.createdAt ?? 0;
-          const leftUpdated = left.createdAt ?? 0;
-          return rightUpdated - leftUpdated;
-        });
-
-      const next = matchingRoots[0]?.[0] ?? null;
-      if (next && next !== activeConnectionId) {
-        onSelectConnection(next);
-      }
-    },
-    [activeConnectionId, connections, onSelectConnection],
-  );
-
   const handleCreateSessionWithModel = useCallback(
     async (...args: Parameters<typeof handleCreateSession>) => {
       const result = await handleCreateSession(...args);
@@ -342,12 +319,15 @@ export function usePromptViewState(props: PromptViewProps) {
     disconnectMcpServer,
     authenticateMcpServer,
     removeMcpServerAuth,
+    activeSkills,
     mcpSettingsOpen,
     setMcpSettingsOpen,
     removeError,
     setRemoveError,
     noReply,
-    tasksSidebarCollapsed,
+    tasksOverlayOpen,
+    handleToggleTasksOverlay,
+    handleCloseTasksOverlay,
     commandPaletteOpen,
     setCommandPaletteOpen,
     chatFullWidth,
@@ -388,8 +368,6 @@ export function usePromptViewState(props: PromptViewProps) {
     setChannelSearchQuery,
     setChannelSearchOpen,
     setChannelSearchMatchCount,
-    handleSelectProjectSession,
-    handleToggleTasksSidebar,
     handleToggleChatFullWidth,
     handleToggleExpandAllTools: () =>
       void handleExpandAllToolsChange(!expandAllTools),

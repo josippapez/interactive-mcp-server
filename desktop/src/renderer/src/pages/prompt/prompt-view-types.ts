@@ -54,6 +54,22 @@ export type PromptViewProps = {
     sessionID: string,
   ) => void;
   onRejectQuestion: (requestId: string, sessionID: string) => void;
+  /** Active top-level app tab — used by the sidebar nav rows */
+  activeTab?: 'prompt' | 'skills' | 'settings';
+  /** Switch top-level app tab from sidebar nav rows */
+  onNavigate?: (tab: 'prompt' | 'skills' | 'settings') => void;
+  /** Called when user clicks the "New chat" sidebar nav row */
+  onNewChat?: () => void;
+  /** Called when user clicks the "Search" sidebar nav row (opens QuickSwitcher) */
+  onOpenSearch?: () => void;
+  /**
+   * Optional content to render in place of the channel area (right pane).
+   * Used so non-channel views (Skills, Settings) can keep the sidebar
+   * mounted and visible — letting the user navigate back to "Home" via
+   * the sidebar's nav rows. When provided, ChannelHeader / chat history /
+   * composer / TasksOverlay are NOT rendered.
+   */
+  rightPaneOverride?: React.ReactNode;
 };
 
 export type ParentInfo = { id: string; title: string };

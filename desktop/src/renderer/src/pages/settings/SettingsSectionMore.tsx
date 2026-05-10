@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
+import { useTheme, type LightTint } from '../../ThemeContext';
 import { Toggle, ToolExclusionsSection } from './SettingsFormParts';
 import type { AppSettings } from './settings-types';
-import { useTheme, type LightTint } from '../../ThemeContext';
 
 type SharedProps = {
   settings: AppSettings;
@@ -144,6 +144,7 @@ const TINTS: { id: LightTint; label: string; bg: string; ring: string }[] = [
   { id: 'sand', label: 'Sand', bg: '#d4c9bc', ring: '#a89080' },
   { id: 'teal', label: 'Teal', bg: '#b8cecc', ring: '#6a9e9c' },
   { id: 'sky', label: 'Sky', bg: '#b8cedc', ring: '#6a8faa' },
+  { id: 'peach', label: 'Peach', bg: '#f6d3c1', ring: '#ec8a73' },
 ];
 
 export function PreferencesSection({
@@ -276,7 +277,6 @@ export function PreferencesSection({
 
 export function AdvancedSection({
   settings,
-  setSettings,
   copied,
   setCopied,
   dbResetStatus,

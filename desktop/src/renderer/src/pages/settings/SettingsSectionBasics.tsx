@@ -1,5 +1,6 @@
 import ProviderAuthSection from '../../components/auth/ProviderAuthSection';
 import { Button } from '@/components/ui/button';
+import { useEffect, useState } from 'react';
 import { NumberInput, Toggle } from './SettingsFormParts';
 import type { AppSettings } from './settings-types';
 
@@ -7,6 +8,65 @@ type SharedProps = {
   settings: AppSettings;
   setSettings: React.Dispatch<React.SetStateAction<AppSettings | null>>;
 };
+
+type ResolvedPorts = {
+  mcpRequestedPort: number;
+  mcpResolvedPort: number;
+  openCodeRequestedPort: number;
+  openCodeResolvedPort: number;
+};
+
+/**
+ * Tracks the actually-bound MCP/OpenCode ports for the read-only "currently
+ * bound on port X" hint. The user's port inputs are hints; when the
+ * configured port is occupied, the resolver probes upward and binds the
+ * next free port. Surfacing this read-only keeps the user informed
+ * without overwriting their saved hint.
+ *
+ * One-shot fetch on mount (covers the case where main has already
+ * resolved before the Settings page mounts), then push-based updates
+ * via `onResolvedPortsChanged` — the event carries the full payload, so
+ * no follow-up IPC roundtrip is needed.
+ */
+function useResolvedPorts(): ResolvedPorts | null {
+  const [resolved, setResolved] = useState<ResolvedPorts | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    window.api
+      .getResolvedPorts()
+      .then((r) => {
+        if (!cancelled) setResolved(r);
+      })
+      .catch(() => {
+        /* non-fatal — UI just hides the hint */
+      });
+    const unsubscribe = window.api.onResolvedPortsChanged((payload) => {
+      if (!cancelled) setResolved(payload);
+    });
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+  }, []);
+  return resolved;
+}
+
+function ResolvedPortHint({
+  requested,
+  resolved,
+}: {
+  requested: number;
+  resolved: number;
+}): React.ReactElement | null {
+  if (resolved === requested) return null;
+  return (
+    <p className="text-xs text-[var(--color-text-muted)] mt-1">
+      Currently bound on port <strong>{resolved}</strong> (requested {requested}
+      ; another process held the configured port, so the resolver probed
+      upward).
+    </p>
+  );
+}
 
 export function ServerSection({
   portInput,
@@ -29,6 +89,7 @@ export function ServerSection({
   isOpenCodePortValid: boolean;
   isTimeoutValid: boolean;
 }): React.ReactElement {
+  const resolved = useResolvedPorts();
   return (
     <div className="space-y-2">
       <NumberInput
@@ -42,6 +103,12 @@ export function ServerSection({
         isValid={isPortValid}
         errorMessage="Enter a valid port between 1024 and 65535."
       />
+      {resolved && (
+        <ResolvedPortHint
+          requested={resolved.mcpRequestedPort}
+          resolved={resolved.mcpResolvedPort}
+        />
+      )}
       <NumberInput
         id="settings-opencode-port"
         value={openCodePortInput}
@@ -53,6 +120,12 @@ export function ServerSection({
         isValid={isOpenCodePortValid}
         errorMessage="Enter a valid port between 1024 and 65535."
       />
+      {resolved && (
+        <ResolvedPortHint
+          requested={resolved.openCodeRequestedPort}
+          resolved={resolved.openCodeResolvedPort}
+        />
+      )}
       <NumberInput
         id="settings-timeout"
         value={timeoutInput}

@@ -34,6 +34,15 @@ export function usePromptProjectState(
       setPinnedProjects(projects.map((p) => ({ path: p.path, name: p.name })));
     };
     void loadPinnedProjects();
+    // Subscribe to live updates so the new-session dropdown reflects folders
+    // added/removed via the project rail (or any other surface). Without this
+    // the dropdown showed a stale snapshot taken at mount time.
+    const unsubscribe = window.api.onPinnedProjectsUpdated(() => {
+      void loadPinnedProjects();
+    });
+    return () => {
+      unsubscribe?.();
+    };
   }, []);
 
   const handleCreateSession = useCallback(
@@ -75,11 +84,12 @@ export function usePromptProjectState(
 
   const handleAddProject = useCallback(async (): Promise<string | null> => {
     const folderPath = await window.api.openFolderDialog();
-    if (!folderPath) {
+    if (!folderPath || !folderPath.trim()) {
       return null;
     }
 
     const name = folderPath.split('/').filter(Boolean).pop() || folderPath;
+    if (!name.trim()) return null;
     await window.api.addPinnedProject(folderPath, name);
     setPinnedProjects((prev) => [...prev, { path: folderPath, name }]);
     return folderPath;

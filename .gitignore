@@ -15,5 +15,9 @@ release/
 
 **/.imcp-session
 
-# Bundled OpenCode binaries (copied during build, not committed)
+# Bundled OpenCode binaries (copied/downloaded during build, not committed).
+# `manifest.json` IS committed and pins the upstream version; the per-platform
+# subdirectories are populated by `desktop/scripts/copy-opencode-bin.mjs`.
 desktop/resources/bin/
+desktop/resources/opencode-bin/*/
+desktop/resources/opencode-node/*

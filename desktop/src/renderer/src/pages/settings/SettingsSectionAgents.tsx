@@ -252,26 +252,38 @@ function AgentListItem({
               overridden
             </span>
           )}
+          {agent.editable === false && (
+            <span
+              className="text-[9px] uppercase px-1 py-0.5 rounded bg-[var(--color-surface)] border border-[var(--color-border)] text-[var(--color-text-faint)]"
+              title="This agent is provided by OpenCode and does not have a local markdown file Eden can edit."
+            >
+              read-only
+            </span>
+          )}
         </div>
         <p className="text-xs text-[var(--color-text-faint)] truncate mt-0.5">
           {agent.description || '—'}
         </p>
       </div>
       <div className="flex gap-1 shrink-0">
-        <button
-          type="button"
-          onClick={() => onEdit(agent)}
-          className="text-[10px] px-2 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-border)]"
-        >
-          Edit
-        </button>
-        <button
-          type="button"
-          onClick={() => onDelete(agent)}
-          className="text-[10px] px-2 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-border)]"
-        >
-          Delete
-        </button>
+        {agent.editable === false ? null : (
+          <>
+            <button
+              type="button"
+              onClick={() => onEdit(agent)}
+              className="text-[10px] px-2 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-border)]"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={() => onDelete(agent)}
+              className="text-[10px] px-2 py-1 rounded bg-[var(--color-surface)] border border-[var(--color-border)]"
+            >
+              Delete
+            </button>
+          </>
+        )}
       </div>
     </div>
   );

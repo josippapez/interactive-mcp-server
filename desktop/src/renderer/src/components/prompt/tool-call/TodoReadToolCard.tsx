@@ -6,13 +6,19 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '../../ui/collapsible';
-import { WrapToggleCodeBlock } from './ToolCallShared';
+import {
+  HighlightedCodeBlock,
+  WrapToggleCodeBlock,
+  guessOutputLanguage,
+} from './ToolCallShared';
 import {
   ToolChevron,
   ToolDurationBadge,
+  ToolNameBadge,
   ToolStatusBadge,
 } from './ToolCallShared';
 import { classifyTool } from './tool-registry';
+import { resolveNextToolExpandedState } from './tool-expanded-state';
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoPriority = 'high' | 'medium' | 'low';
@@ -199,7 +205,13 @@ const TodoReadToolCard = memo(function TodoReadToolCard({
   const [isExpanded, setIsExpanded] = useState(forceExpanded || isPending);
 
   useEffect(() => {
-    setIsExpanded(forceExpanded || isPending);
+    setIsExpanded((currentExpanded) =>
+      resolveNextToolExpandedState({
+        currentExpanded,
+        forceExpanded,
+        isPending,
+      }),
+    );
   }, [forceExpanded, isPending]);
 
   const todos = useMemo(() => parseTodoOutput(tool.output), [tool.output]);
@@ -217,31 +229,34 @@ const TodoReadToolCard = memo(function TodoReadToolCard({
       onOpenChange={setIsExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-component="todoread-trigger"
-          data-pending={isPending ? 'true' : undefined}
-        >
-          <ListChecks
-            data-slot="tool-icon"
-            aria-hidden="true"
-            className="shrink-0"
-          />
-          <span data-slot="tool-title">Todos</span>
-          {progress && (
-            <span
-              data-slot="tool-subtitle"
-              className="font-mono text-[var(--text-weak)]"
-            >
-              {progress.completed}/{progress.total}
-            </span>
-          )}
-          <ToolDurationBadge tool={tool} />
-          <ToolStatusBadge status={tool.status} />
-          <ToolChevron />
-        </button>
-      </CollapsibleTrigger>
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            data-component="todoread-trigger"
+            data-pending={isPending ? 'true' : undefined}
+          >
+            <ListChecks
+              data-slot="tool-icon"
+              aria-hidden="true"
+              className="shrink-0"
+            />
+            <span data-slot="tool-title">Todos</span>
+            <ToolNameBadge name={tool.name} />
+            {progress && (
+              <span
+                data-slot="tool-subtitle"
+                className="font-mono text-[var(--text-weak)]"
+              >
+                {progress.completed}/{progress.total}
+              </span>
+            )}
+            <ToolDurationBadge tool={tool} />
+            <ToolStatusBadge status={tool.status} />
+            <ToolChevron />
+          </button>
+        }
+      />
 
       <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">
         {todos && todos.length > 0 ? (
@@ -267,11 +282,23 @@ const TodoReadToolCard = memo(function TodoReadToolCard({
             ))}
           </div>
         ) : tool.output ? (
-          <WrapToggleCodeBlock
-            text={tool.output}
-            maxHeightClass="max-h-48"
-            preClassName="text-[var(--text-weak)]"
-          />
+          (() => {
+            const language = guessOutputLanguage(tool.output);
+            return language ? (
+              <HighlightedCodeBlock
+                text={tool.output}
+                language={language}
+                maxHeightClass="max-h-48"
+                preClassName="text-[var(--text-weak)]"
+              />
+            ) : (
+              <WrapToggleCodeBlock
+                text={tool.output}
+                maxHeightClass="max-h-48"
+                preClassName="text-[var(--text-weak)]"
+              />
+            );
+          })()
         ) : (
           <div className="text-[10px] text-[var(--text-weak)]">No todos</div>
         )}

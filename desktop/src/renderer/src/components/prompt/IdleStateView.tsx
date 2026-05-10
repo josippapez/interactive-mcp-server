@@ -37,7 +37,8 @@ type Props = {
 
 /**
  * Displays the idle state when no prompt is active and no history exists.
- * Shows a "New Session" input for OpenCode backends, or a waiting message for other providers.
+ * Layout: centered headline ("How can I help you today?") plus the
+ * new-session composer (which contains project/model/agent/variant chips).
  */
 function IdleStateView({
   isOpenCodeAvailable = false,
@@ -81,41 +82,41 @@ function IdleStateView({
     return onAddProject();
   }, [onAddProject]);
 
-  // Show "New Session" input for OpenCode
+  // OpenCode-backed session creation flow (preferred). Renders the centered
+  // welcome layout: headline + composer. The composer's footer already exposes
+  // the agent / model / variant chips inline next to the attachment + send
+  // controls, so no separate top-left agent pill is rendered.
   if (isOpenCodeAvailable && onCreateSession && onAddProject) {
     return (
-      <div className="anim-stagger-fade-up flex flex-col items-center justify-center h-full gap-6 px-4">
-        <div className="text-center" data-stagger-index="0">
-          <div className="flex items-center justify-center gap-2 text-lg mb-2">
-            <span className="text-[var(--color-agent)]">❯</span>
-            <span className="text-[var(--color-text-muted)]">
-              Start a new session
-            </span>
+      <div className="flex h-full w-full flex-col">
+        {/* Centered welcome — headline + composer. */}
+        <div className="flex flex-1 items-center justify-center">
+          <div className="anim-stagger-fade-up w-full max-w-2xl px-6">
+            <h1
+              className="mb-6 text-center text-2xl font-semibold text-[var(--color-text)]"
+              data-stagger-index="0"
+            >
+              How can I help you today?
+            </h1>
+            <div data-stagger-index="1">
+              <NewSessionInput
+                onCreateSession={handleCreateSession}
+                isCreating={isCreating}
+                pinnedProjects={pinnedProjects}
+                onAddProject={handleAddProject}
+                placeholder="Ask the agent…"
+                preSelectedProject={preSelectedProject}
+              />
+            </div>
           </div>
-          <p
-            className="text-sm text-[var(--color-text-faint)]"
-            data-stagger-index="1"
-          >
-            Select a project and type a message to begin
-          </p>
-        </div>
-        <div data-stagger-index="2">
-          <NewSessionInput
-            onCreateSession={handleCreateSession}
-            isCreating={isCreating}
-            pinnedProjects={pinnedProjects}
-            onAddProject={handleAddProject}
-            placeholder="What would you like to work on?"
-            preSelectedProject={preSelectedProject}
-          />
         </div>
       </div>
     );
   }
 
-  // Default waiting state for non-OpenCode providers
+  // Default waiting state for non-OpenCode providers.
   return (
-    <div className="flex flex-col items-center justify-center h-full text-[var(--color-text-muted)] gap-2">
+    <div className="flex h-full flex-col items-center justify-center gap-2 text-[var(--color-text-muted)]">
       <div className="flex items-center gap-2 text-lg">
         <span className="text-[var(--color-agent)]">❯</span>
         <span className="cursor-blink text-[var(--color-text-muted)]">_</span>

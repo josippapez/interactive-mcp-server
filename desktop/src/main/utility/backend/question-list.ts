@@ -1,8 +1,5 @@
 import { getRegisteredConnectionBySessionId } from './database';
-import {
-  createOpencodeClient,
-  type OpencodeClient,
-} from '@opencode-ai/sdk/v2/client';
+import { getClient } from './sdk-client';
 import { createLogger } from '../../utils/logger';
 import { errorMessage } from '../../utils/errors';
 
@@ -28,29 +25,6 @@ export type PendingQuestionRecord = {
 
 const questionLog = createLogger('question');
 
-let _questionClientFactory: (
-  openCodePort: number,
-  directory?: string,
-) => OpencodeClient = (openCodePort: number, directory?: string) =>
-  createOpencodeClient({
-    baseUrl: `http://localhost:${openCodePort}`,
-    directory,
-  });
-
-export function _setQuestionClientFactory(
-  factory: (openCodePort: number, directory?: string) => OpencodeClient,
-): void {
-  _questionClientFactory = factory;
-}
-
-export function _resetQuestionClientFactory(): void {
-  _questionClientFactory = (openCodePort: number, directory?: string) =>
-    createOpencodeClient({
-      baseUrl: `http://localhost:${openCodePort}`,
-      directory,
-    });
-}
-
 // TODO: fetchPendingQuestions is port-only and relies on opencode's
 // WorkspaceRouterMiddleware falling back to process.cwd() — it may miss pending
 // questions on non-cwd Instances. Consider fanning out over all registered
@@ -59,7 +33,7 @@ export async function fetchPendingQuestions(
   openCodePort: number,
 ): Promise<PendingQuestionRecord[]> {
   try {
-    const client = _questionClientFactory(openCodePort);
+    const client = getClient(openCodePort);
     const result = await client.question.list();
     const questions = result.data ?? [];
 
@@ -89,7 +63,7 @@ export async function replyToOpenCodeQuestion(
       'opencode',
     );
     const effectiveDirectory = registered?.baseDirectory ?? undefined;
-    const client = _questionClientFactory(openCodePort, effectiveDirectory);
+    const client = getClient(openCodePort, effectiveDirectory);
 
     questionLog.info(
       `reply start session=${sessionID} request=${requestID} answers=${JSON.stringify(answers)} directory=${effectiveDirectory ?? '(none)'} baseDirectory=${registered?.baseDirectory ?? '(none)'}`,
@@ -129,7 +103,7 @@ export async function replyToOpenCodeQuestion(
         );
 
         // Retry unscoped so the router picks the correct Instance.
-        const unscopedClient = _questionClientFactory(openCodePort);
+        const unscopedClient = getClient(openCodePort);
         const retry = await unscopedClient.question.reply({
           requestID,
           answers,
@@ -183,7 +157,7 @@ export async function rejectOpenCodeQuestion(
       'opencode',
     );
     const effectiveDirectory = registered?.baseDirectory ?? undefined;
-    const client = _questionClientFactory(openCodePort, effectiveDirectory);
+    const client = getClient(openCodePort, effectiveDirectory);
 
     questionLog.info(
       `reject start session=${sessionID} request=${requestID} directory=${effectiveDirectory ?? '(none)'} baseDirectory=${registered?.baseDirectory ?? '(none)'}`,

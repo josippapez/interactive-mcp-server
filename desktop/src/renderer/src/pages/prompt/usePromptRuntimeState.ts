@@ -17,7 +17,6 @@ export function usePromptRuntimeState({
   activeConnectionId,
 }: Args) {
   const [removeError, setRemoveError] = useState<string | null>(null);
-  const [tasksSidebarCollapsed, setTasksSidebarCollapsed] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const expiresAtRef = useRef<Map<string, number>>(new Map());
@@ -84,8 +83,6 @@ export function usePromptRuntimeState({
   return {
     removeError,
     setRemoveError,
-    tasksSidebarCollapsed,
-    setTasksSidebarCollapsed,
     commandPaletteOpen,
     setCommandPaletteOpen,
     idle,

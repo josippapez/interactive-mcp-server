@@ -89,15 +89,14 @@ export function buildStartupContextMessage(
   if (openCodeSessionId) {
     lines.push(`- OpenCode session ID: ${escapeXmlText(openCodeSessionId)}`);
     lines.push(
-      '- Pass this as openCodeSessionId when calling any interactive-desktop MCP tool.',
+      '- Pass this as openCodeSessionId when calling repo docs/libs tools that include that parameter.',
     );
   }
 
   lines.push(
-    '- Prompting policy: use interactive prompt tools for user questions.',
-    '- Timeout policy: if a prompt times out or returns a timeout error (including -32001), re-prompt immediately.',
-    '- Stop phrases (exact match): "Stop prompting", "End session", "Don\'t ask anymore", "Close conversation".',
-    '- Parallel subagents should use unique agent names to avoid sidebar name collisions.',
+    '- Registration: this session was auto-registered by the desktop app from OpenCode SDK session events; do not call register_connection.',
+    '- Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs.',
+    '- Interactive prompt/channel tools are not exposed by this MCP surface; use your harness-native user interaction tools when you need to ask the user.',
   );
 
   // Filter to only enabled entries that are either:

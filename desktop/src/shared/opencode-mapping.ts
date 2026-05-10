@@ -50,6 +50,8 @@ export function mapPart(part: SdkPart): ConversationMessagePart | null {
         id: part.id,
         type: 'text',
         text: part.text ?? '',
+        synthetic: part.synthetic,
+        ignored: part.ignored,
       };
     }
     case 'reasoning': {
@@ -76,6 +78,7 @@ export function mapPart(part: SdkPart): ConversationMessagePart | null {
       let stateMetadata: Record<string, unknown> | undefined;
       let toolStartedAt: number | undefined;
       let toolCompletedAt: number | undefined;
+      const toolTitle = 'title' in state ? state.title : undefined;
 
       switch (state.status) {
         case 'pending':
@@ -98,7 +101,10 @@ export function mapPart(part: SdkPart): ConversationMessagePart | null {
           toolStatus = 'completed';
           toolInput = state.input;
           toolOutput = state.output;
-          stateMetadata = state.metadata;
+          stateMetadata = {
+            ...state.metadata,
+            ...(state.attachments ? { attachments: state.attachments } : {}),
+          };
           toolStartedAt = state.time?.start;
           toolCompletedAt = state.time?.end;
           break;
@@ -125,6 +131,7 @@ export function mapPart(part: SdkPart): ConversationMessagePart | null {
         toolInput,
         toolOutput,
         toolStatus,
+        toolTitle,
         toolMetadata: mergedMetadata,
         toolStartedAt,
         toolCompletedAt,
@@ -186,11 +193,24 @@ export function mapMessage(message: SdkMessage): ConversationMessage {
     providerId: asAssistant?.providerID ?? asUser?.model?.providerID,
     agent: asAssistant?.agent ?? asUser?.agent,
     mode: asAssistant?.mode,
+    finish: asAssistant?.finish,
+    error: asAssistant?.error
+      ? 'data' in asAssistant.error &&
+        typeof asAssistant.error.data === 'object' &&
+        asAssistant.error.data &&
+        'message' in asAssistant.error.data &&
+        typeof asAssistant.error.data.message === 'string'
+        ? asAssistant.error.data.message
+        : asAssistant.error.name
+      : undefined,
+    errorName: asAssistant?.error?.name,
     variant: asAssistant?.variant ?? asUser?.model?.variant,
     createdAt: message.time.created,
     completedAt: asAssistant?.time.completed,
+    tokens: asAssistant?.tokens,
+    cost: asAssistant?.cost,
     path: asAssistant?.path
-      ? { cwd: asAssistant.path.cwd, root: asAssistant.path.cwd }
+      ? { cwd: asAssistant.path.cwd, root: asAssistant.path.root }
       : undefined,
   };
 }

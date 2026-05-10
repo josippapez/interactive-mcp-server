@@ -1,5 +1,6 @@
 import type { HandlerContext, SessionStatusType } from './types';
 import { findKeyByConnectionId } from './helpers';
+import type { ConversationEvent } from '../../../../preload/api/types';
 
 /**
  * Window (in ms) after the renderer mounts during which auto-emitted
@@ -35,6 +36,33 @@ export function shouldSuppressStartupStatus(
 ): boolean {
   if (nowMs - startMs >= graceMs) return false;
   return type === 'success' || type === 'info';
+}
+
+function toSideChannelStatus(
+  evt: ConversationEvent,
+): { sessionId: string; status: string; type: SessionStatusType } | null {
+  switch (evt.type) {
+    case 'session.next.retried':
+      return {
+        sessionId: evt.sessionId,
+        status: `Retry ${evt.attempt}: ${evt.error.message}`,
+        type: 'working',
+      };
+    case 'session.next.compaction.started':
+      return {
+        sessionId: evt.sessionId,
+        status: `Compacting context (${evt.reason})`,
+        type: 'working',
+      };
+    case 'session.next.compaction.ended':
+      return {
+        sessionId: evt.sessionId,
+        status: 'Context compaction completed',
+        type: 'success',
+      };
+    default:
+      return null;
+  }
 }
 
 /**
@@ -102,7 +130,36 @@ export function useStatusHandlers({
   disposers.push(
     window.api.onConversationBatch?.((batch) => {
       for (const evt of batch.events) {
-        if (evt.type !== 'session.status') continue;
+        if (evt.type !== 'session.status') {
+          const sideChannelStatus = toSideChannelStatus(evt);
+          if (!sideChannelStatus) continue;
+          setNodes((prev) => {
+            const nodeId = sideChannelStatus.sessionId;
+            if (!prev.has(nodeId)) return prev;
+            const node = prev.get(nodeId)!;
+            const next = new Map(prev);
+            next.set(nodeId, {
+              ...node,
+              sessionStatuses: [
+                ...node.sessionStatuses.filter(
+                  (s) =>
+                    !(
+                      evt.type === 'session.next.compaction.ended' &&
+                      s.type === 'working' &&
+                      s.status.startsWith('Compacting context')
+                    ),
+                ),
+                {
+                  status: sideChannelStatus.status,
+                  type: sideChannelStatus.type,
+                  timestamp: new Date(),
+                },
+              ],
+            });
+            return next;
+          });
+          continue;
+        }
         const nodeId = evt.sessionId;
 
         if (evt.status === 'streaming') {

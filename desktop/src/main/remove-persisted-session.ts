@@ -2,7 +2,25 @@ import { clearSessionAttachments } from './attachment-store';
 import { emitToRenderer } from './utility/backend/renderer-emit';
 
 export interface RemovePersistedSessionDeps {
-  getOpenCodePort: () => number;
+  /**
+   * Returns the local OpenCode HTTP server port, or `null` if OpenCode is not
+   * currently running / port is unknown. When `null`, the OpenCode-side
+   * `DELETE /session/{id}` call is skipped (a warning is logged) and local
+   * cleanup proceeds unchanged.
+   */
+  getOpenCodePort: () => number | null;
+  /**
+   * Calls OpenCode's `DELETE /session/{providerSessionId}` endpoint so the
+   * upstream session (and its descendants) are removed on the OpenCode side.
+   * Implementations MUST treat HTTP 404 as success (already deleted) and
+   * MUST NOT throw on transient/network errors; the orchestrator catches
+   * errors anyway, but treating 404 as success keeps logs clean.
+   */
+  deleteOpenCodeSession: (
+    providerSessionId: string,
+    port: number,
+    directory?: string,
+  ) => Promise<void>;
   forceTerminateChat: (connectionId: string) => void;
   closeSessionByConnectionId: (connectionId: string) => Promise<boolean>;
   deleteSessionChannel: (sessionId: string) => void | Promise<void>;
@@ -26,13 +44,25 @@ export interface RemovePersistedSessionDeps {
    * so that we can tombstone it and prevent the session-tree poller from
    * re-adding the just-deleted node.
    */
-  getRegisteredConnection: (
-    connectionId: string,
-  ) =>
-    | { providerSessionId: string }
+  getRegisteredConnection: (connectionId: string) =>
+    | {
+        providerSessionId: string;
+        providerType?: 'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone';
+      }
     | null
     | undefined
-    | Promise<{ providerSessionId: string } | null | undefined>;
+    | Promise<
+        | {
+            providerSessionId: string;
+            providerType?:
+              | 'opencode'
+              | 'copilot-cli'
+              | 'claude-sdk'
+              | 'standalone';
+          }
+        | null
+        | undefined
+      >;
   /**
    * Mark a provider session ID as tombstoned so the session-tree poller
    * excludes it from all subsequent snapshots.
@@ -85,6 +115,46 @@ export async function removePersistedSession(
   await deps.deleteSessionChannel(sessionId);
   await deps.deleteRegisteredConnection(providerSessionId);
   await deps.markSessionDeleted(providerSessionId);
+
+  // Delete the upstream OpenCode session via DELETE /session/{id}.
+  //
+  // Without this call, the OpenCode server still considers the session alive,
+  // and on next app restart `fetchSessionTree()` re-pulls it and the row
+  // reappears in the sidebar (often flagged "running"). Local-only deletion
+  // is not enough.
+  //
+  // Gating:
+  //   - When a registered-connection record exists, only delete OpenCode-typed
+  //     sessions. Non-OpenCode providers (claude-sdk, copilot-cli, standalone)
+  //     have nothing to delete on the OpenCode side.
+  //   - When NO registered-connection record exists (orphaned local row),
+  //     fall back to the OpenCode session-id format `ses_*`. This is defensive
+  //     for sessions whose registered-connection row was lost or never created.
+  //
+  // Idempotency: the implementation in `session-channel-handlers.ts` treats
+  // HTTP 404 as success, and any thrown error is caught here so local cleanup
+  // (tombstone, IPC events) always runs.
+  const isOpenCode = rc
+    ? rc.providerType === 'opencode' || rc.providerType === undefined
+    : /^ses_/.test(sessionId);
+  if (isOpenCode) {
+    const port = deps.getOpenCodePort();
+    if (port == null || port <= 0) {
+      console.warn(
+        '[removePersistedSession] OpenCode port unavailable; skipping DELETE /session call for',
+        providerSessionId,
+      );
+    } else {
+      try {
+        await deps.deleteOpenCodeSession(providerSessionId, port);
+      } catch (err) {
+        console.warn(
+          '[removePersistedSession] deleteOpenCodeSession failed (continuing local cleanup):',
+          err,
+        );
+      }
+    }
+  }
 
   // Remove any ephemeral attachment files for this session. Both the
   // providerSessionId (OpenCode) and the connectionId (non-OpenCode) may have

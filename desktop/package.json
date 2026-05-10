@@ -16,22 +16,27 @@
     "rebuild:electron": "electron-rebuild -w better-sqlite3",
     "rebuild:electron:force": "rm -rf node_modules/better-sqlite3/build && electron-rebuild -f -w better-sqlite3 --build-from-source",
     "postinstall": "electron-rebuild -w better-sqlite3",
-    "copy:opencode-node": "node scripts/copy-opencode-node.mjs",
-    "package": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --config",
-    "package:mac": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --mac --config",
-    "package:mac-arm64": "npm run rebuild:electron && npm run copy:opencode-node && ENABLE_BYTECODE=1 electron-vite build && electron-builder --mac --arm64 --config",
-    "package:mac-x64": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --mac --x64 --config",
-    "package:win": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --win --config",
-    "package:linux": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --linux --config",
+    "copy:opencode-bin": "node scripts/copy-opencode-bin.mjs",
+    "copy:opencode-bin:all": "node scripts/copy-opencode-bin.mjs --all",
+    "package": "npm run rebuild:electron && npm run copy:opencode-bin && electron-vite build && electron-builder --config",
+    "package:mac": "npm run rebuild:electron && npm run copy:opencode-bin && electron-vite build && electron-builder --mac --config",
+    "package:mac-arm64": "npm run rebuild:electron && node scripts/copy-opencode-bin.mjs --platform darwin --arch arm64 && ENABLE_BYTECODE=1 electron-vite build && electron-builder --mac --arm64 --config",
+    "package:mac-x64": "npm run rebuild:electron && node scripts/copy-opencode-bin.mjs --platform darwin --arch x64 && electron-vite build && electron-builder --mac --x64 --config",
+    "package:win": "npm run rebuild:electron && node scripts/copy-opencode-bin.mjs --platform win32 --arch x64 && electron-vite build && electron-builder --win --config",
+    "package:linux": "npm run rebuild:electron && node scripts/copy-opencode-bin.mjs --platform linux --arch x64 && electron-vite build && electron-builder --linux --config",
     "package:all": "echo 'Use platform-specific package commands for bundled OpenCode'",
-    "package:dir": "npm run rebuild:electron && npm run copy:opencode-node && electron-vite build && electron-builder --dir --config"
+    "package:dir": "npm run rebuild:electron && npm run copy:opencode-bin && electron-vite build && electron-builder --dir --config"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.96",
-    "@lydell/node-pty": "^1.2.0-beta.10",
-    "@lydell/node-pty-darwin-arm64": "^1.2.0-beta.10",
-    "@modelcontextprotocol/sdk": "^1.27.1",
-    "@opencode-ai/sdk": "^1.14.18",
+    "@base-ui/react": "^1.4.1",
+    "@dnd-kit/core": "^6.3.1",
+    "@dnd-kit/sortable": "^10.0.0",
+    "@dnd-kit/utilities": "^3.2.2",
+    "@lydell/node-pty": "^1.2.0-beta.12",
+    "@lydell/node-pty-darwin-arm64": "^1.2.0-beta.12",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@opencode-ai/sdk": "^1.14.39",
     "@radix-ui/react-alert-dialog": "^1.1.15",
     "@radix-ui/react-collapsible": "^1.1.12",
     "@radix-ui/react-context-menu": "^2.2.16",
@@ -50,42 +55,45 @@
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/pacer": "^0.17.0",
     "@tanstack/store": "^0.7.0",
-    "ai": "^6.0.168",
+    "ai": "^6.0.175",
     "better-sqlite3": "^12.9.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "express": "^5.2.1",
-    "immer": "^11.1.4",
-    "jotai": "^2.19.1",
+    "fix-path": "^4.0.0",
+    "immer": "^11.1.6",
+    "jotai": "^2.20.0",
     "jsonc-parser": "^3.3.1",
     "jszip": "^3.10.1",
-    "lucide-react": "^1.8.0",
+    "lucide-react": "^1.14.0",
     "motion": "^12.38.0",
+    "next-themes": "^0.4.6",
     "radix-ui": "^1.4.3",
     "shiki": "^4.0.2",
+    "sonner": "^2.0.7",
     "streamdown": "^2.5.0",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
-    "zod": "^4.3.6"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/tsconfig": "^2.0.0",
     "@electron-toolkit/utils": "^4.0.0",
-    "@tailwindcss/vite": "^4.1.11",
+    "@tailwindcss/vite": "^4.2.4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/express": "^5.0.6",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^4.6.1",
-    "electron": "^41.2.1",
-    "electron-builder": "^26.8.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^41.5.0",
+    "electron-builder": "^26.9.0",
     "electron-vite": "^5.0.0",
-    "postcss": "^8.5.6",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "tailwindcss": "^4.1.11",
+    "postcss": "^8.5.14",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "tailwindcss": "^4.2.4",
     "typescript": "^5.9.3"
   },
   "build": {
@@ -103,7 +111,14 @@
       "icon": "build/icon.icns",
       "extraResources": [
         "resources/icon.png",
-        "resources/opencode-node/**"
+        "resources/opencode-bin/manifest.json",
+        {
+          "from": "resources/opencode-bin/darwin-${arch}",
+          "to": "opencode-bin/darwin-${arch}",
+          "filter": [
+            "**/*"
+          ]
+        }
       ],
       "files": [
         "!node_modules/onnxruntime-node/bin/napi-v*/linux/**",
@@ -136,7 +151,14 @@
       "icon": "build/icon.ico",
       "extraResources": [
         "resources/icon.png",
-        "resources/opencode-node/**"
+        "resources/opencode-bin/manifest.json",
+        {
+          "from": "resources/opencode-bin/win32-${arch}",
+          "to": "opencode-bin/win32-${arch}",
+          "filter": [
+            "**/*"
+          ]
+        }
       ],
       "files": [
         "!node_modules/onnxruntime-node/bin/napi-v*/linux/**",
@@ -179,7 +201,14 @@
       "icon": "build/icon.png",
       "extraResources": [
         "resources/icon.png",
-        "resources/opencode-node/**"
+        "resources/opencode-bin/manifest.json",
+        {
+          "from": "resources/opencode-bin/linux-${arch}",
+          "to": "opencode-bin/linux-${arch}",
+          "filter": [
+            "**/*"
+          ]
+        }
       ],
       "files": [
         "!node_modules/onnxruntime-node/bin/napi-v*/darwin/**",
@@ -200,6 +229,7 @@
     ],
     "files": [
       "out/**/*",
+      "!resources/opencode-bin/**",
       "!**/*.map",
       "!**/*.md",
       "!**/*.d.ts",

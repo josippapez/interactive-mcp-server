@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
-import { SidebarTrigger } from '@/components/ui/sidebar';
+import { SidebarTrigger, useSidebar } from '@/components/ui/sidebar';
 import ConfirmDeleteModal from '../ConfirmDeleteModal';
 import ConfirmAbortModal from '../ConfirmAbortModal';
 import {
@@ -55,6 +55,15 @@ type Props = {
   onSearchNext?: () => void;
   onSearchPrevious?: () => void;
   onSearchClear?: () => void;
+  /**
+   * Whether the floating Tasks panel is currently open. Omit to hide the
+   * Tasks toggle button (e.g. for non-OpenCode sessions).
+   */
+  tasksOpen?: boolean;
+  /** Toggle callback for the Tasks panel. */
+  onToggleTasks?: () => void;
+  /** Active task count, displayed as a badge on the toggle when > 0. */
+  activeTaskCount?: number;
 };
 
 /** Git branch icon */
@@ -96,22 +105,24 @@ function VcsBadge({ vcsInfo }: { vcsInfo: VcsInfo }): React.ReactElement {
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm bg-[var(--color-surface-alt)] border border-[var(--color-border)] text-[var(--color-text-faint)] select-none max-w-[180px]">
-          <GitBranchIcon />
-          <span className="truncate">{vcsInfo.branch ?? 'unknown'}</span>
-          {hasChanges && (
-            <span className="flex items-center gap-0.5 text-[9px] ml-0.5">
-              <span className="text-[var(--text-on-success)]">
-                +{vcsInfo.additions}
+      <TooltipTrigger
+        render={
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded-sm bg-[var(--color-surface-alt)] border border-[var(--color-border)] text-[var(--color-text-faint)] select-none max-w-[180px]">
+            <GitBranchIcon />
+            <span className="truncate">{vcsInfo.branch ?? 'unknown'}</span>
+            {hasChanges && (
+              <span className="flex items-center gap-0.5 text-[9px] ml-0.5">
+                <span className="text-[var(--text-on-success)]">
+                  +{vcsInfo.additions}
+                </span>
+                <span className="text-[var(--text-on-critical)]">
+                  -{vcsInfo.deletions}
+                </span>
               </span>
-              <span className="text-[var(--text-on-critical)]">
-                -{vcsInfo.deletions}
-              </span>
-            </span>
-          )}
-        </span>
-      </TooltipTrigger>
+            )}
+          </span>
+        }
+      />
       <TooltipContent>{tooltip}</TooltipContent>
     </Tooltip>
   );
@@ -145,11 +156,20 @@ export default function ChannelHeader({
   onSearchNext,
   onSearchPrevious,
   onSearchClear,
+  tasksOpen = false,
+  onToggleTasks,
+  activeTaskCount = 0,
 }: Props): React.ReactElement {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmAbort, setConfirmAbort] = useState(false);
   const [transcriptCopied, setTranscriptCopied] = useState(false);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  // When the sidebar is collapsed, the header's leftmost UI (SidebarTrigger)
+  // would slide under the macOS traffic-lights. Add ~72px left padding to
+  // clear the traffic-light zone (window.ts trafficLightPosition.x = 15 + 3
+  // buttons each ~14px wide with gaps).
+  const { state: sidebarState } = useSidebar();
+  const sidebarCollapsed = sidebarState === 'collapsed';
 
   useEffect(() => {
     if (!searchOpen) return;
@@ -159,7 +179,17 @@ export default function ChannelHeader({
 
   return (
     <>
-      <header className="border-b border-[var(--color-border)] bg-[var(--color-surface-alt)]/95 px-3 py-2 backdrop-blur-sm">
+      {/*
+        ChannelHeader sits flush at y=0; its top edge visually overlaps the
+        macOS titlebar zone. The header element itself is `titlebar-drag` so
+        empty pixels act as a window drag handle. The inner content wrapper is
+        `titlebar-no-drag` so all buttons/inputs/links inside remain clickable.
+        This is the standard Electron pattern (drag on parent, no-drag on
+        interactive children) and avoids overlay z-index conflicts.
+      */}
+      <header
+        className={`titlebar-drag border-b border-[var(--color-border)] bg-[var(--color-surface-alt)]/95 ${sidebarCollapsed ? 'pl-[80px]' : 'px-3'} ${sidebarCollapsed ? 'pr-3' : ''} py-2 backdrop-blur-sm`}
+      >
         <div className="flex min-w-0 flex-wrap items-start gap-3">
           <div className="flex min-w-0 flex-1 flex-col gap-1.5">
             <div className="flex min-w-0 flex-wrap items-center gap-2.5">
@@ -213,157 +243,25 @@ export default function ChannelHeader({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/80 p-1 shadow-sm">
-            {onSearchQueryChange && onSearchOpenChange && (
+            {onToggleTasks && (
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => onSearchOpenChange(!searchOpen)}
-                    className={`h-7 w-7 hover:bg-[var(--color-border)] ${
-                      searchOpen
-                        ? 'text-[var(--color-agent)]'
-                        : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]'
-                    }`}
-                    aria-label={
-                      searchOpen ? 'Hide channel search' : 'Show channel search'
-                    }
-                  >
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.6"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      <circle cx="7" cy="7" r="4.5" />
-                      <path d="m10.5 10.5 3 3" />
-                    </svg>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Find in session</TooltipContent>
-              </Tooltip>
-            )}
-            {canAbort && onAbortSession && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => setConfirmAbort(true)}
-                    className="h-7 w-7 text-amber-500/60 hover:text-amber-500 hover:bg-amber-500/10"
-                    aria-label="Abort running session"
-                  >
-                    {/* Stop/square icon */}
-                    <svg
-                      width="13"
-                      height="13"
-                      viewBox="0 0 16 16"
-                      fill="currentColor"
-                      stroke="none"
-                      aria-hidden="true"
-                    >
-                      <rect x="3" y="3" width="10" height="10" rx="1" />
-                    </svg>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>Abort running session</TooltipContent>
-              </Tooltip>
-            )}
-            {onToggleExpandAllTools && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onToggleExpandAllTools}
-                    className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
-                      expandAllTools ? 'text-[var(--color-agent)]' : ''
-                    }`}
-                    aria-label={
-                      expandAllTools ? 'Collapse all tools' : 'Expand all tools'
-                    }
-                  >
-                    {/* Expand/collapse icon - two horizontal lines with arrows */}
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
-                    >
-                      {expandAllTools ? (
-                        <>
-                          {/* Collapse icon: lines pointing inward */}
-                          <path d="M4 4h8" />
-                          <path d="M4 12h8" />
-                          <path d="M8 6v4" />
-                          <path d="M6 7l2-1 2 1" />
-                          <path d="M6 11l2-1 2 1" />
-                        </>
-                      ) : (
-                        <>
-                          {/* Expand icon: lines pointing outward */}
-                          <path d="M4 6h8" />
-                          <path d="M4 10h8" />
-                          <path d="M8 2v4" />
-                          <path d="M8 10v4" />
-                          <path d="M6 3l2 1 2-1" />
-                          <path d="M6 13l2-1 2 1" />
-                        </>
-                      )}
-                    </svg>
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {expandAllTools ? 'Collapse all tools' : 'Expand all tools'}
-                </TooltipContent>
-              </Tooltip>
-            )}
-            {onCopyTranscript && (
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={async () => {
-                      const ok = await onCopyTranscript();
-                      if (ok) {
-                        setTranscriptCopied(true);
-                        window.setTimeout(
-                          () => setTranscriptCopied(false),
-                          1500,
-                        );
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleTasks}
+                      className={`relative h-7 w-7 hover:bg-[var(--color-border)] ${
+                        tasksOpen
+                          ? 'text-[var(--color-agent)]'
+                          : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]'
+                      }`}
+                      aria-label={
+                        tasksOpen ? 'Hide tasks panel' : 'Show tasks panel'
                       }
-                    }}
-                    className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
-                      transcriptCopied ? 'text-[var(--color-agent)]' : ''
-                    }`}
-                    aria-label="Copy full session transcript as Markdown"
-                  >
-                    {transcriptCopied ? (
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M3 8l3 3 7-7" />
-                      </svg>
-                    ) : (
+                      aria-pressed={tasksOpen}
+                    >
+                      {/* Checklist icon */}
                       <svg
                         width="14"
                         height="14"
@@ -375,12 +273,211 @@ export default function ChannelHeader({
                         strokeLinejoin="round"
                         aria-hidden="true"
                       >
-                        <rect x="5" y="5" width="9" height="9" rx="1.5" />
-                        <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" />
+                        <path d="M2.5 4l1.5 1.5L6.5 3" />
+                        <path d="M2.5 8l1.5 1.5L6.5 7" />
+                        <path d="M2.5 12l1.5 1.5L6.5 11" />
+                        <path d="M9 4h5" />
+                        <path d="M9 8h5" />
+                        <path d="M9 12h5" />
                       </svg>
-                    )}
-                  </Button>
-                </TooltipTrigger>
+                      {activeTaskCount > 0 && (
+                        <span
+                          aria-hidden="true"
+                          className="absolute -right-0.5 -top-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--color-user)] px-1 text-[9px] font-semibold leading-none text-white"
+                        >
+                          {activeTaskCount > 99 ? '99+' : activeTaskCount}
+                        </span>
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  {tasksOpen
+                    ? 'Hide tasks panel'
+                    : `Show tasks panel${activeTaskCount > 0 ? ` (${activeTaskCount} active)` : ''}`}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {onSearchQueryChange && onSearchOpenChange && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onSearchOpenChange(!searchOpen)}
+                      className={`h-7 w-7 hover:bg-[var(--color-border)] ${
+                        searchOpen
+                          ? 'text-[var(--color-agent)]'
+                          : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]'
+                      }`}
+                      aria-label={
+                        searchOpen
+                          ? 'Hide channel search'
+                          : 'Show channel search'
+                      }
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.6"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <circle cx="7" cy="7" r="4.5" />
+                        <path d="m10.5 10.5 3 3" />
+                      </svg>
+                    </Button>
+                  }
+                />
+                <TooltipContent>Find in session</TooltipContent>
+              </Tooltip>
+            )}
+            {canAbort && onAbortSession && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => setConfirmAbort(true)}
+                      className="h-7 w-7 text-amber-500/60 hover:text-amber-500 hover:bg-amber-500/10"
+                      aria-label="Abort running session"
+                    >
+                      {/* Stop/square icon */}
+                      <svg
+                        width="13"
+                        height="13"
+                        viewBox="0 0 16 16"
+                        fill="currentColor"
+                        stroke="none"
+                        aria-hidden="true"
+                      >
+                        <rect x="3" y="3" width="10" height="10" rx="1" />
+                      </svg>
+                    </Button>
+                  }
+                />
+                <TooltipContent>Abort running session</TooltipContent>
+              </Tooltip>
+            )}
+            {onToggleExpandAllTools && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleExpandAllTools}
+                      className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
+                        expandAllTools ? 'text-[var(--color-agent)]' : ''
+                      }`}
+                      aria-label={
+                        expandAllTools
+                          ? 'Collapse all tools'
+                          : 'Expand all tools'
+                      }
+                    >
+                      {/* Expand/collapse icon - two horizontal lines with arrows */}
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        {expandAllTools ? (
+                          <>
+                            {/* Collapse icon: lines pointing inward */}
+                            <path d="M4 4h8" />
+                            <path d="M4 12h8" />
+                            <path d="M8 6v4" />
+                            <path d="M6 7l2-1 2 1" />
+                            <path d="M6 11l2-1 2 1" />
+                          </>
+                        ) : (
+                          <>
+                            {/* Expand icon: lines pointing outward */}
+                            <path d="M4 6h8" />
+                            <path d="M4 10h8" />
+                            <path d="M8 2v4" />
+                            <path d="M8 10v4" />
+                            <path d="M6 3l2 1 2-1" />
+                            <path d="M6 13l2-1 2 1" />
+                          </>
+                        )}
+                      </svg>
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  {expandAllTools ? 'Collapse all tools' : 'Expand all tools'}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {onCopyTranscript && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={async () => {
+                        const ok = await onCopyTranscript();
+                        if (ok) {
+                          setTranscriptCopied(true);
+                          window.setTimeout(
+                            () => setTranscriptCopied(false),
+                            1500,
+                          );
+                        }
+                      }}
+                      className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
+                        transcriptCopied ? 'text-[var(--color-agent)]' : ''
+                      }`}
+                      aria-label="Copy full session transcript as Markdown"
+                    >
+                      {transcriptCopied ? (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M3 8l3 3 7-7" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <rect x="5" y="5" width="9" height="9" rx="1.5" />
+                          <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" />
+                        </svg>
+                      )}
+                    </Button>
+                  }
+                />
                 <TooltipContent>
                   {transcriptCopied ? 'Copied!' : 'Copy session as Markdown'}
                 </TooltipContent>
@@ -388,41 +485,43 @@ export default function ChannelHeader({
             )}
             {onToggleShowThinking && (
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={onToggleShowThinking}
-                    className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
-                      showThinking ? 'text-[var(--color-agent)]' : ''
-                    }`}
-                    aria-label={
-                      showThinking
-                        ? 'Hide thinking sections'
-                        : 'Show thinking sections'
-                    }
-                  >
-                    {/* Brain/thinking icon */}
-                    <svg
-                      width="14"
-                      height="14"
-                      viewBox="0 0 16 16"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleShowThinking}
+                      className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
+                        showThinking ? 'text-[var(--color-agent)]' : ''
+                      }`}
+                      aria-label={
+                        showThinking
+                          ? 'Hide thinking sections'
+                          : 'Show thinking sections'
+                      }
                     >
-                      <path d="M4 8c0-2.2 1.8-4 4-4s4 1.8 4 4" />
-                      <path d="M5 11c-.6-.4-1-1.1-1-2" />
-                      <path d="M11 11c.6-.4 1-1.1 1-2" />
-                      <path d="M6 13c0 .6.4 1 1 1h2c.6 0 1-.4 1-1v-2H6v2z" />
-                      <circle cx="6" cy="7" r="0.5" fill="currentColor" />
-                      <circle cx="10" cy="7" r="0.5" fill="currentColor" />
-                    </svg>
-                  </Button>
-                </TooltipTrigger>
+                      {/* Brain/thinking icon */}
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M4 8c0-2.2 1.8-4 4-4s4 1.8 4 4" />
+                        <path d="M5 11c-.6-.4-1-1.1-1-2" />
+                        <path d="M11 11c.6-.4 1-1.1 1-2" />
+                        <path d="M6 13c0 .6.4 1 1 1h2c.6 0 1-.4 1-1v-2H6v2z" />
+                        <circle cx="6" cy="7" r="0.5" fill="currentColor" />
+                        <circle cx="10" cy="7" r="0.5" fill="currentColor" />
+                      </svg>
+                    </Button>
+                  }
+                />
                 <TooltipContent>
                   {showThinking
                     ? 'Hide thinking sections'
@@ -458,20 +557,69 @@ export default function ChannelHeader({
             )}
             {onToggleChatFullWidth && (
               <Tooltip>
-                <TooltipTrigger asChild>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleChatFullWidth}
+                      className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
+                        chatFullWidth ? 'text-[var(--color-agent)]' : ''
+                      }`}
+                      aria-label={
+                        chatFullWidth
+                          ? 'Use constrained chat width'
+                          : 'Use full-width chat'
+                      }
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        {chatFullWidth ? (
+                          <>
+                            <path d="M2.5 5.5V2.5h3" />
+                            <path d="M13.5 5.5V2.5h-3" />
+                            <path d="M2.5 10.5v3h3" />
+                            <path d="M13.5 10.5v3h-3" />
+                          </>
+                        ) : (
+                          <>
+                            <path d="M5.5 2.5h-3v3" />
+                            <path d="M10.5 2.5h3v3" />
+                            <path d="M5.5 13.5h-3v-3" />
+                            <path d="M10.5 13.5h3v-3" />
+                          </>
+                        )}
+                      </svg>
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  {chatFullWidth
+                    ? 'Use constrained chat width'
+                    : 'Use full-width chat'}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            <Tooltip>
+              <TooltipTrigger
+                render={
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={onToggleChatFullWidth}
-                    className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
-                      chatFullWidth ? 'text-[var(--color-agent)]' : ''
-                    }`}
-                    aria-label={
-                      chatFullWidth
-                        ? 'Use constrained chat width'
-                        : 'Use full-width chat'
-                    }
+                    onClick={onClearMessages}
+                    className="h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
+                    aria-label="Clear message history"
                   >
+                    {/* eraser-ish: lines with strike */}
                     <svg
                       width="14"
                       height="14"
@@ -483,112 +631,71 @@ export default function ChannelHeader({
                       strokeLinejoin="round"
                       aria-hidden="true"
                     >
-                      {chatFullWidth ? (
-                        <>
-                          <path d="M2.5 5.5V2.5h3" />
-                          <path d="M13.5 5.5V2.5h-3" />
-                          <path d="M2.5 10.5v3h3" />
-                          <path d="M13.5 10.5v3h-3" />
-                        </>
-                      ) : (
-                        <>
-                          <path d="M5.5 2.5h-3v3" />
-                          <path d="M10.5 2.5h3v3" />
-                          <path d="M5.5 13.5h-3v-3" />
-                          <path d="M10.5 13.5h3v-3" />
-                        </>
-                      )}
+                      <path d="M2 13h12" />
+                      <path d="M4 10 9 3l4 3-5 7H4z" />
+                      <path d="M9 3l4 3" />
                     </svg>
                   </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  {chatFullWidth
-                    ? 'Use constrained chat width'
-                    : 'Use full-width chat'}
-                </TooltipContent>
-              </Tooltip>
-            )}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onClearMessages}
-                  className="h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
-                  aria-label="Clear message history"
-                >
-                  {/* eraser-ish: lines with strike */}
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
-                  >
-                    <path d="M2 13h12" />
-                    <path d="M4 10 9 3l4 3-5 7H4z" />
-                    <path d="M9 3l4 3" />
-                  </svg>
-                </Button>
-              </TooltipTrigger>
+                }
+              />
               <TooltipContent>Clear message history</TooltipContent>
             </Tooltip>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={onDismissSession}
-                  className="h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
-                  aria-label="Close tab from UI"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    aria-hidden="true"
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onDismissSession}
+                    className="h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
+                    aria-label="Close tab from UI"
                   >
-                    <path d="M3 3l10 10M13 3 3 13" />
-                  </svg>
-                </Button>
-              </TooltipTrigger>
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 3l10 10M13 3 3 13" />
+                    </svg>
+                  </Button>
+                }
+              />
               <TooltipContent>Close tab from UI</TooltipContent>
             </Tooltip>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => setConfirmDelete(true)}
-                  className="h-7 w-7 text-[var(--color-error)]/60 hover:text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
-                  aria-label="Remove session channel permanently"
-                >
-                  <svg
-                    width="13"
-                    height="13"
-                    viewBox="0 0 16 16"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => setConfirmDelete(true)}
+                    className="h-7 w-7 text-[var(--color-error)]/60 hover:text-[var(--color-error)] hover:bg-[var(--color-error)]/10"
+                    aria-label="Remove session channel permanently"
                   >
-                    <path d="M3 4h10" />
-                    <path d="M6 4V2h4v2" />
-                    <path d="M5 4l.5 9h5l.5-9" />
-                    <path d="M7 7v4M9 7v4" />
-                  </svg>
-                </Button>
-              </TooltipTrigger>
+                    <svg
+                      width="13"
+                      height="13"
+                      viewBox="0 0 16 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.5"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <path d="M3 4h10" />
+                      <path d="M6 4V2h4v2" />
+                      <path d="M5 4l.5 9h5l.5-9" />
+                      <path d="M7 7v4M9 7v4" />
+                    </svg>
+                  </Button>
+                }
+              />
               <TooltipContent>
                 Remove session channel permanently
               </TooltipContent>

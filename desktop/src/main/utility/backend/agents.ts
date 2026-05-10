@@ -31,13 +31,15 @@ import {
   getGlobalAgentDir,
   getProjectAgentDir,
 } from '../../utils/opencode-paths';
+import { getClient } from './sdk-client';
+import type { Agent as SdkAgent } from '@opencode-ai/sdk/v2/gen/types.gen.js';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
 export interface AgentDefinition {
   /** Filename without `.md` extension, e.g. "docs-maintainer" */
   name: string;
-  /** Absolute path to the .md file */
+  /** Absolute path to the .md file, or an opencode-sdk pseudo-path. */
   filePath: string;
   /** 'global' = ~/.config/opencode/agent/; 'project' = <baseDir>/.opencode/agent/ */
   scope: 'global' | 'project';
@@ -53,6 +55,12 @@ export interface AgentDefinition {
   rawContents: string;
   /** True if a project-scoped agent with the same name shadows this one */
   overridden?: boolean;
+  /** True for OpenCode built-in agents such as build and plan. */
+  native?: boolean;
+  /** True when OpenCode marks this agent as hidden/internal. */
+  hidden?: boolean;
+  /** True when Eden can edit/delete a local markdown backing file. */
+  editable?: boolean;
 }
 
 export interface WriteAgentParams {
@@ -341,6 +349,7 @@ function readAgentFromDisk(
     tools,
     body,
     rawContents: raw,
+    editable: true,
   };
   if (model !== undefined) agent.model = model;
   if (scope === 'project' && baseDirectory) agent.baseDirectory = baseDirectory;
@@ -384,8 +393,10 @@ function scanDir(
 }
 
 export async function listAgents(
+  openCodePort?: number,
   baseDirectory?: string,
 ): Promise<AgentDefinition[]> {
+  const sdkAgents = await listSdkAgents(openCodePort, baseDirectory);
   const globals = scanDir(globalAgentDir(), 'global');
   const projects = baseDirectory
     ? scanDir(projectAgentDir(baseDirectory), 'project', baseDirectory)
@@ -395,8 +406,93 @@ export async function listAgents(
   for (const g of globals) {
     if (projectNames.has(g.name)) g.overridden = true;
   }
-  // Project-first order, then globals; both already sorted by name.
-  return [...projects, ...globals];
+  return mergeAgentSources(sdkAgents, projects, globals);
+}
+
+export function mergeAgentSources(
+  sdkAgents: AgentDefinition[],
+  projectAgents: AgentDefinition[],
+  globalAgents: AgentDefinition[],
+): AgentDefinition[] {
+  const localByName = new Map<string, AgentDefinition>();
+  for (const agent of [...globalAgents, ...projectAgents]) {
+    localByName.set(agent.name, agent);
+  }
+
+  const result: AgentDefinition[] = [];
+  const seen = new Set<string>();
+
+  for (const sdkAgent of sdkAgents) {
+    const local = localByName.get(sdkAgent.name);
+    seen.add(sdkAgent.name);
+    result.push(local ? mergeSdkAgentWithLocal(sdkAgent, local) : sdkAgent);
+  }
+
+  for (const agent of [...projectAgents, ...globalAgents]) {
+    if (seen.has(agent.name)) continue;
+    seen.add(agent.name);
+    result.push(agent);
+  }
+
+  return result;
+}
+
+function mergeSdkAgentWithLocal(
+  sdkAgent: AgentDefinition,
+  localAgent: AgentDefinition,
+): AgentDefinition {
+  return {
+    ...sdkAgent,
+    filePath: localAgent.filePath,
+    scope: localAgent.scope,
+    baseDirectory: localAgent.baseDirectory,
+    body: localAgent.body,
+    rawContents: localAgent.rawContents,
+    overridden: localAgent.overridden,
+    editable: true,
+  };
+}
+
+async function listSdkAgents(
+  openCodePort?: number,
+  baseDirectory?: string,
+): Promise<AgentDefinition[]> {
+  if (!openCodePort) return [];
+
+  try {
+    const client = getClient(openCodePort, baseDirectory);
+    const response = await client.app.agents(
+      {},
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (response.error || !Array.isArray(response.data)) return [];
+
+    // Surface every SDK agent (including hidden ones) and let the renderer
+    // decide visibility per surface — matches OpenCode TUI behavior where
+    // hidden agents (e.g. `general`) are still selectable in some pickers.
+    return response.data.map(mapSdkAgent);
+  } catch {
+    return [];
+  }
+}
+
+function mapSdkAgent(agent: SdkAgent): AgentDefinition {
+  return {
+    name: agent.name,
+    filePath: `opencode-sdk:${agent.name}`,
+    scope: 'global',
+    description: agent.description ?? '',
+    mode: agent.mode,
+    tools: {},
+    model: agent.model
+      ? `${agent.model.providerID}/${agent.model.modelID}`
+      : undefined,
+    body: agent.prompt ?? '',
+    rawContents: '',
+    native: agent.native,
+    hidden: agent.hidden,
+    editable: false,
+  };
 }
 
 export async function readAgent(

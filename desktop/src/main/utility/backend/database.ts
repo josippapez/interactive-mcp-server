@@ -373,6 +373,18 @@ export async function initDatabase(
     // Schema matches — just ensure tables exist (idempotent).
     createTables();
   }
+
+  // One-shot cleanup: remove any pinned-project rows with empty/whitespace
+  // path or name that may have been written by older builds before the
+  // addPinnedProject() validation guard. These produced phantom "Project"
+  // tiles in the sidebar rail.
+  try {
+    db.exec(
+      `DELETE FROM pinned_projects WHERE TRIM(path) = '' OR TRIM(name) = ''`,
+    );
+  } catch {
+    // Non-fatal — continue startup even if cleanup fails.
+  }
 }
 
 /**
@@ -1686,15 +1698,22 @@ export function getPinnedProjects(): PinnedProject[] {
   }));
 }
 
-/** Add a pinned project. Returns true if added, false if already exists. */
+/** Add a pinned project. Returns true if added, false if already exists or invalid. */
 export function addPinnedProject(path: string, name: string): boolean {
   if (!db) return false;
+  // Reject empty/whitespace-only path or name. An empty path produces a
+  // phantom rail tile with blank initials and the literal "Project" tooltip,
+  // because the renderer falls back through getProjectName('') -> '' and
+  // getProjectDisplayName then defaults to 'Project'.
+  const trimmedPath = path?.trim() ?? '';
+  const trimmedName = name?.trim() ?? '';
+  if (!trimmedPath || !trimmedName) return false;
   try {
     const info = db
       .prepare(
         `INSERT OR IGNORE INTO pinned_projects (path, name) VALUES (?, ?)`,
       )
-      .run(path, name);
+      .run(trimmedPath, trimmedName);
     return info.changes > 0;
   } catch {
     return false;

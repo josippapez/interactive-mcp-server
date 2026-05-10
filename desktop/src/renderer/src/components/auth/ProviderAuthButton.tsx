@@ -10,6 +10,14 @@ interface ProviderAuthButtonProps {
   variant?: 'default' | 'compact' | 'inline';
   /** Called when auth succeeds. */
   onSuccess?: () => void;
+  /**
+   * Called whenever the auth modal closes, regardless of outcome
+   * (success, cancel, error, or timeout). Used to re-read provider
+   * connection state from disk in case auth completed out-of-band
+   * (e.g. device-code OAuth where the in-app authorize call timed
+   * out but the backend wrote auth.json successfully).
+   */
+  onClosed?: () => void;
   /** Additional CSS classes. */
   className?: string;
 }
@@ -27,6 +35,7 @@ export default function ProviderAuthButton({
   providerName,
   variant = 'default',
   onSuccess,
+  onClosed,
   className = '',
 }: ProviderAuthButtonProps): React.ReactElement {
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -34,6 +43,11 @@ export default function ProviderAuthButton({
   const handleSuccess = () => {
     setIsModalOpen(false);
     onSuccess?.();
+  };
+
+  const handleClose = () => {
+    setIsModalOpen(false);
+    onClosed?.();
   };
 
   const baseStyles = {
@@ -76,7 +90,7 @@ export default function ProviderAuthButton({
         providerId={providerId}
         providerName={providerName}
         isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
+        onClose={handleClose}
         onSuccess={handleSuccess}
       />
     </>

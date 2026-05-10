@@ -10,21 +10,30 @@ import type { Attachment } from '../../types';
 import type { UnifiedMessage } from '../../types/unified-message';
 import { useSettings } from '../../store';
 import MarkdownContent from '../MarkdownContent';
-import MessageTimestamp from './MessageTimestamp';
 import {
   filterMessageText,
   formatCost,
-  getAttachmentKey,
-  getEffortBadge,
-  isImageAttachment,
-  isSubagent,
+  getAssistantHeaderMetadata,
+  getExecutionStatusLabel,
   unifiedRoleLabel,
 } from './message-item-helpers';
+import {
+  AssistantErrorBlock,
+  HiddenContextNotice,
+  MessageAttachments,
+  MessageContextMenu,
+  MessageFileParts,
+  MessageHoverToolbar,
+  MessageMetaRow,
+  MessageOptions,
+  MessageSourceLinks,
+  MessageTimestampLine,
+  OutboundStatusBadge,
+} from './message-item-blocks';
 import { ReasoningSection, ToolCallsSection } from './message-item-sections';
 import CompactionMessageItem from './CompactionMessageItem';
 import { messageAnchorId } from './message-id-from-hash';
 import { useMessageCopy } from './useMessageCopy';
-import { Tag } from '../ui/tag';
 import { PERF_LOG_ENABLED } from '../../lib/perf-flag';
 
 export interface MessageItemProps {
@@ -108,14 +117,28 @@ const MessageItem = memo(function MessageItem({
   const settings = useSettings();
   const roleLabel = unifiedRoleLabel(msg);
   const costInfo = formatCost(msg.cost);
-  const modelLabel = msg.modelId ?? null;
-  const effortBadge = getEffortBadge(msg.variant);
-  const agentBadgeLabel =
-    msg.source === 'conversation' && isSubagent(msg.agent) ? roleLabel : null;
+  const { agentBadgeLabel, effortBadge, modelLabel } =
+    getAssistantHeaderMetadata({
+      agent: msg.agent,
+      modelId: msg.modelId,
+      roleLabel,
+      variant: msg.variant,
+    });
+  const userSide = isUserSideMessage(msg);
+  const [now, setNow] = useState(() => Date.now());
+  const executionStatus = getExecutionStatusLabel({
+    completedAt: msg.completedAt,
+    isStreaming,
+    now,
+    source: msg.source,
+    timestamp: msg.timestamp,
+    userSide,
+  });
+  const conversationAgentBadgeLabel =
+    msg.source === 'conversation' ? agentBadgeLabel : null;
   const showMetaRow = Boolean(
     isActive || msg.channelKind === 'outbound' || costInfo,
   );
-  const userSide = isUserSideMessage(msg);
 
   // Filter message text based on display settings
   const displayText = useMemo(() => {
@@ -126,6 +149,19 @@ const MessageItem = memo(function MessageItem({
       settings.hideDocInjections ?? false,
     );
   }, [msg.text, settings.hideSystemReminders, settings.hideDocInjections]);
+
+  useEffect(() => {
+    if (
+      userSide ||
+      msg.source !== 'conversation' ||
+      !isStreaming ||
+      msg.completedAt
+    ) {
+      return;
+    }
+    const interval = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(interval);
+  }, [isStreaming, msg.completedAt, msg.source, userSide]);
 
   // Dev-only first-paint marker: fires exactly once per message id the
   // first time it renders with non-empty assistant content. Emits a
@@ -179,6 +215,17 @@ const MessageItem = memo(function MessageItem({
     closeMenu();
   }, [copy, msg.id, closeMenu]);
 
+  const handleCopyRawMessage = useCallback(() => {
+    void copy(JSON.stringify(msg, null, 2));
+    closeMenu();
+  }, [copy, msg, closeMenu]);
+
+  const handleCopyTools = useCallback(() => {
+    const tools = msg.toolCalls ?? [];
+    void copy(JSON.stringify(tools, null, 2));
+    closeMenu();
+  }, [copy, msg.toolCalls, closeMenu]);
+
   const handleFocusClick = useCallback(() => {
     onRequestFocus?.(msg.id);
   }, [onRequestFocus, msg.id]);
@@ -220,76 +267,7 @@ const MessageItem = memo(function MessageItem({
     return <CompactionMessageItem msg={msg} />;
   }
 
-  // Shared: outbound status badge (SENT/SENDING/QUEUED)
-  const outboundBadge =
-    msg.channelKind === 'outbound' ? (
-      msg.role === 'sent' ? (
-        <Tag
-          tone="success"
-          icon={
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M13.5 4.5L6 12l-3.5-3.5" />
-            </svg>
-          }
-        >
-          SENT
-        </Tag>
-      ) : msg.role === 'sending' ? (
-        <Tag
-          tone="info"
-          icon={
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              className="animate-spin"
-              aria-hidden="true"
-            >
-              <path d="M8 2v2M8 12v2M2 8h2M12 8h2" />
-            </svg>
-          }
-        >
-          SENDING
-        </Tag>
-      ) : (
-        <Tag
-          tone="warning"
-          icon={
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 8h10" />
-              <path d="M8 3v10" opacity="0.35" />
-            </svg>
-          }
-        >
-          QUEUED
-        </Tag>
-      )
-    ) : null;
+  const outboundBadge = <OutboundStatusBadge msg={msg} />;
 
   // Shared: search/active-prompt ring classes for both layouts.
   const searchRingClass = isActiveSearchMatch
@@ -308,176 +286,73 @@ const MessageItem = memo(function MessageItem({
     ? 'ring-2 ring-[var(--color-agent)]/80 bg-[var(--color-agent)]/12 animate-pulse'
     : '';
 
-  // Hover toolbar: Copy button revealed on group-hover / focus.
   const hoverToolbar = (
-    <div
-      className="pointer-events-none absolute right-1 top-1 z-10 flex gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
-      data-slot="message-hover-toolbar"
-    >
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation();
-          handleCopyText();
-        }}
-        className="inline-flex h-6 items-center gap-1 rounded border border-[var(--color-border-weak)] bg-[var(--color-surface)]/90 px-1.5 text-[10px] text-[var(--color-text-muted)] shadow-sm backdrop-blur-sm transition-colors hover:border-[var(--color-agent)]/50 hover:text-[var(--color-text)]"
-        aria-label={copied ? 'Copied message' : 'Copy message'}
-        title={copied ? 'Copied' : 'Copy message'}
-      >
-        {copied ? (
-          <>
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M13.5 4.5L6 12l-3.5-3.5" />
-            </svg>
-            Copied
-          </>
-        ) : (
-          <>
-            <svg
-              width="10"
-              height="10"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <rect x="5" y="5" width="9" height="9" rx="1.5" />
-              <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" />
-            </svg>
-            Copy
-          </>
-        )}
-      </button>
-    </div>
+    <MessageHoverToolbar copied={copied} onCopyText={handleCopyText} />
   );
 
-  // Inline context menu (fixed position + backdrop) — mirrors ProjectRail pattern.
-  const contextMenu = menu && (
-    <>
-      <button
-        type="button"
-        aria-label="Close context menu"
-        onClick={closeMenu}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          closeMenu();
-        }}
-        className="fixed inset-0 z-40 cursor-default bg-transparent"
-      />
-      <div
-        role="menu"
-        aria-label="Message actions"
-        className="fixed z-50 min-w-[160px] overflow-hidden rounded-md border border-[var(--color-border)] bg-[var(--color-surface)] text-[var(--color-text)] shadow-lg"
-        style={{ left: menu.x, top: menu.y }}
-      >
-        <button
-          type="button"
-          role="menuitem"
-          onClick={handleCopyText}
-          className="block w-full px-3 py-1.5 text-left text-xs text-[var(--color-text)] transition-colors hover:bg-[var(--color-agent)]/15"
-        >
-          Copy text
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          onClick={handleCopyId}
-          className="block w-full px-3 py-1.5 text-left text-xs text-[var(--color-text)] transition-colors hover:bg-[var(--color-agent)]/15"
-        >
-          Copy message ID
-        </button>
-        <button
-          type="button"
-          role="menuitem"
-          onClick={handleCopyLink}
-          className="block w-full px-3 py-1.5 text-left text-xs text-[var(--color-text)] transition-colors hover:bg-[var(--color-agent)]/15"
-        >
-          Copy link
-        </button>
-      </div>
-    </>
+  const contextMenu = (
+    <MessageContextMenu
+      hasToolCalls={Boolean(msg.toolCalls?.length)}
+      menu={menu}
+      onClose={closeMenu}
+      onCopyId={handleCopyId}
+      onCopyLink={handleCopyLink}
+      onCopyRawMessage={handleCopyRawMessage}
+      onCopyText={handleCopyText}
+      onCopyTools={handleCopyTools}
+    />
   );
 
   const anchorId = messageAnchorId(msg.id);
 
-  const metaRow = showMetaRow && (
-    <div className="mb-1 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[10px] text-[var(--color-text-faint)]">
-      {isActive && (
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-[var(--color-agent)] animate-pulse" />
-      )}
-      {outboundBadge}
-      {costInfo && (
-        <>
-          <span className="text-[var(--color-text-faint)]/60">•</span>
-          <span className="text-[var(--color-text-muted)]">{costInfo}</span>
-        </>
-      )}
-    </div>
+  const metaRow = (
+    <MessageMetaRow
+      costInfo={costInfo}
+      isActive={isActive}
+      outboundBadge={outboundBadge}
+      show={showMetaRow}
+    />
   );
-
-  const attachmentsBlock = msg.attachments && msg.attachments.length > 0 && (
-    <div
-      className={`mt-2 flex flex-wrap gap-2 ${userSide ? 'justify-end' : ''}`}
-    >
-      {msg.attachments.map((attachment, index) =>
-        isImageAttachment(attachment) ? (
-          <button
-            key={getAttachmentKey(msg.id, attachment, index)}
-            type="button"
-            onClick={() => handleImageClick(attachment)}
-            className="h-12 w-12 overflow-hidden rounded-md border border-[var(--color-border-weak)] bg-[var(--color-surface)] transition-colors hover:border-[var(--color-agent)]"
-            title={`${attachment.name} — click to expand`}
-          >
-            <img
-              src={`data:${attachment.mimeType};base64,${attachment.data}`}
-              alt={attachment.name}
-              className="h-full w-full object-cover"
-            />
-          </button>
-        ) : (
-          <span
-            key={getAttachmentKey(msg.id, attachment, index)}
-            className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border-weak)] bg-[var(--color-surface)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-muted)]"
-          >
-            <span aria-hidden="true">&#128206;</span> {attachment.name}
-          </span>
-        ),
-      )}
-    </div>
+  const attachmentsBlock = (
+    <MessageAttachments
+      attachments={msg.attachments}
+      msgId={msg.id}
+      onImageClick={handleImageClick}
+      userSide={userSide}
+    />
   );
-
-  const optionsBlock = showOptions && predefinedOptions && onSelectOption && (
-    <div className="mt-3 flex flex-wrap gap-2">
-      {predefinedOptions.map((option) => (
-        <button
-          key={option}
-          type="button"
-          onClick={() => onSelectOption(option)}
-          className="cursor-pointer rounded-md border border-[var(--color-agent)]/40 bg-[var(--color-agent)]/10 px-3 py-1.5 text-xs font-medium text-[var(--color-agent)] transition-all hover:border-[var(--color-agent)] hover:bg-[var(--color-agent)]/20 active:scale-95"
-        >
-          {option}
-        </button>
-      ))}
-    </div>
+  const filePartsBlock = (
+    <MessageFileParts
+      files={msg.fileParts}
+      msgId={msg.id}
+      userSide={userSide}
+    />
   );
-
+  const sourceLinksBlock = (
+    <MessageSourceLinks msgId={msg.id} sourceUrls={msg.sourceUrls} />
+  );
+  const hiddenContextBlock = (
+    <HiddenContextNotice count={msg.hiddenTextPartCount} />
+  );
+  const optionsBlock = (
+    <MessageOptions
+      onSelectOption={onSelectOption}
+      options={predefinedOptions}
+      show={showOptions}
+    />
+  );
   const timestampBlock = (
-    <span className="mt-1 block text-[10px] text-[var(--color-text-faint)]">
-      <MessageTimestamp timestamp={new Date(msg.timestamp)} />
-    </span>
+    <MessageTimestampLine
+      executionStatus={executionStatus}
+      timestamp={msg.timestamp}
+    />
+  );
+  const assistantErrorBlock = (
+    <AssistantErrorBlock
+      error={msg.error}
+      errorName={msg.errorName}
+      userSide={userSide}
+    />
   );
 
   // ---------------------------------------------------------------------------
@@ -515,6 +390,7 @@ const MessageItem = memo(function MessageItem({
             </div>
           )}
           {attachmentsBlock}
+          {filePartsBlock}
           {optionsBlock}
         </div>
         {timestampBlock}
@@ -542,9 +418,9 @@ const MessageItem = memo(function MessageItem({
       onKeyDown={handleKeyDown}
     >
       {hoverToolbar}
-      {(agentBadgeLabel || modelLabel || effortBadge) && (
+      {(conversationAgentBadgeLabel || modelLabel || effortBadge) && (
         <div className="mb-1 flex flex-wrap items-center gap-2 text-[10px] text-[var(--color-text-faint)]">
-          {agentBadgeLabel && (
+          {conversationAgentBadgeLabel && (
             <span className="inline-flex items-center gap-1 rounded border border-purple-500/30 bg-purple-500/15 px-1.5 py-0.5 text-[10px] font-medium text-purple-400">
               <svg
                 width="10"
@@ -555,20 +431,21 @@ const MessageItem = memo(function MessageItem({
               >
                 <path d="M8 1a1 1 0 0 1 1 1v1h2a2 2 0 0 1 2 2v1h1a1 1 0 1 1 0 2h-1v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8H2a1 1 0 0 1 0-2h1V5a2 2 0 0 1 2-2h2V2a1 1 0 0 1 1-1ZM6 7a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm4 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm-4 4a1 1 0 0 0 0 2h4a1 1 0 1 0 0-2H6Z" />
               </svg>
-              <span className="truncate">{agentBadgeLabel}</span>
+              <span className="truncate">{conversationAgentBadgeLabel}</span>
+            </span>
+          )}
+          {effortBadge && (
+            <span
+              className="inline-flex items-center rounded border border-[var(--color-border-weak)] bg-[var(--color-surface-raised)]/70 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
+              data-effort={effortBadge.variant}
+              title={effortBadge.label}
+            >
+              {effortBadge.label}
             </span>
           )}
           {modelLabel && (
             <span className="font-mono text-[10px] text-[var(--color-text-faint)]">
               {modelLabel}
-            </span>
-          )}
-          {effortBadge && (
-            <span
-              className="inline-flex items-center rounded border border-[var(--color-border-weak)] bg-[var(--color-surface)]/85 px-1.5 py-0.5 text-[10px] font-medium text-[var(--color-text-muted)]"
-              data-variant={effortBadge.variant}
-            >
-              {effortBadge.label}
             </span>
           )}
         </div>
@@ -607,7 +484,12 @@ const MessageItem = memo(function MessageItem({
           />
         )}
 
+        {assistantErrorBlock}
+
         {attachmentsBlock}
+        {filePartsBlock}
+        {sourceLinksBlock}
+        {hiddenContextBlock}
         {optionsBlock}
       </div>
 

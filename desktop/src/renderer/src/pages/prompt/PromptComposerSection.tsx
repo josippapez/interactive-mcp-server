@@ -1,7 +1,8 @@
 import ChannelComposer from '../../components/prompt/ChannelComposer';
-import { SessionScopedSkillsPanel } from '../../components/prompt/SessionScopedSkillsPanel';
+import { SessionLoadedSkillsPanel } from '../../components/prompt/SessionLoadedSkillsPanel';
 import type { ModelOverride } from '../../hooks/useProviderInjection';
 import type { Model } from '../../hooks/useProviders';
+import type { NativeOpenCodeSkill } from '../../../../preload/api/types';
 import type { Attachment, SessionStatus } from '../../types';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
 
@@ -21,6 +22,7 @@ type Props = {
   providerId?: string | null;
   variant?: string;
   latestStatus: SessionStatus | null;
+  activeSkills: NativeOpenCodeSkill[];
   connectionId: string | null;
   isBusy: boolean;
   docContextEnabled: boolean;
@@ -57,6 +59,7 @@ export function PromptComposerSection({
   providerId,
   variant,
   latestStatus,
+  activeSkills,
   connectionId,
   isBusy,
   docContextEnabled,
@@ -125,10 +128,7 @@ export function PromptComposerSection({
 
   return (
     <>
-      <SessionScopedSkillsPanel
-        providerType={isOpenCodeSession ? 'opencode' : null}
-        providerSessionId={providerSessionId}
-      />
+      {isOpenCodeSession && <SessionLoadedSkillsPanel skills={activeSkills} />}
       <ChannelComposer
         enabled={enabled}
         submitLabel="Queue"

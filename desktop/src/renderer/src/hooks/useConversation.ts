@@ -85,8 +85,6 @@ function releaseIpcListener(): void {
 
 // ─── REST seed deduplication ─────────────────────────────────────────────────
 
-const SEED_LIMIT = 50;
-
 /**
  * Track which sessions have been seeded to avoid redundant REST fetches
  * on remount or hook re-run. The server is the source of truth; once
@@ -97,24 +95,13 @@ const seededSessions = new Set<string>();
 async function seedOnce(sessionId: string): Promise<void> {
   if (seededSessions.has(sessionId)) return;
 
-  // Fast path: if the store already has messages for this session (e.g.,
-  // we just streamed live events before any consumer mounted, or we're
-  // re-entering the session after a rapid switch), skip the network
-  // fetch entirely. This also prevents the seed-vs-live-batch clobber
-  // race described in docs/STREAMING-REWRITE-PLAN.md.
-  const existing = conversationStore.state.messages[sessionId];
-  if (existing && existing.length > 0) {
-    seededSessions.add(sessionId);
-    return;
-  }
-
   seededSessions.add(sessionId);
   try {
     const api = window.api;
     if (!api?.fetchConversationMessages) return;
-    const messages = await api.fetchConversationMessages(sessionId, {
-      limit: SEED_LIMIT,
-    });
+    // Omit `limit` so OpenCode returns the full session history. Passing a
+    // limit intentionally returns only the latest page.
+    const messages = await api.fetchConversationMessages(sessionId);
     if (messages.length > 0) seedMessages(sessionId, messages);
   } catch {
     // Best-effort seed — if it fails the live stream will still fill in
@@ -233,6 +220,7 @@ export function resetConversationSeedCache(): void {
       status: {},
       todos: {},
       contextUsage: {},
+      sessionSideChannels: {},
       vcsBranch: null,
       lastFileEdit: null,
       lastSeq: prev.lastSeq,

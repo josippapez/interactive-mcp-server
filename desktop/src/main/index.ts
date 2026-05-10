@@ -18,7 +18,7 @@ import { reconcileSessionConnections } from './utility/session-client';
 import {
   startOpenCodeServer,
   stopOpenCodeServer,
-} from './utility/opencode-server-client';
+} from './opencode/server-facade';
 import { syncRemoteConfig } from './utility/opencode-client';
 import { checkOpenCodeHealth } from './opencode/health';
 import {
@@ -29,7 +29,28 @@ import {
 import { detectClaudeSdkRuntime } from './claude-sdk-runtime';
 import { BUILTIN_TEMPLATES } from './builtin-templates';
 import { initLogger, createLogger, flushLogger } from './utils/logger';
+import { pinDevUserData } from './utils/dev-userdata-pin';
 import { getUtilitySupervisor } from './utility/supervisor';
+import { requestNativeNotificationPermission } from './utility/permission-notification';
+
+// Dev-only: pin userData (and therefore the SQLite DB + OpenCode XDG state)
+// to the same path the packaged production build uses. Without this, dev
+// runs read/write a separate `eden-desktop/` directory and cannot see
+// sessions started in the packaged "Eden" app, and vice-versa.
+//
+// MUST run before `app.whenReady()` and before any subsystem reads
+// `app.getPath('userData')`. Production builds are left alone.
+if (!app.isPackaged) {
+  pinDevUserData({
+    appSetPath: (key, value) => app.setPath(key, value),
+    appGetPath: (key) => app.getPath(key),
+    targetName: 'Eden',
+    log: {
+      info: (msg) => console.info(msg),
+      warn: (msg) => console.warn(msg),
+    },
+  });
+}
 
 // In development, expose CDP on a configurable port so external tools
 // (chrome-devtools-mcp, electron-mcp-server, React DevTools, etc.) can attach
@@ -49,6 +70,60 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let currentSettings: AppSettings = defaultSettings;
+
+/**
+ * Actually-bound ports as reported by the resolver/probe layer. May differ
+ * from `currentSettings.{port,openCodePort}` when another instance occupies
+ * the configured port and the resolver probed upward. We track these
+ * separately so:
+ *   1. The user's chosen hint stays in `currentSettings` (preserved on save).
+ *   2. Downstream consumers that need the live port (config-sync, MCP
+ *      register, OpenCode SDK calls) read from this holder.
+ *   3. The renderer Settings UI surfaces the resolved value as a read-only
+ *      hint under the editable port input.
+ *
+ * `null` means the resolver hasn't run yet (or fell back to the requested
+ * port verbatim). Callers should fall back to `currentSettings` in that case.
+ */
+const resolvedPorts: { mcp: number | null; openCode: number | null } = {
+  mcp: null,
+  openCode: null,
+};
+
+/** Live port we should use for MCP traffic (resolved if known, else hint). */
+function getEffectiveMcpPort(): number {
+  return resolvedPorts.mcp ?? currentSettings.port;
+}
+
+/** Live port we should use for OpenCode HTTP traffic (resolved if known). */
+function getEffectiveOpenCodePort(): number {
+  return resolvedPorts.openCode ?? currentSettings.openCodePort;
+}
+
+/**
+ * Push the current resolved-port snapshot (with the on-disk requested
+ * values) to the focused renderer so the Settings page can update its
+ * read-only "currently bound on port X" hint without polling AND without
+ * a follow-up `getResolvedPorts()` IPC roundtrip. Called from every site
+ * that mutates `resolvedPorts` (initial MCP startup, OpenCode startup,
+ * supervisor rebind callback, IPC `setResolvedPort`).
+ *
+ * Payload shape matches `get-resolved-ports` so the renderer can use a
+ * single shared type. Safe to call before a window exists — falls
+ * through silently and the renderer will pick up the value via its
+ * one-shot fetch on mount.
+ */
+function emitResolvedPortsChanged(): void {
+  const win = mainWindow;
+  if (!win || win.isDestroyed()) return;
+  const onDisk = loadSettings();
+  win.webContents.send('resolved-ports:changed', {
+    mcpRequestedPort: onDisk.port,
+    mcpResolvedPort: resolvedPorts.mcp ?? onDisk.port,
+    openCodeRequestedPort: onDisk.openCodePort,
+    openCodeResolvedPort: resolvedPorts.openCode ?? onDisk.openCodePort,
+  });
+}
 
 /**
  * Interval (ms) between periodic background refreshes of the providers-info
@@ -119,6 +194,7 @@ function startOpenCodeSupervisor(
   getPort: () => number,
   shouldRun: () => boolean,
   appLog: ReturnType<typeof createLogger>,
+  onPortResolved?: (resolvedPort: number) => void,
 ): void {
   if (openCodeSupervisorTimer) return;
 
@@ -140,11 +216,12 @@ function startOpenCodeSupervisor(
       }
 
       openCodeConsecutiveFailures += 1;
-      appLog.warn(
-        `[supervisor] OpenCode health probe failed (${openCodeConsecutiveFailures}/${OPENCODE_SUPERVISOR_MAX_FAILURES}): ${
-          health.error ?? 'unknown error'
-        }`,
-      );
+      const failureLine = `[supervisor] OpenCode health probe failed (${openCodeConsecutiveFailures}/${OPENCODE_SUPERVISOR_MAX_FAILURES}): ${
+        health.error ?? 'unknown error'
+      }`;
+      appLog.warn(failureLine);
+      // Mirror to console so the failure cause is visible during dev runs.
+      console.warn(failureLine);
 
       if (openCodeConsecutiveFailures < OPENCODE_SUPERVISOR_MAX_FAILURES) {
         return;
@@ -152,9 +229,9 @@ function startOpenCodeSupervisor(
 
       openCodeRestartInFlight = true;
       try {
-        appLog.error(
-          `[supervisor] OpenCode unresponsive — restarting in-process server`,
-        );
+        const restartLine = `[supervisor] OpenCode unresponsive — restarting in-process server`;
+        appLog.error(restartLine);
+        console.error(restartLine);
         try {
           await stopOpenCodeServer();
         } catch (err) {
@@ -165,7 +242,10 @@ function startOpenCodeSupervisor(
           );
         }
         try {
-          await startOpenCodeServer(getPort());
+          const resolvedPort = await startOpenCodeServer(getPort());
+          if (onPortResolved && resolvedPort !== getPort()) {
+            onPortResolved(resolvedPort);
+          }
         } catch (err) {
           appLog.error(
             `[supervisor] startOpenCodeServer during restart failed: ${
@@ -207,6 +287,27 @@ app.whenReady().then(async () => {
   const appLog = createLogger('app');
   appLog.info(`Application started, version=${app.getVersion()}`);
 
+  // Patch process.env.PATH from the user's login shell so MCP servers
+  // configured as `npx -y …` and the spawned OpenCode binary can find
+  // node/npm/npx. Without this, launchd-spawned Electron sees only
+  // `/usr/bin:/bin:/usr/sbin:/sbin` and Homebrew/nvm Node is invisible.
+  //
+  // The user must have Node installed on their machine — we no longer
+  // bundle it. If they don't, MCP servers using `npx` will fail with a
+  // clear "command not found" error.
+  try {
+    const { default: fixPath } = await import('fix-path');
+    const before = process.env.PATH ?? '';
+    fixPath();
+    appLog.info(
+      `[fix-path] patched PATH (was ${before.length} chars, now ${(process.env.PATH ?? '').length} chars)`,
+    );
+  } catch (err) {
+    appLog.warn(
+      `[fix-path] failed to patch PATH: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   // Database init is required here because many IPC handlers (sidebar,
   // templates, session history) read from the DB immediately on renderer
   // load. better-sqlite3 init is fast (<10ms typical) and writes are
@@ -221,6 +322,14 @@ app.whenReady().then(async () => {
   registerIpcHandlers({
     getMainWindow: () => mainWindow,
     getSettings: () => currentSettings,
+    getResolvedPorts: () => ({
+      mcp: resolvedPorts.mcp,
+      openCode: resolvedPorts.openCode,
+    }),
+    setResolvedPort: (kind, port) => {
+      resolvedPorts[kind] = port;
+      emitResolvedPortsChanged();
+    },
     setSettings: (settings: AppSettings) => {
       currentSettings = settings;
       // Push new settings snapshot to the backend utility so the event-stream
@@ -251,6 +360,9 @@ app.whenReady().then(async () => {
   const openedAtLogin = app.getLoginItemSettings().wasOpenedAtLogin;
   mainWindow = createWindow(() => isQuitting, {
     startHidden: openedAtLogin,
+  });
+  mainWindow.once('ready-to-show', () => {
+    requestNativeNotificationPermission(mainWindow);
   });
 
   // providers-info pushes from the utility process are relayed to the
@@ -337,8 +449,44 @@ app.whenReady().then(async () => {
       );
     }
 
-    // Start MCP server (utility reads settings via settings-mirror)
-    await startMcpServer();
+    // Start MCP server (utility reads settings via settings-mirror).
+    // The utility probes upward from `currentSettings.port` if that port
+    // is in use (e.g. another Eden instance) and returns the actually-bound
+    // port. We track the resolved port in `resolvedPorts` (separate from
+    // `currentSettings`) so:
+    //   1. Downstream consumers (syncRemoteConfig, registerMcpWithRetry,
+    //      writeMcpConfigHint) can target the live port.
+    //   2. The user's chosen hint port stays in `currentSettings.port`
+    //      and is preserved on save.
+    const resolvedMcpPort = await startMcpServer();
+    if (typeof resolvedMcpPort === 'number') {
+      resolvedPorts.mcp = resolvedMcpPort;
+      emitResolvedPortsChanged();
+      if (resolvedMcpPort !== currentSettings.port) {
+        appLog.info(
+          `[startup] MCP bound on port=${resolvedMcpPort} (requested=${currentSettings.port})`,
+        );
+        // Keep the utility's settings-mirror in sync so writeMcpConfigHint
+        // and any future readers see the resolved value.
+        try {
+          getUtilitySupervisor().emitSettingsUpdate({
+            allowedPermissions: currentSettings.allowedPermissions ?? [],
+            allowedReadFolders: currentSettings.allowedReadFolders ?? [],
+            autoRegisterSubagents:
+              currentSettings.autoRegisterSubagents ?? true,
+            openCodePort:
+              resolvedPorts.openCode ?? currentSettings.openCodePort,
+            promptTimeoutSeconds: currentSettings.promptTimeoutSeconds,
+            soundEnabled: currentSettings.soundEnabled,
+            docIndexingEnabled: currentSettings.docIndexingEnabled,
+            agentBackend: currentSettings.agentBackend,
+            mcpPort: resolvedMcpPort,
+          });
+        } catch {
+          // Supervisor may not have settled yet — non-fatal.
+        }
+      }
+    }
 
     const isOpenCodeBackend = currentSettings.agentBackend === 'opencode';
     if (isOpenCodeBackend) {
@@ -347,7 +495,7 @@ app.whenReady().then(async () => {
       // "Register provider config" button in Settings after OpenCode restarts.
       if (currentSettings.autoSyncOpencode) {
         const syncResult = syncRemoteConfig(
-          currentSettings.port,
+          getEffectiveMcpPort(),
           currentSettings.promptTimeoutSeconds,
         );
         console.log(`[config-sync] ${syncResult}`);
@@ -359,20 +507,38 @@ app.whenReady().then(async () => {
       // `startOpenCodeServer` is now async (in-process Server.listen()). We
       // still fire-and-forget the promise because the cold-start health-probe
       // below handles the race against consumers that need a live HTTP port.
-      if (currentSettings.autoStartOpenCode) {
-        void startOpenCodeServer(currentSettings.openCodePort).catch(
-          (err: unknown) => {
-            appLog.error(
-              `[startup] OpenCode in-process start failed: ${
-                err instanceof Error ? err.message : String(err)
-              }`,
-            );
-          },
-        );
-      }
+      //
+      // The resolver may bind a different port than `openCodePort` if it's
+      // in use (e.g. another Eden instance). We record the actually-bound
+      // port in `resolvedPorts.openCode` (separate from `currentSettings`)
+      // so the user's hint is preserved and downstream consumers route to
+      // the live server via `getEffectiveOpenCodePort()`.
+      const openCodeStartPromise = currentSettings.autoStartOpenCode
+        ? startOpenCodeServer(currentSettings.openCodePort)
+            .then((resolvedPort) => {
+              resolvedPorts.openCode = resolvedPort;
+              emitResolvedPortsChanged();
+              if (resolvedPort !== currentSettings.openCodePort) {
+                appLog.info(
+                  `[startup] OpenCode bound on port=${resolvedPort} (requested=${currentSettings.openCodePort})`,
+                );
+              }
+            })
+            .catch((err: unknown) => {
+              appLog.error(
+                `[startup] OpenCode in-process start failed: ${
+                  err instanceof Error ? err.message : String(err)
+                }`,
+              );
+            })
+        : Promise.resolve();
+      void openCodeStartPromise;
 
-      // Start session-tree service (pull-on-invalidation model).
-      void startSessionTreeService(currentSettings.openCodePort);
+      // Start session-tree service (pull-on-invalidation model). Wait for
+      // resolver so it gets the actually-bound port, not the stale hint.
+      void openCodeStartPromise.then(() => {
+        void startSessionTreeService(getEffectiveOpenCodePort());
+      });
 
       // Cold-start readiness probe. `startOpenCodeServer` is fire-and-forget,
       // so the HTTP server may still be coming up when we fire the initial
@@ -380,7 +546,7 @@ app.whenReady().then(async () => {
       // and once healthy, warm the main-side providers cache so the first
       // renderer IPC after mount returns instantly instead of racing boot.
       // (The session tree is pulled on-demand by the renderer — no warmup.)
-      void waitForOpenCodeHealthy(() => currentSettings.openCodePort).then(
+      void waitForOpenCodeHealthy(() => getEffectiveOpenCodePort()).then(
         async (healthy) => {
           if (!healthy) {
             appLog.warn(
@@ -388,7 +554,7 @@ app.whenReady().then(async () => {
             );
             return;
           }
-          await fetchProvidersInfo(currentSettings.openCodePort).catch(
+          await fetchProvidersInfo(getEffectiveOpenCodePort()).catch(
             (err: unknown) => {
               appLog.warn(
                 `[startup] providers warmup failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -402,7 +568,7 @@ app.whenReady().then(async () => {
           // main-side cache. Idempotent — clear any prior timer first.
           if (providersRefreshTimer) clearInterval(providersRefreshTimer);
           providersRefreshTimer = setInterval(() => {
-            void refreshProvidersInfo(currentSettings.openCodePort).catch(
+            void refreshProvidersInfo(getEffectiveOpenCodePort()).catch(
               (err: unknown) => {
                 appLog.warn(
                   `[providers-refresh] periodic refresh failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -416,9 +582,16 @@ app.whenReady().then(async () => {
           // auto-start enabled — otherwise they're running OpenCode
           // externally and we must not interfere with its lifecycle.
           startOpenCodeSupervisor(
-            () => currentSettings.openCodePort,
+            () => getEffectiveOpenCodePort(),
             () => currentSettings.autoStartOpenCode,
             appLog,
+            (resolvedPort) => {
+              appLog.info(
+                `[supervisor] OpenCode rebound on port=${resolvedPort} (requested=${currentSettings.openCodePort})`,
+              );
+              resolvedPorts.openCode = resolvedPort;
+              emitResolvedPortsChanged();
+            },
           );
         },
       );
@@ -431,7 +604,7 @@ app.whenReady().then(async () => {
         await getUtilitySupervisor()
           .getBridge()
           .request<{ ok: boolean; error?: string }>('start-event-stream', {
-            openCodePort: currentSettings.openCodePort,
+            openCodePort: getEffectiveOpenCodePort(),
           });
       } catch (err) {
         appLog.error(
@@ -445,7 +618,7 @@ app.whenReady().then(async () => {
       // At startup no folder is selected yet (renderer drives selection),
       // so this is a no-op until the renderer calls set-selected-folder.
       const reconResult = await reconcileSessionConnections(
-        currentSettings.openCodePort,
+        getEffectiveOpenCodePort(),
         null,
       );
       console.log(
@@ -458,8 +631,8 @@ app.whenReady().then(async () => {
       // hang where activeClients stays 0 because OpenCode's client never completes
       // re-initialization after the previous server instance was killed.
       void registerMcpWithRetry({
-        appPort: currentSettings.port,
-        openCodePort: currentSettings.openCodePort,
+        appPort: getEffectiveMcpPort(),
+        openCodePort: getEffectiveOpenCodePort(),
         promptTimeoutSeconds: currentSettings.promptTimeoutSeconds,
       }).then((result) => {
         console.log(
@@ -571,7 +744,11 @@ app.on('before-quit', (event) => {
 
   // Drain any pending log writes before we let the process exit.
   // Best-effort: flushLogger swallows I/O errors internally.
-  void flushLogger().finally(() => {
+  // Guard with a 2 s timeout so a hung write chain never prevents quit.
+  const flushTimeout = new Promise<void>((resolve) =>
+    setTimeout(resolve, 2000),
+  );
+  void Promise.race([flushLogger(), flushTimeout]).finally(() => {
     app.quit();
   });
 });

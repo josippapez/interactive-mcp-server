@@ -203,19 +203,13 @@ Serves persisted image attachments from the local attachment store.
   "status": "ok",
   "activeClients": 2,
   "mcpConfigFile": "<path to imcp-mcp-config.json>",
-  "tools": [
-    "register_connection",
-    "request_user_input",
-    "start_intensive_chat",
-    "ask_intensive_chat",
-    "stop_intensive_chat",
-    "push_session_status",
-    "send_message",
-    "find_repo_docs",
-    "manage_skills_and_instructions"
-  ]
+  "tools": []
 }
 ```
+
+Desktop MCP tools are currently disabled at registration time. The server still
+accepts MCP connections, but new `McpServer` instances do not register the
+interactive tool handlers, so agents cannot discover or call them.
 
 ---
 
@@ -345,7 +339,7 @@ Each accepted connection receives its own isolated `McpServer` instance. Isolati
 | `registerSessionChannelTools`             | `push_session_status`                                               |
 | `registerSendMessageTool`                 | `send_message`                                                      |
 | `registerConnectionTool`                  | `register_connection`                                               |
-| `registerFindRepoDocsTool`                | `find_repo_docs`                                                    |
+| `registerRepoDocsTools`                   | `find_docs`, `read_doc`, `list_docs`, `find_libs`, `find_repo_docs` |
 | `registerManageSkillsAndInstructionsTool` | `manage_skills_and_instructions`                                    |
 
 Both `connectionId` and `connectionName` are passed to tool registrations that need to route IPC or database operations to the correct renderer session (e.g., prompts routed to the correct input bar, cancellation tied to the right connection).

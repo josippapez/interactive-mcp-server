@@ -1,6 +1,7 @@
 # Backend Utility-Process Extraction — Design & Plan
 
 **Status:** Phases 0–4 complete. Phase 5 (cleanup + docs) is the current pass.
+**Update:** the OpenCode HTTP server has since moved to **Mode C — `native-subprocess`** (see [ARCHITECTURE.md](./ARCHITECTURE.md#opencode-server-runs-as-a-native-subprocess-mode-c--committed-default)). References below to `virtual:opencode-server` and "OpenCode in-process server" describe the previous Mode A topology and are preserved for historical context; the in-process import path is dormant/reactivation-ready and no longer the active build flow.
 **Owner:** TBD
 **Target branches:** feature/backend-utility-process
 **Related docs:** [ARCHITECTURE.md](./ARCHITECTURE.md), [MCP-SERVER.md](./MCP-SERVER.md), [OPENCODE-EVENTS.md](./OPENCODE-EVENTS.md), [IPC-API.md](./IPC-API.md), [BACKEND-OPENCODE-SIDECAR-RESEARCH.md](./BACKEND-OPENCODE-SIDECAR-RESEARCH.md)

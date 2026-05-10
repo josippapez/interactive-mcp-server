@@ -32,6 +32,7 @@ import type {
   ConversationEvent,
   ConversationMessage,
   ConversationMessagePart,
+  ConversationSessionSideChannel,
   ConversationTodoItem,
 } from '../../../preload/api/types';
 
@@ -54,6 +55,8 @@ export type ConversationState = {
   todos: Record<string, ConversationTodoItem[]>;
   /** Context usage per session (live updates from `context.usage`). */
   contextUsage: Record<string, ConversationContextUsage>;
+  /** Latest non-chat `session.next.*` side-channel metadata per session. */
+  sessionSideChannels: Record<string, ConversationSessionSideChannel>;
   /** Most recent VCS branch reported by `vcs.updated`. */
   vcsBranch: string | null;
   /** Most recent file edit event (for cache invalidation / UX hints). */
@@ -68,6 +71,7 @@ export const initialConversationState: ConversationState = {
   status: {},
   todos: {},
   contextUsage: {},
+  sessionSideChannels: {},
   vcsBranch: null,
   lastFileEdit: null,
   lastSeq: 0,
@@ -126,6 +130,10 @@ function applyMessageUpdatedDraft(
     const existing = list[result.index]!;
     list[result.index] = {
       ...message,
+      variant: message.variant ?? existing.variant,
+      modelId: message.modelId ?? existing.modelId,
+      providerId: message.providerId ?? existing.providerId,
+      agent: message.agent ?? existing.agent,
       parts: existing.parts,
     } as Draft<ConversationMessage>;
   } else {
@@ -260,6 +268,65 @@ function applyCompactionDoneDraft(
   void beforeTokens;
 }
 
+function ensureSessionSideChannelDraft(
+  draft: ConversationDraft,
+  sessionId: string,
+): Draft<ConversationSessionSideChannel> {
+  return (draft.sessionSideChannels[sessionId] ??=
+    {} as Draft<ConversationSessionSideChannel>);
+}
+
+function applySessionNextModelSwitchedDraft(
+  draft: ConversationDraft,
+  sessionId: string,
+  model: {
+    modelId: string;
+    providerId: string;
+    variant?: string;
+  },
+): void {
+  const channel = ensureSessionSideChannelDraft(draft, sessionId);
+  channel.model = model;
+}
+
+function toolProgressText(
+  event: Extract<ConversationEvent, { type: 'session.next.tool.progress' }>,
+): string | undefined {
+  const text = event.content
+    .filter((item) => item.type === 'text')
+    .map((item) => item.text)
+    .join('\n');
+  return text || undefined;
+}
+
+function applySessionNextToolProgressDraft(
+  draft: ConversationDraft,
+  event: Extract<ConversationEvent, { type: 'session.next.tool.progress' }>,
+): void {
+  const progressText = toolProgressText(event);
+  for (const parts of Object.values(draft.parts)) {
+    const part = parts.find(
+      (candidate) =>
+        candidate.type === 'tool-call' &&
+        candidate.toolCallId === event.callId &&
+        candidate.toolStatus === 'running',
+    );
+    if (!part) continue;
+    part.toolMetadata = {
+      ...(part.toolMetadata ?? {}),
+      progress: {
+        structured: event.structured,
+        content: event.content,
+        updatedAt: event.timestamp,
+      },
+    };
+    if (progressText) {
+      part.toolOutput = progressText;
+    }
+    return;
+  }
+}
+
 function applyFileEditedDraft(
   draft: ConversationDraft,
   directory: string | null,
@@ -319,6 +386,20 @@ function applyEventToDraft(
         event.beforeTokens,
         event.afterTokens,
       );
+      return;
+    case 'session.next.model.switched':
+      applySessionNextModelSwitchedDraft(draft, event.sessionId, {
+        modelId: event.modelId,
+        providerId: event.providerId,
+        variant: event.variant,
+      });
+      return;
+    case 'session.next.retried':
+    case 'session.next.compaction.started':
+    case 'session.next.compaction.ended':
+      return;
+    case 'session.next.tool.progress':
+      applySessionNextToolProgressDraft(draft, event);
       return;
     case 'file.edited':
       applyFileEditedDraft(draft, event.directory, event.file);
@@ -411,26 +492,23 @@ export function seedConversationMessages(
   sessionId: string,
   messages: readonly ConversationMessage[],
 ): ConversationState {
-  const existing = state.messages[sessionId];
-  if (existing && existing.length >= messages.length) {
-    return state;
-  }
-
   return produce(state, (draft) => {
     // Sort defensively — REST response is usually chronological but
     // binary-search requires strict id-asc order.
     const sorted = [...messages].sort((a, b) =>
       a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
     );
-    draft.messages[sessionId] = sorted.map(
-      (m) => ({ ...m, parts: [] }) as Draft<ConversationMessage>,
-    );
+    for (const message of sorted) {
+      applyMessageUpdatedDraft(draft, { ...message, parts: [] });
+    }
     for (const msg of sorted) {
       if (msg.parts.length > 0) {
         const sortedParts = [...msg.parts].sort((a, b) =>
           a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
         );
-        draft.parts[msg.id] = sortedParts as Draft<ConversationMessagePart[]>;
+        for (const part of sortedParts) {
+          applyPartUpdatedDraft(draft, msg.id, part);
+        }
       }
     }
   });

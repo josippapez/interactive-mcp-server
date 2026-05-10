@@ -174,9 +174,17 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       sessionId: string,
     ): Promise<{ success: boolean; error?: string }> => {
       const { openCodePort } = deps.getSettings();
+      logIpcInfo(
+        `abort-session: sessionId=${sessionId} openCodePort=${openCodePort}`,
+      );
       const success = await abortOpenCodeSession(openCodePort, sessionId);
+      logIpcInfo(`abort-session result: success=${success}`);
       if (!success) {
-        return { success: false, error: 'Failed to abort session' };
+        return {
+          success: false,
+          error:
+            'Failed to abort session — check logs (no DB row for session, missing directory header, or auth failure)',
+        };
       }
       return { success: true };
     },

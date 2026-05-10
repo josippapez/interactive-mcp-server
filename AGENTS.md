@@ -66,7 +66,7 @@ The CLI package (`src/`) is published to npm. The desktop app (`desktop/`) is di
 
 ## Key Architectural Decisions
 
-- **No automatic MCP registration** — the desktop app does NOT auto-register with OpenCode on startup. Registration is manual via the "Register provider config" button in Settings.
+- **Automatic OpenCode session registration** — the desktop app registers OpenCode sessions from SDK/SSE session events. Agents do NOT call `register_connection` for OpenCode-backed sessions.
 - **Config-file timeout** — MCP tool call timeout is set in `opencode.json` via `syncRemoteConfig` at startup. Dynamic registration does not reliably override session timeouts.
 - **Prompt timeout behaviour** — when a prompt times out, it clears immediately and an expiry notice is appended. No grace period.
 - **SQLite via sql.js** — all session/message history is persisted in an embedded SQLite database (no native sqlite3 bindings).
@@ -74,26 +74,16 @@ The CLI package (`src/`) is published to npm. The desktop app (`desktop/`) is di
 
 ---
 
-## Auto-register Connection (for AI agents using interactive-desktop tools)
+## Auto-register Connection (for AI agents using desktop repo docs/libs tools)
 
-The desktop app **automatically registers sessions** when it detects new OpenCode sessions via SSE events. Agents do NOT need to call `register_connection` as a prerequisite — tools work immediately.
+The desktop app **automatically registers sessions** when it detects new OpenCode sessions via SDK/SSE events. Agents do NOT call `register_connection` as a prerequisite — repo docs/libs tools work from the auto-registered session metadata.
 
 ### How auto-registration works
 
 1. When OpenCode spawns a session (root or child), the desktop app receives a `session.created.1` SSE event
 2. The desktop app proactively creates a DB row for that session, keyed by `openCodeSessionId`
-3. The desktop app injects a `<system-reminder>` into the agent's context containing its `openCodeSessionId` (format: `ses_<alphanumeric>`)
-4. The agent can immediately use tools like `request_user_input` — just pass `openCodeSessionId` on every call
-
-### When to call `register_connection`
-
-Calling `register_connection` is **optional but recommended** for:
-
-- **Custom channel names** — auto-registered channels use the OpenCode session title; call `register_connection` to set a descriptive name like "Fix authentication bug"
-- **Recovering after deletion** — if a user deletes the channel from the sidebar, call `register_connection` to re-create it
-- **Non-OpenCode providers** — Copilot CLI, Claude SDK, and standalone agents MUST call `register_connection` since there's no SSE auto-detection
-
-`baseDirectory` on `register_connection` is primarily for repo-aware features such as file autocomplete, repository-doc indexing, and `find_repo_docs`. It should not be treated as the source of truth for sidebar grouping. OpenCode-backed sessions are grouped by the session's own creation/directory metadata from OpenCode.
+3. The desktop app injects a `<system-reminder>` into the agent's context containing its `openCodeSessionId` (format: `ses_<alphanumeric>`) and the exposed repo docs/libs tool list
+4. The agent can immediately use repo docs/libs tools when a session base directory is available
 
 ### Why `openCodeSessionId` is required on tool calls
 
@@ -103,57 +93,28 @@ OpenCode uses a **shared MCP client** across all agent sessions. Without an expl
 - Parallel subagents cannot be distinguished from each other
 - The desktop app cannot reliably associate tool calls with the correct session
 
-Each agent MUST pass `openCodeSessionId` on every tool call for correct channel routing.
+Each agent MUST pass `openCodeSessionId` to repo docs/libs tools that include that parameter for correct channel routing.
 
 ### Tool Call Requirements
 
-The following tools REQUIRE `openCodeSessionId` on every call:
+The advertised desktop MCP surface is repository context only:
 
-| Tool                      | Purpose                                    |
-| ------------------------- | ------------------------------------------ |
-| `request_user_input`      | Prompt user for input/confirmation         |
-| `push_session_status`     | Send non-blocking status update to UI      |
-| `send_message`            | Send persistent message to channel history |
-| `start_intensive_chat`    | Start multi-question chat session          |
-| `ask_intensive_chat`      | Ask question in active intensive chat      |
-| `stop_intensive_chat`     | Close intensive chat session               |
-| `poll_context_injections` | Check for pending context from desktop app |
-| `find_repo_docs`          | Search repository documentation            |
+| Tool             | Purpose                                       |
+| ---------------- | --------------------------------------------- |
+| `find_docs`      | Search repository documentation               |
+| `find_repo_docs` | Backward-compatible alias for `find_docs`     |
+| `list_docs`      | List available repository documentation paths |
+| `read_doc`       | Read one repository documentation file        |
+| `find_libs`      | Find npm libraries from package manifests     |
 
 ### Example workflow
 
-**Step 1: Register connection (first tool call)**
+**Search repository docs**
 
 ```json
 {
-  "channelName": "Fix authentication bug",
-  "projectName": "my-project",
-  "baseDirectory": "/Users/me/projects/my-project",
-  "openCodeSessionId": "ses_abc123"
-}
-```
-
-**Step 2: Subsequent tool calls (always include openCodeSessionId)**
-
-```json
-// request_user_input
-{
-  "projectName": "my-project",
-  "message": "Should I refactor the auth module?",
-  "baseDirectory": "/Users/me/projects/my-project",
-  "openCodeSessionId": "ses_abc123"
-}
-
-// push_session_status
-{
-  "status": "Running tests...",
-  "type": "working",
-  "openCodeSessionId": "ses_abc123"
-}
-
-// send_message
-{
-  "message": "Build completed successfully.",
+  "query": "session registration bootstrap",
+  "limit": 8,
   "openCodeSessionId": "ses_abc123"
 }
 ```

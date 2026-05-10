@@ -20,6 +20,7 @@ export interface Command {
   name: string;
   description: string;
   args: CommandArg[];
+  source?: 'command' | 'mcp' | 'skill';
 }
 
 /** Response shape from GET /command. */
@@ -66,8 +67,11 @@ export async function fetchCommands(
     const data = response.data as CommandsResponse | undefined;
     if (!data?.commands) return null;
 
-    _cachedCommands = data.commands;
-    return data.commands;
+    const commands = data.commands.filter(
+      (command) => command.source !== 'skill',
+    );
+    _cachedCommands = commands;
+    return commands;
   } catch {
     return null;
   }

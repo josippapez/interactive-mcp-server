@@ -1,5 +1,4 @@
 import { resolve } from 'path';
-import { promises as fsp } from 'fs';
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -17,11 +16,31 @@ import tailwindcss from '@tailwindcss/vite';
 // sandbox: false on BrowserWindow, which is a security regression.
 const bytecodeEnabled = process.env.ENABLE_BYTECODE === '1';
 
-// Where the platform-agnostic OpenCode Node bundle lives (node.js + *.wasm).
-// Populated by `npm run copy:opencode-node` (see scripts/copy-opencode-node.mjs).
-// Imported by main via `import("virtual:opencode-server")` — the virtual ID is
-// rewritten to this absolute path at resolve time (see plugin below).
-const OPENCODE_NODE_DIR = resolve(__dirname, 'resources/opencode-node');
+// Mode A (`in-process-utility`) is no longer shipped — the desktop app runs
+// `RUNTIME_KIND === 'native-subprocess'` (Mode C) by default. We removed the
+// `copy:opencode-node` packaging step and the `resources/opencode-node/` bundle.
+//
+// The Mode A code paths (`runtime/in-process.ts`,
+// `utility/backend/opencode/opencode-host-entry.ts`) still contain
+// `import('virtual:opencode-server')` so the source tree is reactivation-ready
+// — but those branches are unreachable while `RUNTIME_KIND` stays Mode C.
+//
+// To let Vite build through those dead imports without the bundle, we resolve
+// `virtual:opencode-server` to an in-memory stub module that throws a loud
+// runtime error if anyone ever flips `RUNTIME_KIND` back without re-introducing
+// the bundle.
+const VIRTUAL_OPENCODE_SERVER_ID = 'virtual:opencode-server';
+const RESOLVED_VIRTUAL_OPENCODE_SERVER_ID = '\0' + VIRTUAL_OPENCODE_SERVER_ID;
+const VIRTUAL_OPENCODE_SERVER_STUB = `
+const message =
+  '[virtual:opencode-server] Mode A (in-process OpenCode bundle) was removed ' +
+  'when the app committed to Mode C (native-subprocess). To re-enable Mode A, ' +
+  'restore desktop/scripts/copy-opencode-node.mjs, the resources/opencode-node/ ' +
+  'glob in extraResources, and the original electron.vite.config.ts plugins.';
+function notAvailable() { throw new Error(message); }
+export const Server = { listen: notAvailable };
+export const Log = { init: notAvailable };
+`;
 
 // The OpenCode Node bundle imports `@lydell/node-pty` as an external module.
 // At runtime that specifier resolves to a platform-specific native package
@@ -49,6 +68,11 @@ export default defineConfig({
         //     the extracted backend (OpenCode server + MCP + SSE + DB), loaded
         //     via `utilityProcess.fork(join(__dirname, 'opencode-utility.thread.mjs'))`
         //     (see docs/BACKEND-UTILITY-PROCESS-PLAN.md).
+        //   - `opencode-host.thread` — Electron `utilityProcess` entry for the
+        //     dedicated OpenCode server host (imports `virtual:opencode-server`
+        //     and benefits from the same plugin pipeline as the entries above),
+        //     loaded via
+        //     `utilityProcess.fork(join(__dirname, 'opencode-host.thread.mjs'))`.
         // All must be emitted next to `index.mjs` in `out/main/`.
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
@@ -59,6 +83,10 @@ export default defineConfig({
           'opencode-utility.thread': resolve(
             __dirname,
             'src/main/utility/entry.ts',
+          ),
+          'opencode-host.thread': resolve(
+            __dirname,
+            'src/main/utility/backend/opencode/opencode-host-entry.ts',
           ),
         },
         // Rollup must not try to resolve/bundle these specifiers — they are
@@ -112,42 +140,26 @@ export default defineConfig({
           return undefined;
         },
       },
-      // Rewrite `import("virtual:opencode-server")` to the prebuilt bundle at
-      // resources/opencode-node/node.js. The bundle is produced by
-      // `bun run script/build-node.ts` inside the opencode repo and copied
-      // into this repo via `npm run copy:opencode-node`.
+      // `virtual:opencode-server` is resolved to an in-memory stub that throws
+      // at runtime. Mode A is no longer shipped (see the comment block above
+      // for the full rationale). The two `import('virtual:opencode-server')`
+      // call sites in `runtime/in-process.ts` and `opencode-host-entry.ts` are
+      // dead code while `RUNTIME_KIND === 'native-subprocess'`, but we keep
+      // the resolver so Vite can still build the source tree.
       {
         name: 'opencode:virtual-server-module',
         enforce: 'pre',
         resolveId(id: string) {
-          if (id === 'virtual:opencode-server') {
-            return resolve(OPENCODE_NODE_DIR, 'node.js');
+          if (id === VIRTUAL_OPENCODE_SERVER_ID) {
+            return RESOLVED_VIRTUAL_OPENCODE_SERVER_ID;
           }
           return undefined;
         },
-      },
-      // The OpenCode Node bundle loads tree-sitter grammars from sibling *.wasm
-      // files via `new URL("<name>.wasm", import.meta.url)`. Vite emits the
-      // bundle as a chunk inside `out/main/`, so the wasm files need to land
-      // *next to the chunk* — not in `out/main/chunks/`. (Upstream's
-      // `desktop-electron` build puts both under `out/main/chunks/` because
-      // their rollup config emits the chunk there; our config keeps chunks at
-      // the default rollup location, `out/main/`, so we copy accordingly.)
-      {
-        name: 'opencode:copy-server-assets',
-        async writeBundle() {
-          const outDir = resolve(__dirname, 'out/main');
-          await fsp.mkdir(outDir, { recursive: true });
-          const entries = await fsp.readdir(OPENCODE_NODE_DIR);
-          await Promise.all(
-            entries
-              .filter((name) => name.endsWith('.wasm'))
-              .map(async (name) => {
-                const src = resolve(OPENCODE_NODE_DIR, name);
-                const dst = resolve(outDir, name);
-                await fsp.copyFile(src, dst);
-              }),
-          );
+        load(id: string) {
+          if (id === RESOLVED_VIRTUAL_OPENCODE_SERVER_ID) {
+            return VIRTUAL_OPENCODE_SERVER_STUB;
+          }
+          return undefined;
         },
       },
     ],

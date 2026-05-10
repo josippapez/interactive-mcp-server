@@ -20,24 +20,41 @@ export function filterAgents(
 }
 
 /**
- * Split agents into project-scoped and global buckets.
+ * Split agents into built-in, project-scoped, and global buckets.
+ * Built-in (SDK-native) agents take precedence so TUI defaults like
+ * `build` and `plan` are visually grouped separately from user agents.
  * Global agents marked `overridden: true` are excluded because they are
  * shadowed by a project-level agent of the same name.
  */
 export function groupAgentsByScope(agents: AgentDefinition[]): {
+  builtIn: AgentDefinition[];
   project: AgentDefinition[];
   global: AgentDefinition[];
 } {
+  const builtIn: AgentDefinition[] = [];
   const project: AgentDefinition[] = [];
   const global: AgentDefinition[] = [];
 
   for (const agent of agents) {
-    if (agent.scope === 'project') {
+    if (agent.native) {
+      builtIn.push(agent);
+    } else if (agent.scope === 'project') {
       project.push(agent);
     } else if (agent.scope === 'global' && !agent.overridden) {
       global.push(agent);
     }
   }
 
-  return { project, global };
+  return { builtIn, project, global };
+}
+
+export function getDefaultNativeAgentName(
+  agents: AgentDefinition[],
+  explicitDefault?: string | null,
+): string | null {
+  return (
+    explicitDefault ??
+    agents.find((agent) => agent.mode === 'primary' && agent.native)?.name ??
+    null
+  );
 }

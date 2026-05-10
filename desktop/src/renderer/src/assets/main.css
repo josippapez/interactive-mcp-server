@@ -29,23 +29,31 @@
 :root,
 [data-theme='dark'] {
   --color-user: #f59e0b;
-  --color-agent: #60a5fa;
+  --color-agent: #38bdf8;
   --color-agent-info: #2dd4bf;
-  --color-tool: #64748b;
+  --color-tool: #94a3b8;
   --color-surface: #2f3238;
   --color-surface-alt: #272a30;
   --color-surface-raised: #24272d;
-  --color-border: #3f454f;
+  --color-border: #2c323a;
   /* Softer border used for chat surfaces (user bubble, code blocks, tool cards)
      to match opencode `--border-weak-base` (~8% alpha white on dark). */
-  --color-border-weak: #2c323a;
+  --color-border-weak: #242830;
+  --sidebar-gradient: linear-gradient(
+    180deg,
+    #24272d 0%,
+    #20232a 50%,
+    #1c1f25 100%
+  );
   --color-error: #f87171;
   --color-warning: #facc15;
   --color-success: #4ade80;
   --color-bg: #1f2228;
   --color-text: #e8ebf0;
+  --color-inverse-text: #ffffff;
   --color-text-muted: #a9b0bc;
-  --color-text-faint: #7f8794;
+  /* Bumped from #7f8794 (3.7:1 on surface) to #8d96a4 (~4.5:1) for WCAG AA. */
+  --color-text-faint: #8d96a4;
   --color-input-bg: #2b2f36;
   --color-input-border: #4a5260;
   --color-scrollbar: #596273;
@@ -191,7 +199,9 @@
   --tool-motion-ease: cubic-bezier(0.2, 0, 0, 1);
   --tool-content-gap: 8px;
   --sticky-accordion-top: 0px;
-  --radius-md: 6px;
+  --radius-pill: 9999px;
+  --radius-lg: 14px;
+  --radius-md: 10px;
   --radius-sm: 4px;
   --radius-xs: 3px;
 
@@ -215,18 +225,10 @@
   --destructive: var(--color-error);
   --destructive-foreground: var(--color-inverse-text);
   --ring: var(--color-agent);
-  --radius: 0.375rem;
+  --radius: 0.625rem;
 
-  /* Inverse text (used on filled primary/destructive/sidebar-primary surfaces).
-     Both dark + light themes render white text on saturated blues/reds for
-     WCAG AA contrast — kept at pure white and re-declared per theme so any
-     future tuning is a single override. */
-  --color-inverse-text: #ffffff;
-
-  /* Sidebar tokens (shadcn sidebar primitive) — mapped onto our palette so
-     all 5 themes (dark + light + sage/sand/teal/sky tints) Just Work via
-     the cascade. `--color-sidebar-*` (in `@theme inline` at end of file)
-     re-exports these to Tailwind utilities (bg-sidebar, text-sidebar-*…). */
+  /* Sidebar tokens — same mapping as dark (re-declared so light-theme
+     values resolve correctly; tinted variants below inherit these). */
   --sidebar: var(--color-surface-alt);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-agent);
@@ -321,26 +323,42 @@
 
 /* ===== Light theme ===== */
 [data-theme='light'] {
-  --color-bg: #cfd7e1;
-  --color-text: #1a202c;
-  --color-text-muted: #2f4256;
-  --color-text-faint: #506273;
-  --color-border: #7690a8;
-  --color-border-weak: #99adbf;
+  --color-bg: #ffffff;
+  --color-text: #0f172a;
+  --color-inverse-text: #ffffff;
+  --color-text-muted: #475569;
+  /* Bumped from #94a3b8 (2.66:1 on surface-alt) to #5b6b80 (~4.5:1) for WCAG AA. */
+  --color-text-faint: #5b6b80;
+  --color-border: #e2e8f0;
+  --color-border-weak: #eef2f7;
   --color-error: #b91c1c;
   --color-warning: #92400e;
   --color-success: #166534;
   --color-user: #9a3a00;
-  --color-agent: #1a44c8;
-  --color-agent-info: #0d9488;
+  /* Darkened from #3aa9ff (2.4:1) to #0369a1 (~5.7:1 on surface-alt) for WCAG AA.
+     Used for both text (author labels, links) and accent surfaces (primary, ring). */
+  --color-agent: #0369a1;
+  /* Darkened from #0d9488 (3.8:1) to #0e7490 (~4.7:1) for WCAG AA. */
+  --color-agent-info: #0e7490;
   --color-tool: #3d5268;
-  --color-surface: #e8eef5;
-  --color-surface-alt: #dde6ef;
-  --color-surface-raised: #f5f8fc;
-  --color-input-bg: #f7faff;
-  --color-input-border: #466887;
-  --color-scrollbar: #7a91a6;
-  --color-kbd-bg: #aab7c4;
+  --color-surface: #f6faff;
+  --color-surface-alt: #eaf2fb;
+  --color-surface-raised: #ffffff;
+  --color-input-bg: #ffffff;
+  --color-input-border: #e2e8f0;
+  --color-scrollbar: #cbd5e1;
+  --color-kbd-bg: #f1f5f9;
+  --sidebar-gradient: linear-gradient(
+    180deg,
+    #d9ecfb 0%,
+    #eaf2fb 35%,
+    #f3f8fd 100%
+  );
+
+  /* Bumped radii — see token block above for rationale. */
+  --radius-pill: 9999px;
+  --radius-lg: 14px;
+  --radius-md: 10px;
 
   /* Reference tokens (light) — `--text-strong` darker than base for headings.
      Diff/surface/icon tokens inherit via --color-success/--color-error/--color-agent
@@ -432,6 +450,7 @@
   --destructive: var(--color-error);
   --destructive-foreground: var(--color-inverse-text);
   --ring: var(--color-agent);
+  --radius: 0.625rem;
 
   /* Sidebar tokens — same mapping as dark (re-declared so light-theme
      values resolve correctly; tinted variants below inherit these). */
@@ -514,51 +533,97 @@
    tints. Values are ~20–25% lighter + desaturated relative to each tint's
    `--color-border`, matching the dark/light ratio (see L38-41). */
 [data-theme='light'][data-tint='sage'] {
-  --color-bg: #bdd0c2;
-  --color-surface: #cddbd0;
-  --color-surface-alt: #c5d5c8;
-  --color-surface-raised: #e2eee5;
-  --color-input-bg: #e8f2ea;
-  --color-border: #7a9f86;
-  --color-border-weak: #a4c0ae;
-  --color-scrollbar: #7a9f86;
-  --color-kbd-bg: #a8c0ad;
+  --color-bg: #b0c8b8;
+  --color-surface: #dde9df;
+  --color-surface-alt: #cbdbd0;
+  --color-surface-raised: #ecf3ee;
+  --color-input-bg: #ecf3ee;
+  --color-border: #95b09d;
+  --color-border-weak: #c2d4c8;
+  --color-scrollbar: #92ae99;
+  --color-kbd-bg: #c8d6cc;
+  --sidebar-gradient: linear-gradient(
+    180deg,
+    #b0c8b8 0%,
+    #b8cebf 50%,
+    #b0c8b8 100%
+  );
 }
 
 [data-theme='light'][data-tint='sand'] {
-  --color-bg: #d4c9bc;
-  --color-surface: #e0d6c8;
-  --color-surface-alt: #d8cfc2;
-  --color-surface-raised: #eee5d9;
-  --color-input-bg: #f2ece2;
-  --color-border: #a89080;
-  --color-border-weak: #c8b6a8;
-  --color-scrollbar: #a89080;
-  --color-kbd-bg: #c4b5a8;
+  /* Surfaces widened for visible hierarchy: bg < surface-alt < surface < raised.
+     Previously all 5 tones lived within ~5 L* points making cards / active pill
+     indistinguishable from the sidebar gradient. */
+  --color-bg: #cebda9;
+  --color-surface: #f1e8d8;
+  --color-surface-alt: #e2d8c8;
+  --color-surface-raised: #faf3e7;
+  --color-input-bg: #faf3e7;
+  --color-border: #b8a48b;
+  --color-border-weak: #d4c4ad;
+  --color-scrollbar: #b59e83;
+  --color-kbd-bg: #ddccbd;
+  --sidebar-gradient: linear-gradient(
+    180deg,
+    #cebda9 0%,
+    #d4c4b0 50%,
+    #cebda9 100%
+  );
 }
 
 [data-theme='light'][data-tint='teal'] {
-  --color-bg: #b8cecc;
-  --color-surface: #c8dbd9;
-  --color-surface-alt: #bed4d2;
-  --color-surface-raised: #ddeeed;
-  --color-input-bg: #e4f2f1;
-  --color-border: #6a9e9c;
-  --color-border-weak: #9cc0be;
-  --color-scrollbar: #6a9e9c;
-  --color-kbd-bg: #9abfbe;
+  --color-bg: #a8c6c4;
+  --color-surface: #d6e8e6;
+  --color-surface-alt: #c2d8d6;
+  --color-surface-raised: #e8f2f1;
+  --color-input-bg: #e8f2f1;
+  --color-border: #88adab;
+  --color-border-weak: #bcd2d0;
+  --color-scrollbar: #87adab;
+  --color-kbd-bg: #c2d6d4;
+  --sidebar-gradient: linear-gradient(
+    180deg,
+    #a8c6c4 0%,
+    #b0cccb 50%,
+    #a8c6c4 100%
+  );
 }
 
 [data-theme='light'][data-tint='sky'] {
-  --color-bg: #b8cedc;
-  --color-surface: #c8dae8;
-  --color-surface-alt: #c0d4e2;
-  --color-surface-raised: #ddedf6;
-  --color-input-bg: #e4f0f8;
-  --color-border: #6a8faa;
-  --color-border-weak: #9eb8cc;
-  --color-scrollbar: #6a8faa;
-  --color-kbd-bg: #9ab6c9;
+  --color-bg: #a8c6d6;
+  --color-surface: #d6e6f2;
+  --color-surface-alt: #c2d6e4;
+  --color-surface-raised: #e8f0f8;
+  --color-input-bg: #e8f0f8;
+  --color-border: #88aac4;
+  --color-border-weak: #c0d2e0;
+  --color-scrollbar: #88a8c0;
+  --color-kbd-bg: #c2d4e1;
+  --sidebar-gradient: linear-gradient(
+    180deg,
+    #a8c6d6 0%,
+    #b0ccdb 50%,
+    #a8c6d6 100%
+  );
+}
+
+[data-theme='light'][data-tint='peach'] {
+  --color-bg: #f0c0a8;
+  --color-surface: #fde2d4;
+  --color-surface-alt: #f7d0bc;
+  --color-surface-raised: #ffeede;
+  --color-input-bg: #ffeede;
+  --color-border: #e6a585;
+  --color-border-weak: #f6cdb8;
+  --color-scrollbar: #d99974;
+  --color-kbd-bg: #f4d2bf;
+  --color-agent: #c44a2a;
+  --sidebar-gradient: linear-gradient(
+    180deg,
+    #f0c0a8 0%,
+    #f4c8b1 50%,
+    #f0c0a8 100%
+  );
 }
 
 body {
@@ -630,6 +695,27 @@ textarea::placeholder {
   -webkit-app-region: drag;
 }
 .titlebar-no-drag {
+  -webkit-app-region: no-drag;
+}
+
+/*
+  Auto-exempt interactive elements inside any `.titlebar-drag` region from the
+  drag behaviour so buttons, inputs, links, selects, textareas and explicitly
+  role="button" elements remain clickable. This avoids tagging every single
+  control with `titlebar-no-drag` manually. `-webkit-app-region: drag` is
+  inherited by descendants on macOS, so we must explicitly reset it on
+  interactive descendants.
+*/
+.titlebar-drag button,
+.titlebar-drag a,
+.titlebar-drag input,
+.titlebar-drag textarea,
+.titlebar-drag select,
+.titlebar-drag [role='button'],
+.titlebar-drag [role='link'],
+.titlebar-drag [role='menuitem'],
+.titlebar-drag [role='tab'],
+.titlebar-drag [contenteditable='true'] {
   -webkit-app-region: no-drag;
 }
 
@@ -809,6 +895,14 @@ textarea::placeholder {
     0 0 12px -4px color-mix(in srgb, var(--color-agent) 30%, transparent);
   border-radius: 4px;
   position: relative;
+}
+/* Assistant-side prompts wrap their content in a bare div with no
+   padding utilities. The active-prompt inset 1px border + glow then
+   sits flush against the question text, option buttons, and timestamp.
+   Add internal padding only on this variant so the user-side bubble
+   (which already has `px-4 py-3` from MessageItem.tsx) is unaffected. */
+[data-slot='session-turn-assistant'] [data-active-prompt='true'] {
+  padding: 10px 12px;
 }
 
 /* Subtle animated glow effect for active prompts */
@@ -1045,6 +1139,59 @@ textarea::placeholder {
   background: var(--color-agent);
 }
 
+/* ===== Redesign utilities (sidebar gradient, pill input, nav row, section label) ===== */
+.sidebar-surface {
+  background: var(--sidebar-gradient);
+}
+.pill-input,
+.composer-surface {
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--color-border);
+  background: var(--color-input-bg);
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+.composer-surface {
+  border-radius: var(--radius-lg);
+}
+.pill-input:focus-within,
+.composer-surface:focus-within {
+  border-color: color-mix(in srgb, var(--color-agent) 50%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-agent) 18%, transparent);
+}
+.nav-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 120ms ease;
+  cursor: pointer;
+  user-select: none;
+}
+.nav-row:hover {
+  background: color-mix(in srgb, var(--color-text) 6%, transparent);
+}
+.nav-row[data-active='true'] {
+  background: color-mix(in srgb, var(--color-agent) 14%, transparent);
+  color: var(--color-agent);
+}
+.nav-row .nav-row-shortcut {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--color-text-faint);
+  font-family: var(--font-family-mono);
+}
+.section-label {
+  padding: 12px 12px 6px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--color-text-faint);
+}
+
 /* ===== Streamdown table polish (Vercel ai-chatbot reference look) =====
    - Drop the boxed/bordered look (no outer table border, no vertical cell borders)
    - Keep horizontal row separators only via top border on each row
@@ -1170,7 +1317,10 @@ textarea::placeholder {
   padding: 0;
   border: 1px solid var(--color-border-weak);
   border-radius: var(--radius-md, 6px);
-  background: transparent;
+  /* Use the raised surface so code blocks visibly lift above the canvas
+     even when shiki has no background (no-language or plaintext fences).
+     Shiki's `<pre>` paints over this when a language is present. */
+  background: var(--color-surface-raised);
   gap: 0;
   overflow: hidden;
   font-family: var(--font-family-mono);
@@ -1273,7 +1423,9 @@ textarea::placeholder {
 .prose [data-streamdown='code-block'] {
   border: 1px solid var(--color-border-weak);
   border-radius: var(--radius-md, 6px);
-  background: transparent;
+  /* Raised surface so code blocks lift above the parent (canvas, message bubble,
+     or active-prompt card). Shiki paints over this when a language is present. */
+  background: var(--color-surface-raised);
   overflow: hidden;
   font-family: var(--font-family-mono);
 }
@@ -1382,32 +1534,91 @@ textarea::placeholder {
    ============================================================= */
 
 /* --- Generic tool trigger row (basic-tool) ---
-   NOT a full-bordered box. Flex row only. Cards only appear on
-   tool-error-card and Task (see below). */
+   Modern rounded pill/chip chrome: soft border, subtle surface,
+   generous horizontal padding, gentle hover lift. Reads like a
+   Vercel AI-SDK tool-call chip when collapsed. Cards that opt into
+   the `[data-component='tool-card-shell']` wrapper neutralize these
+   paddings below so the shell can own the chrome. */
 [data-component='tool-trigger'],
 [data-component='grep-trigger'],
 [data-component='glob-trigger'],
 [data-component='todoread-trigger'] {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 0;
-  min-height: 24px;
+  gap: 12px;
+  padding: 10px 16px;
+  min-height: 40px;
   font-family: var(--font-family-mono);
   font-size: 10px;
   color: var(--text-base);
-  background: transparent;
-  border: none;
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border-weak);
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.04) inset,
+    0 2px 6px -2px rgba(0, 0, 0, 0.18);
   width: 100%;
   text-align: left;
   cursor: pointer;
-  transition: color var(--tool-motion-duration) var(--tool-motion-ease);
+  transition:
+    color var(--tool-motion-duration) var(--tool-motion-ease),
+    background-color var(--tool-motion-duration) var(--tool-motion-ease),
+    border-color var(--tool-motion-duration) var(--tool-motion-ease),
+    box-shadow var(--tool-motion-duration) var(--tool-motion-ease),
+    transform var(--tool-motion-duration) var(--tool-motion-ease);
 }
 [data-component='tool-trigger']:hover,
 [data-component='grep-trigger']:hover,
 [data-component='glob-trigger']:hover,
 [data-component='todoread-trigger']:hover {
   color: var(--text-strong);
+  background: color-mix(
+    in srgb,
+    var(--color-surface-raised) 92%,
+    var(--color-agent) 8%
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--color-agent) 40%,
+    var(--color-border-weak)
+  );
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 4px 12px -3px rgba(0, 0, 0, 0.28);
+}
+[data-component='tool-trigger']:active,
+[data-component='grep-trigger']:active,
+[data-component='glob-trigger']:active,
+[data-component='todoread-trigger']:active {
+  transform: translateY(1px);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 1px 2px rgba(0, 0, 0, 0.2);
+}
+[data-component='tool-trigger']:focus-visible,
+[data-component='grep-trigger']:focus-visible,
+[data-component='glob-trigger']:focus-visible,
+[data-component='todoread-trigger']:focus-visible {
+  outline: none;
+  border-color: var(--color-agent);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.06) inset,
+    0 0 0 3px color-mix(in srgb, var(--color-agent) 25%, transparent),
+    0 4px 12px -3px rgba(0, 0, 0, 0.28);
+}
+/* Open state: keep the pill visually anchored to its expanded content
+   by tightening the radius and lifting the surface slightly. */
+[data-component='tool-trigger'][data-state='open'],
+[data-component='grep-trigger'][data-state='open'],
+[data-component='glob-trigger'][data-state='open'],
+[data-component='todoread-trigger'][data-state='open'] {
+  background: var(--color-surface);
+  border-color: color-mix(
+    in srgb,
+    var(--color-agent) 30%,
+    var(--color-border-weak)
+  );
+  border-radius: 14px 14px 8px 8px;
 }
 [data-component='tool-trigger'] [data-slot='tool-icon'],
 [data-component='grep-trigger'] [data-slot='tool-icon'],
@@ -1522,6 +1733,16 @@ textarea::placeholder {
   text-align: left;
   cursor: pointer;
 }
+[data-component='edit-trigger-row'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+[data-component='edit-trigger-row'] [data-component='edit-trigger'] {
+  min-width: 0;
+  flex: 1;
+}
 [data-component='edit-trigger'] [data-slot='edit-title'],
 [data-component='write-trigger'] [data-slot='edit-title'] {
   display: flex;
@@ -1551,6 +1772,34 @@ textarea::placeholder {
 [data-component='write-trigger'] [data-slot='message-part-filename'] {
   color: var(--text-base);
   flex-shrink: 0;
+}
+[data-component='edit-trigger'] [data-slot='message-part-path'] {
+  color: var(--text-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+[data-component='edit-trigger-row'] [data-slot='edit-wrap-toggle'],
+[data-scope='apply-patch'] [data-slot='apply-patch-wrap-toggle'] {
+  flex-shrink: 0;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-xs);
+  padding: 2px 6px;
+  font-family: var(--font-family-mono);
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-weaker);
+  background: transparent;
+}
+[data-component='edit-trigger-row']
+  [data-slot='edit-wrap-toggle'][aria-pressed='true'],
+[data-scope='apply-patch']
+  [data-slot='apply-patch-wrap-toggle'][aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--color-agent) 40%, transparent);
+  color: var(--color-agent);
+  background: color-mix(in srgb, var(--color-agent) 12%, transparent);
 }
 [data-component='edit-content'],
 [data-component='write-content'] {
@@ -1618,7 +1867,7 @@ textarea::placeholder {
 [data-scope='apply-patch'] [data-slot='apply-patch-item']:first-child {
   border-top: none;
 }
-[data-scope='apply-patch'] [data-slot='apply-patch-trigger'] {
+[data-scope='apply-patch'] [data-slot='apply-patch-trigger-row'] {
   position: sticky;
   top: var(--sticky-accordion-top);
   z-index: 1;
@@ -1627,13 +1876,50 @@ textarea::placeholder {
   gap: 8px;
   padding: 6px 8px;
   background-color: var(--background-stronger);
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-trigger'] {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   border: none;
   width: 100%;
+  min-width: 0;
+  flex: 1;
   text-align: left;
   cursor: pointer;
   font-family: var(--font-family-mono);
   font-size: 10px;
   color: var(--text-base);
+  background: transparent;
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-action'] {
+  flex-shrink: 0;
+  border: 1px solid var(--border-weak-base);
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: var(--text-weak);
+  background-color: var(--background-base);
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-action'][data-action='add'] {
+  border-color: rgba(34, 197, 94, 0.35);
+  color: rgb(74, 222, 128);
+  background-color: rgba(34, 197, 94, 0.12);
+}
+[data-scope='apply-patch']
+  [data-slot='apply-patch-action'][data-action='delete'] {
+  border-color: rgba(248, 113, 113, 0.35);
+  color: rgb(248, 113, 113);
+  background-color: rgba(248, 113, 113, 0.12);
+}
+[data-scope='apply-patch']
+  [data-slot='apply-patch-action'][data-action='move'] {
+  border-color: rgba(56, 189, 248, 0.35);
+  color: rgb(56, 189, 248);
+  background-color: rgba(56, 189, 248, 0.12);
 }
 [data-scope='apply-patch'] [data-slot='apply-patch-directory'] {
   color: var(--text-weak);
@@ -1649,6 +1935,14 @@ textarea::placeholder {
   color: var(--text-strong);
   flex-shrink: 0;
   font-weight: 500;
+}
+[data-scope='apply-patch'] [data-slot='apply-patch-path'] {
+  color: var(--text-weak);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+  flex: 1;
 }
 [data-scope='apply-patch'] [data-slot='apply-patch-summary'] {
   display: flex;
@@ -1708,6 +2002,13 @@ textarea::placeholder {
   border-bottom: 1px solid var(--border-weaker-base);
   font-size: 10px;
 }
+[data-component='diff-view']
+  [data-slot='diff-header'][data-variant='toolbar-only'] {
+  /* Edit-tool diffs: outer EditToolCard trigger already shows the file
+     path and additions/deletions, so the diff header only carries the
+     Wrap-lines toggle. Push it to the right edge. */
+  justify-content: flex-end;
+}
 [data-component='diff-view'] [data-slot='diff-filepath'] {
   color: var(--text-weak);
   white-space: nowrap;
@@ -1738,20 +2039,25 @@ textarea::placeholder {
 [data-component='diff-view'][data-variant='side-by-side']
   [data-slot='diff-grid'] {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  overflow-x: auto;
+  /* `minmax(0, 1fr)` is critical: plain `1fr 1fr` lets intrinsic child
+     width push columns past 50%. The `0` minimum forces a true even
+     split and lets each column establish its own scroll context. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   max-height: 28rem;
-  width: max-content;
-  min-width: 100%;
+  width: 100%;
+  min-width: 0;
+  overflow-y: auto;
 }
 [data-component='diff-view'][data-variant='side-by-side']
   [data-slot='diff-side-old'] {
   border-right: 1px solid var(--border-weaker-base);
-  min-width: 24rem;
+  min-width: 0;
+  overflow-x: auto;
 }
 [data-component='diff-view'][data-variant='side-by-side']
   [data-slot='diff-side-new'] {
-  min-width: 24rem;
+  min-width: 0;
+  overflow-x: auto;
 }
 [data-component='diff-view'][data-variant='side-by-side']
   [data-slot='diff-row'] {
@@ -1813,6 +2119,30 @@ textarea::placeholder {
   [data-slot='diff-content'] {
   min-width: 0;
   overflow-wrap: anywhere;
+}
+/* In wrap mode, constrain the grid + sides to the container so the
+   `pre-wrap` cells can actually wrap instead of forcing horizontal
+   overflow via the default `width: max-content` / `min-width: 24rem`
+   sizing used by no-wrap mode. */
+[data-component='diff-view'][data-variant='side-by-side'][data-wrap='true']
+  [data-slot='diff-grid'] {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+[data-component='diff-view'][data-variant='side-by-side'][data-wrap='true']
+  [data-slot='diff-side-old'],
+[data-component='diff-view'][data-variant='side-by-side'][data-wrap='true']
+  [data-slot='diff-side-new'] {
+  min-width: 0;
+  /* In wrap mode, content fits inside the column — disable the
+     per-column horizontal scroll set in the no-wrap default. */
+  overflow-x: hidden;
+}
+[data-component='diff-view'][data-variant='side-by-side'][data-wrap='true']
+  [data-slot='diff-row'] {
+  min-width: 0;
 }
 
 /* --- Todos (todowrite) ---
@@ -2026,7 +2356,9 @@ textarea::placeholder {
 }
 /* The inner trigger buttons had a natural vertical padding. Drop
    it to 0 now that the shell owns the card padding — keeps the
-   row visual density unchanged. */
+   row visual density unchanged. Also neutralize the pill chrome
+   (background/border/shadow/radius) that the standalone trigger
+   paints — inside a card shell the shell owns that chrome. */
 [data-component='tool-card-shell'] [data-component='tool-trigger'],
 [data-component='tool-card-shell'] [data-component='edit-trigger'],
 [data-component='tool-card-shell'] [data-component='write-trigger'],
@@ -2035,6 +2367,20 @@ textarea::placeholder {
 [data-component='tool-card-shell'] [data-component='todoread-trigger'] {
   padding: 0;
   min-height: 22px;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+}
+[data-component='tool-card-shell'] [data-component='tool-trigger']:hover,
+[data-component='tool-card-shell'] [data-component='edit-trigger']:hover,
+[data-component='tool-card-shell'] [data-component='write-trigger']:hover,
+[data-component='tool-card-shell'] [data-component='grep-trigger']:hover,
+[data-component='tool-card-shell'] [data-component='glob-trigger']:hover,
+[data-component='tool-card-shell'] [data-component='todoread-trigger']:hover {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
 }
 /* Read row: the shell now owns the indent chrome, so drop the
    24px left-pad the row used to add itself. */
@@ -2189,4 +2535,39 @@ textarea::placeholder {
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-ring: var(--sidebar-ring);
+
+  /* shadcn/ui semantic tokens — registered with @theme so Tailwind
+     utilities like bg-popover, bg-card, bg-muted, text-muted-foreground
+     resolve to actual colors instead of the default (transparent). */
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+/* ===== Skills page DnD primitives ===== */
+[data-dragging='true'] {
+  opacity: 0.5;
+  cursor: grabbing;
+}
+
+[data-over='true'] {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+  border-radius: 0.5rem;
 }

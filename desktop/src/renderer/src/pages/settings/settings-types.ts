@@ -23,6 +23,9 @@ export type AppSettings = {
   hideDocInjections: boolean;
   chatTextSize: 'sm' | 'md' | 'lg';
   wrapCodeBlocks: boolean;
+  defaultModelId: string;
+  defaultProviderId: string;
+  defaultReasoningVariant: string;
 };
 
 export type SettingsSection =

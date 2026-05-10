@@ -86,29 +86,35 @@ export default function StatusBar({
                 : 'Server stopped'}
           </span>
           <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={handleRestart}
-                disabled={restarting}
-                className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed"
-              >
-                <span className={restarting ? 'animate-spin inline-block' : ''}>
-                  ↺
-                </span>
-              </button>
-            </TooltipTrigger>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={handleRestart}
+                  disabled={restarting}
+                  className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <span
+                    className={restarting ? 'animate-spin inline-block' : ''}
+                  >
+                    ↺
+                  </span>
+                </button>
+              }
+            />
             <TooltipContent>Restart MCP server process</TooltipContent>
           </Tooltip>
           <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={handleForceReconnect}
-                disabled={reconnecting}
-                className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed text-yellow-500"
-              >
-                {reconnecting ? '⟳' : '⚡'}
-              </button>
-            </TooltipTrigger>
+            <TooltipTrigger
+              render={
+                <button
+                  onClick={handleForceReconnect}
+                  disabled={reconnecting}
+                  className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed text-yellow-500"
+                >
+                  {reconnecting ? '⟳' : '⚡'}
+                </button>
+              }
+            />
             <TooltipContent>
               Force reconnect — clear all sessions so clients reinitialize
             </TooltipContent>
@@ -151,19 +157,23 @@ export default function StatusBar({
                       : 'OpenCode ✗'}
               </span>
               <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => void refreshHealth()}
-                    disabled={isChecking}
-                    className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed shrink-0"
-                  >
-                    <span
-                      className={isChecking ? 'animate-spin inline-block' : ''}
+                <TooltipTrigger
+                  render={
+                    <button
+                      onClick={() => void refreshHealth()}
+                      disabled={isChecking}
+                      className="ml-0.5 opacity-50 hover:opacity-100 transition-opacity cursor-pointer disabled:cursor-not-allowed shrink-0"
                     >
-                      ↺
-                    </span>
-                  </button>
-                </TooltipTrigger>
+                      <span
+                        className={
+                          isChecking ? 'animate-spin inline-block' : ''
+                        }
+                      >
+                        ↺
+                      </span>
+                    </button>
+                  }
+                />
                 <TooltipContent>Refresh OpenCode health status</TooltipContent>
               </Tooltip>
             </div>
@@ -200,14 +210,16 @@ export default function StatusBar({
         )}
         <span className="text-[var(--color-text-faint)]">│</span>
         <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              onClick={toggle}
-              className="flex items-center gap-1 hover:text-[var(--color-text)] transition-colors cursor-pointer"
-            >
-              <span>{theme === 'dark' ? '☀' : '☾'}</span>
-            </button>
-          </TooltipTrigger>
+          <TooltipTrigger
+            render={
+              <button
+                onClick={toggle}
+                className="flex items-center gap-1 hover:text-[var(--color-text)] transition-colors cursor-pointer"
+              >
+                <span>{theme === 'dark' ? '☀' : '☾'}</span>
+              </button>
+            }
+          />
           <TooltipContent>
             Switch to {theme === 'dark' ? 'light' : 'dark'} theme
           </TooltipContent>
@@ -216,15 +228,17 @@ export default function StatusBar({
           <>
             <span className="text-[var(--color-text-faint)] shrink-0">│</span>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={onShowShortcuts}
-                  className="flex items-center gap-1 hover:text-[var(--color-text)] transition-colors cursor-pointer"
-                >
-                  <span>⌨</span>
-                  <span>Shortcuts</span>
-                </button>
-              </TooltipTrigger>
+              <TooltipTrigger
+                render={
+                  <button
+                    onClick={onShowShortcuts}
+                    className="flex items-center gap-1 hover:text-[var(--color-text)] transition-colors cursor-pointer"
+                  >
+                    <span>⌨</span>
+                    <span>Shortcuts</span>
+                  </button>
+                }
+              />
               <TooltipContent>Keyboard shortcuts (⌘/)</TooltipContent>
             </Tooltip>
           </>

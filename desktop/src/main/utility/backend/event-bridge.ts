@@ -54,6 +54,12 @@ type PendingCompaction = {
 };
 const pendingCompactions = new Map<string, PendingCompaction>();
 
+type SessionNextRetryError = {
+  message?: string;
+  isRetryable?: boolean;
+  statusCode?: number;
+};
+
 /**
  * Envelope-level metadata the bridge needs from the SDK `GlobalEvent`
  * wrapper (not every caller has it — tests and historical call sites
@@ -260,6 +266,72 @@ export function bridgeEvent(
           // compacted doesn't carry messageId in current SDK; use sessionId
           // placeholder. Renderer uses this to clear/trim message list.
           messageId: sessionID,
+        },
+      ];
+    }
+
+    case 'session.next.model.switched': {
+      const { model } = payload.properties;
+      return [
+        {
+          type: 'session.next.model.switched',
+          sessionId: payload.properties.sessionID,
+          modelId: model.id,
+          providerId: model.providerID,
+          variant: model.variant === 'default' ? undefined : model.variant,
+          timestamp: payload.properties.timestamp,
+        },
+      ];
+    }
+
+    case 'session.next.retried': {
+      const error = payload.properties.error as SessionNextRetryError;
+      return [
+        {
+          type: 'session.next.retried',
+          sessionId: payload.properties.sessionID,
+          attempt: payload.properties.attempt,
+          error: {
+            message: error.message ?? 'Request retrying',
+            isRetryable: error.isRetryable ?? true,
+            statusCode: error.statusCode,
+          },
+          timestamp: payload.properties.timestamp,
+        },
+      ];
+    }
+
+    case 'session.next.compaction.started': {
+      return [
+        {
+          type: 'session.next.compaction.started',
+          sessionId: payload.properties.sessionID,
+          reason: payload.properties.reason,
+          timestamp: payload.properties.timestamp,
+        },
+      ];
+    }
+
+    case 'session.next.compaction.ended': {
+      return [
+        {
+          type: 'session.next.compaction.ended',
+          sessionId: payload.properties.sessionID,
+          include: payload.properties.include,
+          timestamp: payload.properties.timestamp,
+        },
+      ];
+    }
+
+    case 'session.next.tool.progress': {
+      return [
+        {
+          type: 'session.next.tool.progress',
+          sessionId: payload.properties.sessionID,
+          callId: payload.properties.callID,
+          structured: payload.properties.structured,
+          content: payload.properties.content,
+          timestamp: payload.properties.timestamp,
         },
       ];
     }

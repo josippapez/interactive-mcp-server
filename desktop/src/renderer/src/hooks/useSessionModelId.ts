@@ -5,6 +5,7 @@ import { useSetSessionBaseModel } from '../store/session-models';
 type SessionModelState = {
   modelId: string | null;
   providerId: string | null;
+  variant: string | null;
 };
 
 /**
@@ -29,10 +30,20 @@ export function useSessionModelId(
   const state = useConversationSelector<SessionModelState>(
     (store) => {
       if (!isOpenCodeSession || !providerSessionId) {
-        return { modelId: null, providerId: null };
+        return { modelId: null, providerId: null, variant: null };
       }
+      const sideChannelModel =
+        store.sessionSideChannels[providerSessionId]?.model;
+      if (sideChannelModel) {
+        return {
+          modelId: sideChannelModel.modelId,
+          providerId: sideChannelModel.providerId,
+          variant: sideChannelModel.variant ?? null,
+        };
+      }
+
       const messages = store.messages[providerSessionId];
-      if (!messages) return { modelId: null, providerId: null };
+      if (!messages) return { modelId: null, providerId: null, variant: null };
 
       for (let i = messages.length - 1; i >= 0; i -= 1) {
         const msg = messages[i];
@@ -40,12 +51,16 @@ export function useSessionModelId(
           return {
             modelId: msg.modelId,
             providerId: msg.providerId ?? null,
+            variant: msg.variant ?? null,
           };
         }
       }
-      return { modelId: null, providerId: null };
+      return { modelId: null, providerId: null, variant: null };
     },
-    (a, b) => a.modelId === b.modelId && a.providerId === b.providerId,
+    (a, b) =>
+      a.modelId === b.modelId &&
+      a.providerId === b.providerId &&
+      a.variant === b.variant,
   );
 
   // Side-effect: push the resolved model id into the per-session model
@@ -53,12 +68,18 @@ export function useSessionModelId(
   // so it doesn't fire during render.
   useEffect(() => {
     if (!providerSessionId || !isOpenCodeSession || !state.modelId) return;
-    setSessionBaseModel(providerSessionId, state.modelId, state.providerId);
+    setSessionBaseModel(
+      providerSessionId,
+      state.modelId,
+      state.providerId,
+      state.variant,
+    );
   }, [
     providerSessionId,
     isOpenCodeSession,
     state.modelId,
     state.providerId,
+    state.variant,
     setSessionBaseModel,
   ]);
 

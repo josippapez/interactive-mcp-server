@@ -26,22 +26,17 @@
  *   - 8+ triggerSessionTreeUpdate callers (replaced with invalidate())
  */
 
+import { createLogger } from '../../utils/logger';
 import {
   getAllRegisteredConnections,
   getPinnedProjects,
   type RegisteredConnection,
 } from './database';
-import {
-  fetchAllOpenCodeSessions,
-  fetchSessionsForDirectory,
-  type OpenCodeSession,
-} from './session';
-import type { SessionInfo } from './session-types';
-import type { SessionNodeData } from './session-types';
-import { extractVcsInfo } from './vcs';
-import { createLogger } from '../../utils/logger';
 import { createKeyedDebouncer } from './debounce-tree-invalidate';
 import { getMainRpcOrNull } from './rpc';
+import { fetchAllOpenCodeSessions, type OpenCodeSession } from './session';
+import type { SessionInfo, SessionNodeData } from './session-types';
+import { extractVcsInfo } from './vcs';
 
 const log = createLogger('session-tree-service');
 void log;
@@ -156,27 +151,22 @@ export function invalidateSessionTreeForKey(key: string): void {
  * handler whenever the renderer refetches. No caching — OpenCode REST + DB
  * are the sources of truth.
  *
- * When a folder is selected, scope to that directory. When no folder is
- * selected (default "All projects" view), fan out across unscoped + all
- * pinned-project directories so subagents and existing sessions appear
- * eagerly without requiring a manual folder click.
+ * Always returns the full aggregate (unscoped + per-pinned-directory list,
+ * deduplicated). The renderer filters by selectedFolder for display so
+ * that new sessions in other directories appear immediately when SSE
+ * fires `session.created`, without requiring the user to click the
+ * project rail folder.
+ *
+ * `selectedFolder` is retained as renderer-facing state but no longer
+ * scopes REST queries.
  *
  * Returns an empty array when OpenCode is unreachable.
  */
 export async function fetchSessionTree(): Promise<SessionNodeData[]> {
-  const folder = state.selectedFolder;
   const port = state.getOpenCodePort?.() ?? 4096;
 
-  let sessions: OpenCodeSession[] | null;
-  if (folder) {
-    sessions = await fetchSessionsForDirectory(port, folder);
-  } else {
-    // No folder selected — fall back to an aggregate view across all
-    // pinned-project directories. `fetchAllOpenCodeSessions` performs an
-    // unscoped list plus per-directory lists and deduplicates results.
-    const pinnedDirectories = getPinnedProjects().map((p) => p.path);
-    sessions = await fetchAllOpenCodeSessions(port, pinnedDirectories);
-  }
+  const pinnedDirectories = getPinnedProjects().map((p) => p.path);
+  const sessions = await fetchAllOpenCodeSessions(port, pinnedDirectories);
   if (!sessions) return [];
 
   const registeredConnections = getAllRegisteredConnections();

@@ -51,11 +51,59 @@ export function formatCost(cost?: number): string | null {
   return `$${cost.toFixed(2)}`;
 }
 
+export function formatDurationMs(durationMs?: number): string | null {
+  if (durationMs == null || durationMs <= 0) return null;
+  if (durationMs < 1000) return `${durationMs}ms`;
+  const seconds = durationMs / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return `${minutes}m ${remainingSeconds}s`;
+}
+
+export function formatModeName(mode?: string): string | null {
+  if (!mode) return null;
+  return mode
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(' ');
+}
+
+export function getExecutionStatusLabel({
+  completedAt,
+  isStreaming,
+  now,
+  source,
+  timestamp,
+  userSide,
+}: {
+  completedAt?: number;
+  isStreaming: boolean;
+  now: number;
+  source: UnifiedMessage['source'];
+  timestamp: number;
+  userSide: boolean;
+}): string | null {
+  const completedDuration = formatDurationMs(
+    completedAt ? completedAt - timestamp : undefined,
+  );
+  if (completedDuration) return completedDuration;
+
+  if (userSide || source !== 'conversation' || !isStreaming) return null;
+
+  const elapsed = formatDurationMs(Math.max(0, now - timestamp)) ?? '0ms';
+  return `executing ${elapsed}`;
+}
+
 const EFFORT_LEVELS = {
+  none: { label: 'No reasoning', variant: 'effort-none' },
+  minimal: { label: 'Minimal effort', variant: 'effort-minimal' },
   low: { label: 'Low effort', variant: 'effort-low' },
   medium: { label: 'Medium effort', variant: 'effort-medium' },
   high: { label: 'High effort', variant: 'effort-high' },
   xhigh: { label: 'Max effort', variant: 'effort-xhigh' },
+  max: { label: 'Max effort', variant: 'effort-max' },
 } as const;
 
 export function getEffortBadge(variantStr?: string) {
@@ -64,6 +112,24 @@ export function getEffortBadge(variantStr?: string) {
     EFFORT_LEVELS[variantStr.toLowerCase() as keyof typeof EFFORT_LEVELS] ??
     null
   );
+}
+
+export function getAssistantHeaderMetadata({
+  agent,
+  modelId,
+  roleLabel,
+  variant,
+}: {
+  agent?: string;
+  modelId?: string;
+  roleLabel: string;
+  variant?: string;
+}) {
+  return {
+    agentBadgeLabel: isSubagent(agent) ? roleLabel : null,
+    effortBadge: getEffortBadge(variant),
+    modelLabel: modelId ?? null,
+  };
 }
 
 const SYSTEM_BLOCK_REGEX =

@@ -8,12 +8,16 @@ type Props = {
   question: PendingQuestion;
   onReply: (requestId: string, answers: string[][], sessionID: string) => void;
   onReject: (requestId: string, sessionID: string) => void;
+  fill?: boolean;
+  className?: string;
 };
 
 export default function QuestionDock({
   question,
   onReply,
   onReject,
+  fill = false,
+  className = '',
 }: Props): React.ReactElement | null {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<string[][]>([]);
@@ -60,7 +64,20 @@ export default function QuestionDock({
       return;
     }
 
-    updateAnswers([label]);
+    // Single-select: clicking the already-selected option deselects it,
+    // matching native radio-button-pair UX expectations and allowing the
+    // user to clear their choice without reloading the prompt.
+    const next = currentAnswers.includes(label) ? [] : [label];
+    updateAnswers(next);
+    // Mutually exclusive: selecting a predefined option clears any
+    // typed custom answer for this question.
+    if (next.length > 0) {
+      setCustomAnswers((prev) => {
+        const copy = [...prev];
+        copy[currentIndex] = '';
+        return copy;
+      });
+    }
   };
 
   const handleCustomChange = (value: string) => {
@@ -69,20 +86,32 @@ export default function QuestionDock({
       copy[currentIndex] = value;
       return copy;
     });
-
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    if (isMulti) {
-      const withoutPrev = currentAnswers.filter(
-        (item) => item !== (customAnswers[currentIndex] ?? '').trim(),
-      );
-      updateAnswers(
-        withoutPrev.includes(trimmed) ? withoutPrev : [...withoutPrev, trimmed],
-      );
-      return;
+    // Single-select prompts treat predefined option and custom answer as
+    // mutually exclusive: typing a non-empty custom answer clears the
+    // selected option. Multi-select keeps both since custom acts as one
+    // additional pick alongside other selections.
+    if (!isMulti && value.trim().length > 0 && currentAnswers.length > 0) {
+      updateAnswers([]);
     }
-    updateAnswers([trimmed]);
   };
+
+  const buildAnswersForSubmit = (): string[][] =>
+    questions.map((item, index) => {
+      const selected = answers[index] ?? [];
+      const custom = (customAnswers[index] ?? '').trim();
+      const questionIsMulti = item.multiple === true;
+      // Single-select: predefined option and custom answer are mutually
+      // exclusive. If both somehow exist, the predefined selection wins.
+      if (!questionIsMulti) {
+        if (selected.length > 0) return selected;
+        if (custom) return [custom];
+        return [];
+      }
+      // Multi-select: merge custom as an additional pick.
+      if (!custom) return selected;
+      if (selected.includes(custom)) return selected;
+      return [...selected, custom];
+    });
 
   const handleCustomPaste = (
     event: React.ClipboardEvent<HTMLTextAreaElement>,
@@ -123,13 +152,12 @@ export default function QuestionDock({
         setPasteNotice('Failed to save pasted image');
         return;
       }
-      const inserted = result.url ?? result.absolutePath;
+      const inserted = result.absolutePath;
       const existing = customAnswers[currentIndex] ?? '';
       const separator = existing && !existing.endsWith('\n') ? '\n' : '';
       const next = `${existing}${separator}${inserted}\n`;
       handleCustomChange(next);
-      const noticePrefix = result.url ? 'Image URL inserted' : 'Image saved';
-      setPasteNotice(`${noticePrefix}: ${result.filename}`);
+      setPasteNotice(`Image saved: ${result.filename}`);
       window.setTimeout(() => setPasteNotice(null), 4000);
     };
     reader.readAsDataURL(file);
@@ -140,9 +168,14 @@ export default function QuestionDock({
   const currentAnswered =
     currentAnswers.length > 0 ||
     (customEnabled && customAnswer.trim().length > 0);
+  const sizeClass = fill
+    ? 'h-full max-h-none w-full border-t-0'
+    : 'max-h-[min(70vh,600px)] border-t';
 
   return (
-    <div className="relative z-10 flex max-h-[min(70vh,600px)] flex-col border-t border-[var(--color-border)] bg-[var(--color-surface-alt)]">
+    <div
+      className={`relative z-10 flex flex-col border-[var(--color-border)] bg-[var(--color-surface-alt)] ${sizeClass} ${className}`.trim()}
+    >
       {/* Header — pinned */}
       <div className="flex-none px-4 pt-3 pb-2">
         <div className="mb-3 flex items-center justify-between gap-3">
@@ -194,28 +227,68 @@ export default function QuestionDock({
 
       {/* Scrollable middle — options + custom answer */}
       <div className="min-h-0 flex-1 overflow-y-auto px-4">
-        <div className="space-y-2">
+        {currentQuestion.options.length > 0 && (
+          <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+            {isMulti ? 'Select all that apply' : 'Select one'}
+          </div>
+        )}
+        <div
+          className="space-y-2"
+          role={isMulti ? 'group' : 'radiogroup'}
+          aria-label={isMulti ? 'Select all that apply' : 'Select one option'}
+        >
           {currentQuestion.options.map((option) => {
             const picked = currentAnswers.includes(option.label);
             return (
               <button
                 key={option.label}
                 type="button"
+                role={isMulti ? 'checkbox' : 'radio'}
+                aria-checked={picked}
                 onClick={() => handleOptionToggle(option.label)}
-                className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
+                className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2 text-left transition-colors ${
                   picked
                     ? 'border-[var(--color-agent)] bg-[var(--color-agent)]/10'
                     : 'border-[var(--color-border)] bg-[var(--color-surface)] hover:border-[var(--color-agent)]/40'
                 }`}
               >
-                <div className="text-sm font-medium text-[var(--color-text)]">
-                  {option.label}
-                </div>
-                {option.description && (
-                  <div className="mt-0.5 text-xs text-[var(--color-text-muted)]">
-                    {option.description}
-                  </div>
-                )}
+                <span
+                  aria-hidden="true"
+                  className={`mt-0.5 flex h-4 w-4 flex-none items-center justify-center border ${
+                    isMulti ? 'rounded-[3px]' : 'rounded-full'
+                  } ${
+                    picked
+                      ? 'border-[var(--color-agent)] bg-[var(--color-agent)] text-white'
+                      : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+                  }`}
+                >
+                  {picked &&
+                    (isMulti ? (
+                      <svg
+                        viewBox="0 0 16 16"
+                        className="h-3 w-3"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polyline points="3.5 8.5 6.5 11.5 12.5 5" />
+                      </svg>
+                    ) : (
+                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                    ))}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium text-[var(--color-text)]">
+                    {option.label}
+                  </span>
+                  {option.description && (
+                    <span className="mt-0.5 block text-xs text-[var(--color-text-muted)]">
+                      {option.description}
+                    </span>
+                  )}
+                </span>
               </button>
             );
           })}
@@ -223,6 +296,39 @@ export default function QuestionDock({
 
         {customEnabled && (
           <div className="mt-3 pb-3">
+            {!isMulti && currentQuestion.options.length > 0 && (
+              <div className="mb-2 flex items-center gap-3">
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={customAnswer.trim().length > 0}
+                  aria-label="Custom answer"
+                  onClick={() => {
+                    if (customAnswer.trim().length > 0) {
+                      // Clear the custom answer (deselect this radio).
+                      handleCustomChange('');
+                    }
+                  }}
+                  className="flex items-center gap-2 text-left"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`flex h-4 w-4 flex-none items-center justify-center rounded-full border ${
+                      customAnswer.trim().length > 0
+                        ? 'border-[var(--color-agent)] bg-[var(--color-agent)] text-white'
+                        : 'border-[var(--color-border)] bg-[var(--color-surface)]'
+                    }`}
+                  >
+                    {customAnswer.trim().length > 0 && (
+                      <span className="h-1.5 w-1.5 rounded-full bg-white" />
+                    )}
+                  </span>
+                  <span className="text-sm font-medium text-[var(--color-text)]">
+                    Type your own answer
+                  </span>
+                </button>
+              </div>
+            )}
             <Textarea
               value={customAnswer}
               onChange={(event) => handleCustomChange(event.target.value)}
@@ -238,9 +344,7 @@ export default function QuestionDock({
                     );
                   } else if (canSubmit) {
                     // Submit all answers
-                    const answersToSubmit = questions.map(
-                      (_, index) => answers[index] ?? [],
-                    );
+                    const answersToSubmit = buildAnswersForSubmit();
                     onReply(
                       question.requestId,
                       answersToSubmit,
@@ -305,9 +409,7 @@ export default function QuestionDock({
               type="button"
               size="sm"
               onClick={() => {
-                const answersToSubmit = questions.map(
-                  (_, index) => answers[index] ?? [],
-                );
+                const answersToSubmit = buildAnswersForSubmit();
                 onReply(
                   question.requestId,
                   answersToSubmit,

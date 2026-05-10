@@ -308,7 +308,7 @@ Our app is fundamentally different from OpenCode's:
 
 1. **We are an MCP _server_ and prompt UI, not an OpenCode client.** OpenCode is a _dependency_ we embed; the user's agent talks to _us_ via MCP.
 2. Our backend is **three things coupled by shared DB and SDK cache**:
-   - OpenCode HTTP server (currently in-process via `virtual:opencode-server`)
+   - OpenCode HTTP server (now spawned as a native subprocess — Mode C; see [ARCHITECTURE.md](./ARCHITECTURE.md#opencode-server-runs-as-a-native-subprocess-mode-c--committed-default). Historically this doc described the in-process `virtual:opencode-server` path, which is now dormant/reactivation-ready.)
    - MCP Express server (the thing agents connect to)
    - SSE event-stream consumer (reads from OpenCode, fans out to renderer)
 3. The MCP server's tools call `window.api` style prompts that must round-trip through Electron IPC to the renderer and back.
@@ -347,7 +347,7 @@ Given:
 - The fastest path to "UI no longer flips to connecting… under load" is Phase 2 alone (SSE out of main),
 - `utilityProcess` keeps the existing import graph intact (no HTTP-ification of internal calls),
 
-**stick with the `utilityProcess` plan but add a migration exit to Option C** after Phase 4 if the CLI's public HTTP API becomes a superset of what our MCP tools need. That would retire `virtual:opencode-server` entirely.
+**stick with the `utilityProcess` plan but add a migration exit to Option C** after Phase 4 if the CLI's public HTTP API becomes a superset of what our MCP tools need. That would retire `virtual:opencode-server` entirely. (Update: the implementation has since moved directly to Mode C — the OpenCode HTTP server is now spawned as a native subprocess, and the in-process `virtual:opencode-server` import path is dormant. The reasoning below is preserved for historical context.)
 
 ---
 

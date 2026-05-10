@@ -45,7 +45,7 @@ export function useSessionTreeHandler({
     // Track candidate for auto-selection before updating state
     let candidateForSelection: ReturnType<
       typeof resolveNewlyCreatedSessionNodeId
-    > = null;
+    > = null as ReturnType<typeof resolveNewlyCreatedSessionNodeId>;
 
     setNodes((prev) => {
       candidateForSelection = resolveNewlyCreatedSessionNodeId(

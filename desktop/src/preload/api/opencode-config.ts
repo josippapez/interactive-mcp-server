@@ -1,4 +1,5 @@
 import { ipcRenderer } from 'electron';
+import type { OpenCodeConfigDefaults } from './types';
 
 export function createOpenCodeConfigApi() {
   return {
@@ -25,6 +26,12 @@ export function createOpenCodeConfigApi() {
       config: Record<string, unknown> | null;
       filePath: string;
     }> => ipcRenderer.invoke('read-opencode-project-config', baseDirectory),
+
+    fetchOpenCodeConfigDefaults: (
+      baseDirectory?: string,
+    ): Promise<
+      { ok: true; data: OpenCodeConfigDefaults } | { ok: false; error: string }
+    > => ipcRenderer.invoke('fetch-opencode-config-defaults', baseDirectory),
 
     writeOpenCodeGlobalConfig: (
       config: Record<string, unknown>,

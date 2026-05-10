@@ -16,6 +16,7 @@ import {
   upsertContextInjection,
 } from '../../utility/db-client';
 import { injectOpenCodeMessage } from '../../utility/opencode-client';
+import { sessionDelete } from '../../utility/backend/session-api';
 import { injectClaudeMessageForConnection } from '../../claude-sdk-runtime';
 import { searchDocsInWorker } from '../../docs/context-injector-worker';
 import { handleInjectDocContext } from '../../docs/inject-handler';
@@ -91,7 +92,50 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
     'remove-session-channel',
     async (_event, sessionId: string) => {
       return removePersistedSession(sessionId, {
-        getOpenCodePort: () => deps.getSettings().openCodePort,
+        getOpenCodePort: () => {
+          const p = deps.getSettings().openCodePort;
+          return typeof p === 'number' && p > 0 ? p : null;
+        },
+        deleteOpenCodeSession: async (
+          providerSessionId: string,
+          port: number,
+          directory?: string,
+        ) => {
+          // Calls OpenCode's DELETE /session/{id}. The OpenCode server
+          // cascades to children automatically. Treat HTTP 404 as success
+          // (already deleted) so retried/idempotent deletes don't spam logs.
+          try {
+            const result = await sessionDelete(port, providerSessionId, {
+              directory,
+            });
+            const status = result?.response?.status;
+            if (typeof status === 'number' && status === 404) {
+              // Idempotent — already gone upstream.
+              return;
+            }
+            if (result?.error) {
+              const errStatus = (
+                result.error as { status?: number; statusCode?: number }
+              )?.status;
+              if (errStatus === 404) return;
+              throw result.error;
+            }
+          } catch (err) {
+            // Re-throw 404 errors as success; otherwise propagate so the
+            // orchestrator's catch-and-log path takes over.
+            const status =
+              (
+                err as {
+                  status?: number;
+                  statusCode?: number;
+                  response?: { status?: number };
+                }
+              )?.status ??
+              (err as { response?: { status?: number } })?.response?.status;
+            if (status === 404) return;
+            throw err;
+          }
+        },
         forceTerminateChat,
         closeSessionByConnectionId,
         deleteSessionChannel,

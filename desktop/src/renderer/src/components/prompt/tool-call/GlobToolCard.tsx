@@ -11,10 +11,12 @@ import {
   TOOL_CALL_MONO_TEXT_CLASS,
   ToolChevron,
   ToolDurationBadge,
+  ToolNameBadge,
   ToolStatusBadge,
   splitPath,
 } from './ToolCallShared';
 import { classifyTool } from './tool-registry';
+import { resolveNextToolExpandedState } from './tool-expanded-state';
 
 const PATTERN_TRUNCATE = 60;
 const DEFAULT_PATHS_VISIBLE = 15;
@@ -42,6 +44,21 @@ function getStringInput(
 ): string | undefined {
   const value = input?.[key];
   return typeof value === 'string' && value ? value : undefined;
+}
+
+function getNumberMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): number | null {
+  const value = metadata?.[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function getBooleanMetadata(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+): boolean {
+  return metadata?.[key] === true;
 }
 
 const PathRow = memo(function PathRow({
@@ -74,12 +91,20 @@ const GlobToolCard = memo(function GlobToolCard({
   const [showAll, setShowAll] = useState(false);
 
   useEffect(() => {
-    setIsExpanded(forceExpanded || isPending);
+    setIsExpanded((currentExpanded) =>
+      resolveNextToolExpandedState({
+        currentExpanded,
+        forceExpanded,
+        isPending,
+      }),
+    );
   }, [forceExpanded, isPending]);
 
   const paths = useMemo(() => parseGlobOutput(tool.output), [tool.output]);
   const pattern = getStringInput(tool.input, 'pattern');
   const searchPath = getStringInput(tool.input, 'path');
+  const resultCount = getNumberMetadata(tool.metadata, 'count') ?? paths.length;
+  const truncated = getBooleanMetadata(tool.metadata, 'truncated');
 
   const visible = showAll ? paths : paths.slice(0, DEFAULT_PATHS_VISIBLE);
   const hiddenCount = Math.max(0, paths.length - DEFAULT_PATHS_VISIBLE);
@@ -96,46 +121,56 @@ const GlobToolCard = memo(function GlobToolCard({
       onOpenChange={setIsExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-component="glob-trigger"
-          data-pending={isPending ? 'true' : undefined}
-        >
-          <Files
-            data-slot="tool-icon"
-            aria-hidden="true"
-            className="shrink-0"
-          />
-          <span data-slot="tool-title">Find</span>
-          {pattern && (
-            <span
-              data-slot="tool-subtitle"
-              title={pattern}
-              className="font-mono"
-            >
-              {truncatePattern(pattern)}
-            </span>
-          )}
-          {paths.length > 0 ? (
-            <span
-              data-slot="tool-count-pill"
-              className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium bg-[var(--color-success-surface)] text-[var(--color-success)] shrink-0 ${TOOL_CALL_MONO_TEXT_CLASS}`}
-            >
-              {paths.length} {paths.length === 1 ? 'file' : 'files'}
-            </span>
-          ) : hasOutput ? (
-            <span
-              className={`${TOOL_CALL_MONO_TEXT_CLASS} text-[var(--text-weak)]`}
-            >
-              No matches
-            </span>
-          ) : null}
-          <ToolDurationBadge tool={tool} />
-          <ToolStatusBadge status={tool.status} />
-          <ToolChevron />
-        </button>
-      </CollapsibleTrigger>
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            data-component="glob-trigger"
+            data-pending={isPending ? 'true' : undefined}
+          >
+            <Files
+              data-slot="tool-icon"
+              aria-hidden="true"
+              className="shrink-0"
+            />
+            <span data-slot="tool-title">Find</span>
+            <ToolNameBadge name={tool.name} />
+            {pattern && (
+              <span
+                data-slot="tool-subtitle"
+                title={pattern}
+                className="font-mono"
+              >
+                {truncatePattern(pattern)}
+              </span>
+            )}
+            {resultCount > 0 ? (
+              <span
+                data-slot="tool-count-pill"
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium bg-[var(--color-success-surface)] text-[var(--color-success)] shrink-0 ${TOOL_CALL_MONO_TEXT_CLASS}`}
+              >
+                {resultCount} {resultCount === 1 ? 'file' : 'files'}
+              </span>
+            ) : hasOutput ? (
+              <span
+                className={`${TOOL_CALL_MONO_TEXT_CLASS} text-[var(--text-weak)]`}
+              >
+                No matches
+              </span>
+            ) : null}
+            {truncated && (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 font-medium uppercase tracking-wide shrink-0 bg-[var(--background-stronger)] text-[var(--text-weak)] border border-[var(--border-weak-base)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+              >
+                truncated
+              </span>
+            )}
+            <ToolDurationBadge tool={tool} />
+            <ToolStatusBadge status={tool.status} />
+            <ToolChevron />
+          </button>
+        }
+      />
 
       <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">
         {searchPath && (

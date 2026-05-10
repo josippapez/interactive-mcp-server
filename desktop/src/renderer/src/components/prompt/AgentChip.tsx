@@ -3,6 +3,8 @@ import React, { memo } from 'react';
 interface AgentChipProps {
   /** Currently selected agent name, or null for the default agent */
   selectedAgent: string | null;
+  /** Real OpenCode default agent name, shown when no override is selected */
+  defaultAgentName?: string | null;
   /** Whether the popover is open */
   isOpen: boolean;
   /** Toggle the popover */
@@ -54,14 +56,15 @@ function ChevronIcon({ open }: { open: boolean }): React.ReactElement {
 
 function AgentChip({
   selectedAgent,
+  defaultAgentName,
   isOpen,
   onClick,
   disabled = false,
 }: AgentChipProps): React.ReactElement {
-  const displayText = selectedAgent ?? 'default';
+  const displayText = selectedAgent ?? defaultAgentName ?? 'default';
   const tooltip = selectedAgent
     ? `Agent: ${selectedAgent}`
-    : 'Agent: default (no custom agent)';
+    : `Agent: ${defaultAgentName ?? 'default'} (OpenCode default)`;
 
   return (
     <button

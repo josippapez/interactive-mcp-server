@@ -104,6 +104,8 @@ export function clearSession(sessionId: string): void {
     delete nextTodos[sessionId];
     const nextContextUsage = { ...prev.contextUsage };
     delete nextContextUsage[sessionId];
+    const nextSessionSideChannels = { ...prev.sessionSideChannels };
+    delete nextSessionSideChannels[sessionId];
     return {
       ...prev,
       messages: nextMessages,
@@ -111,6 +113,7 @@ export function clearSession(sessionId: string): void {
       status: nextStatus,
       todos: nextTodos,
       contextUsage: nextContextUsage,
+      sessionSideChannels: nextSessionSideChannels,
     };
   });
 }

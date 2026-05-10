@@ -36,6 +36,8 @@ export type {
   ProviderStatus,
   SelectPrompt,
   SessionChannelHistoryRecord,
+  NativeOpenCodeSkill,
+  OpenCodeConfigDefaults,
   SkillOrInstructionRecord,
   TextPrompt,
 } from './api/types';

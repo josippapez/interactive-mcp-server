@@ -36,6 +36,10 @@ import {
   type PromptResponse,
 } from '../ipc/prompt';
 import { loadSettings } from '../settings';
+import {
+  showPermissionNotification,
+  showQuestionNotification,
+} from './permission-notification';
 
 const UTILITY_ENTRY_FILENAME = 'opencode-utility.thread.mjs';
 
@@ -92,6 +96,13 @@ export interface UtilitySupervisor {
   setMainWindow(getMainWindow: () => BrowserWindow | null): void;
   /** Push a settings-snapshot update to the utility. Safe before start (queued implicitly via bridge availability check). */
   emitSettingsUpdate(snapshot?: Partial<BackendSettingsPayload>): void;
+  /**
+   * Push the OpenCode runtime URL to the utility (Mode B/C). No-op if
+   * bridge not yet ready. The optional `password` argument carries the
+   * Basic-auth credential for Mode C-spawned binaries; pass `undefined`
+   * for unauthenticated runtimes (Mode A in-process / dev sidecars).
+   */
+  pushOpenCodeUrl(url: string | null, password?: string | null): void;
 }
 
 interface SupervisorState {
@@ -203,6 +214,34 @@ export function createUtilitySupervisor(): UtilitySupervisor {
       if (!win || win.isDestroyed()) return;
       try {
         win.webContents.send(p.channel, p.payload);
+        if (p.channel === 'permission-asked') {
+          const permissionPayload = p.payload as
+            | {
+                permission?: unknown;
+                metadata?: Record<string, unknown>;
+                patterns?: string[];
+              }
+            | undefined;
+          if (typeof permissionPayload?.permission === 'string') {
+            showPermissionNotification(win, {
+              permission: permissionPayload.permission,
+              metadata: permissionPayload.metadata,
+              patterns: permissionPayload.patterns,
+            });
+          }
+        }
+        if (p.channel === 'question-asked') {
+          const questionPayload = p.payload as
+            | {
+                questions?: Array<{ question?: unknown; header?: unknown }>;
+              }
+            | undefined;
+          if (Array.isArray(questionPayload?.questions)) {
+            showQuestionNotification(win, {
+              questions: questionPayload.questions,
+            });
+          }
+        }
       } catch (err) {
         console.warn(`[utility-supervisor] to-renderer failed: ${String(err)}`);
       }
@@ -396,6 +435,14 @@ export function createUtilitySupervisor(): UtilitySupervisor {
     }
   }
 
+  function pushOpenCodeUrl(url: string | null, password?: string | null): void {
+    try {
+      state.bridge?.emit('opencode.url.set', { url, password });
+    } catch (err) {
+      console.warn(`[supervisor] pushOpenCodeUrl failed:`, err);
+    }
+  }
+
   async function stop(): Promise<void> {
     if (state.stopped) return;
     state.stopped = true;
@@ -427,6 +474,7 @@ export function createUtilitySupervisor(): UtilitySupervisor {
     stop,
     setMainWindow,
     emitSettingsUpdate,
+    pushOpenCodeUrl,
   };
 }
 

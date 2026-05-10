@@ -6,15 +6,20 @@ import {
   CollapsibleTrigger,
 } from '../../ui/collapsible';
 import {
+  HighlightedCodeBlock,
   TOOL_CALL_LABEL_TEXT_CLASS,
   TOOL_CALL_MONO_TEXT_CLASS,
+  ToolNameBadge,
   ToolDurationBadge,
   ToolStatusBadge,
   WrapToggleCodeBlock,
   formatInputCompact,
   getToolInputSummary,
+  guessOutputLanguage,
 } from './ToolCallShared';
 import { getToolPresentation } from './tool-registry';
+import { resolveNextToolExpandedState } from './tool-expanded-state';
+import { shouldShowToolSubtitle } from './tool-name-display';
 
 export function parseTaskId(output?: string): string | null {
   if (!output) return null;
@@ -82,8 +87,9 @@ const InputSection = memo(function InputSection({
         </span>
       </button>
       {showFullInput && (
-        <WrapToggleCodeBlock
+        <HighlightedCodeBlock
           text={formatInputCompact(input)}
+          language="json"
           maxHeightClass="max-h-32"
           containerClassName="mt-1"
           preClassName={`text-[var(--text-weak)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
@@ -102,6 +108,7 @@ export const TaskOutputSection = memo(function TaskOutputSection({
   parsedTaskId: string;
   onNavigateToSession?: (sessionId: string) => void;
 }): React.ReactElement {
+  const language = guessOutputLanguage(output);
   return (
     <div data-component="task-tool-card">
       <div className="flex items-center justify-between gap-2 mb-1.5">
@@ -139,11 +146,20 @@ export const TaskOutputSection = memo(function TaskOutputSection({
           </button>
         )}
       </div>
-      <WrapToggleCodeBlock
-        text={output}
-        maxHeightClass="max-h-48"
-        preClassName={`text-[var(--text-base)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
-      />
+      {language ? (
+        <HighlightedCodeBlock
+          text={output}
+          language={language}
+          maxHeightClass="max-h-48"
+          preClassName={`text-[var(--text-base)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+        />
+      ) : (
+        <WrapToggleCodeBlock
+          text={output}
+          maxHeightClass="max-h-48"
+          preClassName={`text-[var(--text-base)] ${TOOL_CALL_MONO_TEXT_CLASS}`}
+        />
+      )}
     </div>
   );
 });
@@ -153,6 +169,17 @@ const GenericOutputSection = memo(function GenericOutputSection({
 }: {
   output: string;
 }): React.ReactElement {
+  const language = guessOutputLanguage(output);
+  if (language) {
+    return (
+      <HighlightedCodeBlock
+        text={output}
+        language={language}
+        maxHeightClass="max-h-48"
+        preClassName={TOOL_CALL_MONO_TEXT_CLASS}
+      />
+    );
+  }
   return (
     <WrapToggleCodeBlock
       text={output}
@@ -180,12 +207,19 @@ export const DefaultToolCard = memo(function DefaultToolCard({
   tool: ToolCallInfo;
   forceExpanded: boolean;
 }): React.ReactElement {
-  const [isExpanded, setIsExpanded] = useState(forceExpanded);
+  const isPending = tool.status === 'pending';
+  const [isExpanded, setIsExpanded] = useState(forceExpanded || isPending);
   const [showFullInput, setShowFullInput] = useState(false);
 
   useEffect(() => {
-    setIsExpanded(forceExpanded);
-  }, [forceExpanded]);
+    setIsExpanded((currentExpanded) =>
+      resolveNextToolExpandedState({
+        currentExpanded,
+        forceExpanded,
+        isPending,
+      }),
+    );
+  }, [forceExpanded, isPending]);
 
   const toggleFullInput = useCallback(() => {
     setShowFullInput((prev) => !prev);
@@ -193,11 +227,14 @@ export const DefaultToolCard = memo(function DefaultToolCard({
 
   const presentation = getToolPresentation(tool.name, tool.input);
   const RegistryIcon = presentation.icon;
-  const inputSummary =
+  const title = tool.title ?? presentation.title;
+  const rawInputSummary =
     presentation.subtitle ?? getToolInputSummary(tool.name, tool.input);
+  const inputSummary = shouldShowToolSubtitle(title, rawInputSummary)
+    ? rawInputSummary
+    : null;
   const hasInput = Boolean(tool.input && Object.keys(tool.input).length > 0);
   const hasOutput = Boolean(tool.output);
-  const isPending = tool.status === 'pending';
 
   return (
     <Collapsible
@@ -205,28 +242,31 @@ export const DefaultToolCard = memo(function DefaultToolCard({
       onOpenChange={setIsExpanded}
       className="w-full"
     >
-      <CollapsibleTrigger asChild>
-        <button
-          type="button"
-          data-component="tool-trigger"
-          data-pending={isPending ? 'true' : undefined}
-        >
-          <RegistryIcon
-            data-slot="tool-icon"
-            aria-hidden="true"
-            className="shrink-0"
-          />
-          <span data-slot="tool-title">{presentation.title}</span>
-          {inputSummary && (
-            <span data-slot="tool-subtitle" title={inputSummary}>
-              {inputSummary}
-            </span>
-          )}
-          <ToolDurationBadge tool={tool} />
-          <ToolStatusBadge status={tool.status} />
-          <ToolChevron />
-        </button>
-      </CollapsibleTrigger>
+      <CollapsibleTrigger
+        render={
+          <button
+            type="button"
+            data-component="tool-trigger"
+            data-pending={isPending ? 'true' : undefined}
+          >
+            <RegistryIcon
+              data-slot="tool-icon"
+              aria-hidden="true"
+              className="shrink-0"
+            />
+            <span data-slot="tool-title">{title}</span>
+            <ToolNameBadge name={tool.name} />
+            {inputSummary && (
+              <span data-slot="tool-subtitle" title={inputSummary}>
+                {inputSummary}
+              </span>
+            )}
+            <ToolDurationBadge tool={tool} />
+            <ToolStatusBadge status={tool.status} />
+            <ToolChevron />
+          </button>
+        }
+      />
 
       {(hasInput || hasOutput) && (
         <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">

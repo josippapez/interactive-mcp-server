@@ -20,6 +20,7 @@ import { WriteToolCard, isWriteToolCall } from './tool-call/WriteToolCard';
 import TodoReadToolCard, {
   isTodoReadToolCall,
 } from './tool-call/TodoReadToolCard';
+import LspToolCard, { isLspToolCall } from './tool-call/LspToolCard';
 import { getToolCategory } from './tool-call/tool-registry';
 import {
   isEditToolCall,
@@ -121,6 +122,10 @@ function resolveToolCard(
 
   if (isTodoReadToolCall(tool.name)) {
     return <TodoReadToolCard tool={tool} forceExpanded={forceExpanded} />;
+  }
+
+  if (isLspToolCall(tool.name)) {
+    return <LspToolCard tool={tool} forceExpanded={forceExpanded} />;
   }
 
   return <DefaultToolCard tool={tool} forceExpanded={forceExpanded} />;

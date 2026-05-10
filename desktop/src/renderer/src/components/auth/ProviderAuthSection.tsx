@@ -25,7 +25,6 @@ export default function ProviderAuthSection({
     isConnected,
   } = useProviders(isOpenCodeEnabled);
   const {
-    authMethods,
     isLoading: authLoading,
     hasAuthMethods,
     refresh: refreshAuth,
@@ -194,6 +193,7 @@ export default function ProviderAuthSection({
                         providerName={provider.name}
                         variant="compact"
                         onSuccess={handleAuthSuccess}
+                        onClosed={handleAuthSuccess}
                       />
                     </div>
                   </div>

@@ -7,7 +7,7 @@ import {
 } from 'react';
 
 export type Theme = 'dark' | 'light';
-export type LightTint = 'none' | 'sage' | 'sand' | 'teal' | 'sky';
+export type LightTint = 'none' | 'sage' | 'sand' | 'teal' | 'sky' | 'peach';
 
 type ThemeContextValue = {
   theme: Theme;
@@ -35,7 +35,7 @@ export function ThemeProvider({
 
   const [lightTint, setLightTintState] = useState<LightTint>(() => {
     const saved = localStorage.getItem('imcp-light-tint');
-    const valid: LightTint[] = ['none', 'sage', 'sand', 'teal', 'sky'];
+    const valid: LightTint[] = ['none', 'sage', 'sand', 'teal', 'sky', 'peach'];
     return valid.includes(saved as LightTint) ? (saved as LightTint) : 'none';
   });
 

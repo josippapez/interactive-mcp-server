@@ -313,7 +313,7 @@ export function useProviderAuth(): UseProviderAuthResult {
             setState((s) => ({
               ...s,
               status: 'oauth-pending',
-              oauthResult: result.data,
+              oauthResult: result.data ?? null,
             }));
           } catch (err) {
             setState((s) => ({
@@ -431,7 +431,7 @@ export function useProviderAuth(): UseProviderAuthResult {
       setState((s) => ({
         ...s,
         status: 'oauth-pending',
-        oauthResult: result.data,
+        oauthResult: result.data ?? null,
       }));
     } catch (err) {
       setState((s) => ({

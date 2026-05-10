@@ -1,5 +1,24 @@
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet';
+import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { cn } from '@/lib/utils';
 import {
   getAlwaysModeWarning,
   shouldShowInstructionDeliveryControl,
@@ -7,11 +26,15 @@ import {
 import type {
   Folder,
   InstructionDeliveryMode,
+  SkillOrInstruction,
   SkillScope,
 } from './skills-types';
 
 type SkillEditorProps = {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   isCreating: boolean;
+  selected: SkillOrInstruction | null;
   formName: string;
   setFormName: (name: string) => void;
   formType: 'skill' | 'instruction';
@@ -38,8 +61,53 @@ type SkillEditorProps = {
   onCancel: () => void;
 };
 
+function SegmentedToggle<T extends string>({
+  value,
+  onChange,
+  options,
+  ariaLabel,
+}: {
+  value: T;
+  onChange: (value: T) => void;
+  options: { value: T; label: string; description?: string }[];
+  ariaLabel: string;
+}): React.ReactElement {
+  return (
+    <div
+      role="radiogroup"
+      aria-label={ariaLabel}
+      className="inline-flex w-full items-center rounded-md border bg-muted p-[3px] text-muted-foreground"
+    >
+      {options.map((opt) => {
+        const active = opt.value === value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            title={opt.description}
+            onClick={() => onChange(opt.value)}
+            className={cn(
+              'flex-1 rounded-sm px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer',
+              active
+                ? 'bg-background text-foreground shadow-sm'
+                : 'hover:text-foreground',
+            )}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function SkillEditor({
+  open,
+  onOpenChange,
   isCreating,
+  selected,
   formName,
   setFormName,
   formType,
@@ -74,190 +142,245 @@ export function SkillEditor({
     alwaysModeWarning,
   });
 
+  const sheetTitle = isCreating
+    ? formType === 'instruction'
+      ? 'Create new instruction'
+      : 'Create new skill'
+    : `Edit ${selected?.name ?? ''}`;
+
+  const sheetDescription = isCreating
+    ? 'Add a reusable skill or instruction. Markdown is supported in the content body.'
+    : 'Update this entry. The name cannot be changed after creation.';
+
+  const handleKeyDown = (e: React.KeyboardEvent): void => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+      e.preventDefault();
+      onSave();
+    }
+  };
+
   return (
-    <div className="space-y-3">
-      <div>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-          Name
-        </label>
-        <Input
-          type="text"
-          value={formName}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setFormName(e.target.value)
-          }
-          placeholder="e.g. code-review, typescript-rules"
-          disabled={isEditing}
-        />
-        {isEditing && (
-          <p className="text-[10px] text-[var(--color-text-faint)] mt-0.5">
-            Name cannot be changed after creation.
-          </p>
-        )}
-      </div>
+    <Sheet
+      open={open}
+      onOpenChange={(nextOpen) => {
+        onOpenChange(nextOpen);
+        if (!nextOpen) onCancel();
+      }}
+    >
+      <SheetContent
+        side="right"
+        className="sm:max-w-2xl flex flex-col gap-0 p-0"
+      >
+        <SheetHeader className="border-b px-6 py-4">
+          <SheetTitle>{sheetTitle}</SheetTitle>
+          <SheetDescription>{sheetDescription}</SheetDescription>
+        </SheetHeader>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-            Type
-          </label>
-          <select
-            value={formType}
-            onChange={(e) =>
-              setFormType(e.target.value as 'skill' | 'instruction')
-            }
-            className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
-          >
-            <option value="skill">Skill</option>
-            <option value="instruction">Instruction</option>
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-            Scope
-          </label>
-          <select
-            value={formScope}
-            onChange={(e) => setFormScope(e.target.value as SkillScope)}
-            className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
-          >
-            <option value="global">Global (always injected)</option>
-            <option value="session-scoped">
-              Session-scoped (opt-in per channel)
-            </option>
-          </select>
-        </div>
-      </div>
-
-      {showInstructionDelivery && (
-        <div>
-          <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-            Delivery
-          </label>
-          <select
-            value={formInjectionMode}
-            onChange={(e) =>
-              setFormInjectionMode(e.target.value as InstructionDeliveryMode)
-            }
-            className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
-          >
-            <option value="always">Always</option>
-            <option value="catalog">Catalog only</option>
-          </select>
-          {visibleAlwaysModeWarning && (
-            <p className="text-xs text-[var(--color-warning,orange)] mt-1">
-              {visibleAlwaysModeWarning}
-            </p>
-          )}
-        </div>
-      )}
-
-      <div>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-          Folder
-        </label>
-        <select
-          value={formFolderId === null ? '' : String(formFolderId)}
-          onChange={(e) =>
-            setFormFolderId(
-              e.target.value === '' ? null : Number(e.target.value),
-            )
-          }
-          className="w-full bg-[var(--color-input-bg)] border border-[var(--color-input-border)] rounded-sm px-3 py-2 text-sm text-[var(--color-text)]"
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            onSave();
+          }}
+          onKeyDown={handleKeyDown}
+          className="flex flex-1 flex-col overflow-hidden"
         >
-          <option value="">(Unfiled)</option>
-          {folders.map((folder) => (
-            <option key={folder.id} value={String(folder.id)}>
-              {folder.name}
-            </option>
-          ))}
-        </select>
-      </div>
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+            <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+              <div className="space-y-1.5">
+                <Label htmlFor="skill-name">Name</Label>
+                <Input
+                  id="skill-name"
+                  type="text"
+                  value={formName}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setFormName(e.target.value)
+                  }
+                  placeholder="e.g. code-review, typescript-rules"
+                  disabled={isEditing}
+                />
+                {isEditing && (
+                  <p className="text-xs text-muted-foreground">
+                    Name cannot be changed after creation.
+                  </p>
+                )}
+              </div>
 
-      <div>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-          Category
-        </label>
-        <Input
-          type="text"
-          list="category-options"
-          value={formCategory}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setFormCategory(e.target.value)
-          }
-          placeholder="Select or type a category"
-        />
-        <datalist id="category-options">
-          {availableCategories.map((cat) => (
-            <option key={cat} value={cat} />
-          ))}
-        </datalist>
-      </div>
+              <div className="space-y-1.5">
+                <Label>Type</Label>
+                <Tabs
+                  value={formType}
+                  onValueChange={(val) =>
+                    setFormType(val as 'skill' | 'instruction')
+                  }
+                >
+                  <TabsList>
+                    <TabsTrigger value="skill" disabled={isEditing}>
+                      Skill
+                    </TabsTrigger>
+                    <TabsTrigger value="instruction" disabled={isEditing}>
+                      Instruction
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              </div>
+            </div>
 
-      <div>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-          Tags
-        </label>
-        <Input
-          type="text"
-          value={formTags}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setFormTags(e.target.value)
-          }
-          placeholder="Comma-separated tags, e.g. react, typescript, testing"
-        />
-      </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label htmlFor="skill-folder">Folder</Label>
+                <Select
+                  value={
+                    formFolderId === null ? '__none__' : String(formFolderId)
+                  }
+                  onValueChange={(val) =>
+                    setFormFolderId(val === '__none__' ? null : Number(val))
+                  }
+                >
+                  <SelectTrigger id="skill-folder" className="w-full">
+                    <SelectValue placeholder="(Unfiled)" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">(Unfiled)</SelectItem>
+                    {folders.map((folder) => (
+                      <SelectItem key={folder.id} value={String(folder.id)}>
+                        {folder.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
 
-      <div>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-          Description
-        </label>
-        <Input
-          type="text"
-          value={formDescription}
-          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-            setFormDescription(e.target.value)
-          }
-          placeholder="Short summary of what this does"
-        />
-      </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="skill-category">Category</Label>
+                <Input
+                  id="skill-category"
+                  type="text"
+                  list="category-options"
+                  value={formCategory}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    setFormCategory(e.target.value)
+                  }
+                  placeholder="Select or type a category"
+                />
+                <datalist id="category-options">
+                  {availableCategories.map((cat) => (
+                    <option key={cat} value={cat} />
+                  ))}
+                </datalist>
+              </div>
+            </div>
 
-      <div>
-        <label className="block text-xs text-[var(--color-text-muted)] mb-1">
-          Content (Markdown)
-        </label>
-        <Textarea
-          value={formContent}
-          onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
-            setFormContent(e.target.value)
-          }
-          placeholder="Full content body — supports Markdown"
-          rows={16}
-        />
-      </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="skill-description">Description</Label>
+              <Textarea
+                id="skill-description"
+                value={formDescription}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                  setFormDescription(e.target.value)
+                }
+                placeholder="Short summary of what this does"
+                rows={2}
+              />
+            </div>
 
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onSave}
-          className="px-3 py-1.5 text-xs rounded-sm bg-[var(--color-agent)] text-white hover:opacity-90 transition-opacity cursor-pointer"
-        >
-          {isCreating ? 'Create' : 'Save'}
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-3 py-1.5 text-xs rounded-sm border border-[var(--color-border)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] transition-colors cursor-pointer"
-        >
-          Cancel
-        </button>
-        {saveStatus && (
-          <span className="text-xs text-[var(--color-text-faint)]">
-            {saveStatus}
-          </span>
-        )}
-      </div>
-    </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="skill-content">Content (Markdown)</Label>
+              <Textarea
+                id="skill-content"
+                value={formContent}
+                onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) =>
+                  setFormContent(e.target.value)
+                }
+                placeholder="Full content body — supports Markdown"
+                rows={16}
+                className="font-mono text-sm"
+              />
+              <p className="text-xs text-muted-foreground">
+                Tip: press Cmd/Ctrl+Enter to save.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="skill-tags">Tags</Label>
+              <Input
+                id="skill-tags"
+                type="text"
+                value={formTags}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setFormTags(e.target.value)
+                }
+                placeholder="react, typescript, testing"
+              />
+              <p className="text-xs text-muted-foreground">
+                Comma-separated. Used for search and filtering.
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>Scope</Label>
+              <SegmentedToggle<SkillScope>
+                value={formScope}
+                onChange={setFormScope}
+                ariaLabel="Scope"
+                options={[
+                  {
+                    value: 'global',
+                    label: 'Global',
+                    description: 'Always injected into agent sessions',
+                  },
+                  {
+                    value: 'session-scoped',
+                    label: 'Session-scoped',
+                    description: 'Only injected into channels that opt in',
+                  },
+                ]}
+              />
+            </div>
+
+            {showInstructionDelivery && (
+              <div className="space-y-1.5">
+                <Label>Delivery</Label>
+                <SegmentedToggle<InstructionDeliveryMode>
+                  value={formInjectionMode}
+                  onChange={setFormInjectionMode}
+                  ariaLabel="Delivery"
+                  options={[
+                    {
+                      value: 'always',
+                      label: 'Always',
+                      description:
+                        'Instruction content is delivered with every session injection',
+                    },
+                    {
+                      value: 'catalog',
+                      label: 'Catalog only',
+                      description:
+                        'Instruction is shown in the catalog and loaded on demand',
+                    },
+                  ]}
+                />
+                {visibleAlwaysModeWarning && (
+                  <p className="text-xs text-destructive">
+                    {visibleAlwaysModeWarning}
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+
+          <SheetFooter className="border-t px-6 py-3 flex-row items-center justify-end gap-2">
+            {saveStatus && (
+              <span className="mr-auto text-xs text-muted-foreground">
+                {saveStatus}
+              </span>
+            )}
+            <Button type="button" variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit">{isCreating ? 'Create' : 'Save'}</Button>
+          </SheetFooter>
+        </form>
+      </SheetContent>
+    </Sheet>
   );
 }

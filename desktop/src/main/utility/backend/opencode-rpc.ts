@@ -24,8 +24,10 @@ import * as mcpRegister from './mcp-register';
 import * as mcpInject from './mcp-inject';
 import * as mcpStatus from './mcp-status';
 import * as configIo from './config-io';
+import * as configDefaults from './config-defaults';
 import * as configSync from './config-sync';
 import * as agents from './agents';
+import * as nativeSkills from './native-skills';
 
 interface ArgsEnvelope {
   args?: unknown[];
@@ -403,6 +405,17 @@ export function registerOpencodeRpcHandlers(bridge: Bridge): void {
     return configIo.readProjectConfig(baseDirectory);
   });
 
+  bridge.handle('opencode.fetchOpenCodeConfigDefaults', (p) => {
+    const [openCodePort, baseDirectory] = argsOf(p) as [
+      number,
+      string | undefined,
+    ];
+    return configDefaults.fetchOpenCodeConfigDefaults(
+      openCodePort,
+      baseDirectory,
+    );
+  });
+
   bridge.handle('opencode.writeGlobalConfig', (p) => {
     const [data] = argsOf(p) as [Record<string, unknown>];
     return configIo.writeGlobalConfig(data);
@@ -427,8 +440,16 @@ export function registerOpencodeRpcHandlers(bridge: Bridge): void {
 
   // ── agents ───────────────────────────────────────────────────────────────
   bridge.handle('opencode.listAgents', (p) => {
-    const [baseDirectory] = argsOf(p) as [string | undefined];
-    return agents.listAgents(baseDirectory);
+    const [openCodePort, baseDirectory] = argsOf(p) as [
+      number | undefined,
+      string | undefined,
+    ];
+    return agents.listAgents(openCodePort, baseDirectory);
+  });
+
+  bridge.handle('opencode.listNativeOpenCodeSkills', (p) => {
+    const [port, baseDirectory] = argsOf(p) as [number, string | undefined];
+    return nativeSkills.listNativeOpenCodeSkills(port, baseDirectory);
   });
 
   bridge.handle('opencode.readAgent', (p) => {

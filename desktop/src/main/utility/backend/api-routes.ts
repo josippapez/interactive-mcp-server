@@ -16,6 +16,7 @@ import { invalidateSessionTree } from './session-tree-service';
 import { removePersistedSession } from '../../remove-persisted-session';
 import { markSessionDeleted } from './tools/connection-guard';
 import { emitToRenderer } from './renderer-emit';
+import { sessionDelete } from './session-api';
 
 export interface ApiRouterDeps {
   clearAllSessions: (() => Promise<number>) | null;
@@ -88,7 +89,43 @@ export function createApiRouter(deps: ApiRouterDeps): Router {
   router.delete('/api/sessions/:sessionId', async (req, res) => {
     const { sessionId } = req.params;
     await removePersistedSession(sessionId, {
-      getOpenCodePort: deps.getOpenCodePort,
+      getOpenCodePort: () => {
+        const p = deps.getOpenCodePort();
+        return typeof p === 'number' && p > 0 ? p : null;
+      },
+      deleteOpenCodeSession: async (
+        providerSessionId: string,
+        port: number,
+        directory?: string,
+      ) => {
+        // Idempotent DELETE /session/{id}; treat 404 as success.
+        try {
+          const result = await sessionDelete(port, providerSessionId, {
+            directory,
+          });
+          const status = result?.response?.status;
+          if (typeof status === 'number' && status === 404) return;
+          if (result?.error) {
+            const errStatus = (
+              result.error as { status?: number; statusCode?: number }
+            )?.status;
+            if (errStatus === 404) return;
+            throw result.error;
+          }
+        } catch (err) {
+          const status =
+            (
+              err as {
+                status?: number;
+                statusCode?: number;
+                response?: { status?: number };
+              }
+            )?.status ??
+            (err as { response?: { status?: number } })?.response?.status;
+          if (status === 404) return;
+          throw err;
+        }
+      },
       forceTerminateChat,
       closeSessionByConnectionId: deps.closeSessionByConnectionId,
       deleteSessionChannel,

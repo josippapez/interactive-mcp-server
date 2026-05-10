@@ -77,6 +77,12 @@ export type AppSettings = {
   allowedReadFolders: string[];
   allowedPermissions: string[];
   chatTextSize: 'sm' | 'md' | 'lg';
+  defaultModelId: string;
+  defaultProviderId: string;
+  defaultReasoningVariant: string;
+  hideSystemReminders: boolean;
+  hideDocInjections: boolean;
+  wrapCodeBlocks: boolean;
 };
 
 export type PendingPermissionRequest = {
@@ -138,6 +144,13 @@ export type SkillOrInstructionRecord = {
   alwaysModeWarning?: string | null;
 };
 
+export type NativeOpenCodeSkill = {
+  name: string;
+  description: string;
+  location: string;
+  content: string;
+};
+
 export type FolderRecord = {
   id: number;
   name: string;
@@ -157,6 +170,17 @@ export type AgentDefinition = {
   body: string;
   rawContents: string;
   overridden?: boolean;
+  native?: boolean;
+  hidden?: boolean;
+  editable?: boolean;
+};
+
+export type OpenCodeConfigDefaults = {
+  model: string | null;
+  providerId: string | null;
+  modelId: string | null;
+  variant: string | null;
+  defaultAgentName: string | null;
 };
 
 // ─── Provider Auth Types ─────────────────────────────────────────────────────
@@ -232,11 +256,17 @@ export type ConversationMessagePart = {
   id: string;
   type: ConversationPartType;
   text?: string;
+  /** OpenCode marks some text as synthetic/internal; it should not be displayed as user-authored text. */
+  synthetic?: boolean;
+  /** OpenCode marks ignored text as hidden from prompt context; mirror TUI by hiding it in chat text. */
+  ignored?: boolean;
   toolName?: string;
   toolCallId?: string;
   toolInput?: Record<string, unknown>;
   toolOutput?: string;
   toolStatus?: 'pending' | 'running' | 'completed' | 'error';
+  /** Human-readable tool title from OpenCode tool state. */
+  toolTitle?: string;
   /** Tool metadata (for 'tool-call' parts, includes sessionId for Task tools). */
   toolMetadata?: Record<string, unknown>;
   /** Source URL (for 'source-url' parts). */
@@ -276,6 +306,12 @@ export type ConversationMessage = {
   agent?: string;
   /** Message mode (e.g., 'compaction' for context compaction summaries). */
   mode?: string;
+  /** Provider finish reason for assistant messages. */
+  finish?: string;
+  /** User-visible assistant error, if OpenCode reports one. */
+  error?: string;
+  /** OpenCode assistant error name, e.g. MessageAbortedError. */
+  errorName?: string;
   /** Reasoning effort variant (e.g., 'low', 'medium', 'high', 'xhigh'). */
   variant?: string;
   createdAt: number;
@@ -323,6 +359,20 @@ export type ConversationContextUsage = {
   usagePercent: number;
   isNearOverflow: boolean;
   isOverflow: boolean;
+};
+
+export type ConversationSessionNextModel = {
+  modelId: string;
+  providerId: string;
+  variant?: string;
+};
+
+export type ConversationToolProgressContent =
+  | { type: 'text'; text: string }
+  | { type: 'file'; uri: string; mime: string; name?: string };
+
+export type ConversationSessionSideChannel = {
+  model?: ConversationSessionNextModel;
 };
 
 export type ConversationEvent =
@@ -392,6 +442,45 @@ export type ConversationEvent =
       sessionId: string;
       beforeTokens: number;
       afterTokens: number;
+    }
+  | {
+      type: 'session.next.model.switched';
+      sessionId: string;
+      modelId: string;
+      providerId: string;
+      variant?: string;
+      timestamp: number;
+    }
+  | {
+      type: 'session.next.retried';
+      sessionId: string;
+      attempt: number;
+      error: {
+        message: string;
+        isRetryable: boolean;
+        statusCode?: number;
+      };
+      timestamp: number;
+    }
+  | {
+      type: 'session.next.compaction.started';
+      sessionId: string;
+      reason: 'auto' | 'manual';
+      timestamp: number;
+    }
+  | {
+      type: 'session.next.compaction.ended';
+      sessionId: string;
+      include?: string;
+      timestamp: number;
+    }
+  | {
+      type: 'session.next.tool.progress';
+      sessionId: string;
+      callId: string;
+      structured: Record<string, unknown>;
+      content: ConversationToolProgressContent[];
+      timestamp: number;
     }
   | {
       type: 'file.edited';

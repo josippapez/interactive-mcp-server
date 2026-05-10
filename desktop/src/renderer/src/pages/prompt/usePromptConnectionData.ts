@@ -1,10 +1,11 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useConversation } from '../../hooks/useConversation';
 import { useMcpServers } from '../../hooks/useMcpServers';
 import { useSessionModelId } from '../../hooks/useSessionModelId';
 import { useSessionStatus } from '../../hooks/useSessionStatus';
 import { useTodos } from '../../hooks/useTodos';
 import { useVcsInfo } from '../../hooks/useVcsInfo';
+import type { NativeOpenCodeSkill } from '../../../../preload/api/types';
 import { useSessionModelSelection } from '../../store/session-models';
 
 const STATUS_VISIBILITY_MS = 4000;
@@ -73,6 +74,34 @@ export function usePromptConnectionData({
     isOpenCodeSession,
   );
 
+  const [nativeSkills, setNativeSkills] = useState<NativeOpenCodeSkill[]>([]);
+  const activeSkills = nativeSkills;
+
+  useEffect(() => {
+    if (!isOpenCodeSession) {
+      setNativeSkills([]);
+      return;
+    }
+
+    let cancelled = false;
+    void (async () => {
+      let all: NativeOpenCodeSkill[];
+      try {
+        all = await window.api.listNativeOpenCodeSkills(
+          sessionBaseDirectory ?? undefined,
+        );
+      } catch {
+        all = [];
+      }
+      if (cancelled) return;
+      setNativeSkills(all);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpenCodeSession, sessionBaseDirectory]);
+
   const latestStatus = useMemo(() => {
     const latest = sessionStatuses.at(-1) ?? null;
     if (!latest) {
@@ -109,6 +138,7 @@ export function usePromptConnectionData({
     disconnectMcpServer,
     authenticateMcpServer,
     removeMcpServerAuth,
+    activeSkills,
     latestStatus,
   };
 }

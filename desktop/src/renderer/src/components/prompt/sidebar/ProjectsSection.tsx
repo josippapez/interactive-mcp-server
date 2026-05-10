@@ -44,7 +44,7 @@ function groupProjectsBySessionStart(projects: Project[]): GroupedProjects[] {
   ).getTime();
 
   for (const project of projects) {
-    const timestamp = project.earliestSessionCreatedAt;
+    const timestamp = project.latestSessionCreatedAt;
 
     if (timestamp <= 0) {
       const key = 'unknown';
@@ -89,7 +89,7 @@ function groupProjectsBySessionStart(projects: Project[]): GroupedProjects[] {
     .map((group) => ({
       ...group,
       projects: [...group.projects].sort(
-        (a, b) => b.earliestSessionCreatedAt - a.earliestSessionCreatedAt,
+        (a, b) => b.latestSessionCreatedAt - a.latestSessionCreatedAt,
       ),
     }));
 }
@@ -100,6 +100,7 @@ type ProjectsSectionProps = {
   runningCount: number;
   collapsedProjects: Set<string>;
   onToggleProject: (path: string) => void;
+  onPinProject: (path: string, name: string) => void;
   onRemoveProject: (path: string) => void;
   activeConnectionId: string | null;
   onSelect: (id: string) => void;
@@ -121,6 +122,7 @@ export const ProjectsSection = memo(function ProjectsSection({
   runningCount,
   collapsedProjects,
   onToggleProject,
+  onPinProject,
   onRemoveProject,
   activeConnectionId,
   onSelect,
@@ -142,11 +144,11 @@ export const ProjectsSection = memo(function ProjectsSection({
     <SidebarGroup className="gap-0 p-0">
       {/* Show header when no specific project is selected */}
       {!isProjectSelected && (
-        <div className="flex items-center gap-2 px-3 py-2">
-          <SidebarGroupLabel className="h-auto px-0 py-0 text-[10px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-faint)]">
-            Projects
-            <span className="ml-1 opacity-60">({runningCount} active)</span>
-          </SidebarGroupLabel>
+        <div className="section-label">
+          Projects
+          <span className="ml-1 opacity-60 normal-case tracking-normal">
+            ({runningCount} active)
+          </span>
         </div>
       )}
       {projects.length === 0 && !hasDirectConnections && (
@@ -178,6 +180,11 @@ export const ProjectsSection = memo(function ProjectsSection({
                     project.isPinned
                       ? () => onRemoveProject(project.path)
                       : undefined
+                  }
+                  onPin={
+                    project.isPinned
+                      ? undefined
+                      : () => onPinProject(project.path, project.name)
                   }
                   activeConnectionId={activeConnectionId}
                   onSelect={onSelect}

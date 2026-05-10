@@ -52,16 +52,8 @@ Interactive MCP Desktop is an Electron application that acts as a desktop UI for
 │  └────────────────────────┬────────────────────────────────┘     │
 │                           │ one McpServer per connection          │
 │  ┌────────────────────────▼────────────────────────────────┐     │
-│  │  McpServer + tools (per-connection)                     │     │
-│  │   • register_connection                                 │     │
-│  │   • request_user_input                                  │     │
-│  │   • start_intensive_chat / ask_intensive_chat           │     │
-│  │     stop_intensive_chat                                 │     │
-│  │   • push_session_status                                 │     │
-│  │   • send_message                                        │     │
-│  │   • find_repo_docs                                      │     │
-│  │   • manage_skills_and_instructions                      │     │
-│  │   • poll_context_injections                             │     │
+│  │  McpServer (per-connection; tool surface disabled)      │     │
+│  │   • no desktop MCP tools registered                     │     │
 │  └──────────────┬──────────────────────────────────────────┘     │
 │                 │ promptUser()                                    │
 │  ┌──────────────▼──────────────────────────────────────────┐     │
@@ -267,7 +259,7 @@ The main process is the application's Node.js runtime. It bootstraps in `index.t
 7. For Claude SDK backend: `detectClaudeSdkRuntime()` — detect Claude SDK runtime availability.
 8. `createWindow()` — create the `BrowserWindow`; hide it immediately if the app was opened at login.
 9. `createTray()` — create the system-tray icon.
-10. If `autoStartOpenCode` is enabled, `startOpenCodeServer(openCodePort)` — dynamically imports `virtual:opencode-server` (resolved to the prebuilt Node bundle at `resources/opencode-node/node.js`) and calls `Server.listen({ port, hostname: '127.0.0.1' })` **in-process** (no child process). See `desktop/src/main/opencode/server.ts:46`.
+10. If `autoStartOpenCode` is enabled, `startOpenCodeServer(openCodePort)` — resolves a free port via `port-resolver.ts`, then `server-facade.ts` delegates to `main-host-adapter.ts` which uses the `NativeBinaryStrategy` to spawn the platform-native `opencode` binary (committed Mode C, `RUNTIME_KIND = 'native-subprocess'`). The binary lives at `resources/opencode-bin/<platform>-<arch>/opencode[.exe]` and is supervised as a managed child process. See `desktop/src/main/opencode/runtime-mode.ts:23` and `desktop/src/main/opencode/runtime/strategies/native-binary.ts`.
 11. After `startMcpServer` completes, `waitForOpenCodeHealthy(() => openCodePort)` polls `GET /global/health` (~500 ms interval, 30 s overall budget, per-attempt timeout adaptive between 1–10 s based on remaining budget) to gate session-tree and provider warmup on the in-process server being ready. See `desktop/src/main/index.ts:75`.
 12. Once the cold-start probe succeeds, `startOpenCodeSupervisor(() => openCodePort, () => currentSettings.autoStartOpenCode, appLog)` launches the background health watchdog — probes every 15 s, restarts the in-process listener after 3 consecutive failures. Gated on `autoStartOpenCode` so the app never tears down an externally-managed OpenCode. Stopped on `before-quit`. See `desktop/src/main/index.ts:107`.
 
@@ -436,7 +428,11 @@ Persists `AppSettings` as a JSON file at `<userData>/settings.json`. Key setting
 
 #### `tools/` — MCP Tool Registrations
 
-Each file exports one `register*` function called during `createMcpServerWithTools`. Tools are registered on the per-connection `McpServer` instance.
+Each file exports one `register*` function for the historical desktop MCP tool
+surface. These handlers are currently not called from `createMcpServerWithTools`,
+so new per-connection `McpServer` instances expose no desktop MCP tools. The
+files remain in the codebase so the tool surface can be restored deliberately if
+needed.
 
 | File                                | Tool(s) registered                                                  | Description                                                                                                                                                                                                                                                                                                                                                                                     |
 | ----------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -763,17 +759,21 @@ The `openCodeSessionId` parameter is now required on all tool calls for correct 
 
 `BrowserWindow.on('close')` is intercepted: if the app is not in the process of quitting (triggered only by Cmd+Q or the tray Quit menu item), the event is cancelled and the window is hidden instead. This keeps the Express/MCP server running continuously without the user having to manually restart it.
 
-### OpenCode server runs in-process (Phase C)
+### OpenCode server runs as a native subprocess (Mode C — committed default)
 
-Starting with the Phase C migration, the OpenCode HTTP API is **not** spawned as a child process. Instead, `desktop/src/main/opencode/server.ts` dynamically imports a virtual module (`virtual:opencode-server`) that is rewritten at build time to the prebuilt Node bundle at `resources/opencode-node/node.js` (~18 MB ESM) and calls `Server.listen({ port, hostname: '127.0.0.1' })` directly inside the Electron main-process Node runtime.
+The OpenCode HTTP API is launched as a **native child process** spawned from the per-platform binary at `resources/opencode-bin/<platform>-<arch>/opencode[.exe]`. The runtime entry point is `desktop/src/main/opencode/server-facade.ts`, which delegates to `main-host-adapter.ts`. The adapter resolves a free port via `port-resolver.ts`, then the `NativeBinaryStrategy` (`runtime/strategies/native-binary.ts`) spawns and supervises the binary, exposing `GET /global/health` once it is ready. The committed runtime mode is declared in `desktop/src/main/opencode/runtime-mode.ts:23` (`RUNTIME_KIND: OpenCodeRuntimeKind = 'native-subprocess'`).
 
-Consequences:
+Runtime modes:
 
-- No bundled per-platform `opencode` binary is required at runtime. (The legacy `copy:opencode*` step that ships `resources/bin/opencode` is still chained from the packaging scripts as a temporary safety net and will be removed once packaged smoke-tests confirm the in-process path.)
-- Environment variables are pinned before the dynamic import: `XDG_STATE_HOME = app.getPath('userData')` and `OPENCODE_CLIENT = 'desktop'`. See `desktop/src/main/opencode/server.ts:146`.
-- Main-process output is ESM (`format: 'es'`, `entryFileNames: '[name].mjs'`) because the OpenCode bundle uses top-level `await`. `package.json` `"main"` points at `./out/main/index.mjs`.
-- The virtual-module rewrite, a platform-specific narrowing of `@lydell/node-pty`, and the `tree-sitter-*.wasm` copy are all implemented as custom Rollup plugins in `electron.vite.config.ts`. See [BUILD-PACKAGING.md](./BUILD-PACKAGING.md) for details.
-- Crash isolation across the Electron/OpenCode boundary is lost — a fatal error inside the OpenCode listener now takes down the main process. The [Health supervisor](#health-supervisor-auto-restart) is the mitigation.
+- **Mode C — `native-subprocess` (default, committed):** the flow described above. Crash-isolated from the Electron main process.
+- **Mode A — `in-process-utility` (dormant, reactivation-ready):** historical path that dynamically imported `virtual:opencode-server` (a prebuilt OpenCode Node bundle) and called `Server.listen()` inside the Electron main Node runtime. The packaging assets and the `opencode:copy-server-assets` Vite plugin have been removed; the source paths (`runtime/in-process.ts`, `factory.ts case 'in-process-utility'`, `virtual-server.d.ts`) are preserved so the mode can be reactivated. The vite plugin now resolves `virtual:opencode-server` to a stub that throws a descriptive runtime error pointing at the reactivation steps. See [BUILD-PACKAGING.md](./BUILD-PACKAGING.md) for the asset/plugin history.
+
+Consequences of Mode C:
+
+- Environment variables are still pinned for the OpenCode child: `XDG_STATE_HOME = app.getPath('userData')` and `OPENCODE_CLIENT = 'desktop'`.
+- Main-process output is ESM (`format: 'es'`, `entryFileNames: '[name].mjs'`); `package.json` `"main"` points at `./out/main/index.mjs`.
+- A platform-specific narrowing of `@lydell/node-pty` is implemented as a custom Rollup plugin (`opencode:node-pty-narrower`) in `electron.vite.config.ts`. See [BUILD-PACKAGING.md](./BUILD-PACKAGING.md) for details.
+- Crash isolation is preserved across the Electron/OpenCode boundary — a fatal error inside the OpenCode subprocess no longer takes down the main process. The [Health supervisor](#health-supervisor-auto-restart) restarts the child on consecutive health-probe failures.
 
 ### Health supervisor (auto-restart)
 
