@@ -252,6 +252,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     <ContextUsageBar
                       sessionId={contextUsageSessionId}
                       modelContextWindow={
+                        view.runningContextWindow ??
                         view.sessionModelSelection.contextWindow
                       }
                       isBusy={view.sessionBusy && view.isOpenCodeSession}

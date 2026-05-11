@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useAtomValue } from 'jotai';
 import { useConversation } from '../../hooks/useConversation';
 import { useMcpServers } from '../../hooks/useMcpServers';
 import { useSessionModelId } from '../../hooks/useSessionModelId';
@@ -7,6 +8,7 @@ import { useTodos } from '../../hooks/useTodos';
 import { useVcsInfo } from '../../hooks/useVcsInfo';
 import type { NativeOpenCodeSkill } from '../../../../preload/api/types';
 import { useSessionModelSelection } from '../../store/session-models';
+import { findModelById, modelsAtom } from '../../store/providers';
 
 const STATUS_VISIBILITY_MS = 4000;
 
@@ -53,6 +55,18 @@ export function usePromptConnectionData({
   const { modelId: currentModelId, providerId: currentProviderId } =
     useSessionModelId(providerSessionId, isOpenCodeSession);
   const sessionModelSelection = useSessionModelSelection(providerSessionId);
+
+  // Context window of the model that produced the most recent assistant
+  // message. Independent of the composer dropdown override so the context
+  // bar reflects what is actually running, not what is queued for the next
+  // send. Falls back to undefined when no message has been sent yet, in
+  // which case `ContextUsageBar` uses its cached `usage.contextLimit`.
+  const models = useAtomValue(modelsAtom);
+  const runningContextWindow = useMemo(() => {
+    if (!currentModelId) return undefined;
+    return findModelById(models, currentModelId, currentProviderId)
+      ?.contextWindow;
+  }, [models, currentModelId, currentProviderId]);
 
   const { getStatus } = useSessionStatus(isOpenCodeSession);
   const sessionBusy =
@@ -129,6 +143,7 @@ export function usePromptConnectionData({
     currentModelId,
     currentProviderId,
     sessionModelSelection,
+    runningContextWindow,
     sessionBusy,
     mcpServers,
     mcpLoading,
