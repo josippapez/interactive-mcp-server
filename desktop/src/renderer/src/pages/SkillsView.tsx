@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import ConfirmDeleteModal from '../components/ConfirmDeleteModal';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import {
   type Folder,
   type InstructionDeliveryMode,
@@ -44,6 +45,11 @@ export default function SkillsView(): React.ReactElement {
 
   // Delete modal
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+
+  // Folder delete confirm
+  const [folderDeleteTarget, setFolderDeleteTarget] = useState<number | null>(
+    null,
+  );
 
   // Export status
   const [exportStatus, setExportStatus] = useState<string | null>(null);
@@ -131,6 +137,38 @@ export default function SkillsView(): React.ReactElement {
     setFormInjectionMode('always');
     setFormAlwaysModeWarning(null);
   }, [tab]);
+
+  const handleCreateSkill = useCallback(() => {
+    setSelected(null);
+    setIsCreating(true);
+    setIsEditing(false);
+    setFormName('');
+    setFormType('skill');
+    setFormDescription('');
+    setFormContent('');
+    setFormCategory('');
+    setFormTags('');
+    setFormFolderId(null);
+    setFormScope('global');
+    setFormInjectionMode('always');
+    setFormAlwaysModeWarning(null);
+  }, []);
+
+  const handleCreateInstruction = useCallback(() => {
+    setSelected(null);
+    setIsCreating(true);
+    setIsEditing(false);
+    setFormName('');
+    setFormType('instruction');
+    setFormDescription('');
+    setFormContent('');
+    setFormCategory('');
+    setFormTags('');
+    setFormFolderId(null);
+    setFormScope('global');
+    setFormInjectionMode('always');
+    setFormAlwaysModeWarning(null);
+  }, []);
 
   const handleEdit = useCallback(() => {
     setIsEditing(true);
@@ -295,16 +333,15 @@ export default function SkillsView(): React.ReactElement {
     [loadFolders],
   );
 
-  const handleDeleteFolder = useCallback(
-    async (id: number) => {
-      const ok = await window.api.deleteFolder(id);
-      if (ok) {
-        await loadFolders();
-        await loadEntries();
-      }
-    },
-    [loadFolders, loadEntries],
-  );
+  const handleConfirmDeleteFolder = useCallback(async () => {
+    if (folderDeleteTarget === null) return;
+    const ok = await window.api.deleteFolder(folderDeleteTarget);
+    if (ok) {
+      await loadFolders();
+      await loadEntries();
+    }
+    setFolderDeleteTarget(null);
+  }, [folderDeleteTarget, loadFolders, loadEntries]);
 
   useEffect(() => {
     return () => {
@@ -436,13 +473,15 @@ export default function SkillsView(): React.ReactElement {
         exportStatus={exportStatus}
         onExport={() => void handleExport()}
         onCreate={handleCreate}
+        onCreateSkill={handleCreateSkill}
+        onCreateInstruction={handleCreateInstruction}
         onSelect={handleSelect}
         onDelete={(name) => setDeleteTarget(name)}
         onToggleEnabled={handleToggleEnabled}
         folders={folders}
         onCreateFolder={handleCreateFolder}
         onRenameFolder={handleRenameFolder}
-        onDeleteFolder={handleDeleteFolder}
+        onDeleteFolder={(id) => setFolderDeleteTarget(id)}
         onMoveEntry={(name, folderId) =>
           void handleChangeFolder(name, folderId)
         }
@@ -516,6 +555,17 @@ export default function SkillsView(): React.ReactElement {
         label={deleteTarget ?? ''}
         onConfirm={() => void handleDelete()}
         onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmDialog
+        open={folderDeleteTarget !== null}
+        title="Delete folder?"
+        description="Entries in this folder will be unfiled. This cannot be undone."
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        destructive
+        onConfirm={() => void handleConfirmDeleteFolder()}
+        onCancel={() => setFolderDeleteTarget(null)}
       />
     </div>
   );
