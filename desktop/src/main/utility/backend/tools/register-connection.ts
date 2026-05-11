@@ -8,6 +8,7 @@ import {
   listSkillsAndInstructions,
   listSessionScopedEntryNames,
   listSessionMutedEntryNames,
+  listMemories,
   upsertRegisteredConnection,
   type RegisteredConnection,
 } from '../database';
@@ -223,6 +224,9 @@ export function registerConnectionTool(
         entries: await listSkillsAndInstructions(),
         sessionOptInNames,
         sessionMutedNames,
+        memories: baseDirectory
+          ? listMemories({ projectPath: baseDirectory })
+          : listMemories({ scope: 'global' }),
       });
 
       // Guard: another injection path (SSE `session.created` auto-register or

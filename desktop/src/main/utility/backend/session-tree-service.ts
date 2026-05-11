@@ -37,6 +37,7 @@ import { getMainRpcOrNull } from './rpc';
 import { fetchAllOpenCodeSessions, type OpenCodeSession } from './session';
 import type { SessionInfo, SessionNodeData } from './session-types';
 import { extractVcsInfo } from './vcs';
+import { fetchVcsInfo } from './vcs-api';
 
 const log = createLogger('session-tree-service');
 void log;
@@ -77,6 +78,16 @@ const keyedInvalidateDebouncer = createKeyedDebouncer({
 
 export function startSessionTreeService(getOpenCodePort: () => number): void {
   state.getOpenCodePort = getOpenCodePort;
+}
+
+/**
+ * Returns the current OpenCode HTTP port if the session-tree service has been
+ * started; otherwise `null`. Other backend modules (e.g. `manage-memories`)
+ * use this accessor to inject messages into OpenCode without threading the
+ * port through every call site.
+ */
+export function getOpenCodePort(): number | null {
+  return state.getOpenCodePort?.() ?? null;
 }
 
 export function stopSessionTreeService(): void {
@@ -184,16 +195,25 @@ export async function fetchSessionTree(): Promise<SessionNodeData[]> {
 
   const depthCache = new Map<string, number>();
   const result: SessionNodeData[] = [];
+  const vcsByDirectory = await fetchSdkVcsByDirectory(
+    port,
+    sessions,
+    registeredConnections,
+  );
 
   for (const [id, session] of sessionById) {
     if (hasTombstonedAncestor(id, sessionById)) continue;
+    const registered = byOpenCodeId.get(id) ?? null;
     result.push(
       buildSessionNodeData(
         id,
         session,
-        byOpenCodeId.get(id) ?? null,
+        registered,
         sessionById,
         depthCache,
+        vcsByDirectory.get(
+          registered?.baseDirectory ?? session.directory ?? '',
+        ) ?? null,
       ),
     );
   }
@@ -242,6 +262,7 @@ function buildSessionNodeData(
   rc: RegisteredConnection | null,
   sessionById: Map<string, OpenCodeSession>,
   depthCache: Map<string, number>,
+  sdkVcsInfo: SessionNodeData['vcsInfo'],
 ): SessionNodeData {
   // Coerce to the SessionInfo shape expected by extractVcsInfo.
   const info: SessionInfo = {
@@ -274,8 +295,37 @@ function buildSessionNodeData(
     // to `null`, which disables `isOpenCodeSession` downstream and hides
     // the chat history + model selector.
     providerType: 'opencode',
-    vcsInfo: extractVcsInfo(info),
+    vcsInfo: sdkVcsInfo ?? extractVcsInfo(info),
   };
+}
+
+async function fetchSdkVcsByDirectory(
+  port: number,
+  sessions: OpenCodeSession[],
+  registeredConnections: RegisteredConnection[],
+): Promise<Map<string, SessionNodeData['vcsInfo']>> {
+  const directories = new Set<string>();
+  for (const session of sessions) {
+    if (session.directory) directories.add(session.directory);
+  }
+  for (const connection of registeredConnections) {
+    if (connection.baseDirectory) directories.add(connection.baseDirectory);
+  }
+
+  const entries = await Promise.allSettled(
+    [...directories].map(async (directory) => ({
+      directory,
+      vcsInfo: await fetchVcsInfo(port, directory),
+    })),
+  );
+
+  const result = new Map<string, SessionNodeData['vcsInfo']>();
+  for (const entry of entries) {
+    if (entry.status === 'fulfilled' && entry.value.vcsInfo) {
+      result.set(entry.value.directory, entry.value.vcsInfo);
+    }
+  }
+  return result;
 }
 
 // ─── End ─────────────────────────────────────────────────────────────────────

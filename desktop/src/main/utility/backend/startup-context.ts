@@ -7,7 +7,7 @@
  *
  * Design rules:
  * - Skills: emitted in an `<available_skills source="db">` block with name +
- *   description only. Full content is on-demand via the
+ *   description only. Full content is on-demand via the exposed
  *   `manage_skills_and_instructions get` tool — same on-demand pattern as
  *   file-based skills.
  * - Instructions in `always` mode: emitted in an `<instructions source="db">`
@@ -22,7 +22,7 @@
  *   have content.
  */
 
-import type { SkillOrInstruction } from './database';
+import type { Memory, SkillOrInstruction } from './database';
 
 const SKILL_GET_NOTE =
   'Use the manage_skills_and_instructions tool with action "get" to retrieve the full content of any skill by name.';
@@ -57,6 +57,12 @@ export interface StartupContextParams {
    * session's injection. Defaults to empty (no globals muted).
    */
   sessionMutedNames?: readonly string[];
+  /**
+   * Persistent memories to inject. Callers are responsible for filtering to
+   * the right scope+project for the session (typically via
+   * `listMemories({ projectPath: baseDirectory })`). Defaults to empty.
+   */
+  memories?: readonly Memory[];
 }
 
 export function buildStartupContextMessage(
@@ -70,6 +76,7 @@ export function buildStartupContextMessage(
     entries,
     sessionOptInNames,
     sessionMutedNames,
+    memories,
   } = params;
   const optIn = new Set(sessionOptInNames ?? []);
   const muted = new Set(sessionMutedNames ?? []);
@@ -95,7 +102,7 @@ export function buildStartupContextMessage(
 
   lines.push(
     '- Registration: this session was auto-registered by the desktop app from OpenCode SDK session events; do not call register_connection.',
-    '- Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs.',
+    '- Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs, manage_skills_and_instructions, manage_memories.',
     '- Interactive prompt/channel tools are not exposed by this MCP surface; use your harness-native user interaction tools when you need to ask the user.',
   );
 
@@ -161,6 +168,22 @@ export function buildStartupContextMessage(
       lines.push('  </instruction>');
     }
     lines.push('</instructions>');
+  }
+
+  const memoriesList = memories ?? [];
+  if (memoriesList.length > 0) {
+    lines.push('');
+    lines.push('<memories source="db">');
+    for (const memory of memoriesList) {
+      const scopeAttr =
+        memory.scope === 'project' && memory.projectPath
+          ? ` project="${escapeXmlText(memory.projectPath)}"`
+          : '';
+      lines.push(`  <memory scope="${memory.scope}"${scopeAttr}>`);
+      lines.push(escapeXmlText(memory.content));
+      lines.push('  </memory>');
+    }
+    lines.push('</memories>');
   }
 
   if (skills.length > 0) {

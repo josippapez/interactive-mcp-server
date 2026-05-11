@@ -227,12 +227,11 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       const hasInitialMessage = (data.initialMessage?.trim().length ?? 0) > 0;
       const hasModelSelection = Boolean(data.modelSelection);
 
-      // Inject path is required when we need capabilities only supported by
-      // injectOpenCodeMessage (attachments and/or explicit model selection).
+      // Inject path is required for attachments. Explicit model selection is
+      // handled by SDK session.create(), so model-only new sessions can use the
+      // normal initial prompt path and avoid the extra inject step.
       // Note: attachments-only submissions are valid from the blank new-session page.
-      const needsInject =
-        (hasAttachments || hasModelSelection) &&
-        (hasAttachments || hasInitialMessage);
+      const needsInject = hasAttachments;
 
       logIpcInfo(
         `create-opencode-session flags: hasInitialMessage=${hasInitialMessage} hasAttachments=${hasAttachments} hasModelSelection=${hasModelSelection} needsInject=${needsInject}`,
@@ -250,6 +249,13 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
           !needsInject && hasInitialMessage ? data.initialMessage : undefined,
         directory: data.baseDirectory,
         agent: data.agent,
+        model: data.modelSelection
+          ? {
+              id: data.modelSelection.modelId,
+              providerID: data.modelSelection.providerId,
+              variant: data.modelSelection.variant,
+            }
+          : undefined,
       });
 
       if (!result.ok) {

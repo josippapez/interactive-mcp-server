@@ -11,7 +11,6 @@ export const DISABLED_DESKTOP_TOOL_NAMES = new Set([
   'push_session_status',
   'send_message',
   'poll_context_injections',
-  'manage_skills_and_instructions',
 ]);
 
 export const HIDDEN_TOOL_NAMES = DISABLED_DESKTOP_TOOL_NAMES;

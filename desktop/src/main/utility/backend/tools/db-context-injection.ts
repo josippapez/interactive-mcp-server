@@ -32,6 +32,8 @@ import {
   listSkillsAndInstructions,
   listSessionScopedEntryNames,
   listSessionMutedEntryNames,
+  listMemories,
+  type Memory,
   type SkillOrInstruction,
 } from '../database';
 import { startStartupContextInjection } from './register-connection-background';
@@ -177,6 +179,20 @@ export function maybeInjectDbContextOnConnect(
     `injecting DB context (${effective.length} of ${enabled.length} entries; ${sessionOptInNames.length} opt-ins, ${sessionMutedNames.length} mutes) into session ${sessionId} on auto-register`,
   );
 
+  let memories: Memory[] = [];
+  try {
+    const r = listMemories(
+      options.baseDirectory
+        ? { projectPath: options.baseDirectory }
+        : { scope: 'global' },
+    );
+    memories = Array.isArray(r) ? r : [];
+  } catch (err) {
+    log.warn(
+      `failed to list memories for session ${options.openCodeSessionId ?? '(none)'}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
+
   let message: string;
   try {
     message = build({
@@ -187,6 +203,7 @@ export function maybeInjectDbContextOnConnect(
       entries: enabled,
       sessionOptInNames,
       sessionMutedNames,
+      memories,
     });
   } catch (err) {
     injectedSessionIds.delete(sessionId);

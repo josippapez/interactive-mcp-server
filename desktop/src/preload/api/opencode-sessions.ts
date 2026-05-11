@@ -1,5 +1,11 @@
 import { ipcRenderer } from 'electron';
-import type { Attachment, SessionTreeNode } from './types';
+import type {
+  Attachment,
+  OpenCodeFileNode,
+  OpenCodeSdkStatus,
+  OpenCodeUtilitySnapshot,
+  SessionTreeNode,
+} from './types';
 
 export function createOpenCodeSessionsApi() {
   return {
@@ -116,6 +122,33 @@ export function createOpenCodeSessionsApi() {
       string,
       { type: 'busy' | 'idle' | 'error' | 'unknown' }
     > | null> => ipcRenderer.invoke('fetch-session-status'),
+
+    fetchOpenCodeSdkStatus: (
+      baseDirectory?: string,
+    ): Promise<
+      { ok: true; data: OpenCodeSdkStatus } | { ok: false; error: string }
+    > => ipcRenderer.invoke('fetch-opencode-sdk-status', baseDirectory),
+
+    fetchOpenCodeUtilitySnapshot: (
+      baseDirectory?: string,
+    ): Promise<
+      { ok: true; data: OpenCodeUtilitySnapshot } | { ok: false; error: string }
+    > => ipcRenderer.invoke('fetch-opencode-utility-snapshot', baseDirectory),
+
+    findOpenCodeFiles: (options: {
+      query: string;
+      baseDirectory?: string;
+      limit?: number;
+      type?: 'file' | 'directory';
+    }): Promise<{ ok: true; data: string[] } | { ok: false; error: string }> =>
+      ipcRenderer.invoke('find-opencode-files', options),
+
+    listOpenCodeFiles: (options: {
+      path: string;
+      baseDirectory?: string;
+    }): Promise<
+      { ok: true; data: OpenCodeFileNode[] } | { ok: false; error: string }
+    > => ipcRenderer.invoke('list-opencode-files', options),
 
     // Inject a message into an OpenCode session via its HTTP API
     // Set noReply=false to trigger an agent response (default is true for queuing)

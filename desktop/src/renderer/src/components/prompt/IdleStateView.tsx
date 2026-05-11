@@ -68,10 +68,13 @@ function IdleStateView({
           modelSelection,
           agent,
         );
-        // Clear the pre-selected project after successful session creation
         onClearPreSelectedProject?.();
-      } finally {
+        // Loader stays on success until this view unmounts on session
+        // navigation: the IPC resolves before the SSE event that
+        // populates the connections map and triggers the redirect.
+      } catch (error) {
         setIsCreating(false);
+        throw error;
       }
     },
     [onCreateSession, onClearPreSelectedProject],

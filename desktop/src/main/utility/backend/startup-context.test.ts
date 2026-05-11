@@ -59,6 +59,24 @@ describe('buildStartupContextMessage', () => {
     expect(message).not.toContain('disabled-skill');
   });
 
+  it('describes SDK auto-registration and repo docs/libs tools only', () => {
+    const message = buildStartupContextMessage({
+      channelName: 'Test Agent',
+      projectName: 'interactive-mcp-server',
+      openCodeSessionId: 'ses_abc123',
+      entries: [],
+    });
+
+    expect(message).toContain(
+      'this session was auto-registered by the desktop app from OpenCode SDK session events; do not call register_connection',
+    );
+    expect(message).toContain(
+      'Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs, manage_skills_and_instructions.',
+    );
+    expect(message).not.toContain('request_user_input');
+    expect(message).not.toContain('interactive prompt tools');
+  });
+
   it('uses catalog delivery for catalog-mode instructions in startup context', () => {
     const message = buildStartupContextMessage({
       channelName: 'Test Agent',

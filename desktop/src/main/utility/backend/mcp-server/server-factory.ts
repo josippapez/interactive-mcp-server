@@ -1,17 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { BrowserWindow } from 'electron';
 import type { AgentBackend } from '../../../settings-core';
-import { promptUser } from '../prompt-client';
 import { registerRepoDocsTools } from '../tools/find-repo-docs';
-import { registerIntensiveChatTools } from '../tools/intensive-chat';
 import { registerManageSkillsAndInstructionsTool } from '../tools/manage-skills-and-instructions';
-import { registerPollContextInjectionsTool } from '../tools/poll-context-injections';
-import { registerConnectionTool } from '../tools/register-connection';
-import { registerRequestUserInput } from '../tools/request-user-input';
-import {
-  registerSendMessageTool,
-  registerSessionChannelTools,
-} from '../tools/session-channel';
+import { registerManageMemoriesTool } from '../tools/manage-memories';
 import { getEffectiveProvider } from './provider-detection';
 import { applyHiddenToolListFilter } from './tool-list-filter';
 
@@ -41,47 +33,17 @@ export function createMcpServerWithTools(
   const providerType = getEffectiveProvider(getAgentBackend(), requestHeaders);
   const requireSessionId = providerType === 'opencode';
 
-  registerConnectionTool(
-    server,
-    getWindow,
-    connectionId,
-    getOpenCodePort,
-    getDocIndexingEnabled,
-    getAgentBackend,
-    () => providerType,
-  );
-  registerRequestUserInput(
-    server,
-    getWindow,
-    promptUser,
-    connectionId,
-    connectionName,
-    requireSessionId,
-  );
-  registerIntensiveChatTools(
-    server,
-    getWindow,
-    promptUser,
-    connectionId,
-    connectionName,
-    requireSessionId,
-  );
-  registerSessionChannelTools(
-    server,
-    getWindow,
-    connectionId,
-    requireSessionId,
-  );
-  registerSendMessageTool(server, getWindow, connectionId, requireSessionId);
   registerRepoDocsTools(server, connectionId, requireSessionId);
-  registerPollContextInjectionsTool(server, connectionId, requireSessionId);
   registerManageSkillsAndInstructionsTool(
     server,
     getWindow,
     connectionId,
     getOpenCodePort,
   );
+  registerManageMemoriesTool(server, connectionId);
 
+  void connectionName;
+  void getDocIndexingEnabled;
   void getSessionEntries;
   void cleanupConnection;
 

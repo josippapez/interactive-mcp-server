@@ -71,6 +71,13 @@ export type {
 } from './backend/mcp-status';
 export type { ReadConfigResult, WriteConfigResult } from './backend/config-io';
 export type { AgentDefinition, WriteAgentParams } from './backend/agents';
+export type { OpenCodeSdkStatus } from './backend/sdk-status';
+export type {
+  OpenCodeFileNode,
+  OpenCodeFindFilesOptions,
+  OpenCodeListFilesOptions,
+  OpenCodeUtilitySnapshot,
+} from './backend/sdk-utility';
 export { SUPPORTED_FILE_EXTENSIONS } from './backend/injector';
 
 function bridge(): Bridge {
@@ -359,6 +366,46 @@ export function fetchSessionStatus(
   openCodePort: number,
 ): Promise<SessionStatusMap | null> {
   return call('opencode.fetchSessionStatus', [openCodePort]);
+}
+
+import type { OpenCodeSdkStatus } from './backend/sdk-status';
+
+export function fetchOpenCodeSdkStatus(
+  openCodePort: number,
+  baseDirectory?: string,
+): Promise<OpenCodeSdkStatus> {
+  return call('opencode.fetchOpenCodeSdkStatus', [openCodePort, baseDirectory]);
+}
+
+import type {
+  OpenCodeFileNode,
+  OpenCodeFindFilesOptions,
+  OpenCodeListFilesOptions,
+  OpenCodeUtilitySnapshot,
+} from './backend/sdk-utility';
+
+export function fetchOpenCodeUtilitySnapshot(
+  openCodePort: number,
+  baseDirectory?: string,
+): Promise<OpenCodeUtilitySnapshot> {
+  return call('opencode.fetchOpenCodeUtilitySnapshot', [
+    openCodePort,
+    baseDirectory,
+  ]);
+}
+
+export function findOpenCodeFiles(
+  openCodePort: number,
+  options: OpenCodeFindFilesOptions,
+): Promise<string[]> {
+  return call('opencode.findOpenCodeFiles', [openCodePort, options]);
+}
+
+export function listOpenCodeFiles(
+  openCodePort: number,
+  options: OpenCodeListFilesOptions,
+): Promise<OpenCodeFileNode[]> {
+  return call('opencode.listOpenCodeFiles', [openCodePort, options]);
 }
 
 // ─── provider ───────────────────────────────────────────────────────────────

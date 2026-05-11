@@ -108,6 +108,69 @@ export type PendingQuestionRequest = {
   tool?: { messageID: string; callID: string };
 };
 
+export type OpenCodeLspStatus = {
+  id: string;
+  name: string;
+  root: string;
+  status: 'connected' | 'error';
+};
+
+export type OpenCodeFormatterStatus = {
+  name: string;
+  extensions: string[];
+  enabled: boolean;
+};
+
+export type OpenCodeSdkStatus = {
+  lsp: OpenCodeLspStatus[];
+  formatter: OpenCodeFormatterStatus[];
+};
+
+export type OpenCodePathInfo = {
+  home: string;
+  state: string;
+  config: string;
+  worktree: string;
+  directory: string;
+};
+
+export type OpenCodeProjectInfo = {
+  id: string;
+  worktree: string;
+  vcs?: 'git';
+  name?: string;
+  icon?: {
+    url?: string;
+    override?: string;
+    color?: string;
+  };
+  commands?: { start?: string };
+  time: { created: number; updated: number; initialized?: number };
+  sandboxes: string[];
+};
+
+export type OpenCodeFileStatus = {
+  path: string;
+  added: number;
+  removed: number;
+  status: 'added' | 'deleted' | 'modified';
+};
+
+export type OpenCodeFileNode = {
+  name: string;
+  path: string;
+  absolute: string;
+  type: 'file' | 'directory';
+  ignored: boolean;
+};
+
+export type OpenCodeUtilitySnapshot = {
+  path: OpenCodePathInfo | null;
+  project: OpenCodeProjectInfo | null;
+  toolIds: string[];
+  fileStatus: OpenCodeFileStatus[];
+};
+
 export type ProviderActionResult<T> = {
   ok: boolean;
   data?: T;

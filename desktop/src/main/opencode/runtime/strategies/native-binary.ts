@@ -253,6 +253,17 @@ export class NativeBinaryStrategy implements ProcessStrategy {
     const password = randomBytes(32).toString('base64url');
 
     const binPath = resolveBinaryPath();
+
+    // When Eden.app is launched from the macOS Dock or as a login item,
+    // process.cwd() is '/'. Inheriting that into `opencode serve` makes
+    // OpenCode report "Working directory: /" to every session and breaks
+    // tools that resolve relative paths. Fall back to HOME (matches the
+    // mcp-server/auto-register.ts:46-53 fallback).
+    const rawCwd = process.cwd();
+    const spawnCwd =
+      rawCwd === '/' || rawCwd === ''
+        ? (process.env.HOME ?? process.env.USERPROFILE ?? rawCwd)
+        : rawCwd;
     console.info(
       `${LOG_PREFIX} spawning ${binPath} serve --port ${port} --hostname 127.0.0.1`,
     );
@@ -270,6 +281,7 @@ export class NativeBinaryStrategy implements ProcessStrategy {
         'WARN',
       ],
       {
+        cwd: spawnCwd,
         env: {
           ...process.env,
           XDG_STATE_HOME: userDataPath,

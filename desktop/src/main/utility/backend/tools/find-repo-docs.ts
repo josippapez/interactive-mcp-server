@@ -352,12 +352,14 @@ IMPORTANT: You MUST pass your openCodeSessionId (format: ses_<alphanumeric>) wit
     'find_libs',
     {
       description:
-        'Find relevant npm libraries from package.json dependencies/devDependencies in the auto-registered repository.',
+        'Search the auto-registered repository root package.json for package names in dependencies/devDependencies and return matching names, versions, dependency kind, and match score.',
       title: 'Find repository libraries',
       inputSchema: {
         query: z
           .string()
-          .describe('Library search query, for example: tanstack router.'),
+          .describe(
+            'Package-name search query, for example: tanstack or react.',
+          ),
         limit: z.number().int().min(1).max(50).optional().default(20),
         openCodeSessionId: z.string().optional(),
       },

@@ -22,7 +22,6 @@ describe('HIDDEN_TOOL_NAMES', () => {
         'push_session_status',
         'send_message',
         'poll_context_injections',
-        'manage_skills_and_instructions',
       ]),
     );
   });
@@ -49,6 +48,7 @@ describe('HIDDEN_TOOL_NAMES', () => {
         list_docs: { inputSchema: {} },
         find_libs: { inputSchema: {} },
         find_repo_docs: { inputSchema: {} },
+        manage_skills_and_instructions: { inputSchema: {} },
       },
     } as unknown as McpServer;
 
@@ -61,6 +61,7 @@ describe('HIDDEN_TOOL_NAMES', () => {
       'list_docs',
       'find_libs',
       'find_repo_docs',
+      'manage_skills_and_instructions',
     ]);
   });
 });

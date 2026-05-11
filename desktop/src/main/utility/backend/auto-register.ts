@@ -6,21 +6,21 @@
  * sidebar immediately. Tombstoning is handled by `session-tree-service`.
  *
  * NOTE (Phase 6 follow-up): the legacy `recordPendingConnection` /
- * `tryAutoBindSession` heuristic was removed. The post-Phase-6 agent contract
- * (root `AGENTS.md`) requires every tool call — including `register_connection`
- * — to pass `openCodeSessionId`, which means there is no longer any case where
- * we need to guess a connection→session binding from timestamps. Routing now
- * always uses the explicit session ID.
+ * `tryAutoBindSession` heuristic was removed. OpenCode-backed sessions are
+ * created from SDK/SSE session events, and repo docs/libs tool calls use the
+ * explicit `openCodeSessionId` for routing instead of timestamp heuristics.
  */
 
 import {
   getDbInstance,
   getRegisteredConnectionBySessionId,
   isProviderSessionClaimed,
+  listMemories,
   listSessionMutedEntryNames,
   listSessionScopedEntryNames,
   listSkillsAndInstructions,
   upsertRegisteredConnection,
+  type Memory,
 } from './database';
 import { injectOpenCodeMessage } from './injector';
 import {
@@ -38,7 +38,9 @@ const log = createLogger('session-auto-register');
 
 /**
  * Build the session bootstrap message injected into a child session's context.
- * Contains the session ID so the agent knows what to pass to register_connection.
+ * Contains the session ID for repo docs/libs tool routing. Sessions are already
+ * auto-registered from OpenCode SDK events; agents must not call
+ * register_connection as a prerequisite.
  */
 function buildSessionBootstrapMessage(
   sessionId: string,
@@ -48,7 +50,8 @@ function buildSessionBootstrapMessage(
     `<system-reminder>\n` +
     `Your OpenCode session ID is: ${sessionId}\n` +
     `Parent session ID: ${parentId}\n` +
-    `Pass this as openCodeSessionId when calling register_connection.\n` +
+    `This session was auto-registered by the desktop app from OpenCode SDK events. Do not call register_connection.\n` +
+    `Pass this as openCodeSessionId when calling repo docs/libs tools that include that parameter.\n` +
     `</system-reminder>`
   );
 }
@@ -73,9 +76,10 @@ export interface AutoRegisterSessionOptions {
  * agent's context via the OpenCode message API so the agent knows its own
  * session ID before its first tool call — eliminating the need to pass it down.
  *
- * If the agent later calls register_connection for real, upsertRegisteredConnection
- * deduplication will consolidate the record on the (providerType, providerSessionId)
- * composite key, so no orphaned rows are left behind.
+ * If another auto-registration event arrives for the same session,
+ * upsertRegisteredConnection deduplication consolidates the record on the
+ * (providerType, providerSessionId) composite key, so no orphaned rows are left
+ * behind.
  */
 export function autoRegisterSession(
   info: SessionInfo,
@@ -100,6 +104,7 @@ export function autoRegisterSession(
       totalCount: number;
       sessionOptInCount: number;
       sessionMutedCount: number;
+      memoryCount: number;
     } | null;
   }
 
@@ -124,11 +129,15 @@ export function autoRegisterSession(
     }
 
     // Parent baseDirectory inheritance — see file-level docstring.
-    let effectiveBaseDirectory = info.directory;
+    let effectiveBaseDirectory =
+      info.directory === '/' || info.directory === ''
+        ? (process.env['HOME'] ?? info.directory)
+        : info.directory;
     if (info.parentID) {
       const home = process.env['HOME'];
       const looksLikeFallback =
         !info.directory ||
+        info.directory === '/' ||
         info.directory === home ||
         info.directory === '/Users' ||
         info.directory === '/home';
@@ -217,9 +226,10 @@ export function autoRegisterSession(
       totalCount,
       sessionOptInCount,
       sessionMutedCount,
+      memoryCount,
     } = result.skillsContext;
     log.info(
-      `injecting DB skills/instructions context (${effectiveCount} of ${totalCount} entries; ${sessionOptInCount} session opt-ins, ${sessionMutedCount} session mutes) into ${info.parentID ? 'child' : 'root'} session ${info.id} reason=session.created`,
+      `injecting DB context (${effectiveCount} of ${totalCount} entries; ${sessionOptInCount} session opt-ins, ${sessionMutedCount} session mutes; ${memoryCount} memories) into ${info.parentID ? 'child' : 'root'} session ${info.id} reason=session.created`,
     );
     setImmediate(() => {
       void injectOpenCodeMessage(
@@ -258,6 +268,7 @@ interface DbSkillsContext {
   totalCount: number;
   sessionOptInCount: number;
   sessionMutedCount: number;
+  memoryCount: number;
 }
 
 /**
@@ -288,7 +299,19 @@ function buildDbSkillsContext(
         (e.scope === 'global' && !mutedSet.has(e.name)) ||
         (e.scope === 'session-scoped' && optInSet.has(e.name)),
     );
-    if (effective.length === 0) {
+
+    let memories: Memory[] = [];
+    try {
+      memories = baseDirectory
+        ? listMemories({ projectPath: baseDirectory })
+        : listMemories({ scope: 'global' });
+    } catch (err) {
+      log.warn(
+        `failed to list memories for session ${sessionId}: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    if (effective.length === 0 && memories.length === 0) {
       return null;
     }
     const dbContext = buildStartupContextMessage({
@@ -299,6 +322,7 @@ function buildDbSkillsContext(
       entries,
       sessionOptInNames,
       sessionMutedNames,
+      memories,
     });
     return {
       dbContext,
@@ -306,6 +330,7 @@ function buildDbSkillsContext(
       totalCount: entries.length,
       sessionOptInCount: sessionOptInNames.length,
       sessionMutedCount: sessionMutedNames.length,
+      memoryCount: memories.length,
     };
   } catch (err) {
     log.warn(
@@ -369,7 +394,7 @@ function injectDbSkillsAndInstructions(options: InjectDbSkillsOptions): void {
   if (!ctx) return;
 
   log.info(
-    `injecting DB skills/instructions context (${ctx.effectiveCount} of ${ctx.totalCount} entries; ${ctx.sessionOptInCount} session opt-ins, ${ctx.sessionMutedCount} session mutes) into ${parentSessionId ? 'child' : 'root'} session ${sessionId} reason=${reason}`,
+    `injecting DB context (${ctx.effectiveCount} of ${ctx.totalCount} entries; ${ctx.sessionOptInCount} session opt-ins, ${ctx.sessionMutedCount} session mutes; ${ctx.memoryCount} memories) into ${parentSessionId ? 'child' : 'root'} session ${sessionId} reason=${reason}`,
   );
   void injectOpenCodeMessage(
     sessionId,

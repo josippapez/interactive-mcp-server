@@ -2,7 +2,6 @@ import { basename } from 'path';
 import {
   createSessionChannel,
   getRegisteredConnectionBySessionId,
-  updateConnectionId,
   upsertRegisteredConnection,
 } from '../database';
 import { autoDetectOpenCodeSession } from '../session';
@@ -18,6 +17,21 @@ import { emitToRenderer } from '../renderer-emit';
 const log = createLogger('mcp-auto-register');
 
 export const DEFAULT_MAIN_CHANNEL_NAME = 'OpenCode - Main Channel';
+
+function fallbackBaseDirectory(rawCwd: string): string {
+  return rawCwd === '/' || rawCwd === ''
+    ? (process.env.HOME ?? process.env.USERPROFILE ?? rawCwd)
+    : rawCwd;
+}
+
+function preferSessionDirectory(
+  sessionDirectory: string | undefined,
+  fallback: string,
+): string {
+  return sessionDirectory && sessionDirectory !== '/'
+    ? sessionDirectory
+    : fallback;
+}
 
 export interface AutoRegisterDeps {
   connectionId: string;
@@ -47,10 +61,7 @@ export async function autoRegisterDefaultConnection({
   // login item, which would cause the doc indexer to traverse the entire
   // filesystem. Fall back to the user's home directory in that case.
   const rawCwd = process.cwd();
-  const baseDirectory =
-    rawCwd === '/' || rawCwd === ''
-      ? (process.env.HOME ?? process.env.USERPROFILE ?? rawCwd)
-      : rawCwd;
+  const baseDirectory = fallbackBaseDirectory(rawCwd);
   const projectName = basename(baseDirectory) || 'project';
   const backend = getAgentBackend();
   const openCodeEnabled = backend === 'opencode';
@@ -62,6 +73,10 @@ export async function autoRegisterDefaultConnection({
     : null;
 
   if (detected) {
+    const detectedBaseDirectory = preferSessionDirectory(
+      detected.directory,
+      baseDirectory,
+    );
     log.info(
       `auto-detected OpenCode session=${detected.id} for connection=${connectionId}`,
     );
@@ -71,7 +86,18 @@ export async function autoRegisterDefaultConnection({
       'opencode',
     );
     if (existing) {
-      await updateConnectionId(detected.id, connectionId, 'opencode');
+      upsertRegisteredConnection({
+        providerSessionId: detected.id,
+        providerType: 'opencode',
+        connectionId,
+        channelName: existing.channelName ?? channelName,
+        projectName: existing.projectName ?? basename(detectedBaseDirectory),
+        baseDirectory: preferSessionDirectory(
+          detected.directory,
+          existing.baseDirectory ?? detectedBaseDirectory,
+        ),
+        parentSessionId: existing.parentSessionId ?? detected.parentId,
+      });
       await createSessionChannel(connectionId, channelName);
       invalidateSessionTree();
       // Re-inject DB-stored skills/instructions on the resume path. OpenCode
@@ -81,8 +107,11 @@ export async function autoRegisterDefaultConnection({
       maybeInjectDbContextOnConnect({
         openCodeSessionId: detected.id,
         channelName: existing.channelName ?? channelName,
-        projectName: existing.projectName ?? projectName,
-        baseDirectory: existing.baseDirectory ?? baseDirectory,
+        projectName: existing.projectName ?? basename(detectedBaseDirectory),
+        baseDirectory: preferSessionDirectory(
+          detected.directory,
+          existing.baseDirectory ?? detectedBaseDirectory,
+        ),
         connectionId,
         getOpenCodePort,
       });
@@ -94,8 +123,8 @@ export async function autoRegisterDefaultConnection({
       providerType: 'opencode',
       connectionId,
       channelName,
-      projectName,
-      baseDirectory,
+      projectName: basename(detectedBaseDirectory) || projectName,
+      baseDirectory: detectedBaseDirectory,
       parentSessionId: detected.parentId ?? undefined,
     });
     // First-connect path for a detected OpenCode session (no prior DB row).
@@ -104,8 +133,8 @@ export async function autoRegisterDefaultConnection({
     maybeInjectDbContextOnConnect({
       openCodeSessionId: detected.id,
       channelName,
-      projectName,
-      baseDirectory,
+      projectName: basename(detectedBaseDirectory) || projectName,
+      baseDirectory: detectedBaseDirectory,
       connectionId,
       getOpenCodePort,
     });

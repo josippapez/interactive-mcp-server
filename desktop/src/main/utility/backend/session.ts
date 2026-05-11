@@ -16,11 +16,13 @@ import {
   sessionCreate,
   sessionPromptAsync,
 } from './session-api';
+import type { SessionCreateBody } from './session-api';
 import { errorMessage } from '../../utils/errors';
 
 export interface DetectedSession {
   id: string;
   parentId: string | null;
+  directory?: string;
 }
 
 export interface OpenCodeSession {
@@ -316,6 +318,7 @@ export async function autoDetectOpenCodeSession(
   return {
     id: best.id,
     parentId: best.parentID ?? null,
+    directory: best.directory,
   };
 }
 
@@ -388,14 +391,12 @@ export function buildInitialPromptBody(input: {
 /**
  * Create a new OpenCode session via SDK.
  *
- * Uses sessionCreate() with optional title and parentID.
+ * Uses sessionCreate() with optional title, parentID, agent, and model.
  * When a directory is provided, the session is created in that directory context,
  * which loads the project's `.opencode/opencode.jsonc` config and project-specific MCPs.
  * After creating the session, optionally sends an initial message via promptAsync.
- * If an `agent` is provided alongside an `initialMessage`, it is forwarded to
- * `promptAsync` (OpenCode's `POST /session/{id}/prompt_async` accepts `agent`).
- * Note: OpenCode's `POST /session` does NOT accept `agent`, so it is never
- * passed to `sessionCreate`.
+ * If an `agent` is provided alongside an `initialMessage`, it is also forwarded
+ * to `promptAsync` so the first message uses the same explicit agent.
  * If attachments are provided, they will be included in the initial message.
  */
 export async function createOpenCodeSession(
@@ -407,28 +408,31 @@ export async function createOpenCodeSession(
     attachments?: SessionAttachment[];
     /** Directory context for the session - loads project-specific config from .opencode/ */
     directory?: string;
-    /**
-     * Optional OpenCode agent name (e.g. "build", "plan", "docs-maintainer").
-     * Forwarded to `prompt_async` only — OpenCode ignores this on session
-     * creation, so we never pass it to `sessionCreate`.
-     */
+    /** Optional OpenCode agent name (e.g. "build", "plan", "docs-maintainer"). */
     agent?: string;
+    /** Optional model selection for SDK session.create. */
+    model?: SessionCreateBody['model'];
   } = {},
 ): Promise<CreateSessionResult> {
   try {
     // Match OpenCode app behavior: create a directory-scoped client first,
     // then call session.create() on that client.
-    const createResponse = await sessionCreate(
-      openCodePort,
-      {
-        title: options.title,
-        parentID: options.parentID,
-      },
-      {
-        directory: options.directory,
-        signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
-      },
-    );
+    const trimmedAgent = options.agent?.trim();
+    const createBody: SessionCreateBody = {
+      title: options.title,
+      parentID: options.parentID,
+    };
+    if (trimmedAgent) {
+      createBody.agent = trimmedAgent;
+    }
+    if (options.model) {
+      createBody.model = options.model;
+    }
+
+    const createResponse = await sessionCreate(openCodePort, createBody, {
+      directory: options.directory,
+      signal: AbortSignal.timeout(CREATE_SESSION_TIMEOUT_MS),
+    });
 
     if (createResponse.error) {
       const rawError: unknown = createResponse.error;

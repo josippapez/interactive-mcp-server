@@ -1,4 +1,7 @@
-import { getRegisteredConnectionBySessionId } from './database';
+import {
+  getAllRegisteredConnections,
+  getRegisteredConnectionBySessionId,
+} from './database';
 import { getClient } from './sdk-client';
 import { createLogger } from '../../utils/logger';
 import { errorMessage } from '../../utils/errors';
@@ -25,26 +28,75 @@ export type PendingQuestionRecord = {
 
 const questionLog = createLogger('question');
 
-// TODO: fetchPendingQuestions is port-only and relies on opencode's
-// WorkspaceRouterMiddleware falling back to process.cwd() — it may miss pending
-// questions on non-cwd Instances. Consider fanning out over all registered
-// baseDirectories for full coverage.
+function mapPendingQuestion(item: {
+  id?: string;
+  sessionID?: string;
+  questions?: PendingQuestionInfo[];
+  tool?: { messageID: string; callID: string };
+}): PendingQuestionRecord | null {
+  if (!item.id || !item.sessionID) return null;
+  return {
+    requestId: item.id,
+    sessionID: item.sessionID,
+    questions: item.questions ?? [],
+    tool: item.tool,
+  };
+}
+
+async function fetchPendingQuestionsForDirectory(
+  openCodePort: number,
+  directory: string | undefined,
+): Promise<PendingQuestionRecord[]> {
+  const client = getClient(openCodePort, directory);
+  const result = await client.question.list(
+    directory ? { directory } : undefined,
+  );
+  const questions = result.data ?? [];
+  return questions.flatMap((item) => {
+    const mapped = mapPendingQuestion(item);
+    return mapped ? [mapped] : [];
+  });
+}
+
 export async function fetchPendingQuestions(
   openCodePort: number,
 ): Promise<PendingQuestionRecord[]> {
   try {
-    const client = getClient(openCodePort);
-    const result = await client.question.list();
-    const questions = result.data ?? [];
+    const directories = Array.from(
+      new Set(
+        getAllRegisteredConnections()
+          .filter(
+            (connection) =>
+              connection.providerType === 'opencode' &&
+              connection.baseDirectory,
+          )
+          .map((connection) => connection.baseDirectory as string),
+      ),
+    );
 
-    return questions
-      .filter((item) => item?.id && item?.sessionID)
-      .map((item) => ({
-        requestId: item.id,
-        sessionID: item.sessionID,
-        questions: item.questions ?? [],
-        tool: item.tool,
-      }));
+    const results = await Promise.allSettled([
+      fetchPendingQuestionsForDirectory(openCodePort, undefined),
+      ...directories.map((directory) =>
+        fetchPendingQuestionsForDirectory(openCodePort, directory),
+      ),
+    ]);
+
+    const byRequestId = new Map<string, PendingQuestionRecord>();
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        questionLog.error(
+          `fetchPendingQuestions scoped request error: ${errorMessage(result.reason)}`,
+        );
+        continue;
+      }
+      for (const question of result.value) {
+        if (!byRequestId.has(question.requestId)) {
+          byRequestId.set(question.requestId, question);
+        }
+      }
+    }
+
+    return [...byRequestId.values()];
   } catch (err: unknown) {
     questionLog.error(`fetchPendingQuestions error: ${errorMessage(err)}`);
     return [];

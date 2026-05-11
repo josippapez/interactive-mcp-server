@@ -10,7 +10,7 @@ function registeredToolNames(server: unknown): Set<string> {
 }
 
 describe('createMcpServerWithTools', () => {
-  it('registers hidden desktop tools so OpenCode can still call them directly', () => {
+  it('registers repo docs/libs and skills management tools only', () => {
     const server = createMcpServerWithTools(
       () => null,
       'connection-1',
@@ -29,13 +29,15 @@ describe('createMcpServerWithTools', () => {
     expect(names).toContain('list_docs');
     expect(names).toContain('find_libs');
     expect(names).toContain('find_repo_docs');
+    expect(names).toContain('manage_skills_and_instructions');
     expect(HIDDEN_TOOL_NAMES.has('find_docs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('read_doc')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('list_docs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('find_libs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('find_repo_docs')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('manage_skills_and_instructions')).toBe(false);
     for (const hiddenName of HIDDEN_TOOL_NAMES) {
-      expect(names).toContain(hiddenName);
+      expect(names).not.toContain(hiddenName);
     }
   });
 });

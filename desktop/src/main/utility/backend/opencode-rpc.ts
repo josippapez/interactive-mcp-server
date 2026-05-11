@@ -18,6 +18,8 @@ import * as permissionList from './permission-list';
 import * as todoMod from './todo';
 import * as vcsApi from './vcs-api';
 import * as sessionStatus from './session-status';
+import * as sdkStatus from './sdk-status';
+import * as sdkUtility from './sdk-utility';
 import * as providerMod from './provider';
 import * as commandMod from './command';
 import * as mcpRegister from './mcp-register';
@@ -237,6 +239,32 @@ export function registerOpencodeRpcHandlers(bridge: Bridge): void {
   bridge.handle('opencode.fetchSessionStatus', (p) => {
     const [port] = argsOf(p) as [number];
     return sessionStatus.fetchSessionStatus(port);
+  });
+
+  bridge.handle('opencode.fetchOpenCodeSdkStatus', (p) => {
+    const [port, baseDirectory] = argsOf(p) as [number, string | undefined];
+    return sdkStatus.fetchOpenCodeSdkStatus(port, baseDirectory);
+  });
+
+  bridge.handle('opencode.fetchOpenCodeUtilitySnapshot', (p) => {
+    const [port, baseDirectory] = argsOf(p) as [number, string | undefined];
+    return sdkUtility.fetchOpenCodeUtilitySnapshot(port, baseDirectory);
+  });
+
+  bridge.handle('opencode.findOpenCodeFiles', (p) => {
+    const [port, options] = argsOf(p) as [
+      number,
+      sdkUtility.OpenCodeFindFilesOptions,
+    ];
+    return sdkUtility.findOpenCodeFiles(port, options);
+  });
+
+  bridge.handle('opencode.listOpenCodeFiles', (p) => {
+    const [port, options] = argsOf(p) as [
+      number,
+      sdkUtility.OpenCodeListFilesOptions,
+    ];
+    return sdkUtility.listOpenCodeFiles(port, options);
   });
 
   // ── provider ─────────────────────────────────────────────────────────────

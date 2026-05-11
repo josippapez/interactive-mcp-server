@@ -177,9 +177,9 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
         /**
          * Optional per-message OpenCode agent override (e.g. 'plan',
          * 'docs-maintainer'). Whitespace-only or empty strings are treated
-         * as "no override" and the OpenCode session keeps its default
-         * agent. The override applies to a single prompt only — it is not
-         * persisted on the session.
+         * as "no override". NOTE: when set, OpenCode persists this agent
+         * on the session via `AgentSwitched`, so subsequent assistant
+         * messages use it until another switch occurs — not single-prompt.
          */
         agent?: string;
       },

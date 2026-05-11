@@ -40,6 +40,14 @@ export interface SessionListQuery {
 export interface SessionCreateBody {
   parentID?: string;
   title?: string;
+  agent?: string;
+  model?: Parameters<
+    ReturnType<typeof getClient>['session']['create']
+  >[0] extends infer P
+    ? P extends { model?: infer R }
+      ? R
+      : never
+    : never;
   permission?: Parameters<
     ReturnType<typeof getClient>['session']['create']
   >[0] extends infer P

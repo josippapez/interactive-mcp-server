@@ -14,7 +14,7 @@ let dbPath = '';
  * dropped and recreated from scratch. This eliminates all incremental
  * migration code.
  */
-const SCHEMA_VERSION = 14;
+const SCHEMA_VERSION = 15;
 
 // ─── Public interfaces ─────────────────────────────────────────────────────
 
@@ -67,6 +67,31 @@ export interface SkillOrInstruction {
 export interface Folder {
   id: number;
   name: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * Persistent memory entry — equivalent to Claude Code's CLAUDE.md memory
+ * feature. Memories are short Markdown notes injected into every session
+ * bootstrap reminder, scoped either:
+ *   - 'global' (project_path NULL): injected into every session.
+ *   - 'project' (project_path set): injected only when the session's
+ *     baseDirectory matches project_path.
+ *
+ * Memories are intentionally simpler than skills/instructions: no folders,
+ * no enable/disable, no tags, no session opt-in/mute. They are always-on
+ * notes the user (or the agent via `manage_memories`) wants the agent to
+ * remember across sessions.
+ */
+export type MemoryScope = 'global' | 'project';
+
+export interface Memory {
+  id: number;
+  scope: MemoryScope;
+  /** Required when scope='project'; NULL for global memories. */
+  projectPath: string | null;
+  content: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -321,6 +346,23 @@ function createTables(): void {
       created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS memories (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      scope        TEXT    NOT NULL CHECK(scope IN ('global', 'project')),
+      project_path TEXT,
+      content      TEXT    NOT NULL,
+      created_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at   DATETIME DEFAULT CURRENT_TIMESTAMP,
+      CHECK ((scope = 'global' AND project_path IS NULL) OR
+             (scope = 'project' AND project_path IS NOT NULL))
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_memories_scope_project
+      ON memories(scope, project_path)
+  `);
 }
 
 // ─── Initialization ────────────────────────────────────────────────────────
@@ -365,9 +407,11 @@ export async function initDatabase(
   const storedVersion = getSchemaVersion();
   if (storedVersion !== SCHEMA_VERSION) {
     const preservedSkills = preserveSkillsAndInstructions();
+    const preservedMemories = preserveMemories();
     dropAllTables();
     createTables();
     restoreSkillsAndInstructions(preservedSkills);
+    restoreMemories(preservedMemories);
     setSchemaVersion(SCHEMA_VERSION);
   } else {
     // Schema matches — just ensure tables exist (idempotent).
@@ -439,6 +483,7 @@ function dropAllTables(): void {
     'skills_and_instructions',
     'pinned_projects',
     'folders',
+    'memories',
   ];
   for (const table of tables) {
     db.exec(`DROP TABLE IF EXISTS ${table}`);
@@ -536,6 +581,51 @@ function restoreSkillsAndInstructions(rows: PreservedSkillRow[]): void {
       r.updatedAt,
       r.deliveryMode,
     );
+  }
+}
+
+interface PreservedMemoryRow {
+  scope: MemoryScope;
+  projectPath: string | null;
+  content: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+function preserveMemories(): PreservedMemoryRow[] {
+  if (!db) return [];
+  try {
+    const rows = db
+      .prepare(
+        `SELECT scope, project_path, content, created_at, updated_at FROM memories`,
+      )
+      .all() as Array<{
+      scope: string;
+      project_path: string | null;
+      content: string;
+      created_at: string;
+      updated_at: string;
+    }>;
+    return rows.map((r) => ({
+      scope: r.scope === 'project' ? 'project' : 'global',
+      projectPath: r.project_path,
+      content: r.content,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  } catch {
+    return [];
+  }
+}
+
+function restoreMemories(rows: PreservedMemoryRow[]): void {
+  if (!db || rows.length === 0) return;
+  const stmt = db.prepare(
+    `INSERT INTO memories (scope, project_path, content, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  );
+  for (const r of rows) {
+    stmt.run(r.scope, r.projectPath, r.content, r.createdAt, r.updatedAt);
   }
 }
 
@@ -2066,4 +2156,130 @@ export function deleteSessionMutedEntriesForSession(
     `DELETE FROM session_muted_entries
      WHERE provider_type = ? AND provider_session_id = ?`,
   ).run(providerType, providerSessionId);
+}
+
+// ─── Memories ──────────────────────────────────────────────────────────────
+
+interface MemoryRow {
+  id: number;
+  scope: string;
+  project_path: string | null;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+function mapMemoryRow(row: MemoryRow): Memory {
+  return {
+    id: row.id,
+    scope: row.scope === 'project' ? 'project' : 'global',
+    projectPath: row.project_path,
+    content: row.content,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function createMemory(data: {
+  scope: MemoryScope;
+  projectPath?: string | null;
+  content: string;
+}): Memory | null {
+  if (!db) return null;
+  const projectPath =
+    data.scope === 'project' ? (data.projectPath ?? null) : null;
+  if (data.scope === 'project' && !projectPath) {
+    throw new Error('createMemory: project scope requires projectPath');
+  }
+  const info = db
+    .prepare(
+      `INSERT INTO memories (scope, project_path, content) VALUES (?, ?, ?)`,
+    )
+    .run(data.scope, projectPath, data.content);
+  return getMemoryById(Number(info.lastInsertRowid));
+}
+
+export function getMemoryById(id: number): Memory | null {
+  if (!db) return null;
+  const row = db
+    .prepare(
+      `SELECT id, scope, project_path, content, created_at, updated_at
+       FROM memories WHERE id = ?`,
+    )
+    .get(id) as MemoryRow | undefined;
+  return row ? mapMemoryRow(row) : null;
+}
+
+/**
+ * List memories optionally filtered by scope and/or project path.
+ * - No filter: returns all memories.
+ * - `scope='global'`: returns only global memories.
+ * - `scope='project'` with `projectPath`: returns only project memories
+ *   matching that exact path.
+ * - `projectPath` alone (no scope): returns globals plus project memories
+ *   matching that path — the typical "what should inject for this session" set.
+ */
+export function listMemories(filter?: {
+  scope?: MemoryScope;
+  projectPath?: string;
+}): Memory[] {
+  if (!db) return [];
+  const conditions: string[] = [];
+  const params: (string | null)[] = [];
+
+  if (filter?.scope === 'global') {
+    conditions.push(`scope = 'global'`);
+  } else if (filter?.scope === 'project') {
+    conditions.push(`scope = 'project'`);
+    if (filter.projectPath) {
+      conditions.push(`project_path = ?`);
+      params.push(filter.projectPath);
+    }
+  } else if (filter?.projectPath) {
+    conditions.push(`(scope = 'global' OR project_path = ?)`);
+    params.push(filter.projectPath);
+  }
+
+  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+  const rows = db
+    .prepare(
+      `SELECT id, scope, project_path, content, created_at, updated_at
+       FROM memories ${where} ORDER BY scope ASC, created_at ASC`,
+    )
+    .all(...params) as MemoryRow[];
+  return rows.map(mapMemoryRow);
+}
+
+export function updateMemory(
+  id: number,
+  patch: { content?: string; scope?: MemoryScope; projectPath?: string | null },
+): Memory | null {
+  if (!db) return null;
+  const existing = getMemoryById(id);
+  if (!existing) return null;
+
+  const nextScope: MemoryScope = patch.scope ?? existing.scope;
+  const nextProjectPath: string | null =
+    nextScope === 'project'
+      ? patch.projectPath !== undefined
+        ? patch.projectPath
+        : existing.projectPath
+      : null;
+  if (nextScope === 'project' && !nextProjectPath) {
+    throw new Error('updateMemory: project scope requires projectPath');
+  }
+  const nextContent = patch.content ?? existing.content;
+
+  db.prepare(
+    `UPDATE memories
+       SET scope = ?, project_path = ?, content = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE id = ?`,
+  ).run(nextScope, nextProjectPath, nextContent, id);
+  return getMemoryById(id);
+}
+
+export function deleteMemory(id: number): boolean {
+  if (!db) return false;
+  const info = db.prepare(`DELETE FROM memories WHERE id = ?`).run(id);
+  return info.changes > 0;
 }

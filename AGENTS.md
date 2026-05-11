@@ -69,7 +69,7 @@ The CLI package (`src/`) is published to npm. The desktop app (`desktop/`) is di
 - **Automatic OpenCode session registration** — the desktop app registers OpenCode sessions from SDK/SSE session events. Agents do NOT call `register_connection` for OpenCode-backed sessions.
 - **Config-file timeout** — MCP tool call timeout is set in `opencode.json` via `syncRemoteConfig` at startup. Dynamic registration does not reliably override session timeouts.
 - **Prompt timeout behaviour** — when a prompt times out, it clears immediately and an expiry notice is appended. No grace period.
-- **SQLite via sql.js** — all session/message history is persisted in an embedded SQLite database (no native sqlite3 bindings).
+- **SQLite via better-sqlite3** — all session/message history is persisted in an embedded SQLite database. The `electron-rebuild` postinstall step rebuilds the native binding against the bundled Electron version (see `desktop/package.json` `rebuild:electron`).
 - **providerSessionId as primary key** — after the provider-session-id unification refactor (Phase 6), `providerSessionId` is the canonical DB identity for every session, paired with `providerType` as a composite primary key `(providerType, providerSessionId)`. For OpenCode sessions, `providerSessionId` equals the OpenCode session ID. The MCP `connectionId` is an internal transport handle only. Agents pass `openCodeSessionId` on the MCP wire (kept for agent-facing compatibility); it is mapped to `providerSessionId` internally at the MCP boundary. Agents must pass `openCodeSessionId` on every tool call to ensure correct channel routing.
 
 ---
@@ -97,15 +97,16 @@ Each agent MUST pass `openCodeSessionId` to repo docs/libs tools that include th
 
 ### Tool Call Requirements
 
-The advertised desktop MCP surface is repository context only:
+The advertised desktop MCP surface is repository context plus skills/instructions catalog management:
 
-| Tool             | Purpose                                       |
-| ---------------- | --------------------------------------------- |
-| `find_docs`      | Search repository documentation               |
-| `find_repo_docs` | Backward-compatible alias for `find_docs`     |
-| `list_docs`      | List available repository documentation paths |
-| `read_doc`       | Read one repository documentation file        |
-| `find_libs`      | Find npm libraries from package manifests     |
+| Tool                             | Purpose                                                           |
+| -------------------------------- | ----------------------------------------------------------------- |
+| `find_docs`                      | Search repository documentation                                   |
+| `find_repo_docs`                 | Backward-compatible alias for `find_docs`                         |
+| `list_docs`                      | List available repository documentation paths                     |
+| `read_doc`                       | Read one repository documentation file                            |
+| `find_libs`                      | Search root `package.json` dependency/devDependency package names |
+| `manage_skills_and_instructions` | List or fetch DB-stored skills/instructions catalog entries       |
 
 ### Example workflow
 

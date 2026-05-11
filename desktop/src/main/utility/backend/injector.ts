@@ -7,10 +7,65 @@ import { getRegisteredConnectionBySessionId } from './database';
 import { createLogger } from '../../utils/logger';
 import { toProviderReasoningVariant } from '../../../shared/reasoning-variant';
 import { reconcileDeliveryAfterTimeout } from './injector-reconcile';
-import { sessionPromptAsync } from './session-api';
+import { sessionMessages, sessionPromptAsync } from './session-api';
 import { errorMessage } from '../../utils/errors';
 
 const log = createLogger('injector');
+
+/**
+ * Resolve the agent currently associated with an OpenCode session by
+ * inspecting the most recent message that carries an `agent` value.
+ *
+ * Why this exists:
+ *   When we POST a `noReply:true` system-reminder to OpenCode without an
+ *   `agent` field, OpenCode's `createUserMessage` falls back to its global
+ *   `defaultAgent()` — which returns the first visible primary agent. If
+ *   that differs from the session's actual agent (e.g. injecting into a
+ *   subagent session like "librarian"), OpenCode emits `AgentSwitched`
+ *   and persists the wrong agent on the session row, contaminating every
+ *   subsequent assistant message on that session.
+ *
+ *   By passing back the session's existing agent on every silent
+ *   injection, we keep OpenCode on the correct agent rail.
+ *
+ * Returns `null` on any failure so callers can fall through to whatever
+ * default behaviour they had before — this is a defence-in-depth helper
+ * and must never break the injection path.
+ */
+async function resolveSessionAgent(
+  port: number,
+  openCodeSessionId: string,
+  directory: string | undefined,
+): Promise<string | null> {
+  try {
+    const response = await sessionMessages(
+      port,
+      openCodeSessionId,
+      { limit: 50 },
+      {
+        directory,
+        signal: AbortSignal.timeout(3000),
+      },
+    );
+    if (response.error) return null;
+
+    const messages = response.data as
+      | Array<{ info?: { agent?: string; role?: string } }>
+      | undefined;
+    if (!messages || messages.length === 0) return null;
+
+    // Walk newest-first to find the most recent message with an `agent`.
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const candidate = messages[i]?.info?.agent;
+      if (typeof candidate === 'string' && candidate.trim().length > 0) {
+        return candidate.trim();
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export const SUPPORTED_FILE_EXTENSIONS: string[] = [
   'png',
@@ -262,8 +317,31 @@ export async function injectOpenCodeMessage(
       if (systemMessage) {
         requestBody.system = systemMessage;
       }
-      if (trimmedAgent && trimmedAgent.length > 0) {
-        requestBody.agent = trimmedAgent;
+
+      // Without an explicit `agent`, OpenCode falls back to `defaultAgent()`
+      // (the first visible primary agent), which on subagent sessions
+      // triggers `AgentSwitched` and contaminates every later message.
+      // Resolve the session's current agent and pass it back to keep
+      // OpenCode on the correct rail.
+      let effectiveAgent: string | undefined =
+        trimmedAgent && trimmedAgent.length > 0 ? trimmedAgent : undefined;
+
+      if (!effectiveAgent) {
+        const resolved = await resolveSessionAgent(
+          openCodePort,
+          openCodeSessionId,
+          registered?.baseDirectory ?? undefined,
+        );
+        if (resolved) {
+          effectiveAgent = resolved;
+          log.info(
+            `[injectOpenCodeMessage] resolved session agent from history: ${resolved} (session=${openCodeSessionId})`,
+          );
+        }
+      }
+
+      if (effectiveAgent) {
+        requestBody.agent = effectiveAgent;
       }
 
       log.info(

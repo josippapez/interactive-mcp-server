@@ -1,10 +1,17 @@
 import { ipcMain } from 'electron';
-import { checkOpenCodeHealth } from '../../opencode/health';
-import { fetchVcsInfo } from '../../utility/opencode-client';
-import { fetchSessionStatus } from '../../utility/opencode-client';
-import { fetchPendingPermissions } from '../../utility/opencode-client';
-import { fetchPendingQuestions } from '../../utility/opencode-client';
 import { searchGlobal } from '../../docs/search-client';
+import { checkOpenCodeHealth } from '../../opencode/health';
+import {
+  fetchOpenCodeSdkStatus,
+  fetchOpenCodeUtilitySnapshot,
+  fetchPendingPermissions,
+  fetchPendingQuestions,
+  fetchSessionStatus,
+  fetchVcsInfo,
+  findOpenCodeFiles,
+  listOpenCodeFiles,
+} from '../../utility/opencode-client';
+import { withIpcResult } from './ipc-result';
 import { IpcHandlerDeps } from './types';
 
 export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
@@ -73,6 +80,64 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
       }
       return fetchVcsInfo(openCodePort, baseDirectory);
     },
+  );
+
+  ipcMain.handle(
+    'fetch-opencode-sdk-status',
+    withIpcResult(async (_event, baseDirectory?: string) => {
+      const { openCodePort, agentBackend } = deps.getSettings();
+      if (agentBackend !== 'opencode') {
+        return { lsp: [], formatter: [] };
+      }
+      return fetchOpenCodeSdkStatus(openCodePort, baseDirectory);
+    }),
+  );
+
+  ipcMain.handle(
+    'fetch-opencode-utility-snapshot',
+    withIpcResult(async (_event, baseDirectory?: string) => {
+      const { openCodePort, agentBackend } = deps.getSettings();
+      if (agentBackend !== 'opencode') {
+        return { path: null, project: null, toolIds: [], fileStatus: [] };
+      }
+      return fetchOpenCodeUtilitySnapshot(openCodePort, baseDirectory);
+    }),
+  );
+
+  ipcMain.handle(
+    'find-opencode-files',
+    withIpcResult(
+      async (
+        _event,
+        options: {
+          query: string;
+          baseDirectory?: string;
+          limit?: number;
+          type?: 'file' | 'directory';
+        },
+      ) => {
+        const { openCodePort, agentBackend } = deps.getSettings();
+        if (agentBackend !== 'opencode') return [];
+        return findOpenCodeFiles(openCodePort, options);
+      },
+    ),
+  );
+
+  ipcMain.handle(
+    'list-opencode-files',
+    withIpcResult(
+      async (
+        _event,
+        options: {
+          path: string;
+          baseDirectory?: string;
+        },
+      ) => {
+        const { openCodePort, agentBackend } = deps.getSettings();
+        if (agentBackend !== 'opencode') return [];
+        return listOpenCodeFiles(openCodePort, options);
+      },
+    ),
   );
 
   ipcMain.handle(
