@@ -104,7 +104,7 @@ export function stopSessionTreeService(): Promise<void> {
   }
 }
 
-export function fetchSessionTree(): Promise<SessionNodeData[]> {
+export function fetchSessionTree(): Promise<SessionNodeData[] | null> {
   return call('session.tree.fetch', []);
 }
 

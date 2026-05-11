@@ -97,9 +97,18 @@ export function useSessionTreeHandler({
     isFetching = true;
     void Promise.resolve(fetcher)
       .then((snapshotNodes) => {
-        if (snapshotNodes) {
-          applySnapshot(snapshotNodes);
+        if (snapshotNodes === null || snapshotNodes === undefined) {
+          // Main signals null only on REST fetch failure (typically a
+          // cold-start race where OpenCode has not bound its port yet).
+          // Schedule a bounded retry chain so the user does not have to
+          // click Refresh manually. Stops once any non-null snapshot lands
+          // or after RETRY_DELAYS_MS is exhausted; SSE invalidations will
+          // catch up later anyway.
+          scheduleRetry();
+          return;
         }
+        cancelPendingRetry();
+        applySnapshot(snapshotNodes);
       })
       .finally(() => {
         isFetching = false;
@@ -108,6 +117,29 @@ export function useSessionTreeHandler({
           fetchAndApply();
         }
       });
+  };
+
+  const RETRY_DELAYS_MS = [250, 500, 1000];
+  let retryAttempt = 0;
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const cancelPendingRetry = (): void => {
+    if (retryTimer !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = null;
+    }
+    retryAttempt = 0;
+  };
+
+  const scheduleRetry = (): void => {
+    if (retryAttempt >= RETRY_DELAYS_MS.length) return;
+    if (retryTimer !== null) return;
+    const delay = RETRY_DELAYS_MS[retryAttempt];
+    retryAttempt += 1;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      fetchAndApply();
+    }, delay);
   };
 
   // ------------------------------------------------------------------
@@ -124,6 +156,7 @@ export function useSessionTreeHandler({
   fetchAndApply();
 
   return () => {
+    cancelPendingRetry();
     for (const dispose of disposers) {
       dispose?.();
     }

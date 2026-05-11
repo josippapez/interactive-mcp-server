@@ -50,7 +50,10 @@ export function createOpenCodeSessionsApi() {
 
     // Pull-on-invalidation: fetch the current session tree snapshot directly.
     // Renderer calls this in response to `onSessionTreeInvalidated` events.
-    getSessionTree: (): Promise<SessionTreeNode[]> =>
+    // Returns `null` when the main-process REST fetch failed (cold-start race
+    // or transient transport error); the renderer treats `null` as
+    // "retry shortly" while `[]` means "no sessions exist".
+    getSessionTree: (): Promise<SessionTreeNode[] | null> =>
       ipcRenderer.invoke('get-session-tree'),
 
     // Fetch todos for an OpenCode session

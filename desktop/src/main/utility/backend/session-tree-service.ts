@@ -171,14 +171,17 @@ export function invalidateSessionTreeForKey(key: string): void {
  * `selectedFolder` is retained as renderer-facing state but no longer
  * scopes REST queries.
  *
- * Returns an empty array when OpenCode is unreachable.
+ * Returns `null` when the OpenCode REST fetch failed (server unreachable
+ * or transient error). The renderer treats `null` as "retry shortly" and
+ * `[]` as "no sessions exist". Without this distinction the sidebar would
+ * blank out on every transient cold-start fetch failure.
  */
-export async function fetchSessionTree(): Promise<SessionNodeData[]> {
+export async function fetchSessionTree(): Promise<SessionNodeData[] | null> {
   const port = state.getOpenCodePort?.() ?? 4096;
 
   const pinnedDirectories = getPinnedProjects().map((p) => p.path);
   const sessions = await fetchAllOpenCodeSessions(port, pinnedDirectories);
-  if (!sessions) return [];
+  if (!sessions) return null;
 
   const registeredConnections = getAllRegisteredConnections();
   const byOpenCodeId = new Map<string, RegisteredConnection>(
