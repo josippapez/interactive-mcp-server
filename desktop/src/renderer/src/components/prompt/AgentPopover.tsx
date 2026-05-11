@@ -172,9 +172,7 @@ function AgentPopover({
   };
 
   const selectItem = (item: FlatItem): void => {
-    handleSelect(
-      item.agent.name === resolvedDefaultAgentName ? null : item.agent.name,
-    );
+    handleSelect(item.agent.name);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>): void => {
@@ -207,11 +205,7 @@ function AgentPopover({
       <button
         key={`${agent.scope}:${agent.filePath}`}
         type="button"
-        onClick={() =>
-          handleSelect(
-            agent.name === resolvedDefaultAgentName ? null : agent.name,
-          )
-        }
+        onClick={() => handleSelect(agent.name)}
         onMouseEnter={() => setActiveIndex(flatIdx)}
         className={`w-full px-2 py-1.5 text-left text-[11px] flex items-center justify-between gap-2 transition-colors ${
           isSelected
