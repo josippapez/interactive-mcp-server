@@ -147,12 +147,10 @@ export function useSessionFiltering({
   );
 
   const filteredProjects = useMemo(() => {
-    return projects
-      .map((project) => ({
-        ...project,
-        sessions: filterByActivity(filterByProvider(project.sessions)),
-      }))
-      .filter((project) => project.sessions.length > 0 || project.isPinned);
+    return projects.map((project) => ({
+      ...project,
+      sessions: filterByActivity(filterByProvider(project.sessions)),
+    }));
   }, [projects, filterByActivity, filterByProvider]);
 
   // Get all nodes for counting
