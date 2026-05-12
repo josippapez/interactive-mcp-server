@@ -6,3 +6,10 @@ export function shouldVirtualizeMessageList(input: {
 }): boolean {
   return !input.isBusy && input.messageCount > CHAT_VIRTUALIZATION_THRESHOLD;
 }
+
+export function shouldUseVirtualBottomScroll(input: {
+  isVirtualized: boolean;
+  messageCount: number;
+}): boolean {
+  return input.isVirtualized && input.messageCount > 0;
+}

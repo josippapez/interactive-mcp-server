@@ -126,6 +126,7 @@ export default function ChatHistoryView({
     src: string;
     name: string;
   } | null>(null);
+  const [jumpToBottomSignal, setJumpToBottomSignal] = useState(0);
 
   // Refs for the scroll container and inner content wrapper.
   // (useAutoScroll exposes a callback ref we combine with our own.)
@@ -450,11 +451,17 @@ export default function ChatHistoryView({
   const handleToggleStickToBottom = useCallback(
     (next: boolean) => {
       if (!channelId) {
-        if (next) jumpToBottom();
+        if (next) {
+          setJumpToBottomSignal((value) => value + 1);
+          jumpToBottom();
+        }
         return;
       }
       setChannelStickToBottom(channelId, next);
-      if (next) jumpToBottom();
+      if (next) {
+        setJumpToBottomSignal((value) => value + 1);
+        jumpToBottom();
+      }
     },
     [channelId, jumpToBottom, setChannelStickToBottom],
   );
@@ -474,6 +481,7 @@ export default function ChatHistoryView({
           return;
         }
         e.preventDefault();
+        setJumpToBottomSignal((value) => value + 1);
         jumpToBottom();
       }
     };
@@ -634,6 +642,7 @@ export default function ChatHistoryView({
             showThinking={showThinking}
             isBusy={isBusy}
             matchedMessageIds={matchedMessageIds}
+            jumpToBottomSignal={jumpToBottomSignal}
             activeSearchMatchId={
               activeSearchMatchIndex >= 0
                 ? (matchedMessageIds[activeSearchMatchIndex] ?? null)

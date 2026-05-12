@@ -15,7 +15,10 @@ import {
   getStreamingMessageId,
   useSeenMessageIds,
 } from './message-list-helpers';
-import { shouldVirtualizeMessageList } from './message-list-virtualization';
+import {
+  shouldUseVirtualBottomScroll,
+  shouldVirtualizeMessageList,
+} from './message-list-virtualization';
 
 interface MessageListProps {
   /** Messages to render */
@@ -51,6 +54,8 @@ interface MessageListProps {
    * `activeSearchMatchId`, the list will scroll the matched row into view.
    */
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
+  /** Incremented by the parent on explicit jumps to the latest message. */
+  jumpToBottomSignal?: number;
   /**
    * Id of the message currently targeted by a `#message-<id>` URL hash.
    * Causes a transient pulse highlight on that row (managed by parent).
@@ -94,6 +99,7 @@ const MessageList = memo(function MessageList({
   matchedMessageIds = EMPTY_MATCHED_IDS,
   activeSearchMatchId = null,
   scrollContainerRef,
+  jumpToBottomSignal = 0,
   deepLinkMessageId = null,
 }: MessageListProps): React.ReactElement {
   const newMessageIds = useSeenMessageIds(messages);
@@ -165,6 +171,32 @@ const MessageList = memo(function MessageList({
     },
     [getRefSetter, virtualizer],
   );
+
+  const lastHandledJumpSignalRef = useRef(0);
+  useEffect(() => {
+    if (jumpToBottomSignal === 0) return;
+    if (lastHandledJumpSignalRef.current === jumpToBottomSignal) return;
+    lastHandledJumpSignalRef.current = jumpToBottomSignal;
+    if (
+      !shouldUseVirtualBottomScroll({
+        isVirtualized: shouldVirtualize,
+        messageCount: messages.length,
+      })
+    ) {
+      return;
+    }
+
+    virtualizer.scrollToIndex(messages.length - 1, {
+      align: 'end',
+      behavior: 'auto',
+    });
+    requestAnimationFrame(() => {
+      virtualizer.scrollToIndex(messages.length - 1, {
+        align: 'end',
+        behavior: 'auto',
+      });
+    });
+  }, [jumpToBottomSignal, messages.length, shouldVirtualize, virtualizer]);
 
   // Which message currently holds keyboard focus (null = none).
   const [focusedId, setFocusedId] = useState<string | null>(null);
