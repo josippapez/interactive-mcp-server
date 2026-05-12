@@ -105,6 +105,88 @@ describe('conversation-reducer', () => {
     expect(updated.sessionSideChannels.ses_1).toBeUndefined();
   });
 
+  it('creates assistant metadata from session.next.step.started before message updates arrive', () => {
+    const updated = applyConversationEvent(initialConversationState, {
+      type: 'session.next.step.started',
+      sessionId: 'ses_1',
+      messageId: 'msg_step',
+      agent: 'build',
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+      timestamp: 250,
+    });
+
+    expect(updated.messages.ses_1[0]).toMatchObject({
+      id: 'msg_step',
+      role: 'assistant',
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+      agent: 'build',
+    });
+    expect(updated.sessionSideChannels.ses_1.model).toEqual({
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+    });
+  });
+
+  it('preserves step-started variant when later message updates omit it', () => {
+    const seeded = applyConversationEvent(initialConversationState, {
+      type: 'session.next.step.started',
+      sessionId: 'ses_1',
+      messageId: 'msg_step',
+      agent: 'build',
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+      timestamp: 250,
+    });
+
+    const updated = applyConversationEvent(seeded, {
+      type: 'message.updated',
+      sessionId: 'ses_1',
+      message: assistantMessage({
+        id: 'msg_step',
+        modelId: undefined,
+        providerId: undefined,
+        variant: undefined,
+      }),
+    });
+
+    expect(updated.messages.ses_1[0]).toMatchObject({
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+    });
+  });
+
+  it('lets session.next.step.started correct stale existing message metadata', () => {
+    const seeded = applyConversationEvent(initialConversationState, {
+      type: 'message.updated',
+      sessionId: 'ses_1',
+      message: assistantMessage({ id: 'msg_step', variant: 'low' }),
+    });
+
+    const updated = applyConversationEvent(seeded, {
+      type: 'session.next.step.started',
+      sessionId: 'ses_1',
+      messageId: 'msg_step',
+      agent: 'build',
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+      timestamp: 250,
+    });
+
+    expect(updated.messages.ses_1[0]).toMatchObject({
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+    });
+  });
+
   it('does not let stale session.next.tool.progress overwrite a completed tool', () => {
     const seeded = applyConversationEvent(initialConversationState, {
       type: 'message.part.updated',

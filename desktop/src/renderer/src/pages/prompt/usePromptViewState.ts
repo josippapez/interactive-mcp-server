@@ -157,6 +157,7 @@ export function usePromptViewState(props: PromptViewProps) {
   });
 
   const displayedSessionModel = resolveDisplayedSessionModel({
+    hasOverride: Boolean(sessionModelSelection.currentModelOverride),
     runningModel: {
       modelId: currentModelId,
       providerId: currentProviderId,

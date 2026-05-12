@@ -287,6 +287,42 @@ function applySessionNextModelSwitchedDraft(
   channel.model = model;
 }
 
+function applySessionNextStepStartedDraft(
+  draft: ConversationDraft,
+  event: Extract<ConversationEvent, { type: 'session.next.step.started' }>,
+): void {
+  const sessionMessages = draft.messages[event.sessionId] ?? [];
+  const existing = sessionMessages.find((msg) => msg.id === event.messageId);
+  const nextMessage = {
+    ...(existing ?? {}),
+    id: event.messageId,
+    sessionId: event.sessionId,
+    role: 'assistant' as const,
+    parts: existing?.parts ?? [],
+    modelId: event.modelId,
+    providerId: event.providerId,
+    agent: event.agent,
+    variant: event.variant,
+    createdAt: event.timestamp,
+  };
+
+  if (existing) {
+    Object.assign(existing, nextMessage);
+  } else {
+    sessionMessages.push(nextMessage);
+    draft.messages[event.sessionId] = sessionMessages as Draft<
+      ConversationMessage[]
+    >;
+  }
+
+  const channel = ensureSessionSideChannelDraft(draft, event.sessionId);
+  channel.model = {
+    modelId: event.modelId,
+    providerId: event.providerId,
+    variant: event.variant,
+  };
+}
+
 function toolProgressText(
   event: Extract<ConversationEvent, { type: 'session.next.tool.progress' }>,
 ): string | undefined {
@@ -391,6 +427,9 @@ function applyEventToDraft(
         providerId: event.providerId,
         variant: event.variant,
       });
+      return;
+    case 'session.next.step.started':
+      applySessionNextStepStartedDraft(draft, event);
       return;
     case 'session.next.retried':
     case 'session.next.compaction.started':

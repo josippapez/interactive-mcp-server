@@ -515,6 +515,16 @@ export type ConversationEvent =
       timestamp: number;
     }
   | {
+      type: 'session.next.step.started';
+      sessionId: string;
+      messageId: string;
+      agent: string;
+      modelId: string;
+      providerId: string;
+      variant?: string;
+      timestamp: number;
+    }
+  | {
       type: 'session.next.retried';
       sessionId: string;
       attempt: number;

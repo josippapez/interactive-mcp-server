@@ -49,10 +49,10 @@ describe('getEffortBadge', () => {
     });
   });
 
-  it('maps max variant', () => {
+  it('normalizes provider max variant to canonical xhigh badge', () => {
     expect(getEffortBadge('max')).toEqual({
       label: 'Max effort',
-      variant: 'effort-max',
+      variant: 'effort-xhigh',
     });
   });
 

@@ -96,4 +96,41 @@ describe('opencode-mapping', () => {
       path: { cwd: '/repo/app', root: '/repo' },
     });
   });
+
+  it('maps v2 assistant model refs including variant', () => {
+    const message = {
+      id: 'msg_v2',
+      sessionID: 'ses_1',
+      role: 'assistant',
+      time: { created: 10 },
+      agent: 'build',
+      model: {
+        id: 'claude-opus-4.6',
+        providerID: 'github-copilot',
+        variant: 'max',
+      },
+      content: [],
+    } as unknown as AssistantMessage;
+
+    expect(mapMessage(message)).toMatchObject({
+      modelId: 'claude-opus-4.6',
+      providerId: 'github-copilot',
+      variant: 'xhigh',
+    });
+  });
+
+  it('normalizes default assistant variant to missing display metadata', () => {
+    const message: AssistantMessage = {
+      id: 'msg_default',
+      sessionID: 'ses_1',
+      role: 'assistant',
+      time: { created: 10 },
+      parentID: 'user_1',
+      modelID: 'gpt-5.5',
+      providerID: 'github-copilot',
+      variant: 'default',
+    };
+
+    expect(mapMessage(message).variant).toBeUndefined();
+  });
 });

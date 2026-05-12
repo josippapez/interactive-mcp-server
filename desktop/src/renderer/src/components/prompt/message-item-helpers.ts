@@ -1,5 +1,6 @@
 import type { Attachment } from '../../types';
 import type { UnifiedMessage } from '../../types/unified-message';
+import { normalizeReasoningVariant } from '../../../../shared/reasoning-variant';
 
 export function getAttachmentKey(
   messageId: string,
@@ -107,11 +108,9 @@ const EFFORT_LEVELS = {
 } as const;
 
 export function getEffortBadge(variantStr?: string) {
-  if (!variantStr) return null;
-  return (
-    EFFORT_LEVELS[variantStr.toLowerCase() as keyof typeof EFFORT_LEVELS] ??
-    null
-  );
+  const normalizedVariant = normalizeReasoningVariant(variantStr);
+  if (!normalizedVariant) return null;
+  return EFFORT_LEVELS[normalizedVariant as keyof typeof EFFORT_LEVELS] ?? null;
 }
 
 export function getAssistantHeaderMetadata({

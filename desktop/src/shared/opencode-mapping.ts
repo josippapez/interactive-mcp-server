@@ -22,6 +22,7 @@ import type {
   ConversationMessagePart,
   ConversationMessageRole,
 } from '../preload/api/types';
+import { normalizeReasoningVariant } from './reasoning-variant';
 
 /**
  * Raw SDK part types we DO NOT mirror into the renderer. These are internal
@@ -36,6 +37,13 @@ const SKIP_PART_TYPES = new Set<string>([
   'agent',
   'retry',
 ]);
+
+function normalizeDisplayVariant(
+  variant: string | null | undefined,
+): string | undefined {
+  const normalized = normalizeReasoningVariant(variant);
+  return normalized === 'default' ? undefined : normalized;
+}
 
 /**
  * Map a raw SDK `Part` (any variant in the union) to our simplified
@@ -182,6 +190,13 @@ export function mapMessage(message: SdkMessage): ConversationMessage {
   const isAssistant = message.role === 'assistant';
   const asAssistant = isAssistant ? (message as AssistantMessage) : null;
   const asUser = !isAssistant ? (message as UserMessage) : null;
+  const assistantModel = asAssistant
+    ? (
+        asAssistant as AssistantMessage & {
+          model?: { id?: string; providerID?: string; variant?: string };
+        }
+      ).model
+    : undefined;
 
   return {
     id: message.id,
@@ -189,8 +204,12 @@ export function mapMessage(message: SdkMessage): ConversationMessage {
     parentId: asAssistant?.parentID ?? null,
     role: mapRole(message),
     parts: [], // parts arrive via message.part.updated
-    modelId: asAssistant?.modelID ?? asUser?.model?.modelID,
-    providerId: asAssistant?.providerID ?? asUser?.model?.providerID,
+    modelId:
+      asAssistant?.modelID ?? assistantModel?.id ?? asUser?.model?.modelID,
+    providerId:
+      asAssistant?.providerID ??
+      assistantModel?.providerID ??
+      asUser?.model?.providerID,
     agent: asAssistant?.agent ?? asUser?.agent,
     mode: asAssistant?.mode,
     finish: asAssistant?.finish,
@@ -204,7 +223,9 @@ export function mapMessage(message: SdkMessage): ConversationMessage {
         : asAssistant.error.name
       : undefined,
     errorName: asAssistant?.error?.name,
-    variant: asAssistant?.variant ?? asUser?.model?.variant,
+    variant: normalizeDisplayVariant(
+      asAssistant?.variant ?? assistantModel?.variant ?? asUser?.model?.variant,
+    ),
     createdAt: message.time.created,
     completedAt: asAssistant?.time.completed,
     tokens: asAssistant?.tokens,

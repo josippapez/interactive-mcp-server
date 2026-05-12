@@ -62,6 +62,8 @@ export function semanticKey(event: ConversationEvent): string | null {
       return `cdone:${event.sessionId}`;
     case 'session.next.model.switched':
       return `next.model:${event.sessionId}`;
+    case 'session.next.step.started':
+      return `next.step:${event.sessionId}:${event.messageId}`;
     case 'session.next.retried':
       return `next.retry:${event.sessionId}`;
     case 'session.next.compaction.started':

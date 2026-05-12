@@ -26,6 +26,7 @@ import type {
 } from '@opencode-ai/sdk/v2/client';
 import type { ConversationEvent } from '../../../preload/api/types';
 import { mapMessage, mapPart } from '../../../shared/opencode-mapping';
+import { normalizeReasoningVariant } from '../../../shared/reasoning-variant';
 import {
   computeContextUsage,
   getSessionContextUsage,
@@ -34,6 +35,13 @@ import {
 // Re-export the shared mappers so existing callers inside this backend
 // package can continue importing them from `./event-bridge`.
 export { mapMessage, mapPart };
+
+function normalizeDisplayVariant(
+  variant: string | null | undefined,
+): string | undefined {
+  const normalized = normalizeReasoningVariant(variant);
+  return normalized === 'default' ? undefined : normalized;
+}
 
 // ─── Top-level dispatch ──────────────────────────────────────────────────────
 
@@ -278,7 +286,23 @@ export function bridgeEvent(
           sessionId: payload.properties.sessionID,
           modelId: model.id,
           providerId: model.providerID,
-          variant: model.variant === 'default' ? undefined : model.variant,
+          variant: normalizeDisplayVariant(model.variant),
+          timestamp: payload.properties.timestamp,
+        },
+      ];
+    }
+
+    case 'session.next.step.started': {
+      const { model } = payload.properties;
+      return [
+        {
+          type: 'session.next.step.started',
+          sessionId: payload.properties.sessionID,
+          messageId: payload.id,
+          agent: payload.properties.agent,
+          modelId: model.id,
+          providerId: model.providerID,
+          variant: normalizeDisplayVariant(model.variant),
           timestamp: payload.properties.timestamp,
         },
       ];
