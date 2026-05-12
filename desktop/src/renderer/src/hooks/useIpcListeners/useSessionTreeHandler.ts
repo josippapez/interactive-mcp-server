@@ -28,6 +28,7 @@ export function useSessionTreeHandler({
   applyStartupPromptBuffer,
   applyStartupPermissionBuffer,
   applyStartupQuestionBuffer,
+  rehydratePendingQuestions,
 }: HandlerContext): () => void {
   const disposers: Array<(() => void) | undefined> = [];
 
@@ -66,6 +67,7 @@ export function useSessionTreeHandler({
         applyStartupPermissionBuffer(snap.providerSessionId, snap.connectionId);
         applyStartupQuestionBuffer(snap.providerSessionId, snap.connectionId);
       }
+      void rehydratePendingQuestions();
     });
 
     // Do not steal focus from a currently active channel, and do not

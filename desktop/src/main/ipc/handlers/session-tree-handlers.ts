@@ -1,5 +1,6 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { basename } from 'path';
+import { existsSync } from 'fs';
 import {
   getRegisteredConnectionBySessionId,
   upsertRegisteredConnection,
@@ -12,6 +13,7 @@ import {
 } from '../../utility/opencode-client';
 import { fetchTodosForSession } from '../../utility/opencode-client';
 import { abortOpenCodeSession } from '../../utility/opencode-client';
+import { rejectPendingQuestionsForSession } from '../../utility/opencode-client';
 import {
   fetchSessionTree,
   getSelectedFolder,
@@ -26,12 +28,49 @@ import {
   ModelSelectionPayload,
 } from './types';
 import { logIpcInfo } from './shared';
+import { writeSessionLog } from '../../utils/session-logger';
+import {
+  buildSessionLogOpenResult,
+  buildSessionLogFilePath,
+  readSessionLog,
+} from '../../utils/session-logger';
+import { formatQuestionLifecycleLog } from '../../utility/backend/question-lifecycle-logger';
 
 export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
   // Pull-on-invalidation: return the current session tree snapshot on demand.
   ipcMain.handle('get-session-tree', async () => {
     return fetchSessionTree();
   });
+
+  ipcMain.handle('get-session-log-path', (_event, sessionId: string) => {
+    return buildSessionLogFilePath(deps.getLogsDir(), sessionId);
+  });
+
+  ipcMain.handle(
+    'read-session-log',
+    (_event, sessionId: string, lines?: number): Promise<string> => {
+      return readSessionLog(deps.getLogsDir(), sessionId, lines ?? 200);
+    },
+  );
+
+  ipcMain.handle(
+    'open-session-log',
+    async (
+      _event,
+      sessionId: string,
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const logFile = buildSessionLogOpenResult(deps.getLogsDir(), sessionId);
+      if (!logFile.ok) {
+        return logFile;
+      }
+      const path = logFile.path;
+      if (!existsSync(path)) {
+        return { ok: false, error: 'Session log file does not exist yet.' };
+      }
+      const error = await shell.openPath(path);
+      return error ? { ok: false, error } : { ok: true };
+    },
+  );
 
   // Renderer-triggered invalidation (user-clicked "refresh" button in sidebar).
   // Fires `session-tree-invalidated` so the renderer refetches. A plain
@@ -118,6 +157,13 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       logIpcInfo(
         `reply-question: requestID=${data.requestID} sessionID=${data.sessionID} answers=${JSON.stringify(data.answers)}`,
       );
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.sessionID,
+        'INFO',
+        'ipc:reply-question',
+        `requestID=${data.requestID} answers=${JSON.stringify(data.answers)}`,
+      );
       const result = await replyToOpenCodeQuestion(
         openCodePort,
         data.requestID,
@@ -125,6 +171,18 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
         data.sessionID,
       );
       logIpcInfo(`reply-question result: ${JSON.stringify(result)}`);
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.sessionID,
+        result.ok ? 'INFO' : 'ERROR',
+        'question-lifecycle',
+        formatQuestionLifecycleLog({
+          kind: 'answered',
+          requestId: data.requestID,
+          sessionId: data.sessionID,
+          answerCount: data.answers.length,
+        }) + ` result=${JSON.stringify(result)}`,
+      );
       return result;
     },
   );
@@ -139,12 +197,30 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       logIpcInfo(
         `reject-question: requestID=${data.requestID} sessionID=${data.sessionID}`,
       );
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.sessionID,
+        'INFO',
+        'ipc:reject-question',
+        `requestID=${data.requestID}`,
+      );
       const result = await rejectOpenCodeQuestion(
         openCodePort,
         data.requestID,
         data.sessionID,
       );
       logIpcInfo(`reject-question result: ${JSON.stringify(result)}`);
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.sessionID,
+        result.ok ? 'INFO' : 'ERROR',
+        'question-lifecycle',
+        formatQuestionLifecycleLog({
+          kind: 'rejected',
+          requestId: data.requestID,
+          sessionId: data.sessionID,
+        }) + ` result=${JSON.stringify(result)}`,
+      );
       return result;
     },
   );
@@ -177,8 +253,22 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       logIpcInfo(
         `abort-session: sessionId=${sessionId} openCodePort=${openCodePort}`,
       );
+      writeSessionLog(
+        deps.getLogsDir(),
+        sessionId,
+        'WARN',
+        'ipc:abort-session',
+        `abort requested openCodePort=${openCodePort}`,
+      );
       const success = await abortOpenCodeSession(openCodePort, sessionId);
       logIpcInfo(`abort-session result: success=${success}`);
+      writeSessionLog(
+        deps.getLogsDir(),
+        sessionId,
+        success ? 'INFO' : 'ERROR',
+        'ipc:abort-session',
+        `success=${success}`,
+      );
       if (!success) {
         return {
           success: false,
@@ -186,6 +276,38 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
             'Failed to abort session — check logs (no DB row for session, missing directory header, or auth failure)',
         };
       }
+
+      const rejectedQuestionIds = await rejectPendingQuestionsForSession(
+        openCodePort,
+        sessionId,
+      );
+      for (const requestId of rejectedQuestionIds) {
+        writeSessionLog(
+          deps.getLogsDir(),
+          sessionId,
+          'WARN',
+          'question-lifecycle',
+          formatQuestionLifecycleLog({
+            kind: 'expired',
+            requestId,
+            sessionId,
+            reason: 'abort',
+          }),
+        );
+        deps.getMainWindow()?.webContents.send('question-cleared', {
+          requestId,
+          sessionID: sessionId,
+          rejected: true,
+        });
+      }
+
+      deps.getMainWindow()?.webContents.send('session-status-update', {
+        connectionId: sessionId,
+        providerSessionId: sessionId,
+        status: 'Session aborted',
+        type: 'info',
+      });
+      invalidateSessionTree();
       return { success: true };
     },
   );

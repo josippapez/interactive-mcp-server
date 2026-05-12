@@ -5,11 +5,16 @@ import {
   matchSkillsForMessage,
 } from '../../utility/backend/tools/skill-match';
 import { createLogger } from '../../utils/logger';
+import {
+  writeSessionLog,
+  type SessionLogLevel,
+} from '../../utils/session-logger';
+import type { IpcHandlerDeps } from './types';
 
 const ipcLog = createLogger('ipc');
 const rendererLog = createLogger('renderer');
 
-export function registerRendererLogChannel(): void {
+export function registerRendererLogChannel(deps: IpcHandlerDeps): void {
   ipcMain.on(
     'renderer-log',
     (
@@ -18,10 +23,18 @@ export function registerRendererLogChannel(): void {
         level: 'debug' | 'info' | 'warn' | 'error';
         category: string;
         message: string;
+        sessionId?: string | null;
       },
     ) => {
       const logFn = rendererLog[data.level] ?? rendererLog.info;
       logFn(`[${data.category}] ${data.message}`);
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.sessionId,
+        data.level.toUpperCase() as SessionLogLevel,
+        `renderer:${data.category}`,
+        data.message,
+      );
     },
   );
 }

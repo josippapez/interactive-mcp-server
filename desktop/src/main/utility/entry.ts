@@ -26,6 +26,7 @@
 
 import { Bridge } from './bridge';
 import { initLogger, createLogger } from '../utils/logger';
+import { rotateOldSessionLogs } from '../utils/session-logger';
 import { setMainRpc } from './backend/rpc';
 import {
   updateSettingsSnapshot,
@@ -129,6 +130,7 @@ function bootstrap(): void {
     if (typeof e.data.logsDir === 'string' && e.data.logsDir.length > 0) {
       try {
         initLogger(e.data.logsDir);
+        rotateOldSessionLogs(e.data.logsDir);
       } catch (err) {
         console.error('[utility] initLogger failed:', err);
       }

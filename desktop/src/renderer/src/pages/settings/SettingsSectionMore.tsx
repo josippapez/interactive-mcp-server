@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button';
-import { useTheme, type LightTint } from '../../ThemeContext';
+import { useTheme } from '../../ThemeContext';
 import { Toggle, ToolExclusionsSection } from './SettingsFormParts';
 import type { AppSettings } from './settings-types';
 
@@ -138,20 +138,11 @@ export function PermissionsSection({
   );
 }
 
-const TINTS: { id: LightTint; label: string; bg: string; ring: string }[] = [
-  { id: 'none', label: 'Default', bg: '#c4cdd9', ring: '#7a91a6' },
-  { id: 'sage', label: 'Sage', bg: '#bdd0c2', ring: '#7a9f86' },
-  { id: 'sand', label: 'Sand', bg: '#d4c9bc', ring: '#a89080' },
-  { id: 'teal', label: 'Teal', bg: '#b8cecc', ring: '#6a9e9c' },
-  { id: 'sky', label: 'Sky', bg: '#b8cedc', ring: '#6a8faa' },
-  { id: 'peach', label: 'Peach', bg: '#f6d3c1', ring: '#ec8a73' },
-];
-
 export function PreferencesSection({
   settings,
   setSettings,
 }: SharedProps): React.ReactElement {
-  const { theme, lightTint, setLightTint } = useTheme();
+  const { theme } = useTheme();
 
   return (
     <div className="space-y-2">
@@ -217,51 +208,6 @@ export function PreferencesSection({
         label="Wrap lines in code blocks"
         description="Wrap long lines in tool output and code blocks instead of horizontal scrolling"
       />
-
-      {theme === 'light' && (
-        <div className="pt-3 pb-1">
-          <p className="text-xs font-medium text-[var(--color-text-muted)] mb-2">
-            Light mode tint
-          </p>
-          <div className="flex items-center gap-2 flex-wrap">
-            {TINTS.map((tint) => {
-              const isActive = lightTint === tint.id;
-              return (
-                <button
-                  key={tint.id}
-                  type="button"
-                  title={tint.label}
-                  onClick={() => setLightTint(tint.id)}
-                  className="flex flex-col items-center gap-1 group"
-                >
-                  <span
-                    className="w-7 h-7 rounded-full border-2 transition-all"
-                    style={{
-                      backgroundColor: tint.bg,
-                      borderColor: isActive ? tint.ring : 'transparent',
-                      outline: isActive
-                        ? `2px solid ${tint.ring}`
-                        : '2px solid transparent',
-                      outlineOffset: '2px',
-                    }}
-                  />
-                  <span
-                    className="text-[10px] transition-colors"
-                    style={{
-                      color: isActive
-                        ? 'var(--color-text)'
-                        : 'var(--color-text-faint)',
-                      fontWeight: isActive ? 600 : 400,
-                    }}
-                  >
-                    {tint.label}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      )}
 
       <ToolExclusionsSection
         settings={settings}

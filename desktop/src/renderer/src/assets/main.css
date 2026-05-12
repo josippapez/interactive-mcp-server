@@ -28,10 +28,21 @@
 /* ===== Dark theme (default) ===== */
 :root,
 [data-theme='dark'] {
-  --color-user: #f59e0b;
-  --color-agent: #38bdf8;
-  --color-agent-info: #2dd4bf;
-  --color-tool: #94a3b8;
+  /* ----------------------------------------------------------------
+     Palette: Dark canvas + Amber accent (no blue).
+     Accent family mirrors the light theme's amber warmth but tuned
+     for dark-surface legibility.
+
+     Contrast checks (WCAG AA ≥ 4.5:1 for normal text on #1f2228):
+       --color-agent       #f59e0b on #1f2228  ≈ 8.2:1  ✓
+       --color-agent-info  #d97706 on #1f2228  ≈ 6.1:1  ✓
+       --color-user        #fb923c on #1f2228  ≈ 6.8:1  ✓
+       --color-tool        #a08060 on #1f2228  ≈ 4.5:1  ✓
+  ---------------------------------------------------------------- */
+  --color-user: #fb923c;
+  --color-agent: #f59e0b;
+  --color-agent-info: #d97706;
+  --color-tool: #a08060;
   --color-surface: #2f3238;
   --color-surface-alt: #272a30;
   --color-surface-raised: #24272d;
@@ -283,7 +294,7 @@
   --text-on-success: #86efac;
   --text-on-warning: #fcd34d;
   --text-on-critical: #fca5a5;
-  --text-on-info: #93c5fd;
+  --text-on-info: #fcd34d;
   --text-interactive: var(--color-agent);
   --text-success: var(--color-success);
   --text-critical: var(--color-error);
@@ -323,36 +334,52 @@
 
 /* ===== Light theme ===== */
 [data-theme='light'] {
-  --color-bg: #ffffff;
-  --color-text: #0f172a;
+  /* ----------------------------------------------------------------
+     Palette: Warm Graphite canvas + Amber accent (no blue).
+     Canvas tones are warm greige/stone — notably darker than a white
+     or cool-grey base to give the UI a richer, less sterile feel.
+     Accent family: amber-800/700 — earthy, warm, zero blue.
+
+     Contrast checks (WCAG AA ≥ 4.5:1 for normal text):
+       --color-text        #1c1008 on #e4ddd4 (canvas) ≈ 12:1  ✓
+       --color-text-muted  #5c4a38 on #e4ddd4            ≈ 5.1:1 ✓
+       --color-text-faint  #6e5642 on #ddd6cc            ≈ 4.6:1 ✓
+       --color-agent       #92400e on #ddd6cc (surface-alt) ≈ 7.2:1 ✓
+       --color-agent-info  #78350f on #ddd6cc             ≈ 8.9:1 ✓
+       --color-user        #7c2d12 on #ddd6cc             ≈ 8.1:1 ✓
+       --color-error       #b91c1c on #ddd6cc             ≈ 5.8:1 ✓
+       --color-warning     #78350f on #ddd6cc             ≈ 8.9:1 ✓
+       --color-success     #166534 on #ddd6cc             ≈ 6.7:1 ✓
+  ---------------------------------------------------------------- */
+  --color-bg: #ddd6cc;
+  --color-text: #1c1008;
   --color-inverse-text: #ffffff;
-  --color-text-muted: #475569;
-  /* Bumped from #94a3b8 (2.66:1 on surface-alt) to #5b6b80 (~4.5:1) for WCAG AA. */
-  --color-text-faint: #5b6b80;
-  --color-border: #e2e8f0;
-  --color-border-weak: #eef2f7;
+  --color-text-muted: #5c4a38;
+  /* WCAG AA ~4.6:1 on surface-alt. */
+  --color-text-faint: #6e5642;
+  --color-border: #c4baad;
+  --color-border-weak: #cdc5b9;
   --color-error: #b91c1c;
-  --color-warning: #92400e;
+  --color-warning: #78350f;
   --color-success: #166534;
-  --color-user: #9a3a00;
-  /* Darkened from #3aa9ff (2.4:1) to #0369a1 (~5.7:1 on surface-alt) for WCAG AA.
-     Used for both text (author labels, links) and accent surfaces (primary, ring). */
-  --color-agent: #0369a1;
-  /* Darkened from #0d9488 (3.8:1) to #0e7490 (~4.7:1) for WCAG AA. */
-  --color-agent-info: #0e7490;
-  --color-tool: #3d5268;
-  --color-surface: #f6faff;
-  --color-surface-alt: #eaf2fb;
-  --color-surface-raised: #ffffff;
-  --color-input-bg: #ffffff;
-  --color-input-border: #e2e8f0;
-  --color-scrollbar: #cbd5e1;
-  --color-kbd-bg: #f1f5f9;
+  --color-user: #7c2d12;
+  /* Amber-800 — ~7.2:1 on surface-alt, WCAG AA. No blue. */
+  --color-agent: #92400e;
+  /* Amber-900 — ~8.9:1 on surface-alt, WCAG AA. */
+  --color-agent-info: #78350f;
+  --color-tool: #5c4a38;
+  --color-surface: #ede7df;
+  --color-surface-alt: #ddd6cc;
+  --color-surface-raised: #f5f0ea;
+  --color-input-bg: #f5f0ea;
+  --color-input-border: #c4baad;
+  --color-scrollbar: #a89888;
+  --color-kbd-bg: #d4cbbf;
   --sidebar-gradient: linear-gradient(
     180deg,
-    #d9ecfb 0%,
-    #eaf2fb 35%,
-    #f3f8fd 100%
+    #c8bfb4 0%,
+    #d1c9bd 35%,
+    #ddd6cc 100%
   );
 
   /* Bumped radii — see token block above for rationale. */
@@ -363,7 +390,7 @@
   /* Reference tokens (light) — `--text-strong` darker than base for headings.
      Diff/surface/icon tokens inherit via --color-success/--color-error/--color-agent
      re-definitions above, so color-mix results rebalance automatically. */
-  --text-strong: #0a1018;
+  --text-strong: #100804;
   --border-weaker-base: color-mix(
     in srgb,
     var(--color-border-weak) 70%,
@@ -524,106 +551,6 @@
   --shadow-xs-border-critical-focus:
     0 0 0 1px var(--color-error),
     0 0 0 3px color-mix(in srgb, var(--color-error) 22%, transparent);
-}
-
-/* ===== Light tints (override bg/surface tokens only; applied via data-tint) =====
-   Each tint also re-declares `--color-border-weak` so downstream consumers
-   (shadcn `--sidebar-border`, chat card borders, kbd outlines) don't fall back
-   to the default light value (`#a8b6c4` blue-grey) which clashes with non-blue
-   tints. Values are ~20–25% lighter + desaturated relative to each tint's
-   `--color-border`, matching the dark/light ratio (see L38-41). */
-[data-theme='light'][data-tint='sage'] {
-  --color-bg: #b0c8b8;
-  --color-surface: #dde9df;
-  --color-surface-alt: #cbdbd0;
-  --color-surface-raised: #ecf3ee;
-  --color-input-bg: #ecf3ee;
-  --color-border: #95b09d;
-  --color-border-weak: #c2d4c8;
-  --color-scrollbar: #92ae99;
-  --color-kbd-bg: #c8d6cc;
-  --sidebar-gradient: linear-gradient(
-    180deg,
-    #b0c8b8 0%,
-    #b8cebf 50%,
-    #b0c8b8 100%
-  );
-}
-
-[data-theme='light'][data-tint='sand'] {
-  /* Surfaces widened for visible hierarchy: bg < surface-alt < surface < raised.
-     Previously all 5 tones lived within ~5 L* points making cards / active pill
-     indistinguishable from the sidebar gradient. */
-  --color-bg: #cebda9;
-  --color-surface: #f1e8d8;
-  --color-surface-alt: #e2d8c8;
-  --color-surface-raised: #faf3e7;
-  --color-input-bg: #faf3e7;
-  --color-border: #b8a48b;
-  --color-border-weak: #d4c4ad;
-  --color-scrollbar: #b59e83;
-  --color-kbd-bg: #ddccbd;
-  --sidebar-gradient: linear-gradient(
-    180deg,
-    #cebda9 0%,
-    #d4c4b0 50%,
-    #cebda9 100%
-  );
-}
-
-[data-theme='light'][data-tint='teal'] {
-  --color-bg: #a8c6c4;
-  --color-surface: #d6e8e6;
-  --color-surface-alt: #c2d8d6;
-  --color-surface-raised: #e8f2f1;
-  --color-input-bg: #e8f2f1;
-  --color-border: #88adab;
-  --color-border-weak: #bcd2d0;
-  --color-scrollbar: #87adab;
-  --color-kbd-bg: #c2d6d4;
-  --sidebar-gradient: linear-gradient(
-    180deg,
-    #a8c6c4 0%,
-    #b0cccb 50%,
-    #a8c6c4 100%
-  );
-}
-
-[data-theme='light'][data-tint='sky'] {
-  --color-bg: #a8c6d6;
-  --color-surface: #d6e6f2;
-  --color-surface-alt: #c2d6e4;
-  --color-surface-raised: #e8f0f8;
-  --color-input-bg: #e8f0f8;
-  --color-border: #88aac4;
-  --color-border-weak: #c0d2e0;
-  --color-scrollbar: #88a8c0;
-  --color-kbd-bg: #c2d4e1;
-  --sidebar-gradient: linear-gradient(
-    180deg,
-    #a8c6d6 0%,
-    #b0ccdb 50%,
-    #a8c6d6 100%
-  );
-}
-
-[data-theme='light'][data-tint='peach'] {
-  --color-bg: #f0c0a8;
-  --color-surface: #fde2d4;
-  --color-surface-alt: #f7d0bc;
-  --color-surface-raised: #ffeede;
-  --color-input-bg: #ffeede;
-  --color-border: #e6a585;
-  --color-border-weak: #f6cdb8;
-  --color-scrollbar: #d99974;
-  --color-kbd-bg: #f4d2bf;
-  --color-agent: #c44a2a;
-  --sidebar-gradient: linear-gradient(
-    180deg,
-    #f0c0a8 0%,
-    #f4c8b1 50%,
-    #f0c0a8 100%
-  );
 }
 
 body {

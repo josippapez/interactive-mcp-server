@@ -30,12 +30,18 @@ describe('createMcpServerWithTools', () => {
     expect(names).toContain('find_libs');
     expect(names).toContain('find_repo_docs');
     expect(names).toContain('manage_skills_and_instructions');
+    expect(names).toContain('manage_memories');
+    expect(names).toContain('manage_background_subagents');
+    expect(names).toContain('message_background_subagent');
     expect(HIDDEN_TOOL_NAMES.has('find_docs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('read_doc')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('list_docs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('find_libs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('find_repo_docs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('manage_skills_and_instructions')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('manage_memories')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('manage_background_subagents')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('message_background_subagent')).toBe(false);
     for (const hiddenName of HIDDEN_TOOL_NAMES) {
       expect(names).not.toContain(hiddenName);
     }

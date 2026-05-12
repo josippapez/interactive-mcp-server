@@ -102,7 +102,7 @@ export function buildStartupContextMessage(
 
   lines.push(
     '- Registration: this session was auto-registered by the desktop app from OpenCode SDK session events; do not call register_connection.',
-    '- Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs, manage_skills_and_instructions, manage_memories.',
+    '- Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs, manage_skills_and_instructions, manage_memories, manage_background_subagents, message_background_subagent.',
     '- Interactive prompt/channel tools are not exposed by this MCP surface; use your harness-native user interaction tools when you need to ask the user.',
   );
 

@@ -14,7 +14,7 @@ let dbPath = '';
  * dropped and recreated from scratch. This eliminates all incremental
  * migration code.
  */
-const SCHEMA_VERSION = 15;
+const SCHEMA_VERSION = 16;
 
 // ─── Public interfaces ─────────────────────────────────────────────────────
 
@@ -146,6 +146,22 @@ export interface RegisteredConnection {
    */
   providerType: 'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone';
   createdAt: string;
+  updatedAt: string;
+}
+
+export interface BackgroundSubagentRecord {
+  id: string;
+  sessionId: string;
+  parentSessionId: string;
+  prompt: string;
+  title: string;
+  agent: string | null;
+  model: { providerID: string; modelID: string; variant?: string } | null;
+  baseDirectory: string | null;
+  status: 'running' | 'completed' | 'cancelled' | 'error';
+  error: string | null;
+  completionNotifiedAt: string | null;
+  startedAt: string;
   updatedAt: string;
 }
 
@@ -314,6 +330,28 @@ function createTables(): void {
     )
   `);
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS background_subagents (
+      id                      TEXT     PRIMARY KEY,
+      session_id              TEXT     NOT NULL,
+      parent_session_id       TEXT     NOT NULL,
+      prompt                  TEXT     NOT NULL,
+      title                   TEXT     NOT NULL,
+      agent                   TEXT,
+      model                   TEXT,
+      base_directory          TEXT,
+      status                  TEXT     NOT NULL CHECK(status IN ('running', 'completed', 'cancelled', 'error')),
+      error                   TEXT,
+      completion_notified_at  TEXT,
+      started_at              TEXT     NOT NULL,
+      updated_at              TEXT     NOT NULL
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_background_subagents_session
+      ON background_subagents(session_id)
+  `);
+
   // noReply context injections — for Copilot CLI / standalone mode.
   // Injections are claimed atomically and delivered via the poll_context_injections
   // MCP tool or auto-prepended to request_user_input responses.
@@ -479,6 +517,7 @@ function dropAllTables(): void {
     'session_channel_history',
     'session_channels',
     'registered_connections',
+    'background_subagents',
     'conversations',
     'skills_and_instructions',
     'pinned_projects',
@@ -689,6 +728,107 @@ export function clearHistory(): void {
   db.exec('DELETE FROM conversations');
 }
 
+function mapBackgroundSubagentRow(row: {
+  id: string;
+  session_id: string;
+  parent_session_id: string;
+  prompt: string;
+  title: string;
+  agent: string | null;
+  model: string | null;
+  base_directory: string | null;
+  status: BackgroundSubagentRecord['status'];
+  error: string | null;
+  completion_notified_at: string | null;
+  started_at: string;
+  updated_at: string;
+}): BackgroundSubagentRecord {
+  return {
+    id: row.id,
+    sessionId: row.session_id,
+    parentSessionId: row.parent_session_id,
+    prompt: row.prompt,
+    title: row.title,
+    agent: row.agent,
+    model: row.model
+      ? (JSON.parse(row.model) as BackgroundSubagentRecord['model'])
+      : null,
+    baseDirectory: row.base_directory,
+    status: row.status,
+    error: row.error,
+    completionNotifiedAt: row.completion_notified_at,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function upsertBackgroundSubagent(
+  record: BackgroundSubagentRecord,
+): void {
+  if (!db) return;
+  db.prepare(
+    `INSERT INTO background_subagents
+       (id, session_id, parent_session_id, prompt, title, agent, model, base_directory, status, error, completion_notified_at, started_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       session_id = excluded.session_id,
+       parent_session_id = excluded.parent_session_id,
+       prompt = excluded.prompt,
+       title = excluded.title,
+       agent = excluded.agent,
+       model = excluded.model,
+       base_directory = excluded.base_directory,
+       status = excluded.status,
+       error = excluded.error,
+       completion_notified_at = excluded.completion_notified_at,
+       updated_at = excluded.updated_at`,
+  ).run(
+    record.id,
+    record.sessionId,
+    record.parentSessionId,
+    record.prompt,
+    record.title,
+    record.agent,
+    record.model ? JSON.stringify(record.model) : null,
+    record.baseDirectory,
+    record.status,
+    record.error,
+    record.completionNotifiedAt,
+    record.startedAt,
+    record.updatedAt,
+  );
+}
+
+export function getBackgroundSubagentRecord(
+  id: string,
+): BackgroundSubagentRecord | null {
+  if (!db) return null;
+  const row = db
+    .prepare(`SELECT * FROM background_subagents WHERE id = ?`)
+    .get(id) as Parameters<typeof mapBackgroundSubagentRow>[0] | undefined;
+  return row ? mapBackgroundSubagentRow(row) : null;
+}
+
+export function getBackgroundSubagentRecordBySessionId(
+  sessionId: string,
+): BackgroundSubagentRecord | null {
+  if (!db) return null;
+  const row = db
+    .prepare(`SELECT * FROM background_subagents WHERE session_id = ?`)
+    .get(sessionId) as
+    | Parameters<typeof mapBackgroundSubagentRow>[0]
+    | undefined;
+  return row ? mapBackgroundSubagentRow(row) : null;
+}
+
+export function listBackgroundSubagentRecords(): BackgroundSubagentRecord[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(`SELECT * FROM background_subagents ORDER BY started_at DESC`)
+    .all() as Parameters<typeof mapBackgroundSubagentRow>[0][];
+  return rows.map(mapBackgroundSubagentRow);
+}
+
 // ─── Database reset ────────────────────────────────────────────────────────
 
 export function resetDatabase(): {
@@ -719,6 +859,7 @@ export function resetDatabase(): {
     'session_channel_history',
     'session_channels',
     'registered_connections',
+    'background_subagents',
     'conversations',
     'skills_and_instructions',
     'folders',

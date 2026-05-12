@@ -322,6 +322,16 @@ export function rejectOpenCodeQuestion(
   ]);
 }
 
+export function rejectPendingQuestionsForSession(
+  openCodePort: number,
+  sessionID: string,
+): Promise<string[]> {
+  return call('opencode.rejectPendingQuestionsForSession', [
+    openCodePort,
+    sessionID,
+  ]);
+}
+
 // ─── permission-list ────────────────────────────────────────────────────────
 
 import type { PendingPermissionRecord } from './backend/permission-list';

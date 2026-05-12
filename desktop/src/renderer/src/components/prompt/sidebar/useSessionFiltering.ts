@@ -62,6 +62,7 @@ export function useSessionFiltering({
   const isNodeRunning = useCallback(
     (node: SessionNode): boolean => {
       const status = getStatus(node.providerSessionId ?? '');
+      if (status === 'idle' || status === 'error') return node.hasPendingPrompt;
       return (
         node.hasPendingPrompt ||
         status === 'busy' ||
@@ -86,11 +87,11 @@ export function useSessionFiltering({
       if (showInactive) return nodes;
 
       const visibleIds = new Set(
-        filterVisibleSessionIds(nodes, activeConnectionId),
+        filterVisibleSessionIds(nodes, activeConnectionId, getStatus),
       );
       return nodes.filter((node) => visibleIds.has(node.id));
     },
-    [showInactive, activeConnectionId],
+    [showInactive, activeConnectionId, getStatus, statusMap],
   );
 
   // Sort nodes by running status and recency.

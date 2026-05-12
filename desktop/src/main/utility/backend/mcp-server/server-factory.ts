@@ -4,6 +4,8 @@ import type { AgentBackend } from '../../../settings-core';
 import { registerRepoDocsTools } from '../tools/find-repo-docs';
 import { registerManageSkillsAndInstructionsTool } from '../tools/manage-skills-and-instructions';
 import { registerManageMemoriesTool } from '../tools/manage-memories';
+import { registerManageBackgroundSubagentsTool } from '../tools/manage-background-subagents';
+import { registerMessageBackgroundSubagentTool } from '../tools/message-background-subagent';
 import { getEffectiveProvider } from './provider-detection';
 import { applyHiddenToolListFilter } from './tool-list-filter';
 
@@ -41,6 +43,8 @@ export function createMcpServerWithTools(
     getOpenCodePort,
   );
   registerManageMemoriesTool(server, connectionId);
+  registerManageBackgroundSubagentsTool(server, connectionId);
+  registerMessageBackgroundSubagentTool(server, connectionId);
 
   void connectionName;
   void getDocIndexingEnabled;

@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   getAllRegisteredConnections: vi.fn(),
   getRegisteredConnectionBySessionId: vi.fn(),
   getClient: vi.fn(),
+  fetchAllOpenCodeSessions: vi.fn(),
+  fetchOpenCodeSession: vi.fn(),
 }));
 
 vi.mock('./database', () => ({
@@ -15,7 +17,16 @@ vi.mock('./sdk-client', () => ({
   getClient: mocks.getClient,
 }));
 
-import { fetchPendingQuestions } from './question-list';
+vi.mock('./session', () => ({
+  fetchAllOpenCodeSessions: mocks.fetchAllOpenCodeSessions,
+  fetchOpenCodeSession: mocks.fetchOpenCodeSession,
+}));
+
+import {
+  fetchPendingQuestions,
+  replyToOpenCodeQuestion,
+  rejectPendingQuestionsForSession,
+} from './question-list';
 
 const PORT = 4321;
 
@@ -31,6 +42,10 @@ beforeEach(() => {
   mocks.getAllRegisteredConnections.mockReset();
   mocks.getRegisteredConnectionBySessionId.mockReset();
   mocks.getClient.mockReset();
+  mocks.fetchAllOpenCodeSessions.mockReset();
+  mocks.fetchOpenCodeSession.mockReset();
+  mocks.fetchAllOpenCodeSessions.mockResolvedValue([]);
+  mocks.fetchOpenCodeSession.mockResolvedValue(null);
 });
 
 describe('fetchPendingQuestions', () => {
@@ -75,5 +90,164 @@ describe('fetchPendingQuestions', () => {
       'req_shared',
       'req_b',
     ]);
+  });
+
+  it('also polls live OpenCode session directories when registrations are missing', async () => {
+    mocks.getAllRegisteredConnections.mockReturnValue([]);
+    mocks.fetchAllOpenCodeSessions.mockResolvedValue([
+      {
+        id: 'ses_a',
+        directory: '/repo-a',
+      },
+    ]);
+    mocks.getClient.mockImplementation((_port: number, directory?: string) => ({
+      question: {
+        list: vi.fn().mockResolvedValue({
+          data: directory === '/repo-a' ? [question('req_a', 'ses_a')] : [],
+        }),
+      },
+    }));
+
+    const result = await fetchPendingQuestions(PORT);
+
+    expect(mocks.getClient).toHaveBeenCalledWith(PORT, undefined);
+    expect(mocks.getClient).toHaveBeenCalledWith(PORT, '/repo-a');
+    expect(result.map((item) => item.requestId)).toEqual(['req_a']);
+  });
+});
+
+describe('rejectPendingQuestionsForSession', () => {
+  it('rejects only pending questions for the aborted session and returns their request ids', async () => {
+    const rejectA = vi.fn().mockResolvedValue({ data: true });
+    const rejectB = vi.fn().mockResolvedValue({ data: true });
+    mocks.getAllRegisteredConnections.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_a',
+        baseDirectory: '/repo-a',
+      },
+    ]);
+    mocks.getRegisteredConnectionBySessionId.mockResolvedValue({
+      providerType: 'opencode',
+      providerSessionId: 'ses_a',
+      baseDirectory: '/repo-a',
+    });
+    mocks.getClient.mockImplementation((_port: number, directory?: string) => ({
+      question: {
+        list: vi.fn().mockResolvedValue({
+          data:
+            directory === '/repo-a'
+              ? [question('req_a', 'ses_a'), question('req_b', 'ses_b')]
+              : [],
+        }),
+        reject: directory === '/repo-a' ? rejectA : rejectB,
+      },
+    }));
+
+    const result = await rejectPendingQuestionsForSession(PORT, 'ses_a');
+
+    expect(result).toEqual(['req_a']);
+    expect(rejectA).toHaveBeenCalledWith({
+      requestID: 'req_a',
+      directory: '/repo-a',
+    });
+    expect(rejectB).not.toHaveBeenCalled();
+  });
+});
+
+describe('replyToOpenCodeQuestion', () => {
+  it('returns ok only after the scoped reply removes the pending question', async () => {
+    const reply = vi.fn().mockResolvedValue({ data: true });
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [question('req_a', 'ses_a')] })
+      .mockResolvedValueOnce({ data: [] });
+    mocks.getRegisteredConnectionBySessionId.mockResolvedValue({
+      providerType: 'opencode',
+      providerSessionId: 'ses_a',
+      baseDirectory: '/repo-a',
+    });
+    mocks.getClient.mockReturnValue({ question: { reply, list } });
+
+    const result = await replyToOpenCodeQuestion(
+      PORT,
+      'req_a',
+      [['Yes']],
+      'ses_a',
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(reply).toHaveBeenCalledWith({
+      requestID: 'req_a',
+      answers: [['Yes']],
+      directory: '/repo-a',
+    });
+    expect(list).toHaveBeenCalledTimes(2);
+  });
+
+  it('falls back to the live session directory when the registration row is missing', async () => {
+    const reply = vi.fn().mockResolvedValue({ data: true });
+    const list = vi
+      .fn()
+      .mockResolvedValueOnce({ data: [question('req_a', 'ses_a')] })
+      .mockResolvedValueOnce({ data: [] });
+    mocks.getRegisteredConnectionBySessionId.mockResolvedValue(null);
+    mocks.fetchOpenCodeSession.mockResolvedValue({
+      id: 'ses_a',
+      directory: '/repo-a',
+    });
+    mocks.getClient.mockReturnValue({ question: { reply, list } });
+
+    const result = await replyToOpenCodeQuestion(
+      PORT,
+      'req_a',
+      [['Yes']],
+      'ses_a',
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(mocks.getClient).toHaveBeenCalledWith(PORT, '/repo-a');
+    expect(reply).toHaveBeenCalledWith({
+      requestID: 'req_a',
+      answers: [['Yes']],
+      directory: '/repo-a',
+    });
+  });
+
+  it('retries unscoped and reports failure when the question remains pending', async () => {
+    const scopedReply = vi.fn().mockResolvedValue({ data: true });
+    const scopedList = vi.fn().mockResolvedValue({
+      data: [question('req_a', 'ses_a')],
+    });
+    const unscopedReply = vi.fn().mockResolvedValue({ data: true });
+    const unscopedList = vi.fn().mockResolvedValue({
+      data: [question('req_a', 'ses_a')],
+    });
+    mocks.getRegisteredConnectionBySessionId.mockResolvedValue({
+      providerType: 'opencode',
+      providerSessionId: 'ses_a',
+      baseDirectory: '/repo-a',
+    });
+    mocks.getClient.mockImplementation((_port: number, directory?: string) => ({
+      question: directory
+        ? { reply: scopedReply, list: scopedList }
+        : { reply: unscopedReply, list: unscopedList },
+    }));
+
+    const result = await replyToOpenCodeQuestion(
+      PORT,
+      'req_a',
+      [['Yes']],
+      'ses_a',
+    );
+
+    expect(result).toEqual({
+      ok: false,
+      error: 'Question reply was accepted but the request is still pending.',
+    });
+    expect(unscopedReply).toHaveBeenCalledWith({
+      requestID: 'req_a',
+      answers: [['Yes']],
+    });
   });
 });

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
-  seedSessionStatus,
+  replaceSessionStatusSnapshot,
   useConversationSelector,
 } from '../store/conversation-store';
 import type { ConversationSessionStatus } from '../store/conversation-reducer';
@@ -8,6 +8,8 @@ import type { ConversationSessionStatus } from '../store/conversation-reducer';
 export type SessionStatusType = 'busy' | 'idle' | 'error' | 'unknown';
 
 export type SessionStatusMap = Record<string, { type: SessionStatusType }>;
+
+export const SESSION_STATUS_REFRESH_MS = 5000;
 
 type UseSessionStatusResult = {
   statusMap: SessionStatusMap;
@@ -87,9 +89,11 @@ export function useSessionStatus(
     try {
       const result = await window.api.fetchSessionStatus?.();
       if (!result) return;
+      const next: Record<string, ConversationSessionStatus> = {};
       for (const [sessionId, entry] of Object.entries(result)) {
-        seedSessionStatus(sessionId, mapRestStatus(entry.type));
+        next[sessionId] = mapRestStatus(entry.type);
       }
+      replaceSessionStatusSnapshot(next);
     } catch {
       // Best-effort seed — live events will fill in eventually.
     }
@@ -98,6 +102,12 @@ export function useSessionStatus(
   useEffect(() => {
     if (!enabled) return;
     void refresh();
+    const interval = window.setInterval(() => {
+      void refresh();
+    }, SESSION_STATUS_REFRESH_MS);
+    return () => {
+      window.clearInterval(interval);
+    };
   }, [enabled, refresh]);
 
   // Memoize the exposed statusMap so its identity is preserved across

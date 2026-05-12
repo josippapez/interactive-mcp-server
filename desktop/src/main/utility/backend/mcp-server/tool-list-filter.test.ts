@@ -49,6 +49,9 @@ describe('HIDDEN_TOOL_NAMES', () => {
         find_libs: { inputSchema: {} },
         find_repo_docs: { inputSchema: {} },
         manage_skills_and_instructions: { inputSchema: {} },
+        manage_memories: { inputSchema: {} },
+        manage_background_subagents: { inputSchema: {} },
+        message_background_subagent: { inputSchema: {} },
       },
     } as unknown as McpServer;
 
@@ -62,6 +65,9 @@ describe('HIDDEN_TOOL_NAMES', () => {
       'find_libs',
       'find_repo_docs',
       'manage_skills_and_instructions',
+      'manage_memories',
+      'manage_background_subagents',
+      'message_background_subagent',
     ]);
   });
 });

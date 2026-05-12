@@ -19,6 +19,7 @@ import { sessionAbort } from './session-api';
 import { createLogger } from '../../utils/logger';
 import { errorMessage } from '../../utils/errors';
 import { getOpenCodePassword } from './opencode/password-subject';
+import { fetchOpenCodeSession } from './session';
 
 const abortLog = createLogger('abort');
 
@@ -44,7 +45,11 @@ export async function abortOpenCodeSession(
     sessionId,
     'opencode',
   );
-  const effectiveDirectory = registered?.baseDirectory ?? undefined;
+  const liveSession = registered?.baseDirectory
+    ? null
+    : await fetchOpenCodeSession(openCodePort, sessionId);
+  const effectiveDirectory =
+    registered?.baseDirectory ?? liveSession?.directory ?? undefined;
   const hasPassword = getOpenCodePassword() !== null;
 
   // Surface preconditions explicitly. If `directory` is missing or `hasPassword`
@@ -56,7 +61,7 @@ export async function abortOpenCodeSession(
   }
   if (!effectiveDirectory) {
     abortLog.warn(
-      `session=${sessionId} has no baseDirectory in DB — abort RPC will not include opencode-directory header`,
+      `session=${sessionId} has no baseDirectory in DB or live session data — abort RPC will not include opencode-directory header`,
     );
   }
 

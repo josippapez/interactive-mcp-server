@@ -292,10 +292,18 @@ function logDispatch(
   details: Record<string, unknown>,
 ): void {
   const message = `${fn}: ${resolution} ${JSON.stringify(details)}`;
+  const sessionId =
+    typeof details.resolvedSessionId === 'string'
+      ? details.resolvedSessionId
+      : typeof details.sessionId === 'string'
+        ? details.sessionId
+        : typeof details.activeChannelId === 'string'
+          ? details.activeChannelId
+          : null;
 
   // Log to file via IPC for persistent diagnostics (guard for test environment)
   if (typeof window !== 'undefined' && window.api?.log) {
-    window.api.log('info', 'message-dispatch', message);
+    window.api.log('info', 'message-dispatch', message, sessionId);
   }
 
   // Also log to console in development for immediate visibility

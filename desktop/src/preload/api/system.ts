@@ -56,8 +56,9 @@ export function createSystemApi() {
       level: 'debug' | 'info' | 'warn' | 'error',
       category: string,
       message: string,
+      sessionId?: string | null,
     ): void => {
-      ipcRenderer.send('renderer-log', { level, category, message });
+      ipcRenderer.send('renderer-log', { level, category, message, sessionId });
     },
   };
 }

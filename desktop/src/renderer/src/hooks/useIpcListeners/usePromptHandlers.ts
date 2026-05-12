@@ -71,6 +71,7 @@ export function usePromptHandlers({
           'info',
           'prompt-routing',
           `[onPromptRequest] promptId=${data.id} connectionId=${data.connectionId} providerSessionId=${data.providerSessionId ?? 'null'} foundNodeId=${nodeId ?? 'null'} nodeKeys=${JSON.stringify(nodeKeys)} nodeInfos=${JSON.stringify(nodeInfos)}`,
+          data.providerSessionId ?? data.connectionId,
         );
 
         if (!nodeId) {
@@ -81,6 +82,7 @@ export function usePromptHandlers({
             'warn',
             'prompt-routing',
             `[onPromptRequest] No matching node found — buffering prompt for later. connectionId=${data.connectionId} providerSessionId=${data.providerSessionId ?? 'null'}`,
+            data.providerSessionId ?? data.connectionId,
           );
           bufferPrompt(data);
           return prev;

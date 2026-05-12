@@ -4,6 +4,7 @@ import { AppSettings } from '../../settings';
 export interface IpcHandlerDeps {
   getMainWindow: () => BrowserWindow | null;
   getSettings: () => AppSettings;
+  getLogsDir: () => string;
   setSettings: (settings: AppSettings) => void;
   /**
    * Returns actually-bound ports tracked separately from `getSettings()`.

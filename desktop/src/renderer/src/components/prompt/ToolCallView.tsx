@@ -8,6 +8,9 @@ import ApplyPatchToolCard, {
 } from './tool-call/ApplyPatchToolCard';
 import { DefaultToolCard } from './tool-call/DefaultToolCard';
 import { TaskToolCard, isTaskToolCall } from './tool-call/TaskToolCard';
+import BackgroundSubagentToolCard, {
+  isBackgroundSubagentToolCall,
+} from './tool-call/BackgroundSubagentToolCard';
 import { EditToolCard, ReadToolRow } from './tool-call/FileToolCards';
 import { BashToolCard, isBashToolCall } from './tool-call/BashToolCard';
 import GrepToolCard, { isGrepToolCall } from './tool-call/GrepToolCard';
@@ -87,6 +90,16 @@ function resolveToolCard(
   if (isTaskToolCall(tool.name)) {
     return (
       <TaskToolCard
+        tool={tool}
+        forceExpanded={forceExpanded}
+        onNavigateToSession={onNavigateToSession}
+      />
+    );
+  }
+
+  if (isBackgroundSubagentToolCall(tool.name)) {
+    return (
+      <BackgroundSubagentToolCard
         tool={tool}
         forceExpanded={forceExpanded}
         onNavigateToSession={onNavigateToSession}

@@ -29,6 +29,10 @@ import {
 import { detectClaudeSdkRuntime } from './claude-sdk-runtime';
 import { BUILTIN_TEMPLATES } from './builtin-templates';
 import { initLogger, createLogger, flushLogger } from './utils/logger';
+import {
+  flushSessionLogger,
+  rotateOldSessionLogs,
+} from './utils/session-logger';
 import { pinDevUserData } from './utils/dev-userdata-pin';
 import { getUtilitySupervisor } from './utility/supervisor';
 import { requestNativeNotificationPermission } from './utility/permission-notification';
@@ -284,6 +288,7 @@ app.whenReady().then(async () => {
 
   // Initialize file logger first so everything else can log.
   initLogger(app.getPath('logs'));
+  rotateOldSessionLogs(app.getPath('logs'));
   const appLog = createLogger('app');
   appLog.info(`Application started, version=${app.getVersion()}`);
 
@@ -322,6 +327,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers({
     getMainWindow: () => mainWindow,
     getSettings: () => currentSettings,
+    getLogsDir: () => app.getPath('logs'),
     getResolvedPorts: () => ({
       mcp: resolvedPorts.mcp,
       openCode: resolvedPorts.openCode,
@@ -748,7 +754,10 @@ app.on('before-quit', (event) => {
   const flushTimeout = new Promise<void>((resolve) =>
     setTimeout(resolve, 2000),
   );
-  void Promise.race([flushLogger(), flushTimeout]).finally(() => {
+  void Promise.race([
+    Promise.all([flushLogger(), flushSessionLogger()]).then(() => undefined),
+    flushTimeout,
+  ]).finally(() => {
     app.quit();
   });
 });

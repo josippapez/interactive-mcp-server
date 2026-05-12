@@ -101,6 +101,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
               <>
                 <ChannelHeader
                   label={sessionChannel?.label ?? activeConnectionId}
+                  sessionId={view.providerSessionId ?? activeConnectionId}
                   promptActive={Boolean(prompt)}
                   onClearMessages={view.handleClearMessages}
                   onRemoveSession={view.handleRemoveSession}
@@ -117,6 +118,8 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                   chatFullWidth={view.chatFullWidth}
                   onToggleChatFullWidth={view.handleToggleChatFullWidth}
                   onCopyTranscript={view.handleCopyTranscript}
+                  onOpenSessionLog={view.handleOpenSessionLog}
+                  onCopySessionLogPath={view.handleCopySessionLogPath}
                   parentInfo={view.parentInfo}
                   onNavigateToParent={
                     view.parentInfo ? view.handleNavigateToParent : undefined
@@ -147,7 +150,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     view.todos.filter(
                       (t) =>
                         t.status === 'pending' || t.status === 'in_progress',
-                    ).length
+                    ).length + view.runningBackgroundSubagentCount
                   }
                 />
 
@@ -332,6 +335,8 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                   isLoading={view.todosLoading}
                   error={view.todosError}
                   onRefresh={view.refreshTodos}
+                  backgroundSubagents={view.backgroundSubagents}
+                  onNavigateToSession={view.handleNavigateToSession}
                 />
               )}
           </div>

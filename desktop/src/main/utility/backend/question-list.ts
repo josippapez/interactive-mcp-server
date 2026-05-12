@@ -5,6 +5,7 @@ import {
 import { getClient } from './sdk-client';
 import { createLogger } from '../../utils/logger';
 import { errorMessage } from '../../utils/errors';
+import { fetchAllOpenCodeSessions, fetchOpenCodeSession } from './session';
 
 export type PendingQuestionOption = {
   label: string;
@@ -27,6 +28,22 @@ export type PendingQuestionRecord = {
 };
 
 const questionLog = createLogger('question');
+const QUESTION_REPLY_STILL_PENDING_ERROR =
+  'Question reply was accepted but the request is still pending.';
+
+async function resolveSessionDirectory(
+  openCodePort: number,
+  sessionID: string,
+): Promise<string | undefined> {
+  const registered = await getRegisteredConnectionBySessionId(
+    sessionID,
+    'opencode',
+  );
+  if (registered?.baseDirectory) return registered.baseDirectory;
+
+  const session = await fetchOpenCodeSession(openCodePort, sessionID);
+  return session?.directory;
+}
 
 function mapPendingQuestion(item: {
   id?: string;
@@ -62,15 +79,21 @@ export async function fetchPendingQuestions(
   openCodePort: number,
 ): Promise<PendingQuestionRecord[]> {
   try {
+    const registeredDirectories = getAllRegisteredConnections()
+      .filter(
+        (connection) =>
+          connection.providerType === 'opencode' && connection.baseDirectory,
+      )
+      .map((connection) => connection.baseDirectory as string);
+    const liveSessions = (await fetchAllOpenCodeSessions(openCodePort)) ?? [];
+    const liveDirectories = liveSessions.flatMap((session) =>
+      session.directory ? [session.directory] : [],
+    );
     const directories = Array.from(
       new Set(
-        getAllRegisteredConnections()
-          .filter(
-            (connection) =>
-              connection.providerType === 'opencode' &&
-              connection.baseDirectory,
-          )
-          .map((connection) => connection.baseDirectory as string),
+        [...registeredDirectories, ...liveDirectories].filter(
+          (directory) => directory.trim().length > 0,
+        ),
       ),
     );
 
@@ -110,15 +133,14 @@ export async function replyToOpenCodeQuestion(
   sessionID: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const registered = await getRegisteredConnectionBySessionId(
+    const effectiveDirectory = await resolveSessionDirectory(
+      openCodePort,
       sessionID,
-      'opencode',
     );
-    const effectiveDirectory = registered?.baseDirectory ?? undefined;
     const client = getClient(openCodePort, effectiveDirectory);
 
     questionLog.info(
-      `reply start session=${sessionID} request=${requestID} answers=${JSON.stringify(answers)} directory=${effectiveDirectory ?? '(none)'} baseDirectory=${registered?.baseDirectory ?? '(none)'}`,
+      `reply start session=${sessionID} request=${requestID} answers=${JSON.stringify(answers)} directory=${effectiveDirectory ?? '(none)'}`,
     );
 
     const result = await client.question.reply({
@@ -134,58 +156,45 @@ export async function replyToOpenCodeQuestion(
       return { ok: false, error: String(result.error) };
     }
 
-    // Verify delivery asynchronously (fire-and-forget). If the requestID is
-    // still pending after reply, the WorkspaceRouterMiddleware likely routed
-    // to the wrong Instance — retry the reply once in the background without
-    // a directory filter (unscoped) and log if the retry also fails. This
-    // keeps the UI snappy while still recovering from the router race that
-    // originally motivated the verification step.
-    void (async () => {
-      try {
-        const listResult = await client.question.list({
-          directory: effectiveDirectory,
-        });
-        const stillPending = (listResult.data ?? []).some(
-          (item) => item?.id === requestID,
-        );
-        if (!stillPending) return;
+    const listResult = await client.question.list({
+      directory: effectiveDirectory,
+    });
+    const stillPending = (listResult.data ?? []).some(
+      (item) => item?.id === requestID,
+    );
+    if (!stillPending) {
+      questionLog.info(
+        `reply success session=${sessionID} request=${requestID}`,
+      );
+      return { ok: true };
+    }
 
-        questionLog.warn(
-          `reply not delivered session=${sessionID} request=${requestID} directory=${effectiveDirectory ?? '(none)'} — retrying unscoped`,
-        );
+    questionLog.warn(
+      `reply not delivered session=${sessionID} request=${requestID} directory=${effectiveDirectory ?? '(none)'} — retrying unscoped`,
+    );
 
-        // Retry unscoped so the router picks the correct Instance.
-        const unscopedClient = getClient(openCodePort);
-        const retry = await unscopedClient.question.reply({
-          requestID,
-          answers,
-        });
-        if (retry.error) {
-          questionLog.error(
-            `reply retry error session=${sessionID} request=${requestID} error=${String(retry.error)}`,
-          );
-          return;
-        }
+    const unscopedClient = getClient(openCodePort);
+    const retry = await unscopedClient.question.reply({
+      requestID,
+      answers,
+    });
+    if (retry.error) {
+      questionLog.error(
+        `reply retry error session=${sessionID} request=${requestID} error=${String(retry.error)}`,
+      );
+      return { ok: false, error: String(retry.error) };
+    }
 
-        const listAfterRetry = await unscopedClient.question.list();
-        const stillPendingAfterRetry = (listAfterRetry.data ?? []).some(
-          (item) => item?.id === requestID,
-        );
-        if (stillPendingAfterRetry) {
-          questionLog.error(
-            `reply retry not delivered session=${sessionID} request=${requestID} — request still present after retry`,
-          );
-        } else {
-          questionLog.info(
-            `reply retry success session=${sessionID} request=${requestID}`,
-          );
-        }
-      } catch (listErr: unknown) {
-        questionLog.warn(
-          `reply verification/retry failed session=${sessionID} request=${requestID} error=${listErr instanceof Error ? listErr.message : String(listErr)}`,
-        );
-      }
-    })();
+    const listAfterRetry = await unscopedClient.question.list();
+    const stillPendingAfterRetry = (listAfterRetry.data ?? []).some(
+      (item) => item?.id === requestID,
+    );
+    if (stillPendingAfterRetry) {
+      questionLog.error(
+        `reply retry not delivered session=${sessionID} request=${requestID} — request still present after retry`,
+      );
+      return { ok: false, error: QUESTION_REPLY_STILL_PENDING_ERROR };
+    }
 
     questionLog.info(`reply success session=${sessionID} request=${requestID}`);
     return { ok: true };
@@ -204,15 +213,14 @@ export async function rejectOpenCodeQuestion(
   sessionID: string,
 ): Promise<{ ok: boolean; error?: string }> {
   try {
-    const registered = await getRegisteredConnectionBySessionId(
+    const effectiveDirectory = await resolveSessionDirectory(
+      openCodePort,
       sessionID,
-      'opencode',
     );
-    const effectiveDirectory = registered?.baseDirectory ?? undefined;
     const client = getClient(openCodePort, effectiveDirectory);
 
     questionLog.info(
-      `reject start session=${sessionID} request=${requestID} directory=${effectiveDirectory ?? '(none)'} baseDirectory=${registered?.baseDirectory ?? '(none)'}`,
+      `reject start session=${sessionID} request=${requestID} directory=${effectiveDirectory ?? '(none)'}`,
     );
 
     const result = await client.question.reject({
@@ -238,4 +246,39 @@ export async function rejectOpenCodeQuestion(
     );
     return { ok: false, error: message };
   }
+}
+
+export async function rejectPendingQuestionsForSession(
+  openCodePort: number,
+  sessionID: string,
+): Promise<string[]> {
+  const pendingQuestions = await fetchPendingQuestions(openCodePort);
+  const requestIds = pendingQuestions
+    .filter((question) => question.sessionID === sessionID)
+    .map((question) => question.requestId);
+
+  const settled = await Promise.allSettled(
+    requestIds.map((requestId) =>
+      rejectOpenCodeQuestion(openCodePort, requestId, sessionID),
+    ),
+  );
+
+  const rejectedRequestIds: string[] = [];
+  settled.forEach((result, index) => {
+    const requestId = requestIds[index];
+    if (result.status === 'fulfilled' && result.value.ok) {
+      rejectedRequestIds.push(requestId);
+      return;
+    }
+
+    const reason =
+      result.status === 'rejected'
+        ? errorMessage(result.reason)
+        : (result.value.error ?? 'unknown error');
+    questionLog.warn(
+      `abort reject failed session=${sessionID} request=${requestId} error=${reason}`,
+    );
+  });
+
+  return rejectedRequestIds;
 }

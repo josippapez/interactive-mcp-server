@@ -98,6 +98,7 @@ export function PromptComposerSection({
         attachmentsCount: attachments?.length ?? 0,
         timestamp: new Date().toISOString(),
       }),
+      providerSessionId ?? sessionChannelId ?? dispatchSessionId,
     );
   };
 

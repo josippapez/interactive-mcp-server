@@ -181,6 +181,22 @@ export function seedSessionStatus(
   });
 }
 
+export function replaceSessionStatusSnapshot(
+  statuses: Record<string, ConversationSessionStatus>,
+): void {
+  conversationStore.setState((prev) => {
+    const prevKeys = Object.keys(prev.status);
+    const nextKeys = Object.keys(statuses);
+    if (
+      prevKeys.length === nextKeys.length &&
+      nextKeys.every((key) => prev.status[key] === statuses[key])
+    ) {
+      return prev;
+    }
+    return { ...prev, status: { ...statuses } };
+  });
+}
+
 /**
  * Memoizing `useSyncExternalStore` wrapper. Pattern borrowed from
  * `session-graph.ts`: cache the last selector result and return it

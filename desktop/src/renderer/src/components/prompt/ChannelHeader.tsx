@@ -11,6 +11,7 @@ import {
 import { Button } from '@/components/ui/button';
 import type { VcsInfo } from '../../types';
 import { CHAT_TEXT_SIZE_OPTIONS, type ChatTextSize } from './chat-text-size';
+import { useMessageCopy } from './useMessageCopy';
 
 type ParentInfo = {
   id: string;
@@ -19,6 +20,7 @@ type ParentInfo = {
 
 type Props = {
   label: string;
+  sessionId?: string | null;
   promptActive: boolean;
   onClearMessages: () => void;
   onRemoveSession: () => void;
@@ -43,6 +45,8 @@ type Props = {
    * Resolves to `true` on success, `false` on failure or empty transcript.
    */
   onCopyTranscript?: () => Promise<boolean>;
+  onOpenSessionLog?: () => Promise<boolean>;
+  onCopySessionLogPath?: () => Promise<boolean>;
   /** Parent session info for breadcrumb navigation */
   parentInfo?: ParentInfo | null;
   /** Callback to navigate to parent session */
@@ -130,6 +134,7 @@ function VcsBadge({ vcsInfo }: { vcsInfo: VcsInfo }): React.ReactElement {
 
 export default function ChannelHeader({
   label,
+  sessionId,
   promptActive,
   onClearMessages,
   onRemoveSession,
@@ -146,6 +151,8 @@ export default function ChannelHeader({
   chatFullWidth = false,
   onToggleChatFullWidth,
   onCopyTranscript,
+  onOpenSessionLog,
+  onCopySessionLogPath,
   parentInfo,
   onNavigateToParent,
   searchQuery = '',
@@ -163,6 +170,8 @@ export default function ChannelHeader({
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmAbort, setConfirmAbort] = useState(false);
   const [transcriptCopied, setTranscriptCopied] = useState(false);
+  const [logPathCopied, setLogPathCopied] = useState(false);
+  const { copied: sessionIdCopied, copy: copySessionId } = useMessageCopy();
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   // When the sidebar is collapsed, the header's leftmost UI (SidebarTrigger)
   // would slide under the macOS traffic-lights. Add ~72px left padding to
@@ -420,6 +429,156 @@ export default function ChannelHeader({
                 />
                 <TooltipContent>
                   {expandAllTools ? 'Collapse all tools' : 'Expand all tools'}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {sessionId && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => {
+                        if (sessionId) {
+                          void copySessionId(sessionId);
+                        }
+                      }}
+                      className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
+                        sessionIdCopied ? 'text-[var(--color-agent)]' : ''
+                      }`}
+                      aria-label="Copy session ID"
+                      disabled={!sessionId}
+                    >
+                      {sessionIdCopied ? (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M3 8l3 3 7-7" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <rect x="5" y="5" width="9" height="9" rx="1.5" />
+                          <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" />
+                        </svg>
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  {sessionIdCopied ? 'Copied!' : 'Copy session ID'}
+                </TooltipContent>
+              </Tooltip>
+            )}
+            {onOpenSessionLog && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => void onOpenSessionLog()}
+                      className="h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)]"
+                      aria-label="Open session log"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 2.5h6l4 4v7A1.5 1.5 0 0 1 11.5 15h-7A1.5 1.5 0 0 1 3 13.5v-11Z" />
+                        <path d="M9 2.5V6a.5.5 0 0 0 .5.5H13" />
+                        <path d="M5.5 9h5M5.5 11.5h5" />
+                      </svg>
+                    </Button>
+                  }
+                />
+                <TooltipContent>Open session log</TooltipContent>
+              </Tooltip>
+            )}
+            {onCopySessionLogPath && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={async () => {
+                        const ok = await onCopySessionLogPath();
+                        if (ok) {
+                          setLogPathCopied(true);
+                          window.setTimeout(
+                            () => setLogPathCopied(false),
+                            1500,
+                          );
+                        }
+                      }}
+                      className={`h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
+                        logPathCopied ? 'text-[var(--color-agent)]' : ''
+                      }`}
+                      aria-label="Copy session log path"
+                    >
+                      {logPathCopied ? (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.8"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M3 8l3 3 7-7" />
+                        </svg>
+                      ) : (
+                        <svg
+                          width="14"
+                          height="14"
+                          viewBox="0 0 16 16"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M6 8h4" />
+                          <path d="M7 5.5 4.5 8 7 10.5" />
+                          <path d="m9 5.5 2.5 2.5L9 10.5" />
+                          <rect x="2" y="2" width="12" height="12" rx="2" />
+                        </svg>
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  {logPathCopied ? 'Copied!' : 'Copy log path'}
                 </TooltipContent>
               </Tooltip>
             )}

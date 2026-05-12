@@ -1,6 +1,7 @@
 import type { HandlerContext, SessionStatusType } from './types';
 import { findKeyByConnectionId } from './helpers';
 import type { ConversationEvent } from '../../../../preload/api/types';
+import { clearTerminalSessionState } from './status-state';
 
 /**
  * Window (in ms) after the renderer mounts during which auto-emitted
@@ -98,12 +99,22 @@ export function useStatusHandlers({
           data.providerSessionId,
         );
         if (!nodeId) return prev;
-        const node = prev.get(nodeId)!;
+        const clearedPrev =
+          data.status === 'Session aborted'
+            ? clearTerminalSessionState(prev, nodeId)
+            : prev;
+        const node = clearedPrev.get(nodeId)!;
         const next = new Map(prev);
+        const previousStatuses =
+          incomingType === 'working'
+            ? node.sessionStatuses
+            : node.sessionStatuses.filter(
+                (status) => status.type !== 'working',
+              );
         next.set(nodeId, {
           ...node,
           sessionStatuses: [
-            ...node.sessionStatuses,
+            ...previousStatuses,
             {
               status: data.status,
               type: incomingType,
@@ -125,7 +136,7 @@ export function useStatusHandlers({
   // OpenCode provider session id, which is used directly as the node key.
   //
   // - `streaming` → add a 'working' status to show the active indicator
-  // - `idle` → clear 'working' statuses to hide the active indicator
+  // - `idle` / `error` → clear 'working' statuses to hide the active indicator
   // ------------------------------------------------------------------
   disposers.push(
     window.api.onConversationBatch?.((batch) => {
@@ -185,23 +196,11 @@ export function useStatusHandlers({
             });
             return next;
           });
-        } else if (evt.status === 'idle') {
-          // Clear 'working' statuses when session goes idle
+        } else if (evt.status === 'idle' || evt.status === 'error') {
+          // Clear stale question UI too; OpenCode can accept an answer or abort
+          // without delivering a follow-up `question.cleared` SSE.
           setNodes((prev) => {
-            if (!prev.has(nodeId)) return prev;
-            const node = prev.get(nodeId)!;
-            const filteredStatuses = node.sessionStatuses.filter(
-              (s) => s.type !== 'working',
-            );
-            if (filteredStatuses.length === node.sessionStatuses.length) {
-              return prev;
-            }
-            const next = new Map(prev);
-            next.set(nodeId, {
-              ...node,
-              sessionStatuses: filteredStatuses,
-            });
-            return next;
+            return clearTerminalSessionState(prev, nodeId);
           });
         }
       }

@@ -12,6 +12,8 @@ interface UseStartupPromptsOptions {
   setNodes: React.Dispatch<React.SetStateAction<Map<string, SessionNode>>>;
 }
 
+export const PENDING_QUESTION_REHYDRATE_INTERVAL_MS = 5000;
+
 /**
  * Hook for recovering prompts that arrived while the renderer was restarting.
  * Also provides a callback to apply buffered prompts when nodes arrive late.
@@ -227,6 +229,16 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
     rehydratePendingPermissions,
     rehydratePendingQuestions,
   ]);
+
+  useEffect(() => {
+    const interval = window.setInterval(() => {
+      void rehydratePendingQuestions();
+    }, PENDING_QUESTION_REHYDRATE_INTERVAL_MS);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [rehydratePendingQuestions]);
 
   /**
    * Apply any buffered startup prompt for a given providerSessionId or connectionId.

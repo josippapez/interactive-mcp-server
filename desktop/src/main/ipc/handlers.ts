@@ -16,7 +16,7 @@ import { IpcHandlerDeps } from './handlers/types';
 export type { IpcHandlerDeps } from './handlers/types';
 
 export function registerIpcHandlers(deps: IpcHandlerDeps): void {
-  registerRendererLogChannel();
+  registerRendererLogChannel(deps);
   registerSystemHandlers(deps);
   registerSettingsHandlers(deps);
   registerOpenCodeCoreHandlers(deps);

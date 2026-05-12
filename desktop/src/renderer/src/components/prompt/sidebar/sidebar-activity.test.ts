@@ -45,4 +45,46 @@ describe('filterVisibleSessionIds', () => {
 
     expect(filterVisibleSessionIds([workingNode], null)).toEqual(['session-1']);
   });
+
+  it('keeps OpenCode sessions with busy provider status visible', () => {
+    const childNode = createNode({
+      id: 'ses_child',
+      providerSessionId: 'ses_child',
+      hasMcpChannel: false,
+      openCodeParentId: 'ses_parent',
+    });
+    const parentNode = createNode({
+      id: 'ses_parent',
+      providerSessionId: 'ses_parent',
+      hasMcpChannel: true,
+    });
+
+    expect(
+      filterVisibleSessionIds([parentNode, childNode], null, (sessionId) =>
+        sessionId === 'ses_child' ? 'busy' : null,
+      ),
+    ).toEqual(['ses_parent', 'ses_child']);
+  });
+
+  it('treats explicit idle provider status as authoritative over stale local working status', () => {
+    const staleWorkingNode = createNode({
+      sessionStatuses: [
+        { status: 'Busy', type: 'working', timestamp: new Date() },
+      ],
+    });
+
+    expect(
+      filterVisibleSessionIds([staleWorkingNode], null, () => 'idle'),
+    ).toEqual([]);
+  });
+
+  it('keeps pending questions visible even when provider status is idle', () => {
+    const pendingNode = createNode({
+      hasPendingPrompt: true,
+    });
+
+    expect(filterVisibleSessionIds([pendingNode], null, () => 'idle')).toEqual([
+      'session-1',
+    ]);
+  });
 });

@@ -77,6 +77,7 @@ export const selectChannelAtom = atom(
         'info',
         'channel-selection',
         `selectChannel ${JSON.stringify(logPayload)}`,
+        channelId,
       );
     }
 

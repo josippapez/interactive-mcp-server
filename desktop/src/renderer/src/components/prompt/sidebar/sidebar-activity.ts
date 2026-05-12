@@ -1,8 +1,17 @@
 import type { SessionNode } from '../../../types';
+import type { SessionStatusType } from '../../../hooks/useSessionStatus';
 
-function isNodeRunning(node: SessionNode): boolean {
+function isNodeRunning(
+  node: SessionNode,
+  getStatus?: (sessionId: string) => SessionStatusType | null,
+): boolean {
+  const providerStatus = getStatus?.(node.providerSessionId ?? '');
+  if (providerStatus === 'idle' || providerStatus === 'error') {
+    return node.hasPendingPrompt;
+  }
   return (
     node.hasPendingPrompt ||
+    providerStatus === 'busy' ||
     node.sessionStatuses.some((status) => status.type === 'working')
   );
 }
@@ -10,6 +19,7 @@ function isNodeRunning(node: SessionNode): boolean {
 export function filterVisibleSessionIds(
   nodes: SessionNode[],
   activeConnectionId: string | null,
+  getStatus?: (sessionId: string) => SessionStatusType | null,
 ): string[] {
   const byParentKey = new Map<string, SessionNode>();
   for (const node of nodes) {
@@ -24,7 +34,7 @@ export function filterVisibleSessionIds(
   for (const node of nodes) {
     if (
       node.id === activeConnectionId ||
-      isNodeRunning(node) ||
+      isNodeRunning(node, getStatus) ||
       node.unreadCount > 0
     ) {
       visibleIds.add(node.id);

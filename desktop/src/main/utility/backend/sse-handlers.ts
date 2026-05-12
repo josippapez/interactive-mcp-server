@@ -19,6 +19,8 @@ import {
   tombstoneOpenCodeSession,
 } from './session-tree-service';
 import type { SessionInfo } from './session-types';
+import { getSettingsSnapshot } from './settings-mirror';
+import { writeSessionLog } from '../../utils/session-logger';
 
 type SessionEventProperties = {
   sessionID: string;
@@ -58,6 +60,13 @@ export function handleSessionCreated(
   if (!info || typeof info.id !== 'string') return;
 
   const next = toSessionInfo(info);
+  writeSessionLog(
+    getSettingsSnapshot().logsDir,
+    next.id,
+    'INFO',
+    'sse:session.created',
+    `title=${next.title ?? '(untitled)'} directory=${next.directory ?? '(none)'} parentID=${next.parentID ?? '(none)'}`,
+  );
 
   if (options.getAutoRegisterSubagents()) {
     const port = options.getOpenCodePort();
@@ -74,6 +83,13 @@ export function handleSessionCreated(
 export function handleSessionUpdated(props: SessionEventProperties): void {
   const { info } = props;
   if (!info || typeof info.id !== 'string') return;
+  writeSessionLog(
+    getSettingsSnapshot().logsDir,
+    info.id,
+    'DEBUG',
+    'sse:session.updated',
+    `title=${info.title ?? '(untitled)'}`,
+  );
   invalidateSessionTreeForKey(info.id);
 }
 
@@ -83,6 +99,13 @@ export function handleSessionDeleted(props: SessionEventProperties): void {
   if (typeof id !== 'string' || id.length === 0) return;
 
   tombstoneOpenCodeSession(id);
+  writeSessionLog(
+    getSettingsSnapshot().logsDir,
+    id,
+    'INFO',
+    'sse:session.deleted',
+    'session deleted',
+  );
   invalidateSessionTree();
 }
 
@@ -97,6 +120,13 @@ export function handleSessionCompacted(
 ): void {
   if (!sessionId) return;
   const port = options.getOpenCodePort();
+  writeSessionLog(
+    getSettingsSnapshot().logsDir,
+    sessionId,
+    'INFO',
+    'sse:session.compacted',
+    'session compacted; reinjecting context',
+  );
   try {
     reinjectDbContextAfterCompaction(sessionId, {
       getOpenCodePort: () => port,

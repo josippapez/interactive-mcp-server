@@ -56,6 +56,14 @@ export function createSessionsApi() {
       sessionId: string,
     ): Promise<SessionChannelHistoryRecord[]> =>
       ipcRenderer.invoke('get-session-channel-history', sessionId),
+    getSessionLogPath: (sessionId: string): Promise<string> =>
+      ipcRenderer.invoke('get-session-log-path', sessionId),
+    readSessionLog: (sessionId: string, lines?: number): Promise<string> =>
+      ipcRenderer.invoke('read-session-log', sessionId, lines),
+    openSessionLog: (
+      sessionId: string,
+    ): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('open-session-log', sessionId),
     clearSessionChannelMessages: (sessionId: string): Promise<boolean> =>
       ipcRenderer.invoke('clear-session-channel-messages', sessionId),
     removeSessionChannel: (sessionId: string): Promise<boolean> =>

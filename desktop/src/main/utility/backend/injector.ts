@@ -7,7 +7,7 @@ import { getRegisteredConnectionBySessionId } from './database';
 import { createLogger } from '../../utils/logger';
 import { toProviderReasoningVariant } from '../../../shared/reasoning-variant';
 import { reconcileDeliveryAfterTimeout } from './injector-reconcile';
-import { sessionMessages, sessionPromptAsync } from './session-api';
+import { sessionGet, sessionMessages, sessionPromptAsync } from './session-api';
 import { errorMessage } from '../../utils/errors';
 
 const log = createLogger('injector');
@@ -62,6 +62,38 @@ async function resolveSessionAgent(
       }
     }
     return null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveOpenCodeSessionDirectory(input: {
+  sessionDirectory?: string | null;
+  registeredBaseDirectory?: string | null;
+}): string | undefined {
+  const sessionDirectory = input.sessionDirectory?.trim();
+  if (sessionDirectory) return sessionDirectory;
+  const registeredBaseDirectory = input.registeredBaseDirectory?.trim();
+  return registeredBaseDirectory || undefined;
+}
+
+async function fetchOpenCodeSessionDirectory(
+  port: number,
+  openCodeSessionId: string,
+  registeredBaseDirectory: string | null,
+): Promise<string | null> {
+  try {
+    const response = await sessionGet(port, openCodeSessionId, {
+      directory: registeredBaseDirectory ?? undefined,
+      signal: AbortSignal.timeout(3000),
+    });
+    if (response.error) return null;
+    const data = response.data;
+    if (!data || typeof data !== 'object') return null;
+    const directory = 'directory' in data ? data.directory : undefined;
+    return typeof directory === 'string' && directory.trim()
+      ? directory.trim()
+      : null;
   } catch {
     return null;
   }
@@ -294,6 +326,16 @@ export async function injectOpenCodeMessage(
         openCodeSessionId,
         'opencode',
       );
+      const registeredBaseDirectory = registered?.baseDirectory ?? null;
+      const sessionDirectory = await fetchOpenCodeSessionDirectory(
+        openCodePort,
+        openCodeSessionId,
+        registeredBaseDirectory,
+      );
+      const requestDirectory = resolveOpenCodeSessionDirectory({
+        sessionDirectory,
+        registeredBaseDirectory,
+      });
 
       // Build the request body for SDK
       const requestBody: {
@@ -330,7 +372,7 @@ export async function injectOpenCodeMessage(
         const resolved = await resolveSessionAgent(
           openCodePort,
           openCodeSessionId,
-          registered?.baseDirectory ?? undefined,
+          requestDirectory,
         );
         if (resolved) {
           effectiveAgent = resolved;
@@ -345,7 +387,7 @@ export async function injectOpenCodeMessage(
       }
 
       log.info(
-        `[injectOpenCodeMessage] SDK request body: ${JSON.stringify(requestBody)} directory=${registered?.baseDirectory ?? '(none)'}`,
+        `[injectOpenCodeMessage] SDK request body: ${JSON.stringify(requestBody)} directory=${requestDirectory ?? '(none)'}`,
       );
 
       // Use SDK's promptAsync method with timeout via AbortSignal
@@ -354,7 +396,7 @@ export async function injectOpenCodeMessage(
         openCodeSessionId,
         requestBody,
         {
-          directory: registered?.baseDirectory ?? undefined,
+          directory: requestDirectory,
           signal: AbortSignal.timeout(timeoutMs),
         },
       );

@@ -35,6 +35,7 @@ import {
   ModelSelectionPayload,
 } from './types';
 import { logIpcInfo, withSkillSuggestion } from './shared';
+import { writeSessionLog } from '../../utils/session-logger';
 
 export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
   // Save a base64 image (e.g. from clipboard) to the per-session attachments
@@ -155,6 +156,13 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
       logIpcInfo(
         `[queue-session-message] sessionId=${data.sessionId} messageLength=${data.message.length}`,
       );
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.sessionId,
+        'INFO',
+        'ipc:queue-session-message',
+        `messageLength=${data.message.length}`,
+      );
       const outbound = await withSkillSuggestion(data.message);
       await queueSessionMessage(data.sessionId, outbound);
       logIpcInfo(
@@ -187,6 +195,13 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
       logIpcInfo(
         `[inject-opencode-message] openCodeSessionId=${data.openCodeSessionId} noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0} agent=${data.agent ?? '(none)'}`,
       );
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.openCodeSessionId,
+        'INFO',
+        'ipc:inject-opencode-message',
+        `noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0} agent=${data.agent ?? '(none)'}`,
+      );
       const outbound = await withSkillSuggestion(data.message);
       const result = await injectOpenCodeMessage(
         data.openCodeSessionId,
@@ -201,6 +216,13 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
       );
       logIpcInfo(
         `[inject-opencode-message] result ok=${result.ok} error=${result.error ?? 'none'} openCodeSessionId=${data.openCodeSessionId}`,
+      );
+      writeSessionLog(
+        deps.getLogsDir(),
+        data.openCodeSessionId,
+        result.ok ? 'INFO' : 'ERROR',
+        'ipc:inject-opencode-message',
+        `result ok=${result.ok} error=${result.error ?? 'none'}`,
       );
       return result;
     },

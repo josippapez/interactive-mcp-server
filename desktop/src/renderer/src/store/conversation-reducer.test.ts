@@ -6,8 +6,14 @@ import type {
 import {
   applyConversationEvent,
   initialConversationState,
+  type ConversationSessionStatus,
   seedConversationMessages,
 } from './conversation-reducer';
+import {
+  conversationStore,
+  replaceSessionStatusSnapshot,
+  seedSessionStatus,
+} from './conversation-store';
 
 function assistantMessage(
   overrides: Partial<ConversationMessage> = {},
@@ -116,5 +122,19 @@ describe('conversation-reducer', () => {
 
     expect(updated.parts.msg_1[0].toolOutput).toBe('Final result');
     expect(updated.sessionSideChannels.ses_1).toBeUndefined();
+  });
+});
+
+describe('conversation-store status snapshot', () => {
+  it('removes stale busy statuses missing from the latest REST snapshot', () => {
+    conversationStore.setState(initialConversationState);
+    seedSessionStatus('ses_stale', 'streaming');
+    seedSessionStatus('ses_current', 'streaming');
+
+    replaceSessionStatusSnapshot({
+      ses_current: 'idle' satisfies ConversationSessionStatus,
+    });
+
+    expect(conversationStore.state.status).toEqual({ ses_current: 'idle' });
   });
 });

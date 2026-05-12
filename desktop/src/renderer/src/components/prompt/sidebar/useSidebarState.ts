@@ -11,6 +11,7 @@ import { useHealthStatus } from '../../../store/opencode-health';
 
 /** Local storage key for persisted selected project */
 const SELECTED_PROJECT_KEY = 'sidebar-selected-project';
+const MIN_REFRESH_SPINNER_MS = 350;
 
 type UseSidebarStateProps = {
   activeConnectionId: string | null;
@@ -79,15 +80,31 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
   // Refresh state
   const [isUserRefreshing, setIsUserRefreshing] = useState(false);
 
+  // Session status from OpenCode API
+  const {
+    getStatus,
+    statusMap,
+    refresh: refreshSessionStatus,
+  } = useSessionStatus(true);
+
   const handleRefresh = useCallback(async () => {
     if (isUserRefreshing) return;
     setIsUserRefreshing(true);
+    const startedAt = Date.now();
     try {
-      await window.api.refreshSessionTree();
+      await Promise.all([
+        window.api.refreshSessionTree(),
+        refreshSessionStatus(),
+      ]);
     } finally {
-      setIsUserRefreshing(false);
+      const remaining = MIN_REFRESH_SPINNER_MS - (Date.now() - startedAt);
+      if (remaining > 0) {
+        window.setTimeout(() => setIsUserRefreshing(false), remaining);
+      } else {
+        setIsUserRefreshing(false);
+      }
     }
-  }, [isUserRefreshing]);
+  }, [isUserRefreshing, refreshSessionStatus]);
 
   // Show the spinner as rotating during cold-start while OpenCode is still
   // coming up and we don't yet have any projects to display. As soon as the
@@ -97,9 +114,6 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
   const healthStatus = useHealthStatus();
   const isColdStartLoading = !healthStatus.healthy && projects.length === 0;
   const isRefreshing = isUserRefreshing || isColdStartLoading;
-
-  // Session status from OpenCode API
-  const { getStatus, statusMap } = useSessionStatus(true);
 
   // Collapsed state management
   const {

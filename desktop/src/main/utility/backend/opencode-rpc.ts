@@ -217,6 +217,11 @@ export function registerOpencodeRpcHandlers(bridge: Bridge): void {
     return questionList.rejectOpenCodeQuestion(port, requestID, sessionID);
   });
 
+  bridge.handle('opencode.rejectPendingQuestionsForSession', (p) => {
+    const [port, sessionID] = argsOf(p) as [number, string];
+    return questionList.rejectPendingQuestionsForSession(port, sessionID);
+  });
+
   // ── permission-list ──────────────────────────────────────────────────────
   bridge.handle('opencode.fetchPendingPermissions', (p) => {
     const [port, baseDir] = argsOf(p) as [number, string | undefined];

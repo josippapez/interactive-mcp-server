@@ -43,6 +43,9 @@ import {
   shouldAutoApproveReadPermission,
 } from './permission-auto-approve';
 import { createLogger } from '../../utils/logger';
+import { writeSessionLog } from '../../utils/session-logger';
+import { getSettingsSnapshot } from './settings-mirror';
+import { formatQuestionLifecycleLog } from './question-lifecycle-logger';
 
 const log = createLogger('prompt-event-forwarder');
 
@@ -360,7 +363,30 @@ export function forwardQuestionAsked(
       log.info(
         `question.asked session=${sessionID} request=${frame.requestId} connection=${connectionId ?? 'null'} questions=${frame.questions.length}`,
       );
+      writeSessionLog(
+        getSettingsSnapshot().logsDir,
+        sessionID,
+        'INFO',
+        'question-lifecycle',
+        formatQuestionLifecycleLog({
+          kind: 'asked',
+          requestId: frame.requestId,
+          sessionId: sessionID,
+          questionCount: frame.questions.length,
+        }),
+      );
       send(ctx, 'question-asked', frame);
+      writeSessionLog(
+        getSettingsSnapshot().logsDir,
+        sessionID,
+        'INFO',
+        'question-lifecycle',
+        formatQuestionLifecycleLog({
+          kind: 'displayed',
+          requestId: frame.requestId,
+          sessionId: sessionID,
+        }),
+      );
     },
   );
 }
@@ -382,6 +408,18 @@ export function forwardQuestionReplied(
       if (!frame) return;
       log.info(
         `question.cleared session=${sessionID} request=${frame.requestId} rejected=${String(frame.rejected ?? false)}`,
+      );
+      writeSessionLog(
+        getSettingsSnapshot().logsDir,
+        sessionID,
+        'INFO',
+        'question-lifecycle',
+        formatQuestionLifecycleLog({
+          kind: 'cleared',
+          requestId: frame.requestId,
+          sessionId: sessionID,
+          reason: frame.rejected ? 'rejected' : 'replied',
+        }),
       );
       send(ctx, 'question-cleared', frame);
     },

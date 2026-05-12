@@ -11,11 +11,12 @@ function logHandler(
   fn: string,
   event: string,
   details: Record<string, unknown>,
+  sessionId?: string | null,
 ): void {
   const message = `${fn}: ${event} ${JSON.stringify(details)}`;
   // Log to file via IPC for persistent diagnostics (guard for test environment)
   if (typeof window !== 'undefined' && window.api?.log) {
-    window.api.log('info', 'message-handlers', message);
+    window.api.log('info', 'message-handlers', message, sessionId);
   }
   console.log(`[message-handlers] ${fn}:`, event, details);
 }
@@ -50,20 +51,30 @@ export function useMessageHandlers({
         sessionId,
       );
 
-      logHandler('handleQueueSessionMessage', 'called', {
-        activeChannelId,
-        sessionId,
-        resolvedSessionId: target?.sessionId ?? sessionId,
-        resolvedVia: target?.resolvedVia ?? 'fallback',
-        nodeKey: target?.nodeKey,
-        messageLength: message.length,
-      });
+      logHandler(
+        'handleQueueSessionMessage',
+        'called',
+        {
+          activeChannelId,
+          sessionId,
+          resolvedSessionId: target?.sessionId ?? sessionId,
+          resolvedVia: target?.resolvedVia ?? 'fallback',
+          nodeKey: target?.nodeKey,
+          messageLength: message.length,
+        },
+        target?.sessionId ?? sessionId,
+      );
 
       if (!target) {
-        logHandler('handleQueueSessionMessage', 'no-active-target', {
+        logHandler(
+          'handleQueueSessionMessage',
+          'no-active-target',
+          {
+            sessionId,
+            nodesCount: nodesRef.current.size,
+          },
           sessionId,
-          nodesCount: nodesRef.current.size,
-        });
+        );
         return;
       }
 
@@ -129,24 +140,34 @@ export function useMessageHandlers({
         sessionId,
       );
 
-      logHandler('handleInjectWithReply', 'called', {
-        activeChannelId,
-        sessionId,
-        resolvedSessionId: target?.sessionId ?? sessionId,
-        resolvedVia: target?.resolvedVia ?? 'fallback',
-        nodeKey: target?.nodeKey,
-        nodeTitle: target?.node?.title,
-        messageLength: message.length,
-        attachmentsCount: attachments?.length ?? 0,
-        hasModelOverride: !!modelOverride,
-        agent: agent ?? '(none)',
-      });
+      logHandler(
+        'handleInjectWithReply',
+        'called',
+        {
+          activeChannelId,
+          sessionId,
+          resolvedSessionId: target?.sessionId ?? sessionId,
+          resolvedVia: target?.resolvedVia ?? 'fallback',
+          nodeKey: target?.nodeKey,
+          nodeTitle: target?.node?.title,
+          messageLength: message.length,
+          attachmentsCount: attachments?.length ?? 0,
+          hasModelOverride: !!modelOverride,
+          agent: agent ?? '(none)',
+        },
+        target?.sessionId ?? sessionId,
+      );
 
       if (!target) {
-        logHandler('handleInjectWithReply', 'no-active-target', {
+        logHandler(
+          'handleInjectWithReply',
+          'no-active-target',
+          {
+            sessionId,
+            nodesCount: nodesRef.current.size,
+          },
           sessionId,
-          nodesCount: nodesRef.current.size,
-        });
+        );
         return;
       }
 
@@ -156,11 +177,16 @@ export function useMessageHandlers({
       setNodes((prev) => {
         const key = target.nodeKey;
         if (!key) {
-          logHandler('handleInjectWithReply', 'CRITICAL-key-null', {
+          logHandler(
+            'handleInjectWithReply',
+            'CRITICAL-key-null',
+            {
+              sessionId,
+              outboundId,
+              nodesCount: prev.size,
+            },
             sessionId,
-            outboundId,
-            nodesCount: prev.size,
-          });
+          );
           return prev;
         }
         const node = prev.get(key)!;
@@ -181,11 +207,16 @@ export function useMessageHandlers({
             },
           ],
         });
-        logHandler('handleInjectWithReply', 'message-added', {
-          key,
-          outboundId,
-          newMessagesCount: node.channelMessages.length + 1,
-        });
+        logHandler(
+          'handleInjectWithReply',
+          'message-added',
+          {
+            key,
+            outboundId,
+            newMessagesCount: node.channelMessages.length + 1,
+          },
+          target.sessionId,
+        );
         return next;
       });
 

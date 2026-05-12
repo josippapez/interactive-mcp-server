@@ -64,6 +64,7 @@ import {
   type QuestionRepliedPayload,
 } from './prompt-event-forwarder';
 import { getSettingsSnapshot } from './settings-mirror';
+import { handleBackgroundSubagentSessionStatus } from './tools/manage-background-subagents';
 
 const log = createLogger('event-stream');
 
@@ -536,6 +537,21 @@ async function runLoop(): Promise<void> {
             port,
           },
         );
+        for (const ev of mapped) {
+          if (ev.type === 'session.status') {
+            const status =
+              ev.status === 'streaming'
+                ? 'busy'
+                : ev.status === 'error'
+                  ? 'error'
+                  : 'idle';
+            void handleBackgroundSubagentSessionStatus({
+              openCodePort: port,
+              sessionId: ev.sessionId,
+              status,
+            });
+          }
+        }
         for (const ev of mapped) enqueue(ev);
       }
 

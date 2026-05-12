@@ -8,6 +8,10 @@ import {
   getPromptPlaceholder,
   getQueueComposerBaseDirectory,
 } from './prompt-utils';
+import {
+  countRunningBackgroundSubagents,
+  deriveBackgroundSubagents,
+} from './background-subagents';
 import { useDeriveSessionAgentEffect } from './useDeriveSessionAgentEffect';
 import { usePromptConnectionData } from './usePromptConnectionData';
 import { usePromptInteractionState } from './usePromptInteractionState';
@@ -71,6 +75,12 @@ export function usePromptViewState(props: PromptViewProps) {
   const isOpenCodeSession = activeNode?.providerType === 'opencode';
   const sessionBaseDirectory =
     activeNode?.baseDirectory ?? activeNode?.directory ?? null;
+  const backgroundSubagents = deriveBackgroundSubagents(
+    connections,
+    providerSessionId,
+  );
+  const runningBackgroundSubagentCount =
+    countRunningBackgroundSubagents(backgroundSubagents);
 
   const {
     noReply,
@@ -291,6 +301,26 @@ export function usePromptViewState(props: PromptViewProps) {
     }
   }, [channelMessages, conversationMessages, activePromptId]);
 
+  const handleOpenSessionLog = useCallback(async (): Promise<boolean> => {
+    const sessionId = providerSessionId ?? activeConnectionId;
+    if (!sessionId) return false;
+    const result = await window.api.openSessionLog(sessionId);
+    return result.ok;
+  }, [activeConnectionId, providerSessionId]);
+
+  const handleCopySessionLogPath = useCallback(async (): Promise<boolean> => {
+    const sessionId = providerSessionId ?? activeConnectionId;
+    if (!sessionId) return false;
+    const path = await window.api.getSessionLogPath(sessionId);
+    if (!path) return false;
+    try {
+      await navigator.clipboard.writeText(path);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [activeConnectionId, providerSessionId]);
+
   return {
     chatEndRef,
     activeNode,
@@ -299,6 +329,8 @@ export function usePromptViewState(props: PromptViewProps) {
     parentInfo,
     handleNavigateToParent,
     handleNavigateToSession,
+    backgroundSubagents,
+    runningBackgroundSubagentCount,
     todos,
     todosLoading,
     todosError,
@@ -360,6 +392,8 @@ export function usePromptViewState(props: PromptViewProps) {
     handleClearMessages,
     handleDismissCurrentSession,
     handleCopyTranscript,
+    handleOpenSessionLog,
+    handleCopySessionLogPath,
     channelSearchQuery,
     channelSearchOpen,
     channelSearchMatchCount,
