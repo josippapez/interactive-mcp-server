@@ -455,10 +455,6 @@ const MessageItem = memo(function MessageItem({
       <div
         className={`min-w-0 rounded-xl ${searchRingClass} ${activePromptClass}`.trim()}
         data-active-prompt={isActive ? 'true' : undefined}
-        style={{
-          contentVisibility: 'auto',
-          containIntrinsicSize: 'auto 100px',
-        }}
       >
         {metaRow}
 

@@ -54,6 +54,7 @@
     "@streamdown/mermaid": "^1.0.2",
     "@tailwindcss/typography": "^0.5.19",
     "@tanstack/pacer": "^0.17.0",
+    "@tanstack/react-virtual": "^3.13.24",
     "@tanstack/store": "^0.7.0",
     "ai": "^6.0.175",
     "better-sqlite3": "^12.9.0",

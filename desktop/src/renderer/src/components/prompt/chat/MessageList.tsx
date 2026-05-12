@@ -2,10 +2,12 @@ import React, {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { UnifiedMessage } from '../../../types/unified-message';
 import MessageItem from '../MessageItem';
 import UnreadDivider from './UnreadDivider';
@@ -13,6 +15,7 @@ import {
   getStreamingMessageId,
   useSeenMessageIds,
 } from './message-list-helpers';
+import { shouldVirtualizeMessageList } from './message-list-virtualization';
 
 interface MessageListProps {
   /** Messages to render */
@@ -94,6 +97,10 @@ const MessageList = memo(function MessageList({
   deepLinkMessageId = null,
 }: MessageListProps): React.ReactElement {
   const newMessageIds = useSeenMessageIds(messages);
+  const shouldVirtualize = shouldVirtualizeMessageList({
+    messageCount: messages.length,
+    isBusy,
+  });
   const streamingMessageId = useMemo(
     () => getStreamingMessageId(messages, isBusy),
     [messages, isBusy],
@@ -135,6 +142,30 @@ const MessageList = memo(function MessageList({
     [matchedMessageIds],
   );
 
+  const getItemKey = useCallback(
+    (index: number) => messages[index]?.id ?? index,
+    [messages],
+  );
+  const virtualizer = useVirtualizer({
+    count: shouldVirtualize ? messages.length : 0,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    estimateSize: () => 160,
+    getItemKey,
+    overscan: 8,
+    enabled: shouldVirtualize,
+    useAnimationFrameWithResizeObserver: true,
+  });
+
+  const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : [];
+
+  const setMeasuredRowRef = useCallback(
+    (id: string, node: HTMLDivElement | null): void => {
+      getRefSetter(id)(node);
+      if (node) virtualizer.measureElement(node);
+    },
+    [getRefSetter, virtualizer],
+  );
+
   // Which message currently holds keyboard focus (null = none).
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
@@ -172,6 +203,20 @@ const MessageList = memo(function MessageList({
       const next = messages[nextIdx];
       if (!next) return;
       setFocusedId(next.id);
+      if (shouldVirtualize) {
+        virtualizer.scrollToIndex(nextIdx, {
+          align: 'center',
+          behavior: 'smooth',
+        });
+        requestAnimationFrame(() => {
+          const row = rowRefs.current.get(next.id);
+          const article = row?.querySelector<HTMLElement>(
+            'article[data-slot^="session-turn-"]',
+          );
+          article?.focus({ preventScroll: true });
+        });
+        return;
+      }
       const nextRow = rowRefs.current.get(next.id);
       const nextArticle = nextRow?.querySelector<HTMLElement>(
         'article[data-slot^="session-turn-"]',
@@ -179,10 +224,22 @@ const MessageList = memo(function MessageList({
       nextArticle?.focus({ preventScroll: false });
       nextArticle?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     },
-    [messages],
+    [messages, shouldVirtualize, virtualizer],
   );
 
   useEffect(() => {
+    const targetId = activeSearchMatchId ?? deepLinkMessageId;
+    if (!targetId) return;
+    if (shouldVirtualize) {
+      const index = messages.findIndex((m) => m.id === targetId);
+      if (index !== -1) {
+        virtualizer.scrollToIndex(index, {
+          align: 'center',
+          behavior: 'smooth',
+        });
+      }
+      return;
+    }
     if (!activeSearchMatchId) return;
     const node = rowRefs.current.get(activeSearchMatchId);
     if (!node) return;
@@ -200,7 +257,121 @@ const MessageList = memo(function MessageList({
       return;
     }
     node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [activeSearchMatchId, scrollContainerRef]);
+  }, [
+    activeSearchMatchId,
+    deepLinkMessageId,
+    messages,
+    scrollContainerRef,
+    shouldVirtualize,
+    virtualizer,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!shouldVirtualize) return;
+    virtualizer.measure();
+  }, [messages, shouldVirtualize, virtualizer]);
+
+  const renderMessage = useCallback(
+    (msg: UnifiedMessage, index: number): React.ReactElement => {
+      const isActive = msg.isActivePrompt ?? false;
+      const showOptions = Boolean(
+        isActive &&
+        predefinedOptions &&
+        predefinedOptions.length > 0 &&
+        onSelectOption,
+      );
+
+      const showDividerBefore = showUnreadDivider && index === unreadStartIndex;
+
+      const isNewMessage = newMessageIds.has(msg.id);
+      const isStreamingMessage = msg.id === streamingMessageId;
+
+      return (
+        <>
+          {showDividerBefore && <UnreadDivider />}
+          <MessageItem
+            msg={msg}
+            isActive={isActive}
+            showOptions={showOptions}
+            predefinedOptions={predefinedOptions}
+            onSelectOption={onSelectOption}
+            onExpandImage={onExpandImage}
+            expandAllTools={expandAllTools}
+            toolAutoExpandExclusions={toolAutoExpandExclusions}
+            onNavigateToSession={onNavigateToSession}
+            showThinking={showThinking}
+            isNew={isNewMessage}
+            isStreaming={isStreamingMessage}
+            isSearchMatch={matchedIdSet.has(msg.id)}
+            isActiveSearchMatch={activeSearchMatchId === msg.id}
+            isFocused={focusedId === msg.id}
+            isDeepLinkTarget={deepLinkMessageId === msg.id}
+            onRequestFocus={handleRequestFocus}
+            onKeyNavigate={handleKeyNavigate}
+          />
+        </>
+      );
+    },
+    [
+      activeSearchMatchId,
+      deepLinkMessageId,
+      expandAllTools,
+      focusedId,
+      handleKeyNavigate,
+      handleRequestFocus,
+      matchedIdSet,
+      newMessageIds,
+      onExpandImage,
+      onNavigateToSession,
+      onSelectOption,
+      predefinedOptions,
+      showThinking,
+      showUnreadDivider,
+      streamingMessageId,
+      toolAutoExpandExclusions,
+      unreadStartIndex,
+    ],
+  );
+
+  if (shouldVirtualize) {
+    return (
+      <div
+        ref={contentRef}
+        data-slot="session-turn-list"
+        className="px-2 py-3"
+        style={{
+          height: `${virtualizer.getTotalSize()}px`,
+          position: 'relative',
+        }}
+      >
+        <div
+          className="absolute left-0 top-0 flex w-full flex-col gap-3"
+          style={{
+            transform: `translateY(${virtualItems[0]?.start ?? 0}px)`,
+          }}
+        >
+          {virtualItems.map((virtualItem) => {
+            const msg = messages[virtualItem.index];
+            if (!msg) return null;
+            return (
+              <div
+                key={virtualItem.key}
+                data-index={virtualItem.index}
+                data-message-id={msg.id}
+                style={{
+                  contentVisibility: 'auto',
+                  containIntrinsicSize: 'auto 120px',
+                }}
+                ref={(node) => setMeasuredRowRef(msg.id, node)}
+              >
+                {renderMessage(msg, virtualItem.index)}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -209,48 +380,19 @@ const MessageList = memo(function MessageList({
       className="flex flex-col gap-3 px-2 py-3"
     >
       {messages.map((msg, index) => {
-        const isActive = msg.isActivePrompt ?? false;
-        const showOptions = Boolean(
-          isActive &&
-          predefinedOptions &&
-          predefinedOptions.length > 0 &&
-          onSelectOption,
-        );
-
-        const showDividerBefore =
-          showUnreadDivider && index === unreadStartIndex;
-
-        const isNewMessage = newMessageIds.has(msg.id);
-        const isStreamingMessage = msg.id === streamingMessageId;
-
         return (
           <div
             key={msg.id}
             data-index={index}
             data-message-id={msg.id}
             ref={getRefSetter(msg.id)}
+            style={{
+              contentVisibility:
+                msg.id === streamingMessageId ? 'visible' : 'auto',
+              containIntrinsicSize: 'auto 120px',
+            }}
           >
-            {showDividerBefore && <UnreadDivider />}
-            <MessageItem
-              msg={msg}
-              isActive={isActive}
-              showOptions={showOptions}
-              predefinedOptions={predefinedOptions}
-              onSelectOption={onSelectOption}
-              onExpandImage={onExpandImage}
-              expandAllTools={expandAllTools}
-              toolAutoExpandExclusions={toolAutoExpandExclusions}
-              onNavigateToSession={onNavigateToSession}
-              showThinking={showThinking}
-              isNew={isNewMessage}
-              isStreaming={isStreamingMessage}
-              isSearchMatch={matchedIdSet.has(msg.id)}
-              isActiveSearchMatch={activeSearchMatchId === msg.id}
-              isFocused={focusedId === msg.id}
-              isDeepLinkTarget={deepLinkMessageId === msg.id}
-              onRequestFocus={handleRequestFocus}
-              onKeyNavigate={handleKeyNavigate}
-            />
+            {renderMessage(msg, index)}
           </div>
         );
       })}
