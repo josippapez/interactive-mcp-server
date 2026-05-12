@@ -94,9 +94,11 @@ export function useContextUsage(
         return resolution.providerSessionId;
       }
     } catch (err) {
-      console.warn(
-        '[useContextUsage] Failed to resolve provider session:',
-        err,
+      const message = err instanceof Error ? err.message : String(err);
+      window.api.log?.(
+        'warn',
+        'useContextUsage',
+        `Failed to resolve provider session: ${message}`,
       );
     }
 
@@ -130,7 +132,13 @@ export function useContextUsage(
         });
       }
     } catch (err) {
-      console.warn('[useContextUsage] Failed to fetch usage:', err);
+      const message = err instanceof Error ? err.message : String(err);
+      window.api.log?.(
+        'warn',
+        'useContextUsage',
+        `Failed to fetch usage: ${message}`,
+        targetSessionId,
+      );
     } finally {
       setIsLoading(false);
     }

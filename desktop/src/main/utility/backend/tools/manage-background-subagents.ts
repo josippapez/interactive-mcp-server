@@ -33,6 +33,7 @@ import {
 type BackgroundSubagentState = BackgroundSubagentRecord['status'];
 
 type LiveStatus = 'busy' | 'idle' | 'error' | 'unknown';
+type LiveStatusMap = Record<string, { type?: string } | undefined>;
 
 type ConnectedBackgroundSubagentModels = ProvidersInfo;
 type BackgroundSubagentPreset = 'deep' | 'labor' | 'fast';
@@ -50,6 +51,12 @@ const INVALID_MODEL_SELECTION_MESSAGE =
 const STALLED_AFTER_MS = 10 * 60_000;
 
 const backgroundSubagents = new Map<string, BackgroundSubagentRecord>();
+const backgroundSubagentsBySessionId = new Map<
+  string,
+  BackgroundSubagentRecord
+>();
+const knownBackgroundSubagentSessionIds = new Set<string>();
+let knownBackgroundSubagentSessionsLoaded = false;
 
 export const TOOL_DESCRIPTION = `<description>
 Start and inspect real background OpenCode subagents without blocking the current agent turn.
@@ -82,11 +89,13 @@ function cacheRecord(
   record: BackgroundSubagentRecord,
 ): BackgroundSubagentRecord {
   backgroundSubagents.set(record.id, record);
+  backgroundSubagentsBySessionId.set(record.sessionId, record);
+  knownBackgroundSubagentSessionIds.add(record.sessionId);
   return record;
 }
 
 function persistRecord(record: BackgroundSubagentRecord): void {
-  backgroundSubagents.set(record.id, record);
+  cacheRecord(record);
   upsertBackgroundSubagent(record);
 }
 
@@ -97,11 +106,11 @@ function getRecordById(id: string): BackgroundSubagentRecord | null {
 function getRecordBySessionId(
   sessionId: string,
 ): BackgroundSubagentRecord | null {
-  return (
-    [...backgroundSubagents.values()].find(
-      (record) => record.sessionId === sessionId,
-    ) ?? getBackgroundSubagentRecordBySessionId(sessionId)
-  );
+  const cached = backgroundSubagentsBySessionId.get(sessionId);
+  if (cached) return cached;
+  if (!knownBackgroundSubagentSessionIds.has(sessionId)) return null;
+  const record = getBackgroundSubagentRecordBySessionId(sessionId);
+  return record ? cacheRecord(record) : null;
 }
 
 function jsonResult(payload: unknown): CallToolResult {
@@ -275,6 +284,29 @@ export function summarizeBackgroundSubagentStatus(input: {
   return input.localStatus;
 }
 
+export function seedKnownBackgroundSubagentSessions(
+  records: readonly Pick<BackgroundSubagentRecord, 'sessionId'>[],
+): void {
+  for (const record of records) {
+    knownBackgroundSubagentSessionIds.add(record.sessionId);
+  }
+}
+
+function ensureKnownBackgroundSubagentSessionsLoaded(): void {
+  if (knownBackgroundSubagentSessionsLoaded) return;
+  knownBackgroundSubagentSessionsLoaded = true;
+  seedKnownBackgroundSubagentSessions(listBackgroundSubagentRecords());
+}
+
+export function getLiveStatusFromMap(
+  data: LiveStatusMap | null | undefined,
+  sessionId: string,
+): LiveStatus | undefined {
+  const raw = data?.[sessionId]?.type;
+  if (raw === 'busy' || raw === 'idle' || raw === 'error') return raw;
+  return raw ? 'unknown' : undefined;
+}
+
 export function extractAssistantTextFromMessages(messages: unknown[]): string {
   const chunks: string[] = [];
   for (const message of messages) {
@@ -350,10 +382,18 @@ async function getLiveStatus(
   if (response.error) return undefined;
   const data = response.data;
   if (!data || typeof data !== 'object') return undefined;
-  const raw = (data as Record<string, { type?: string } | undefined>)[sessionId]
-    ?.type;
-  if (raw === 'busy' || raw === 'idle' || raw === 'error') return raw;
-  return raw ? 'unknown' : undefined;
+  return getLiveStatusFromMap(data as LiveStatusMap, sessionId);
+}
+
+async function fetchLiveStatusMap(
+  openCodePort: number,
+): Promise<LiveStatusMap | null> {
+  const response = await sessionStatus(openCodePort, {
+    signal: AbortSignal.timeout(3000),
+  });
+  if (response.error) return null;
+  const data = response.data;
+  return data && typeof data === 'object' ? (data as LiveStatusMap) : null;
 }
 
 async function getParentSessionDirectory(
@@ -430,12 +470,11 @@ export function getBackgroundSubagentById(
 async function refreshRecordStatus(
   record: BackgroundSubagentRecord,
   openCodePort: number,
+  liveStatusMap?: LiveStatusMap | null,
 ): Promise<BackgroundSubagentRecord> {
-  const liveStatus = await getLiveStatus(
-    openCodePort,
-    record.sessionId,
-    record.baseDirectory,
-  );
+  const liveStatus = liveStatusMap
+    ? getLiveStatusFromMap(liveStatusMap, record.sessionId)
+    : await getLiveStatus(openCodePort, record.sessionId, record.baseDirectory);
   const nextStatus = summarizeBackgroundSubagentStatus({
     localStatus: record.status,
     liveStatus,
@@ -498,6 +537,7 @@ async function notifyParentOfCompletion(
 export function hasTrackedBackgroundSubagentSession(
   sessionId: string,
 ): boolean {
+  ensureKnownBackgroundSubagentSessionsLoaded();
   return getRecordBySessionId(sessionId) !== null;
 }
 
@@ -506,6 +546,8 @@ export async function handleBackgroundSubagentSessionStatus(input: {
   sessionId: string;
   status: 'busy' | 'idle' | 'error' | 'unknown';
 }): Promise<void> {
+  ensureKnownBackgroundSubagentSessionsLoaded();
+  if (!knownBackgroundSubagentSessionIds.has(input.sessionId)) return;
   const record = getRecordBySessionId(input.sessionId);
   if (!record) return;
   cacheRecord(record);
@@ -798,9 +840,12 @@ export function registerManageBackgroundSubagentsTool(
         }
 
         case 'list': {
+          const persistedRecords = listBackgroundSubagentRecords();
+          seedKnownBackgroundSubagentSessions(persistedRecords);
+          const liveStatusMap = await fetchLiveStatusMap(openCodePort);
           const records = await Promise.all(
-            listBackgroundSubagentRecords().map((record) =>
-              refreshRecordStatus(record, openCodePort),
+            persistedRecords.map((record) =>
+              refreshRecordStatus(record, openCodePort, liveStatusMap),
             ),
           );
           return jsonResult({

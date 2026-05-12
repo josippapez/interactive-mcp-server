@@ -11,7 +11,9 @@ import {
 } from './conversation-reducer';
 import {
   conversationStore,
+  _resetConversationStoreForTest,
   replaceSessionStatusSnapshot,
+  seedMessages,
   seedSessionStatus,
 } from './conversation-store';
 
@@ -136,5 +138,34 @@ describe('conversation-store status snapshot', () => {
     });
 
     expect(conversationStore.state.status).toEqual({ ses_current: 'idle' });
+  });
+
+  it('evicts older seeded sessions so switching chats cannot retain every full history', () => {
+    _resetConversationStoreForTest();
+
+    for (let index = 0; index < 10; index += 1) {
+      const sessionId = `ses_${index}`;
+      seedMessages(sessionId, [
+        assistantMessage({
+          id: `msg_${index}`,
+          sessionId,
+          createdAt: index,
+          parts: [{ id: `part_${index}`, type: 'text', text: 'message' }],
+        }),
+      ]);
+    }
+
+    expect(Object.keys(conversationStore.state.messages)).toEqual([
+      'ses_2',
+      'ses_3',
+      'ses_4',
+      'ses_5',
+      'ses_6',
+      'ses_7',
+      'ses_8',
+      'ses_9',
+    ]);
+    expect(conversationStore.state.parts.msg_0).toBeUndefined();
+    expect(conversationStore.state.parts.msg_9).toBeDefined();
   });
 });

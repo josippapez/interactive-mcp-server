@@ -187,11 +187,9 @@ function applyPartDeltaDraft(
   if (!list) return; // unknown message — whole-part event will race in
   const result = binarySearch(list, partId, (p) => p.id);
   if (!result.found) return; // unknown part — same story
-  // In-place string-append — does NOT reassign `draft.parts` nor the
-  // target `draft.parts[messageId]` array. Immer only produces a new
-  // array for `parts[messageId]` and a new map for `parts` when the
-  // draft records a structural change to that slot; mutating a nested
-  // scalar leaves both alone.
+  // Mutating the part lets Immer clone only the changed message's part list
+  // and ancestors. Downstream selectors rely on per-message part identity to
+  // keep older joined messages cached during token streaming.
   const target = list[result.index]!;
   target.text = (target.text ?? '') + delta;
 }

@@ -203,58 +203,64 @@ function getSessionCreatedAt(node: SessionNode): number {
   return node.createdAt ?? 0;
 }
 
-/**
- * Get the most recent activity time across an entire subtree (node + all descendants).
- */
-function getSubtreeLatestActivityTime(
-  node: SessionNode,
-  allNodes: SessionNode[],
-): number {
-  const nodeTime = getLatestActivityTime(node);
+type SubtreeStats = {
+  isRunning: boolean;
+  hasUnread: boolean;
+  latestActivity: number;
+};
 
-  // Find all children recursively
-  const children = allNodes.filter(
-    (n) => n.openCodeParentId === node.providerSessionId,
-  );
-
-  if (children.length === 0) return nodeTime;
-
-  const childTimes = children.map((child) =>
-    getSubtreeLatestActivityTime(child, allNodes),
-  );
-
-  return Math.max(nodeTime, ...childTimes);
+function buildChildrenByParent(
+  nodes: SessionNode[],
+): Map<string | null, SessionNode[]> {
+  const childrenByParent = new Map<string | null, SessionNode[]>();
+  for (const node of nodes) {
+    if (node.isDirectConnection) continue;
+    const parentId = node.openCodeParentId;
+    const existing = childrenByParent.get(parentId);
+    if (existing) {
+      existing.push(node);
+    } else {
+      childrenByParent.set(parentId, [node]);
+    }
+  }
+  return childrenByParent;
 }
 
-/**
- * Check if a node or any of its descendants is "running" (has activity).
- */
-function isSubtreeRunning(node: SessionNode, allNodes: SessionNode[]): boolean {
-  const isNodeActive =
-    node.hasPendingPrompt ||
-    node.sessionStatuses.some((s) => s.type === 'working');
+function buildSubtreeStats(
+  nodes: SessionNode[],
+  childrenByParent: Map<string | null, SessionNode[]>,
+): Map<string, SubtreeStats> {
+  const statsById = new Map<string, SubtreeStats>();
+  const visit = (node: SessionNode): SubtreeStats => {
+    const cached = statsById.get(node.providerSessionId);
+    if (cached) return cached;
 
-  if (isNodeActive) return true;
+    let stats: SubtreeStats = {
+      isRunning:
+        node.hasPendingPrompt ||
+        node.sessionStatuses.some((status) => status.type === 'working'),
+      hasUnread: node.unreadCount > 0,
+      latestActivity: getLatestActivityTime(node),
+    };
 
-  // Check children recursively
-  const children = allNodes.filter(
-    (n) => n.openCodeParentId === node.providerSessionId,
-  );
+    for (const child of childrenByParent.get(node.providerSessionId) ?? []) {
+      const childStats = visit(child);
+      stats = {
+        isRunning: stats.isRunning || childStats.isRunning,
+        hasUnread: stats.hasUnread || childStats.hasUnread,
+        latestActivity: Math.max(
+          stats.latestActivity,
+          childStats.latestActivity,
+        ),
+      };
+    }
 
-  return children.some((child) => isSubtreeRunning(child, allNodes));
-}
+    statsById.set(node.providerSessionId, stats);
+    return stats;
+  };
 
-/**
- * Check if a node or any of its descendants has unread messages.
- */
-function hasSubtreeUnread(node: SessionNode, allNodes: SessionNode[]): boolean {
-  if (node.unreadCount > 0) return true;
-
-  const children = allNodes.filter(
-    (n) => n.openCodeParentId === node.providerSessionId,
-  );
-
-  return children.some((child) => hasSubtreeUnread(child, allNodes));
+  for (const node of nodes) visit(node);
+  return statsById;
 }
 
 /**
@@ -273,26 +279,30 @@ export function partitionNodes(nodes: Map<string, SessionNode>): {
   const directConnections = all.filter((n) => n.isDirectConnection);
 
   const ocNodes = all.filter((n) => !n.isDirectConnection);
-  const roots = ocNodes.filter((n) => n.openCodeParentId === null);
+  const childrenByParent = buildChildrenByParent(ocNodes);
+  const subtreeStats = buildSubtreeStats(ocNodes, childrenByParent);
+  const roots = childrenByParent.get(null) ?? [];
 
   // Sort roots by: running subtrees first, then by most recent subtree activity
   const sortedRoots = [...roots].sort((a, b) => {
-    const aRunning = isSubtreeRunning(a, ocNodes);
-    const bRunning = isSubtreeRunning(b, ocNodes);
+    const aStats = subtreeStats.get(a.providerSessionId);
+    const bStats = subtreeStats.get(b.providerSessionId);
+    const aRunning = aStats?.isRunning ?? false;
+    const bRunning = bStats?.isRunning ?? false;
 
     if (aRunning && !bRunning) return -1;
     if (!aRunning && bRunning) return 1;
 
     // Secondary: unread in subtree
-    const aUnread = hasSubtreeUnread(a, ocNodes);
-    const bUnread = hasSubtreeUnread(b, ocNodes);
+    const aUnread = aStats?.hasUnread ?? false;
+    const bUnread = bStats?.hasUnread ?? false;
 
     if (aUnread && !bUnread) return -1;
     if (!aUnread && bUnread) return 1;
 
     // Tertiary: most recent activity in subtree
-    const aLatest = getSubtreeLatestActivityTime(a, ocNodes);
-    const bLatest = getSubtreeLatestActivityTime(b, ocNodes);
+    const aLatest = aStats?.latestActivity ?? 0;
+    const bLatest = bStats?.latestActivity ?? 0;
 
     return bLatest - aLatest; // Descending (newest first)
   });
@@ -300,7 +310,9 @@ export function partitionNodes(nodes: Map<string, SessionNode>): {
   const openCodeTree: SessionNode[] = [];
   for (const root of sortedRoots) {
     openCodeTree.push({ ...root, depth: 0 });
-    openCodeTree.push(...collectSubtree(ocNodes, root.providerSessionId, 1));
+    openCodeTree.push(
+      ...collectSubtree(childrenByParent, root.providerSessionId, 1),
+    );
   }
 
   return { openCodeTree, directConnections };
@@ -310,18 +322,20 @@ export function partitionNodes(nodes: Map<string, SessionNode>): {
  * Recursively collect children of a given parent, depth-first.
  */
 function collectSubtree(
-  nodes: SessionNode[],
+  childrenByParent: Map<string | null, SessionNode[]>,
   parentId: string | null,
   depth: number,
 ): SessionNode[] {
-  const children = nodes
-    .filter((n) => n.openCodeParentId === parentId && !n.isDirectConnection)
-    .sort((a, b) => a.title.localeCompare(b.title));
+  const children = [...(childrenByParent.get(parentId) ?? [])].sort((a, b) =>
+    a.title.localeCompare(b.title),
+  );
 
   const result: SessionNode[] = [];
   for (const child of children) {
     result.push({ ...child, depth });
-    result.push(...collectSubtree(nodes, child.providerSessionId, depth + 1));
+    result.push(
+      ...collectSubtree(childrenByParent, child.providerSessionId, depth + 1),
+    );
   }
   return result;
 }
@@ -383,7 +397,9 @@ export function groupByProject(
 ): Project[] {
   const all = Array.from(nodes.values());
   const ocNodes = all.filter((n) => !n.isDirectConnection);
-  const roots = ocNodes.filter((n) => n.openCodeParentId === null);
+  const childrenByParent = buildChildrenByParent(ocNodes);
+  const subtreeStats = buildSubtreeStats(ocNodes, childrenByParent);
+  const roots = childrenByParent.get(null) ?? [];
 
   // Group root sessions by their project path
   const projectMap = new Map<string, SessionNode[]>();
@@ -443,14 +459,22 @@ export function groupByProject(
     const sessions: SessionNode[] = [];
     for (const root of sortedRoots) {
       sessions.push({ ...root, depth: 0 });
-      sessions.push(...collectSubtree(ocNodes, root.providerSessionId, 1));
+      sessions.push(
+        ...collectSubtree(childrenByParent, root.providerSessionId, 1),
+      );
     }
 
     // Calculate project-level stats
-    const isRunning = sortedRoots.some((r) => isSubtreeRunning(r, ocNodes));
-    const hasUnread = sortedRoots.some((r) => hasSubtreeUnread(r, ocNodes));
+    const isRunning = sortedRoots.some(
+      (root) => subtreeStats.get(root.providerSessionId)?.isRunning ?? false,
+    );
+    const hasUnread = sortedRoots.some(
+      (root) => subtreeStats.get(root.providerSessionId)?.hasUnread ?? false,
+    );
     const latestActivity = Math.max(
-      ...sortedRoots.map((r) => getSubtreeLatestActivityTime(r, ocNodes)),
+      ...sortedRoots.map(
+        (root) => subtreeStats.get(root.providerSessionId)?.latestActivity ?? 0,
+      ),
       0,
     );
     const earliestSessionCreatedAt = sortedRoots.reduce((earliest, session) => {

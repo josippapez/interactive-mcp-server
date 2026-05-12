@@ -81,10 +81,6 @@ export const selectChannelAtom = atom(
       );
     }
 
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[channel-selection] selectChannel', logPayload);
-    }
-
     // Track intentional null selections
     if (channelId === null) {
       set(intentionalNullSelectionAtom, intentional);

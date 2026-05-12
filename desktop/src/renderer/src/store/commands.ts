@@ -82,15 +82,6 @@ export const fetchCommandsAtom = atom(
 
       if (result) {
         set(commandsAtom, result);
-
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[commands-store] Commands fetched', {
-            count: result.length,
-            commands: result.map((c) => c.name),
-            baseDirectory: params?.baseDirectory,
-            timestamp: new Date().toISOString(),
-          });
-        }
       } else {
         set(commandsAtom, []);
       }
@@ -99,9 +90,7 @@ export const fetchCommandsAtom = atom(
         err instanceof Error ? err.message : 'Failed to fetch commands';
       set(commandsErrorAtom, message);
 
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('[commands-store] Failed to fetch:', err);
-      }
+      window.api.log?.('warn', 'commands-store', `Failed to fetch: ${message}`);
     } finally {
       set(commandsLoadingAtom, false);
     }
@@ -131,23 +120,17 @@ export const executeCommandAtom = atom(
         params.baseDirectory,
       );
 
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[commands-store] Command executed', {
-          sessionId: params.sessionId,
-          command: params.commandName,
-          ok: result.ok,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
       return result;
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Command execution failed';
 
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('[commands-store] Command execution failed:', err);
-      }
+      window.api.log?.(
+        'warn',
+        'commands-store',
+        `Command execution failed: ${message}`,
+        params.sessionId,
+      );
 
       return { ok: false, error: message };
     } finally {

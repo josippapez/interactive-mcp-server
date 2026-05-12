@@ -41,24 +41,21 @@ export function useSessionHandlers({
 
   const handleReplyQuestion = useCallback(
     (requestId: string, answers: string[][], sessionID: string) => {
-      console.log(
-        '[session-handlers] handleReplyQuestion called, requestId:',
-        requestId,
-        'sessionID:',
-        sessionID,
-        'answers:',
-        answers,
-      );
       void window.api
         .replyQuestion(requestId, answers, sessionID)
         .then((result) => {
-          console.log('[session-handlers] replyQuestion result:', result);
           if (result?.ok) {
             setNodes((prev) => removePendingQuestion(prev, requestId));
           }
         })
         .catch((err) => {
-          console.error('[session-handlers] replyQuestion error:', err);
+          const message = err instanceof Error ? err.message : String(err);
+          window.api.log?.(
+            'error',
+            'session-handlers',
+            `replyQuestion error: ${message}`,
+            sessionID,
+          );
         });
     },
     [setNodes],
@@ -66,22 +63,21 @@ export function useSessionHandlers({
 
   const handleRejectQuestion = useCallback(
     (requestId: string, sessionID: string) => {
-      console.log(
-        '[session-handlers] handleRejectQuestion called, requestId:',
-        requestId,
-        'sessionID:',
-        sessionID,
-      );
       void window.api
         .rejectQuestion(requestId, sessionID)
         .then((result) => {
-          console.log('[session-handlers] rejectQuestion result:', result);
           if (result?.ok) {
             setNodes((prev) => removePendingQuestion(prev, requestId));
           }
         })
         .catch((err) => {
-          console.error('[session-handlers] rejectQuestion error:', err);
+          const message = err instanceof Error ? err.message : String(err);
+          window.api.log?.(
+            'error',
+            'session-handlers',
+            `rejectQuestion error: ${message}`,
+            sessionID,
+          );
         });
     },
     [setNodes],

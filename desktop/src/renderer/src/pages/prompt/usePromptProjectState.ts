@@ -62,7 +62,11 @@ export function usePromptProjectState(
       });
 
       if (!result.ok) {
-        console.error('[PromptView] Failed to create session:', result.error);
+        window.api.log?.(
+          'error',
+          'PromptView',
+          `Failed to create session: ${result.error}`,
+        );
         return null;
       }
 

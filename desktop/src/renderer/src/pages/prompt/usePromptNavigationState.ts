@@ -111,7 +111,12 @@ export function usePromptNavigationState({
           return;
         }
       }
-      console.warn(`[PromptView] Could not find session for ID: ${sessionId}`);
+      window.api.log?.(
+        'warn',
+        'PromptView',
+        `Could not find session for ID: ${sessionId}`,
+        sessionId,
+      );
     },
     [connections, onSelectConnection],
   );

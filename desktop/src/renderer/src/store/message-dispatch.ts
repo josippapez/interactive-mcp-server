@@ -283,8 +283,7 @@ export function resolveInteractiveMessageTarget(
 // -----------------------------------------------------------------------------
 
 /**
- * Log message dispatch events to both console (dev only) and the main process
- * log file (always). This ensures routing diagnostics are persisted for debugging.
+ * Persist message dispatch diagnostics to the main-process log file.
  */
 function logDispatch(
   fn: string,
@@ -304,11 +303,6 @@ function logDispatch(
   // Log to file via IPC for persistent diagnostics (guard for test environment)
   if (typeof window !== 'undefined' && window.api?.log) {
     window.api.log('info', 'message-dispatch', message, sessionId);
-  }
-
-  // Also log to console in development for immediate visibility
-  if (process.env.NODE_ENV === 'development') {
-    console.log(`[message-dispatch] ${fn}:`, resolution, details);
   }
 }
 

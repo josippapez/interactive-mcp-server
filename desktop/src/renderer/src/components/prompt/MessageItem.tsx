@@ -163,9 +163,8 @@ const MessageItem = memo(function MessageItem({
     return () => window.clearInterval(interval);
   }, [isStreaming, msg.completedAt, msg.source, userSide]);
 
-  // Dev-only first-paint marker: fires exactly once per message id the
-  // first time it renders with non-empty assistant content. Emits a
-  // `performance.mark` + console log for §6 metric #1 validation.
+  // Opt-in first-paint marker: fires exactly once per message id the
+  // first time it renders with non-empty assistant content.
   const perfFirstPaintFiredRef = useRef(false);
   useEffect(() => {
     if (!PERF_ENABLED) return;
@@ -180,8 +179,10 @@ const MessageItem = memo(function MessageItem({
       // Ignore — performance API unavailable in some sandboxed tests.
     }
 
-    console.log(
-      `[perf.first-paint] msgId=${msg.id} chars=${displayText.length} at=${Date.now()}`,
+    window.api?.log?.(
+      'info',
+      'perf',
+      `first-paint msgId=${msg.id} chars=${displayText.length} at=${Date.now()}`,
     );
   }, [displayText, msg.id, userSide]);
 

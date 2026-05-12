@@ -196,7 +196,12 @@ export function usePromptViewState(props: PromptViewProps) {
     }
     const result = await window.api.abortSession(providerSessionId);
     if (!result.success) {
-      console.warn('[PromptView] Failed to abort session:', result.error);
+      window.api.log?.(
+        'warn',
+        'PromptView',
+        `Failed to abort session: ${result.error}`,
+        providerSessionId,
+      );
     }
   }, [providerSessionId]);
 

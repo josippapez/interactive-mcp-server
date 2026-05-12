@@ -247,14 +247,6 @@ export const setChannelPreferenceAtom = atom(
     const next = new Map(current);
     next.set(channelId, preference);
 
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[channel-preferences] Set preference', {
-        channelId,
-        preference,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
     set(channelPreferencesAtom, next);
     saveToStorage(next);
   },
@@ -273,13 +265,6 @@ export const clearChannelPreferenceAtom = atom(
     const next = new Map(current);
     next.delete(channelId);
 
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[channel-preferences] Clear preference', {
-        channelId,
-        timestamp: new Date().toISOString(),
-      });
-    }
-
     set(channelPreferencesAtom, next);
     saveToStorage(next);
   },
@@ -290,12 +275,6 @@ export const clearChannelPreferenceAtom = atom(
  * Useful for cleanup or reset scenarios.
  */
 export const clearAllChannelPreferencesAtom = atom(null, (_get, set) => {
-  if (process.env.NODE_ENV === 'development') {
-    console.log('[channel-preferences] Clear all preferences', {
-      timestamp: new Date().toISOString(),
-    });
-  }
-
   set(channelPreferencesAtom, new Map());
   saveToStorage(new Map());
 });

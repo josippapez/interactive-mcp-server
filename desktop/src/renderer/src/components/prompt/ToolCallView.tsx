@@ -144,6 +144,33 @@ function resolveToolCard(
   return <DefaultToolCard tool={tool} forceExpanded={forceExpanded} />;
 }
 
+function toolViewPropsEqual(
+  prev: {
+    tool: ToolCallInfo;
+    forceExpanded?: boolean;
+    onNavigateToSession?: (sessionId: string) => void;
+  },
+  next: {
+    tool: ToolCallInfo;
+    forceExpanded?: boolean;
+    onNavigateToSession?: (sessionId: string) => void;
+  },
+): boolean {
+  const prevTool = prev.tool;
+  const nextTool = next.tool;
+  return (
+    prev.forceExpanded === next.forceExpanded &&
+    prev.onNavigateToSession === next.onNavigateToSession &&
+    prevTool.id === nextTool.id &&
+    prevTool.name === nextTool.name &&
+    prevTool.status === nextTool.status &&
+    prevTool.input === nextTool.input &&
+    prevTool.output === nextTool.output &&
+    prevTool.startedAt === nextTool.startedAt &&
+    prevTool.completedAt === nextTool.completedAt
+  );
+}
+
 const ToolCallView = memo(function ToolCallView({
   tool,
   forceExpanded = false,
@@ -169,6 +196,6 @@ const ToolCallView = memo(function ToolCallView({
       {resolveToolCard(tool, forceExpanded, onNavigateToSession)}
     </div>
   );
-});
+}, toolViewPropsEqual);
 
 export default ToolCallView;

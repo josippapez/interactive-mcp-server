@@ -8,6 +8,7 @@ import {
   buildConnectedBackgroundSubagentModels,
   buildModelRecommendations,
   extractAssistantTextFromMessages,
+  getLiveStatusFromMap,
   resolveBackgroundSubagentBaseDirectory,
   resolvePresetModelSelection,
   serializeBackgroundSubagentRecord,
@@ -308,6 +309,27 @@ describe('manage-background-subagents helpers', () => {
         liveStatus: 'idle',
       }),
     ).toBe('completed');
+  });
+
+  it('reads one session live status from a shared status snapshot', () => {
+    expect(
+      getLiveStatusFromMap(
+        {
+          ses_a: { type: 'busy' },
+          ses_b: { type: 'idle' },
+        },
+        'ses_b',
+      ),
+    ).toBe('idle');
+  });
+
+  it('treats unexpected snapshot statuses as unknown', () => {
+    expect(getLiveStatusFromMap({ ses_a: { type: 'retrying' } }, 'ses_a')).toBe(
+      'unknown',
+    );
+    expect(
+      getLiveStatusFromMap({ ses_a: { type: 'busy' } }, 'ses_missing'),
+    ).toBeUndefined();
   });
 
   it('serializes elapsed and stale metadata for background subagents', () => {

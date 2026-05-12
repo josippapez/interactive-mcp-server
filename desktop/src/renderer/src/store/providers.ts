@@ -120,9 +120,6 @@ export const fetchProvidersAtom = atom(null, async (_get, set) => {
 
   inFlightPromise = (async () => {
     try {
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[providers-store] Fetching providers (network)…');
-      }
       const providersInfo = await window.api.fetchProvidersInfo();
 
       if (providersInfo) {
@@ -159,15 +156,6 @@ export const fetchProvidersAtom = atom(null, async (_get, set) => {
         if (providersInfo.providers.length > 0) {
           set(hasFetchedProvidersSuccessfullyAtom, true);
         }
-
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[providers-store] Providers fetched', {
-            providerCount: providersInfo.providers.length,
-            modelCount: flattenedModels.length,
-            connectedCount: providersInfo.connectedProviderIds.length,
-            timestamp: new Date().toISOString(),
-          });
-        }
       } else {
         set(providersAtom, []);
         set(modelsAtom, []);
@@ -177,10 +165,11 @@ export const fetchProvidersAtom = atom(null, async (_get, set) => {
       const message =
         err instanceof Error ? err.message : 'Failed to fetch providers';
       set(providersErrorAtom, message);
-
-      if (process.env.NODE_ENV === 'development') {
-        console.warn('[providers-store] Failed to fetch:', err);
-      }
+      window.api.log?.(
+        'warn',
+        'providers-store',
+        `Failed to fetch: ${message}`,
+      );
     } finally {
       set(providersLoadingAtom, false);
     }

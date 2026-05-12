@@ -68,6 +68,18 @@ describe('session-logger', () => {
     );
   });
 
+  it('returns the full session log when line count is not positive', async () => {
+    const logsDir = await makeTempDir();
+
+    writeSessionLog(logsDir, 'ses_abc123', 'INFO', 'test', 'first');
+    writeSessionLog(logsDir, 'ses_abc123', 'INFO', 'test', 'second');
+    await flushSessionLogger();
+
+    await expect(readSessionLog(logsDir, 'ses_abc123', 0)).resolves.toMatch(
+      /first[\s\S]*second/,
+    );
+  });
+
   it('builds a session log open result', () => {
     expect(buildSessionLogOpenResult('/tmp/logs', 'ses_abc123')).toEqual({
       ok: true,

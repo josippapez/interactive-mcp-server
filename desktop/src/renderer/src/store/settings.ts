@@ -128,21 +128,15 @@ export const fetchSettingsAtom = atom(null, async (_get, set) => {
     };
 
     set(settingsAtom, syncedSettings);
-
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[settings-store] Settings fetched', {
-        syncedSettings,
-        timestamp: new Date().toISOString(),
-      });
-    }
   } catch (err) {
     const errorMessage =
       err instanceof Error ? err.message : 'Failed to fetch settings';
     set(settingsErrorAtom, errorMessage);
-
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[settings-store] Failed to fetch settings:', err);
-    }
+    window.api.log?.(
+      'warn',
+      'settings-store',
+      `Failed to fetch settings: ${errorMessage}`,
+    );
   } finally {
     set(settingsLoadingAtom, false);
   }
@@ -156,13 +150,6 @@ export const updateSettingsAtom = atom(
   null,
   (_get, set, updates: Partial<SyncedSettings>) => {
     set(settingsAtom, (prev) => ({ ...prev, ...updates }));
-
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[settings-store] Settings updated locally', {
-        updates,
-        timestamp: new Date().toISOString(),
-      });
-    }
   },
 );
 
@@ -248,9 +235,6 @@ export function useSettingsSync(): {
   useEffect(() => {
     const cleanup = window.api.onSettingsChanged(() => {
       if (mountedRef.current) {
-        if (process.env.NODE_ENV === 'development') {
-          console.log('[settings-store] Settings changed via IPC, refreshing');
-        }
         void fetchSettings();
       }
     });

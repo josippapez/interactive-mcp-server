@@ -48,7 +48,11 @@ export function useProviderAuthMethods(
       const message =
         err instanceof Error ? err.message : 'Failed to fetch auth methods';
       setError(message);
-      console.warn('[useProviderAuthMethods] Failed to fetch:', err);
+      window.api.log?.(
+        'warn',
+        'useProviderAuthMethods',
+        `Failed to fetch: ${message}`,
+      );
     } finally {
       setIsLoading(false);
     }

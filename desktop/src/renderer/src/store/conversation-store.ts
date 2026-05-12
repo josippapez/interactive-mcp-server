@@ -34,6 +34,7 @@ import {
   type ConversationState,
 } from './conversation-reducer';
 import { PERF_LOG_ENABLED } from '../lib/perf-flag';
+import { clearSessionSnapshotCache } from '../hooks/useConversation.helpers';
 
 export const conversationStore = new Store<ConversationState>(
   initialConversationState,
@@ -48,6 +49,35 @@ export const conversationStore = new Store<ConversationState>(
  * spammed the devtools console at ~60 Hz during streaming.
  */
 const PERF_ENABLED = PERF_LOG_ENABLED;
+const MAX_RETAINED_CONVERSATION_SESSIONS = 8;
+
+const retainedSessionOrder: string[] = [];
+
+function touchRetainedSession(sessionId: string): void {
+  const existingIndex = retainedSessionOrder.indexOf(sessionId);
+  if (existingIndex !== -1) retainedSessionOrder.splice(existingIndex, 1);
+  retainedSessionOrder.push(sessionId);
+}
+
+function pruneConversationState(
+  state: ConversationState,
+  keepSessionIds: ReadonlySet<string>,
+): ConversationState {
+  let next = state;
+  for (const sessionId of Object.keys(state.messages)) {
+    if (keepSessionIds.has(sessionId)) continue;
+    const sessionMessages = next.messages[sessionId];
+    const nextMessages = { ...next.messages };
+    const nextParts = { ...next.parts };
+    if (sessionMessages) {
+      for (const msg of sessionMessages) delete nextParts[msg.id];
+    }
+    delete nextMessages[sessionId];
+    clearSessionSnapshotCache(sessionId);
+    next = { ...next, messages: nextMessages, parts: nextParts };
+  }
+  return next;
+}
 
 /**
  * Apply a coalesced batch received from the main-process event stream.
@@ -58,8 +88,10 @@ export function applyBatch(batch: ConversationBatch): void {
   if (PERF_ENABLED) {
     const hopMs = Date.now() - batch.flushedAt;
 
-    console.log(
-      `[perf.hop] seq=${batch.seq} count=${batch.events.length} hopMs=${hopMs}`,
+    window.api?.log?.(
+      'info',
+      'perf',
+      `hop seq=${batch.seq} count=${batch.events.length} hopMs=${hopMs}`,
     );
   }
   conversationStore.setState((prev) => {
@@ -80,8 +112,16 @@ export function seedMessages(
   sessionId: string,
   messages: readonly ConversationMessage[],
 ): void {
+  touchRetainedSession(sessionId);
+  while (retainedSessionOrder.length > MAX_RETAINED_CONVERSATION_SESSIONS) {
+    retainedSessionOrder.shift();
+  }
+  const keepSessionIds = new Set(retainedSessionOrder);
   conversationStore.setState((prev) =>
-    seedConversationMessages(prev, sessionId, messages),
+    pruneConversationState(
+      seedConversationMessages(prev, sessionId, messages),
+      keepSessionIds,
+    ),
   );
 }
 
@@ -98,6 +138,7 @@ export function clearSession(sessionId: string): void {
       for (const msg of sessionMessages) delete nextParts[msg.id];
     }
     delete nextMessages[sessionId];
+    clearSessionSnapshotCache(sessionId);
     const nextStatus = { ...prev.status };
     delete nextStatus[sessionId];
     const nextTodos = { ...prev.todos };
@@ -106,6 +147,8 @@ export function clearSession(sessionId: string): void {
     delete nextContextUsage[sessionId];
     const nextSessionSideChannels = { ...prev.sessionSideChannels };
     delete nextSessionSideChannels[sessionId];
+    const retainedIndex = retainedSessionOrder.indexOf(sessionId);
+    if (retainedIndex !== -1) retainedSessionOrder.splice(retainedIndex, 1);
     return {
       ...prev,
       messages: nextMessages,
@@ -222,4 +265,9 @@ export function useConversationSelector<T>(
     },
     () => selector(conversationStore.state),
   );
+}
+
+export function _resetConversationStoreForTest(): void {
+  retainedSessionOrder.splice(0, retainedSessionOrder.length);
+  conversationStore.setState(initialConversationState);
 }

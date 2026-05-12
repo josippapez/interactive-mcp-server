@@ -91,6 +91,19 @@ function releaseIpcListener(): void {
  * seeded, live events keep the store current.
  */
 const seededSessions = new Set<string>();
+const MAX_SEEDED_SESSIONS = 8;
+const seededSessionOrder: string[] = [];
+
+function markSeeded(sessionId: string): void {
+  const existingIndex = seededSessionOrder.indexOf(sessionId);
+  if (existingIndex !== -1) seededSessionOrder.splice(existingIndex, 1);
+  seededSessionOrder.push(sessionId);
+  seededSessions.add(sessionId);
+  while (seededSessionOrder.length > MAX_SEEDED_SESSIONS) {
+    const evicted = seededSessionOrder.shift();
+    if (evicted) seededSessions.delete(evicted);
+  }
+}
 
 async function seedOnce(sessionId: string): Promise<void> {
   if (seededSessions.has(sessionId)) return;
@@ -99,10 +112,11 @@ async function seedOnce(sessionId: string): Promise<void> {
   try {
     const api = window.api;
     if (!api?.fetchConversationMessages) return;
-    // Omit `limit` so OpenCode returns the full session history. Passing a
-    // limit intentionally returns only the latest page.
-    const messages = await api.fetchConversationMessages(sessionId);
+    const messages = await api.fetchConversationMessages(sessionId, {
+      limit: 100,
+    });
     if (messages.length > 0) seedMessages(sessionId, messages);
+    markSeeded(sessionId);
   } catch {
     // Best-effort seed — if it fails the live stream will still fill in
     // whatever the user is actively doing.
@@ -200,6 +214,7 @@ export function useConversation(
  */
 export function resetConversationSeedCache(): void {
   seededSessions.clear();
+  seededSessionOrder.splice(0, seededSessionOrder.length);
   conversationStore.setState((prev) => {
     // Preserve lastSeq (don't re-replay duplicates from main) but drop
     // cached messages/parts/status and auxiliary slices.

@@ -176,8 +176,7 @@ export default function QuestionDock({
     <div
       className={`relative z-10 flex flex-col border-[var(--color-border)] bg-[var(--color-surface-alt)] ${sizeClass} ${className}`.trim()}
     >
-      {/* Header — pinned */}
-      <div className="flex-none px-4 pt-3 pb-2">
+      <div className="min-h-0 flex-1 overflow-y-auto px-4 pt-3 pb-2">
         <div className="mb-3 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-xs font-semibold uppercase tracking-wide text-[var(--color-agent)]">
@@ -223,12 +222,9 @@ export default function QuestionDock({
         <div className="text-sm text-[var(--color-text)] [&_.prose]:text-sm [&_.prose_p]:!text-sm [&_.prose_p]:my-1 [&_[data-streamdown='code-block']]:my-2">
           <MarkdownContent content={currentQuestion.question} />
         </div>
-      </div>
 
-      {/* Scrollable middle — options + custom answer */}
-      <div className="min-h-0 flex-1 overflow-y-auto px-4">
         {currentQuestion.options.length > 0 && (
-          <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
+          <div className="mt-3 mb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--color-text-muted)]">
             {isMulti ? 'Select all that apply' : 'Select one'}
           </div>
         )}

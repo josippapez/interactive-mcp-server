@@ -152,7 +152,8 @@ const GlobalSearch = memo(function GlobalSearch({
         });
         setResults(searchResults);
       } catch (error) {
-        console.error('Global search failed:', error);
+        const message = error instanceof Error ? error.message : String(error);
+        window.api.log?.('error', 'GlobalSearch', `Search failed: ${message}`);
         setResults({ sessions: [], messages: [] });
       } finally {
         setIsLoading(false);

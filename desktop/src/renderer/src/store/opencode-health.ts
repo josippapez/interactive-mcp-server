@@ -93,15 +93,6 @@ export const checkHealthAtom = atom(null, async (get, set) => {
     if (result) {
       set(healthStatusAtom, result);
       set(lastHealthCheckAtom, Date.now());
-
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[health-store] Health check completed', {
-          available: result.available,
-          healthy: result.healthy,
-          version: result.version,
-          timestamp: new Date().toISOString(),
-        });
-      }
     } else {
       set(healthStatusAtom, {
         available: false,
@@ -114,16 +105,14 @@ export const checkHealthAtom = atom(null, async (get, set) => {
     // Check if still enabled after async call
     if (!get(healthEnabledAtom)) return;
 
+    const message = err instanceof Error ? err.message : 'Unknown error';
     set(healthStatusAtom, {
       available: false,
       healthy: false,
       version: null,
-      error: err instanceof Error ? err.message : 'Unknown error',
+      error: message,
     });
-
-    if (process.env.NODE_ENV === 'development') {
-      console.warn('[health-store] Health check failed:', err);
-    }
+    window.api.log?.('warn', 'health-store', `Health check failed: ${message}`);
   } finally {
     if (get(healthEnabledAtom)) {
       set(healthCheckingAtom, false);

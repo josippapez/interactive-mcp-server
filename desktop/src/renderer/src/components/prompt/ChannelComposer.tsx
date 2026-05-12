@@ -237,9 +237,6 @@ function ChannelComposer({
       setCommandQuery('');
       setInternalPaletteOpen(false);
       onCommandPaletteChange?.(false);
-      if (process.env.NODE_ENV === 'development') {
-        console.debug(`[ChannelComposer] Command /${commandName} executed`);
-      }
     },
     [draftKey, onCommandPaletteChange],
   );

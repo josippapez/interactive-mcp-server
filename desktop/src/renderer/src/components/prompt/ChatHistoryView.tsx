@@ -341,9 +341,7 @@ export default function ChatHistoryView({
     initialBatch: 20,
     stagingBatch: 10,
     stagingThreshold: 30,
-    // Avoid deferred/empty-looking updates while users are actively chatting.
-    // Virtualization + history windowing already keep render cost bounded.
-    enabled: false,
+    enabled: !isBusy,
   });
 
   const [lastSeenMessageId, setLastSeenMessageId] = useState<string | null>(

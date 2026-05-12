@@ -121,18 +121,7 @@ export function useProviderInjection(
       modelOverride?: ModelOverride,
       agent?: string,
     ): Promise<void> => {
-      console.log('[useProviderInjection] inject() called', {
-        sessionId,
-        outboundId,
-        message,
-        messageLength: message.length,
-        attachmentsCount: attachments?.length ?? 0,
-        noReply,
-        modelOverride,
-      });
-
       const providerStatus = await window.api.getProviderStatus();
-      console.log('[useProviderInjection] Provider status:', providerStatus);
 
       // Find the node that owns this connectionId (sessionId).
       // Use nodesRef.current to always get the latest nodes map, avoiding
@@ -141,15 +130,6 @@ export function useProviderInjection(
         nodesRef.current,
         sessionId,
       );
-
-      console.log('[useProviderInjection] Initial node lookup', {
-        sessionId,
-        outboundId,
-        nodeKey,
-        nodeFound: !!node,
-        nodesCount: nodesRef.current.size,
-        nodeKeys: Array.from(nodesRef.current.keys()),
-      });
 
       const baseDirectory = node?.baseDirectory ?? undefined;
       const connectionId = node?.connectionId ?? sessionId;
@@ -176,22 +156,10 @@ export function useProviderInjection(
           sessionId,
         );
         if (freshKey) {
-          console.log(
-            '[useProviderInjection] getCurrentNodeKey: found via session lookup',
-            freshKey,
-          );
           return freshKey;
         }
         // Final fallback: search by outbound message ID
         const outboundKey = findNodeByOutboundId(nodesRef.current, outboundId);
-        console.log(
-          '[useProviderInjection] getCurrentNodeKey: fallback by outboundId',
-          {
-            outboundId,
-            foundKey: outboundKey,
-            nodesCount: nodesRef.current.size,
-          },
-        );
         return outboundKey;
       };
 
@@ -258,13 +226,6 @@ export function useProviderInjection(
             resolvedVia: 'cached' as const,
           }
         : await window.api.resolveSession(connectionId, baseDirectory);
-
-      console.log('[useProviderInjection] Session resolution result', {
-        sessionId,
-        connectionId,
-        directProviderSessionId,
-        resolved,
-      });
 
       // Handle ambiguous resolution — surface a warning, don't inject.
       if (resolved.resolvedVia === 'ambiguous') {
@@ -338,19 +299,6 @@ export function useProviderInjection(
       }
 
       try {
-        console.log(
-          '[useProviderInjection] Calling injectWithSessionRecovery',
-          {
-            providerSessionId,
-            connectionId,
-            baseDirectory,
-            message,
-            noReply,
-            timestamp: new Date().toISOString(),
-          },
-        );
-
-        const startTime = performance.now();
         const result = await injectWithSessionRecovery(
           {
             initialSessionId: providerSessionId,
@@ -359,37 +307,16 @@ export function useProviderInjection(
           },
           {
             inject: async (sid: string) => {
-              console.log(
-                '[useProviderInjection] Calling window.api.injectOpenCodeMessage',
-                {
+              return (
+                (await window.api.injectOpenCodeMessage?.(
                   sid,
                   message,
-                  attachmentsCount: attachments?.length ?? 0,
+                  attachments,
                   noReply,
                   modelOverride,
                   agent,
-                  timestamp: new Date().toISOString(),
-                },
+                )) ?? { ok: false, error: 'OpenCode inject bridge unavailable' }
               );
-              const injectStartTime = performance.now();
-              const injectResult = (await window.api.injectOpenCodeMessage?.(
-                sid,
-                message,
-                attachments,
-                noReply,
-                modelOverride,
-                agent,
-              )) ?? { ok: false, error: 'OpenCode inject bridge unavailable' };
-              const injectElapsed = performance.now() - injectStartTime;
-              console.log(
-                '[useProviderInjection] injectOpenCodeMessage result:',
-                {
-                  ...injectResult,
-                  elapsedMs: Math.round(injectElapsed),
-                  timestamp: new Date().toISOString(),
-                },
-              );
-              return injectResult;
             },
             reResolve: async (cid: string, dir?: string) =>
               (await window.api.reResolveSession(cid, dir)) ?? {
@@ -400,24 +327,8 @@ export function useProviderInjection(
           },
         );
 
-        const totalElapsed = performance.now() - startTime;
-        console.log(
-          '[useProviderInjection] injectWithSessionRecovery result:',
-          {
-            ...result,
-            totalElapsedMs: Math.round(totalElapsed),
-            timestamp: new Date().toISOString(),
-          },
-        );
-
         if (result.ok) {
           const currentKey = getCurrentNodeKey();
-          console.log('[useProviderInjection] Injection succeeded', {
-            initialNodeKey: nodeKey,
-            currentNodeKey: currentKey,
-            outboundId,
-            resultSessionId: result.sessionId,
-          });
           if (currentKey) {
             withNode(currentKey, (n) => ({
               ...n,
@@ -451,31 +362,15 @@ export function useProviderInjection(
         }
 
         const failureKey = getCurrentNodeKey();
-        console.log('[useProviderInjection] Injection FAILED', {
-          initialNodeKey: nodeKey,
-          currentNodeKey: failureKey,
-          outboundId,
-          resultOk: result.ok,
-          resultError: result.error,
-          resultRetried: result.retried,
-        });
+        window.api.log?.(
+          'error',
+          'useProviderInjection',
+          `Injection failed for outbound ${outboundId}: ${result.error ?? 'unknown error'}`,
+          result.sessionId ?? providerSessionId,
+        );
 
         if (failureKey) {
-          console.log('[useProviderInjection] Updating message sent=false', {
-            failureKey,
-            outboundId,
-          });
           withNode(failureKey, (n) => {
-            const messageFound = n.channelMessages.some(
-              (m) => m.id === outboundId,
-            );
-            console.log('[useProviderInjection] withNode updater for failure', {
-              nodeId: n.id,
-              messagesCount: n.channelMessages.length,
-              outboundId,
-              messageFound,
-              messageIds: n.channelMessages.slice(-5).map((m) => m.id),
-            });
             return {
               ...n,
               channelMessages: n.channelMessages.map((m) =>
@@ -505,25 +400,22 @@ export function useProviderInjection(
             };
           });
         } else {
-          console.log(
-            '[useProviderInjection] CRITICAL: nodeKey is null, cannot update message!',
-            {
-              sessionId,
-              outboundId,
-              nodesCount: nodesRef.current.size,
-              nodeKeys: Array.from(nodesRef.current.keys()),
-            },
+          window.api.log?.(
+            'error',
+            'useProviderInjection',
+            `Could not update failed outbound ${outboundId}: node key was not found`,
+            sessionId,
           );
         }
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         const errorKey = getCurrentNodeKey();
-        console.log('[useProviderInjection] Injection threw error', {
-          initialNodeKey: nodeKey,
-          currentNodeKey: errorKey,
-          outboundId,
-          error: msg,
-        });
+        window.api.log?.(
+          'error',
+          'useProviderInjection',
+          `Injection threw for outbound ${outboundId}: ${msg}`,
+          sessionId,
+        );
         if (errorKey) {
           withNode(errorKey, (n) => ({
             ...n,

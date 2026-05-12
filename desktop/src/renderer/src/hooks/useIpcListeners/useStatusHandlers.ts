@@ -2,6 +2,7 @@ import type { HandlerContext, SessionStatusType } from './types';
 import { findKeyByConnectionId } from './helpers';
 import type { ConversationEvent } from '../../../../preload/api/types';
 import { clearTerminalSessionState } from './status-state';
+import type { SessionNode } from '../../types';
 
 /**
  * Window (in ms) after the renderer mounts during which auto-emitted
@@ -64,6 +65,75 @@ function toSideChannelStatus(
     default:
       return null;
   }
+}
+
+function applySideChannelStatus(
+  prev: Map<string, SessionNode>,
+  event: ConversationEvent,
+  sideChannelStatus: {
+    sessionId: string;
+    status: string;
+    type: SessionStatusType;
+  },
+  timestamp: Date,
+): Map<string, SessionNode> {
+  const nodeId = sideChannelStatus.sessionId;
+  if (!prev.has(nodeId)) return prev;
+  const node = prev.get(nodeId)!;
+  const next = new Map(prev);
+  next.set(nodeId, {
+    ...node,
+    sessionStatuses: [
+      ...node.sessionStatuses.filter(
+        (status) =>
+          !(
+            event.type === 'session.next.compaction.ended' &&
+            status.type === 'working' &&
+            status.status.startsWith('Compacting context')
+          ),
+      ),
+      {
+        status: sideChannelStatus.status,
+        type: sideChannelStatus.type,
+        timestamp,
+      },
+    ],
+  });
+  return next;
+}
+
+function applyConversationStatus(
+  prev: Map<string, SessionNode>,
+  event: Extract<ConversationEvent, { type: 'session.status' }>,
+  timestamp: Date,
+): Map<string, SessionNode> {
+  const nodeId = event.sessionId;
+  if (event.status === 'streaming') {
+    if (!prev.has(nodeId)) return prev;
+    const node = prev.get(nodeId)!;
+    if (node.sessionStatuses.some((status) => status.type === 'working')) {
+      return prev;
+    }
+    const next = new Map(prev);
+    next.set(nodeId, {
+      ...node,
+      sessionStatuses: [
+        ...node.sessionStatuses,
+        {
+          status: 'Session active',
+          type: 'working',
+          timestamp,
+        },
+      ],
+    });
+    return next;
+  }
+
+  if (event.status === 'idle' || event.status === 'error') {
+    return clearTerminalSessionState(prev, nodeId);
+  }
+
+  return prev;
 }
 
 /**
@@ -140,70 +210,31 @@ export function useStatusHandlers({
   // ------------------------------------------------------------------
   disposers.push(
     window.api.onConversationBatch?.((batch) => {
-      for (const evt of batch.events) {
-        if (evt.type !== 'session.status') {
+      const statusEvents = batch.events.filter((evt) => {
+        if (evt.type === 'session.status') return true;
+        return toSideChannelStatus(evt) !== null;
+      });
+      if (statusEvents.length === 0) return;
+      setNodes((prev) => {
+        let next = prev;
+        for (const evt of statusEvents) {
+          const timestamp = new Date();
+          if (evt.type === 'session.status') {
+            next = applyConversationStatus(next, evt, timestamp);
+            continue;
+          }
           const sideChannelStatus = toSideChannelStatus(evt);
-          if (!sideChannelStatus) continue;
-          setNodes((prev) => {
-            const nodeId = sideChannelStatus.sessionId;
-            if (!prev.has(nodeId)) return prev;
-            const node = prev.get(nodeId)!;
-            const next = new Map(prev);
-            next.set(nodeId, {
-              ...node,
-              sessionStatuses: [
-                ...node.sessionStatuses.filter(
-                  (s) =>
-                    !(
-                      evt.type === 'session.next.compaction.ended' &&
-                      s.type === 'working' &&
-                      s.status.startsWith('Compacting context')
-                    ),
-                ),
-                {
-                  status: sideChannelStatus.status,
-                  type: sideChannelStatus.type,
-                  timestamp: new Date(),
-                },
-              ],
-            });
-            return next;
-          });
-          continue;
+          if (sideChannelStatus) {
+            next = applySideChannelStatus(
+              next,
+              evt,
+              sideChannelStatus,
+              timestamp,
+            );
+          }
         }
-        const nodeId = evt.sessionId;
-
-        if (evt.status === 'streaming') {
-          // Add 'working' status when session starts streaming
-          setNodes((prev) => {
-            if (!prev.has(nodeId)) return prev;
-            const node = prev.get(nodeId)!;
-            // Check if already has a working status to avoid duplicates
-            if (node.sessionStatuses.some((s) => s.type === 'working')) {
-              return prev;
-            }
-            const next = new Map(prev);
-            next.set(nodeId, {
-              ...node,
-              sessionStatuses: [
-                ...node.sessionStatuses,
-                {
-                  status: 'Session active',
-                  type: 'working' as SessionStatusType,
-                  timestamp: new Date(),
-                },
-              ],
-            });
-            return next;
-          });
-        } else if (evt.status === 'idle' || evt.status === 'error') {
-          // Clear stale question UI too; OpenCode can accept an answer or abort
-          // without delivering a follow-up `question.cleared` SSE.
-          setNodes((prev) => {
-            return clearTerminalSessionState(prev, nodeId);
-          });
-        }
-      }
+        return next;
+      });
     }),
   );
 

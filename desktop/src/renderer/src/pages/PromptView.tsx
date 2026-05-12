@@ -196,7 +196,6 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                         </div>
                       )}
                       <ChatHistoryView
-                        key={view.providerSessionId ?? activeConnectionId}
                         messages={channelMessages}
                         chatEndRef={view.chatEndRef}
                         activePromptId={view.activePromptId}

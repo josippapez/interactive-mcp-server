@@ -9,8 +9,6 @@ export type SessionStatusType = 'busy' | 'idle' | 'error' | 'unknown';
 
 export type SessionStatusMap = Record<string, { type: SessionStatusType }>;
 
-export const SESSION_STATUS_REFRESH_MS = 5000;
-
 type UseSessionStatusResult = {
   statusMap: SessionStatusMap;
   isLoading: boolean;
@@ -102,12 +100,6 @@ export function useSessionStatus(
   useEffect(() => {
     if (!enabled) return;
     void refresh();
-    const interval = window.setInterval(() => {
-      void refresh();
-    }, SESSION_STATUS_REFRESH_MS);
-    return () => {
-      window.clearInterval(interval);
-    };
   }, [enabled, refresh]);
 
   // Memoize the exposed statusMap so its identity is preserved across

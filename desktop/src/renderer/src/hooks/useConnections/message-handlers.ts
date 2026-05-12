@@ -5,7 +5,7 @@ import type { ModelOverride } from '../useProviderInjection';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
 
 /**
- * Log message handler events to both console and the main process log file.
+ * Persist message handler diagnostics to the main-process log file.
  */
 function logHandler(
   fn: string,
@@ -18,7 +18,6 @@ function logHandler(
   if (typeof window !== 'undefined' && window.api?.log) {
     window.api.log('info', 'message-handlers', message, sessionId);
   }
-  console.log(`[message-handlers] ${fn}:`, event, details);
 }
 
 interface MessageHandlersOptions {

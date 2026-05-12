@@ -1,5 +1,6 @@
 import {
   promises as fsp,
+  createReadStream,
   mkdirSync,
   readdirSync,
   statSync,
@@ -10,10 +11,12 @@ import { join } from 'path';
 export type SessionLogLevel = 'DEBUG' | 'INFO' | 'WARN' | 'ERROR';
 
 const MAX_SESSION_LOG_AGE_MS = 30 * 24 * 60 * 60 * 1000;
-const MAX_QUEUE_LEN = 1000;
+const MAX_QUEUE_LEN = 200;
+const INITIAL_TAIL_READ_BYTES = 64 * 1024;
 const queues = new Map<string, string[]>();
 const writeChains = new Map<string, Promise<void>>();
 const flushing = new Set<string>();
+const ensuredSessionDirs = new Set<string>();
 
 export function sanitizeSessionIdForFilename(sessionId: string): string {
   const sanitized = sessionId
@@ -53,9 +56,45 @@ export async function readSessionLog(
 ): Promise<string> {
   await flushSessionLogger();
   const path = buildSessionLogFilePath(logsDir, sessionId);
-  const content = await fsp.readFile(path, 'utf8').catch(() => '');
-  if (lines <= 0) return content;
-  return content.split('\n').filter(Boolean).slice(-lines).join('\n');
+  if (lines <= 0) return fsp.readFile(path, 'utf8').catch(() => '');
+  return readSessionLogTail(path, lines);
+}
+
+async function readSessionLogTail(
+  path: string,
+  lines: number,
+): Promise<string> {
+  const stat = await fsp.stat(path).catch(() => null);
+  if (!stat) return '';
+  let readBytes = Math.min(stat.size, INITIAL_TAIL_READ_BYTES);
+
+  while (readBytes <= stat.size) {
+    const start = stat.size - readBytes;
+    const content = await readFileRange(path, start, stat.size - 1);
+    const lineParts = content.split('\n').filter(Boolean);
+    if (lineParts.length > lines || readBytes === stat.size) {
+      return lineParts.slice(-lines).join('\n');
+    }
+    readBytes = Math.min(stat.size, readBytes * 2);
+  }
+
+  return '';
+}
+
+function readFileRange(
+  path: string,
+  start: number,
+  end: number,
+): Promise<string> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    const stream = createReadStream(path, { start, end, encoding: 'utf8' });
+    stream.on('data', (chunk) => {
+      chunks.push(Buffer.from(chunk));
+    });
+    stream.on('error', () => resolve(''));
+    stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
+  });
 }
 
 function formatSessionLine(
@@ -124,10 +163,14 @@ export function writeSessionLog(
 ): void {
   if (!logsDir || !sessionId) return;
   const path = buildSessionLogFilePath(logsDir, sessionId);
-  try {
-    mkdirSync(sessionsDir(logsDir), { recursive: true });
-  } catch {
-    return;
+  const dir = sessionsDir(logsDir);
+  if (!ensuredSessionDirs.has(dir)) {
+    try {
+      mkdirSync(dir, { recursive: true });
+      ensuredSessionDirs.add(dir);
+    } catch {
+      return;
+    }
   }
   const queue = queues.get(path) ?? [];
   if (queue.length >= MAX_QUEUE_LEN) {
@@ -149,4 +192,5 @@ export function _resetSessionLoggerForTest(): void {
   queues.clear();
   writeChains.clear();
   flushing.clear();
+  ensuredSessionDirs.clear();
 }

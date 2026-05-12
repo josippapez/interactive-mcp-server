@@ -19,11 +19,24 @@ const snapshotCache = new Map<
   string,
   {
     messages: ConversationMessage[];
-    parts: Record<string, ConversationMessagePart[]>;
+    partsByMessageId: Map<string, ConversationMessagePart[]>;
     status: ConversationSessionStatus;
     joined: SessionSnapshot;
   }
 >();
+
+function messagePartsUnchanged(
+  messages: readonly ConversationMessage[],
+  partsByMessageId: ReadonlyMap<string, ConversationMessagePart[]>,
+  stateParts: Record<string, ConversationMessagePart[]>,
+): boolean {
+  for (const msg of messages) {
+    if ((stateParts[msg.id] ?? EMPTY_PARTS) !== partsByMessageId.get(msg.id)) {
+      return false;
+    }
+  }
+  return true;
+}
 
 export function shallowEqualMessage(
   a: ConversationMessage,
@@ -53,8 +66,8 @@ export function selectSession(
   if (
     cached &&
     cached.messages === rawMessages &&
-    cached.parts === state.parts &&
-    cached.status === status
+    cached.status === status &&
+    messagePartsUnchanged(rawMessages, cached.partsByMessageId, state.parts)
   ) {
     return cached.joined;
   }
@@ -64,8 +77,10 @@ export function selectSession(
       ? new Map(cached.joined.messages.map((m) => [m.id, m]))
       : null;
   const joined: ConversationMessage[] = [];
+  const partsByMessageId = new Map<string, ConversationMessagePart[]>();
   for (const msg of rawMessages) {
     const partList = state.parts[msg.id] ?? EMPTY_PARTS;
+    partsByMessageId.set(msg.id, partList);
     const prevJoined = prevJoinedById?.get(msg.id);
     if (
       prevJoined &&
@@ -81,7 +96,7 @@ export function selectSession(
   const snapshot: SessionSnapshot = { messages: joined, status };
   snapshotCache.set(sessionId, {
     messages: rawMessages,
-    parts: state.parts,
+    partsByMessageId,
     status,
     joined: snapshot,
   });
@@ -102,4 +117,8 @@ export const NULL_SNAPSHOT: SessionSnapshot = {
 
 export function clearSnapshotCache(): void {
   snapshotCache.clear();
+}
+
+export function clearSessionSnapshotCache(sessionId: string): void {
+  snapshotCache.delete(sessionId);
 }

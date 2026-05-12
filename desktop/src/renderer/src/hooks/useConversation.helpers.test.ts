@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ConversationMessage } from '../../../preload/api/types';
 import type { ConversationState } from '../store/conversation-reducer';
-import { selectSession, shallowEqualMessage } from './useConversation.helpers';
+import {
+  clearSnapshotCache,
+  selectSession,
+  shallowEqualMessage,
+} from './useConversation.helpers';
 
 function makeMessage(
   overrides: Partial<ConversationMessage> = {},
@@ -40,6 +44,10 @@ function makeState(message: ConversationMessage): ConversationState {
 }
 
 describe('useConversation.helpers', () => {
+  afterEach(() => {
+    clearSnapshotCache();
+  });
+
   it('treats reasoning variant changes as message changes', () => {
     const base = makeMessage({ variant: undefined });
     const updated = makeMessage({ variant: 'high' });
@@ -56,5 +64,25 @@ describe('useConversation.helpers', () => {
 
     expect(updatedSnapshot.messages[0]).not.toBe(initialSnapshot.messages[0]);
     expect(updatedSnapshot.messages[0].variant).toBe('high');
+  });
+
+  it('reuses snapshots when unrelated session parts change', () => {
+    const message = makeMessage({ id: 'msg-1', sessionId: 'ses-1' });
+    const part = { id: 'part-1', type: 'text', text: 'hello' };
+    const initial: ConversationState = {
+      ...makeState(message),
+      parts: { 'msg-1': [part] },
+    };
+
+    const initialSnapshot = selectSession(initial, 'ses-1');
+    const updatedSnapshot = selectSession(
+      {
+        ...initial,
+        parts: { ...initial.parts, unrelated: [] },
+      },
+      'ses-1',
+    );
+
+    expect(updatedSnapshot).toBe(initialSnapshot);
   });
 });

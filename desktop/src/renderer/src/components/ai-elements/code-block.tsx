@@ -277,7 +277,12 @@ export const highlightCode = (
     })
     // oxlint-disable-next-line eslint-plugin-promise(prefer-await-to-then), eslint-plugin-promise(prefer-await-to-callbacks)
     .catch((error) => {
-      console.error('Failed to highlight code:', error);
+      const message = error instanceof Error ? error.message : String(error);
+      window.api.log?.(
+        'error',
+        'code-block',
+        `Failed to highlight code: ${message}`,
+      );
       subscribers.delete(tokensCacheKey);
     });
 

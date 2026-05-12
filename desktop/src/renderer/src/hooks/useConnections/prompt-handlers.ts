@@ -40,7 +40,12 @@ export function usePromptHandlers({
       // CRITICAL: For prompt responses, this uses prompt.providerSessionId, not node's.
       const target = resolvePromptTarget(nodesRef.current, activeChannelId);
       if (!target) {
-        console.warn('[handleSubmit] Could not resolve dispatch target');
+        window.api.log?.(
+          'warn',
+          'prompt-handlers',
+          'handleSubmit could not resolve dispatch target',
+          activeChannelId,
+        );
         return;
       }
 
@@ -106,7 +111,12 @@ export function usePromptHandlers({
       const activeChannelId = getActiveChannelIdSnapshot();
       const target = resolvePromptTarget(nodesRef.current, activeChannelId);
       if (!target) {
-        console.warn('[handleSelectOption] Could not resolve dispatch target');
+        window.api.log?.(
+          'warn',
+          'prompt-handlers',
+          'handleSelectOption could not resolve dispatch target',
+          activeChannelId,
+        );
         return;
       }
 

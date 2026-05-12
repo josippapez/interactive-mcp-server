@@ -149,6 +149,7 @@ describe('maybeInjectDbContextOnConnect', () => {
         makeEntry({ name: 'global-visible', scope: 'global' }),
         makeEntry({ id: 2, name: 'session-opt-in', scope: 'session-scoped' }),
       ],
+      memories: [],
       sessionOptInNames: ['session-opt-in'],
       sessionMutedNames: ['global-visible'],
     });
