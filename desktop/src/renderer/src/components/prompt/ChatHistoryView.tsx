@@ -197,6 +197,12 @@ export default function ChatHistoryView({
     }
   }, [channelId, resetAutoScroll]);
 
+  useEffect(() => {
+    if (!channelId) return;
+    resetAutoScroll(channelId);
+    setJumpToBottomSignal((value) => value + 1);
+  }, [channelId, resetAutoScroll]);
+
   // Outer ref-equality short-circuit for mergeMessages. During streaming,
   // Immer mints a new `conversationMessages` reference on every 16ms flush,
   // which invalidates the useMemo below even when nothing meaningful changed

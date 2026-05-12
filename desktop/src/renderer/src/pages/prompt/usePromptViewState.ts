@@ -21,6 +21,7 @@ import { usePromptProjectState } from './usePromptProjectState';
 import { usePromptRuntimeState } from './usePromptRuntimeState';
 import { usePromptSettingsState } from './usePromptSettingsState';
 import type { PromptViewProps } from './prompt-view-types';
+import { resolveDisplayedSessionModel } from './session-model-display';
 
 export function usePromptViewState(props: PromptViewProps) {
   const {
@@ -126,6 +127,7 @@ export function usePromptViewState(props: PromptViewProps) {
     conversationIsSeeding,
     currentModelId,
     currentProviderId,
+    currentVariant,
     sessionModelSelection,
     runningContextWindow,
     sessionBusy,
@@ -152,6 +154,19 @@ export function usePromptViewState(props: PromptViewProps) {
     channelMessages,
     conversationMessagesLength: conversationMessages.length,
     activeConnectionId,
+  });
+
+  const displayedSessionModel = resolveDisplayedSessionModel({
+    runningModel: {
+      modelId: currentModelId,
+      providerId: currentProviderId,
+      variant: currentVariant,
+    },
+    selectedModel: {
+      modelId: sessionModelSelection.modelId,
+      providerId: sessionModelSelection.providerId,
+      variant: sessionModelSelection.variant,
+    },
   });
 
   useDeriveSessionAgentEffect({
@@ -346,7 +361,9 @@ export function usePromptViewState(props: PromptViewProps) {
     conversationIsSeeding,
     currentModelId,
     currentProviderId,
+    currentVariant,
     sessionModelSelection,
+    displayedSessionModel,
     runningContextWindow,
     sessionBusy,
     sessionBaseDirectory,

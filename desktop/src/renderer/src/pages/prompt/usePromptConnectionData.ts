@@ -52,8 +52,11 @@ export function usePromptConnectionData({
   const conversationMessages = messages;
   const conversationAvailable = isOpenCodeSession;
 
-  const { modelId: currentModelId, providerId: currentProviderId } =
-    useSessionModelId(providerSessionId, isOpenCodeSession);
+  const {
+    modelId: currentModelId,
+    providerId: currentProviderId,
+    variant: currentVariant,
+  } = useSessionModelId(providerSessionId, isOpenCodeSession);
   const sessionModelSelection = useSessionModelSelection(providerSessionId);
 
   // Context window of the model that produced the most recent assistant
@@ -142,6 +145,7 @@ export function usePromptConnectionData({
     conversationIsSeeding,
     currentModelId,
     currentProviderId,
+    currentVariant,
     sessionModelSelection,
     runningContextWindow,
     sessionBusy,

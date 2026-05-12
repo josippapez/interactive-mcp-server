@@ -275,9 +275,9 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     isOpenCodeSession={view.isOpenCodeSession}
                     noReply={view.noReply}
                     commandPaletteOpen={view.commandPaletteOpen}
-                    modelId={view.sessionModelSelection.modelId}
-                    providerId={view.sessionModelSelection.providerId}
-                    variant={view.sessionModelSelection.variant ?? undefined}
+                    modelId={view.displayedSessionModel.modelId}
+                    providerId={view.displayedSessionModel.providerId}
+                    variant={view.displayedSessionModel.variant ?? undefined}
                     latestStatus={view.latestStatus}
                     activeSkills={view.activeSkills}
                     connectionId={activeConnectionId}

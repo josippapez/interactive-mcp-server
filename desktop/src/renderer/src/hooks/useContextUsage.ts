@@ -68,6 +68,10 @@ export function useContextUsage(
   const resolvedIdRef = useRef<string | null>(null);
   resolvedIdRef.current = resolvedId;
 
+  useEffect(() => {
+    setResolvedId(sessionId?.startsWith('ses_') && enabled ? sessionId : null);
+  }, [enabled, sessionId]);
+
   const storeUsage = useConversationSelector((state) =>
     resolvedId ? state.contextUsage[resolvedId] : undefined,
   );
