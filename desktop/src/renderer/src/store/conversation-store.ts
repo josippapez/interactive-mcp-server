@@ -49,7 +49,7 @@ export const conversationStore = new Store<ConversationState>(
  * spammed the devtools console at ~60 Hz during streaming.
  */
 const PERF_ENABLED = PERF_LOG_ENABLED;
-const MAX_RETAINED_CONVERSATION_SESSIONS = 8;
+const MAX_RETAINED_CONVERSATION_SESSIONS = 20;
 
 const retainedSessionOrder: string[] = [];
 

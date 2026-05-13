@@ -17,14 +17,10 @@ import {
  *   • At bottom + new content → programmatic scroll; stays sticky.
  *   • User scrolls up (wheel-up, drag, Page Up) → sticky=false.
  *   • User scrolls back within threshold → sticky=true.
- *   • jumpToBottom() / End key / channel switch → sticky=true AND scroll.
+ *   • jumpToBottom() / End key / channel switch → sticky=true.
  *
- * The key problem this hook solves: distinguish **programmatic** scrolls (our
- * own `scrollTo()` calls) from **user** scrolls. We use the same technique as
- * OpenCode's `createAutoScroll`: before every programmatic scroll we `mark()`
- * the expected target scrollTop; when a subsequent scroll event fires, if the
- * current scrollTop is within 2px of that mark (within 1500ms), we treat it
- * as programmatic and preserve the sticky state.
+ * The key problem this hook solves: track user intent while keeping the DOM
+ * scroll container anchored to the bottom during streaming.
  */
 
 // ---------------------------------------------------------------------------
@@ -35,12 +31,7 @@ import {
 const AUTO_MARKER_SCROLL_TOP_TOLERANCE_PX = 2;
 /** Auto-marker expiry — after this, scroll events are always treated as user. */
 const AUTO_MARKER_EXPIRY_MS = 1500;
-/**
- * After a programmatic scroll request, treat ALL scroll events as "auto"
- * for this window — covers smooth-scroll animation frames whose intermediate
- * scrollTop values are far from the final target. Slightly longer than a
- * typical browser smooth-scroll animation.
- */
+/** Cover smooth-scroll frames whose intermediate scrollTop differs from target. */
 const PROGRAMMATIC_SCROLL_WINDOW_MS = 600;
 
 // ---------------------------------------------------------------------------
@@ -136,9 +127,6 @@ export function shouldPauseAutoScrollOnWheel(deltaY: number): boolean {
  * Pure transition: given a scroll event, decide the next `isStickyToBottom`.
  *
  * - If the scroll was programmatic (`wasAuto`) → keep previous sticky state.
- *   This is critical: our own `scrollTo()` fires a scroll event with a
- *   momentarily-stale layout. Without this guard we'd immediately flip to
- *   `false` on every auto-scroll.
  * - Else if distance ≤ threshold → sticky=true (user is back at bottom).
  * - Else → sticky=false (user scrolled away).
  */
@@ -152,13 +140,6 @@ export function nextStickyStateOnScroll(input: {
   return input.distance <= input.threshold;
 }
 
-/**
- * Returns true if `now` is before the programmatic-scroll window expiry.
- * Used to keep sticky=true across smooth-scroll animation frames whose
- * intermediate scrollTop values won't match the marker's exact target.
- *
- * A value of 0 (or negative) for `windowUntil` means no window is open.
- */
 export function isWithinProgrammaticScrollWindow(
   windowUntil: number,
   now: number = Date.now(),
@@ -166,14 +147,6 @@ export function isWithinProgrammaticScrollWindow(
   return windowUntil > 0 && now < windowUntil;
 }
 
-/**
- * Marker that records the target scrollTop of a programmatic scroll, so the
- * subsequent `scroll` event can be classified as programmatic (not user).
- *
- * Matches OpenCode's `markAuto`/`isAuto` strategy — the 2px tolerance absorbs
- * sub-pixel layout drift, the 1500ms expiry guards against stale marks if the
- * user starts scrolling well after our last programmatic scroll.
- */
 export interface AutoScrollMarker {
   mark: (scrollTop: number, now?: number) => void;
   isAuto: (scrollTop: number, now?: number) => boolean;
@@ -188,13 +161,15 @@ export function createAutoScrollMarker(): AutoScrollMarker {
       mark = { top: scrollTop, time: now };
     },
     isAuto(scrollTop: number, now: number = Date.now()): boolean {
-      const m = mark;
-      if (!m) return false;
-      if (now - m.time > AUTO_MARKER_EXPIRY_MS) {
+      const current = mark;
+      if (!current) return false;
+      if (now - current.time > AUTO_MARKER_EXPIRY_MS) {
         mark = undefined;
         return false;
       }
-      return Math.abs(scrollTop - m.top) <= AUTO_MARKER_SCROLL_TOP_TOLERANCE_PX;
+      return (
+        Math.abs(scrollTop - current.top) <= AUTO_MARKER_SCROLL_TOP_TOLERANCE_PX
+      );
     },
     clear(): void {
       mark = undefined;
@@ -227,21 +202,13 @@ export function useAutoScroll(
   const scrollElRef = useRef<HTMLDivElement | null>(null);
   const stickyRef = useRef(stickyPreference ?? true);
   const markerRef = useRef(createAutoScrollMarker());
+  const programmaticScrollUntilRef = useRef<number>(0);
   // Keep the latest onStickyChange callback in a ref so setSticky stays stable
   // even when the consumer passes an inline callback.
   const onStickyChangeRef = useRef(onStickyChange);
   useEffect(() => {
     onStickyChangeRef.current = onStickyChange;
   }, [onStickyChange]);
-  /**
-   * Timestamp (ms since epoch) until which scroll events should be treated as
-   * programmatic regardless of the marker's exact-scrollTop match. Set by
-   * `scrollToBottomInternal` to cover smooth-scroll animation frames whose
-   * intermediate scrollTop values are far from the final target. Cleared by
-   * `handleWheel` on any genuine user wheel-up.
-   */
-  const programmaticScrollUntilRef = useRef<number>(0);
-
   // Keep refs in sync with React state so event handlers always read fresh values.
   useEffect(() => {
     stickyRef.current = isStickyToBottom;
@@ -277,38 +244,25 @@ export function useAutoScroll(
     el.style.overflowAnchor = stickyRef.current ? 'none' : 'auto';
   }, []);
 
-  /**
-   * Core programmatic scroll: moves to bottom AND marks the expected scrollTop
-   * so the subsequent `scroll` event is classified as programmatic.
-   */
   const scrollToBottomInternal = useCallback(
     (behavior: ScrollBehavior, makeSticky: boolean) => {
       const el = scrollElRef.current;
       if (!el) return;
       const targetTop = Math.max(0, el.scrollHeight - el.clientHeight);
       markerRef.current.mark(targetTop);
-      // Open a programmatic-scroll window so mid-animation scroll events
-      // (whose scrollTop values won't match the final target) are still
-      // classified as programmatic. Without this, smooth-scroll frames cause
-      // `isAuto()` to return false and `nextStickyStateOnScroll` flips sticky
-      // back to false before the animation finishes.
       programmaticScrollUntilRef.current =
         Date.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
       if (behavior === 'smooth') {
         el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
       } else {
-        // Bypass any CSS scroll-behavior:smooth.
         el.scrollTop = el.scrollHeight;
       }
       if (makeSticky) setSticky(true);
-      // Update derived state on next frame once the browser has processed scroll.
       requestAnimationFrame(() => {
-        // Re-mark after layout in case scrollHeight changed between calls
-        // (content grew during the frame). Keeps the auto-classifier accurate.
-        const el2 = scrollElRef.current;
-        if (el2) {
+        const nextEl = scrollElRef.current;
+        if (nextEl) {
           markerRef.current.mark(
-            Math.max(0, el2.scrollHeight - el2.clientHeight),
+            Math.max(0, nextEl.scrollHeight - nextEl.clientHeight),
           );
         }
         syncDerivedState();
@@ -324,27 +278,25 @@ export function useAutoScroll(
     [scrollToBottomInternal],
   );
 
-  const forceScrollToBottom = useCallback(() => {
-    scrollToBottomInternal('auto', true);
+  const jumpToBottom = useCallback(() => {
+    scrollToBottomInternal('smooth', true);
   }, [scrollToBottomInternal]);
 
-  const jumpToBottom = useCallback(() => {
-    // Jump button / End key: always force scroll and stick, regardless of state.
-    scrollToBottomInternal('smooth', true);
+  const forceScrollToBottom = useCallback(() => {
+    scrollToBottomInternal('auto', true);
   }, [scrollToBottomInternal]);
 
   const handleScroll = useCallback(() => {
     const el = scrollElRef.current;
     if (!el) return;
     const distance = getDistanceFromBottom(el);
-    const wasAuto =
-      markerRef.current.isAuto(el.scrollTop) ||
-      isWithinProgrammaticScrollWindow(programmaticScrollUntilRef.current);
     const nextSticky = nextStickyStateOnScroll({
       prev: stickyRef.current,
       distance,
       threshold,
-      wasAuto,
+      wasAuto:
+        markerRef.current.isAuto(el.scrollTop) ||
+        isWithinProgrammaticScrollWindow(programmaticScrollUntilRef.current),
     });
     if (nextSticky !== stickyRef.current) setSticky(nextSticky);
     // Derived state still reflects the raw distance (for the jump button).
@@ -358,16 +310,13 @@ export function useAutoScroll(
   }, [setSticky]);
 
   const resume = useCallback(() => {
-    forceScrollToBottom();
-  }, [forceScrollToBottom]);
+    scrollToBottomInternal('auto', true);
+  }, [scrollToBottomInternal]);
 
   const handleWheel = useCallback(
     (deltaY: number) => {
       if (!shouldPauseAutoScrollOnWheel(deltaY)) return;
-      // User intent to scroll up → clear the auto marker so the upcoming scroll
-      // event is classified as user, close the programmatic-scroll window so
-      // an in-flight smooth-scroll animation can be cancelled, and flip
-      // sticky=false immediately.
+      // User intent to scroll up → flip sticky=false immediately.
       markerRef.current.clear();
       programmaticScrollUntilRef.current = 0;
       setSticky(false);
@@ -389,7 +338,6 @@ export function useAutoScroll(
       // channelId is accepted for API compatibility; current impl doesn't use it.
       void _channelId;
       setSticky(true);
-      // Scroll after the DOM has a chance to render the new channel's content.
       requestAnimationFrame(() => {
         scrollToBottomInternal('auto', true);
       });
@@ -423,9 +371,11 @@ export function useAutoScroll(
         syncDerivedState();
         return;
       }
-      if (!options.working) return;
-      if (!stickyRef.current) return;
-      scrollToBottomInternal('auto', false);
+      if (options.working && stickyRef.current) {
+        scrollToBottomInternal('auto', false);
+        return;
+      }
+      syncDerivedState();
     });
 
     observer.observe(content);
@@ -441,7 +391,6 @@ export function useAutoScroll(
     if (stickyPreference === undefined) return;
     if (stickyPreference === stickyRef.current) return;
     if (stickyPreference) {
-      // Re-engage: sticky=true AND scroll to bottom.
       scrollToBottomInternal('auto', true);
     } else {
       setSticky(false);

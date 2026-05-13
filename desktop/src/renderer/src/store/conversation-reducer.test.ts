@@ -222,10 +222,10 @@ describe('conversation-store status snapshot', () => {
     expect(conversationStore.state.status).toEqual({ ses_current: 'idle' });
   });
 
-  it('evicts older seeded sessions so switching chats cannot retain every full history', () => {
+  it('retains the latest twenty seeded sessions before pruning older histories', () => {
     _resetConversationStoreForTest();
 
-    for (let index = 0; index < 10; index += 1) {
+    for (let index = 0; index < 22; index += 1) {
       const sessionId = `ses_${index}`;
       seedMessages(sessionId, [
         assistantMessage({
@@ -246,8 +246,20 @@ describe('conversation-store status snapshot', () => {
       'ses_7',
       'ses_8',
       'ses_9',
+      'ses_10',
+      'ses_11',
+      'ses_12',
+      'ses_13',
+      'ses_14',
+      'ses_15',
+      'ses_16',
+      'ses_17',
+      'ses_18',
+      'ses_19',
+      'ses_20',
+      'ses_21',
     ]);
     expect(conversationStore.state.parts.msg_0).toBeUndefined();
-    expect(conversationStore.state.parts.msg_9).toBeDefined();
+    expect(conversationStore.state.parts.msg_21).toBeDefined();
   });
 });

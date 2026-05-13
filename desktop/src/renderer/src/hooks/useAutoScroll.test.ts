@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createAutoScrollMarker,
+  isWithinProgrammaticScrollWindow,
   nextStickyStateOnScroll,
   resolveAutoScrollState,
   shouldPauseAutoScrollOnWheel,
@@ -17,6 +18,17 @@ describe('useAutoScroll helpers', () => {
 
   it('shows jump control only past the jump threshold', () => {
     expect(resolveAutoScrollState(401, 10, 400).showJump).toBe(true);
+  });
+
+  it('resumes sticky state when the user scrolls back to bottom', () => {
+    expect(
+      nextStickyStateOnScroll({
+        prev: false,
+        distance: 10,
+        threshold: 10,
+        wasAuto: false,
+      }),
+    ).toBe(true);
   });
 
   it('preserves sticky state during programmatic scrolls', () => {
@@ -40,5 +52,10 @@ describe('useAutoScroll helpers', () => {
     marker.mark(100, 1000);
     expect(marker.isAuto(101, 1100)).toBe(true);
     expect(marker.isAuto(103, 1100)).toBe(false);
+  });
+
+  it('keeps smooth scroll frames programmatic while the window is open', () => {
+    expect(isWithinProgrammaticScrollWindow(1500, 1200)).toBe(true);
+    expect(isWithinProgrammaticScrollWindow(1500, 1600)).toBe(false);
   });
 });

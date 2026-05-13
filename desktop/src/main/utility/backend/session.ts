@@ -18,6 +18,7 @@ import {
 } from './session-api';
 import type { SessionCreateBody } from './session-api';
 import { errorMessage } from '../../utils/errors';
+import { toProviderReasoningVariant } from '../../../shared/reasoning-variant';
 
 export interface DetectedSession {
   id: string;
@@ -363,6 +364,7 @@ const SESSION_MESSAGE_TIMEOUT_MS = 120_000;
 export interface InitialPromptBody {
   parts: { type: 'text'; text: string }[];
   agent?: string;
+  model?: { providerID: string; modelID: string };
 }
 
 /**
@@ -375,6 +377,7 @@ export interface InitialPromptBody {
 export function buildInitialPromptBody(input: {
   initialMessage: string;
   agent?: string;
+  model?: { providerID: string; modelID: string };
 }): InitialPromptBody {
   const body: InitialPromptBody = {
     parts: [{ type: 'text', text: input.initialMessage }],
@@ -383,6 +386,9 @@ export function buildInitialPromptBody(input: {
   const trimmedAgent = input.agent?.trim();
   if (trimmedAgent && trimmedAgent.length > 0) {
     body.agent = trimmedAgent;
+  }
+  if (input.model) {
+    body.model = input.model;
   }
 
   return body;
@@ -425,8 +431,15 @@ export async function createOpenCodeSession(
     if (trimmedAgent) {
       createBody.agent = trimmedAgent;
     }
-    if (options.model) {
-      createBody.model = options.model;
+    const providerModel = options.model
+      ? {
+          providerID: options.model.providerID,
+          id: options.model.id,
+          variant: toProviderReasoningVariant(options.model.variant),
+        }
+      : undefined;
+    if (providerModel) {
+      createBody.model = providerModel;
     }
 
     const createResponse = await sessionCreate(openCodePort, createBody, {
@@ -454,6 +467,12 @@ export async function createOpenCodeSession(
           buildInitialPromptBody({
             initialMessage: options.initialMessage,
             agent: options.agent,
+            model: options.model
+              ? {
+                  providerID: options.model.providerID,
+                  modelID: options.model.id,
+                }
+              : undefined,
           }),
           {
             directory: options.directory,

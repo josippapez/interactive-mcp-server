@@ -2,12 +2,10 @@ import React, {
   memo,
   useCallback,
   useEffect,
-  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
-import { useVirtualizer } from '@tanstack/react-virtual';
 import type { UnifiedMessage } from '../../../types/unified-message';
 import MessageItem from '../MessageItem';
 import UnreadDivider from './UnreadDivider';
@@ -15,10 +13,6 @@ import {
   getStreamingMessageId,
   useSeenMessageIds,
 } from './message-list-helpers';
-import {
-  shouldUseVirtualBottomScroll,
-  shouldVirtualizeMessageList,
-} from './message-list-virtualization';
 
 interface MessageListProps {
   /** Messages to render */
@@ -54,8 +48,6 @@ interface MessageListProps {
    * `activeSearchMatchId`, the list will scroll the matched row into view.
    */
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
-  /** Incremented by the parent on explicit jumps to the latest message. */
-  jumpToBottomSignal?: number;
   /**
    * Id of the message currently targeted by a `#message-<id>` URL hash.
    * Causes a transient pulse highlight on that row (managed by parent).
@@ -69,19 +61,8 @@ const EMPTY_EXCLUSIONS: string[] = [];
 const EMPTY_MATCHED_IDS: string[] = [];
 
 /**
- * Plain (non-virtualized) message list.
- *
- * Renders all messages in-order as regular DOM nodes. Auto-scroll / sticky
- * behavior is owned entirely by the parent (`ChatHistoryView` + `useAutoScroll`)
- * — this component just mounts rows and forwards its content wrapper ref so
- * the parent can observe height changes if desired.
- *
- * Replaces the previous TanStack Virtual implementation. Virtualization added
- * re-measurement jank during streaming (row heights change per token, forcing
- * re-layout and fighting with the auto-scroll driver). The Vercel AI chatbot
- * style — plain list + bottom-anchor — renders far more predictably, and the
- * existing history-windowing (`useHistoryWindow`) already caps the rendered
- * message count for long sessions.
+ * Non-virtualized message list. Auto-scroll is owned by the parent
+ * (`ChatHistoryView` + `useAutoScroll`) observing this content wrapper.
  */
 const MessageList = memo(function MessageList({
   messages,
@@ -99,14 +80,9 @@ const MessageList = memo(function MessageList({
   matchedMessageIds = EMPTY_MATCHED_IDS,
   activeSearchMatchId = null,
   scrollContainerRef,
-  jumpToBottomSignal = 0,
   deepLinkMessageId = null,
 }: MessageListProps): React.ReactElement {
   const newMessageIds = useSeenMessageIds(messages);
-  const shouldVirtualize = shouldVirtualizeMessageList({
-    messageCount: messages.length,
-    isBusy,
-  });
   const streamingMessageId = useMemo(
     () => getStreamingMessageId(messages, isBusy),
     [messages, isBusy],
@@ -148,56 +124,6 @@ const MessageList = memo(function MessageList({
     [matchedMessageIds],
   );
 
-  const getItemKey = useCallback(
-    (index: number) => messages[index]?.id ?? index,
-    [messages],
-  );
-  const virtualizer = useVirtualizer({
-    count: shouldVirtualize ? messages.length : 0,
-    getScrollElement: () => scrollContainerRef?.current ?? null,
-    estimateSize: () => 160,
-    getItemKey,
-    overscan: 8,
-    enabled: shouldVirtualize,
-    useAnimationFrameWithResizeObserver: true,
-  });
-
-  const virtualItems = shouldVirtualize ? virtualizer.getVirtualItems() : [];
-
-  const setMeasuredRowRef = useCallback(
-    (id: string, node: HTMLDivElement | null): void => {
-      getRefSetter(id)(node);
-      if (node) virtualizer.measureElement(node);
-    },
-    [getRefSetter, virtualizer],
-  );
-
-  const lastHandledJumpSignalRef = useRef(0);
-  useEffect(() => {
-    if (jumpToBottomSignal === 0) return;
-    if (lastHandledJumpSignalRef.current === jumpToBottomSignal) return;
-    lastHandledJumpSignalRef.current = jumpToBottomSignal;
-    if (
-      !shouldUseVirtualBottomScroll({
-        isVirtualized: shouldVirtualize,
-        messageCount: messages.length,
-      })
-    ) {
-      return;
-    }
-
-    virtualizer.scrollToIndex(messages.length - 1, {
-      align: 'end',
-      behavior: 'auto',
-    });
-    requestAnimationFrame(() => {
-      virtualizer.scrollToIndex(messages.length - 1, {
-        align: 'end',
-        behavior: 'auto',
-      });
-    });
-  }, [jumpToBottomSignal, messages.length, shouldVirtualize, virtualizer]);
-
   // Which message currently holds keyboard focus (null = none).
   const [focusedId, setFocusedId] = useState<string | null>(null);
 
@@ -235,20 +161,6 @@ const MessageList = memo(function MessageList({
       const next = messages[nextIdx];
       if (!next) return;
       setFocusedId(next.id);
-      if (shouldVirtualize) {
-        virtualizer.scrollToIndex(nextIdx, {
-          align: 'center',
-          behavior: 'smooth',
-        });
-        requestAnimationFrame(() => {
-          const row = rowRefs.current.get(next.id);
-          const article = row?.querySelector<HTMLElement>(
-            'article[data-slot^="session-turn-"]',
-          );
-          article?.focus({ preventScroll: true });
-        });
-        return;
-      }
       const nextRow = rowRefs.current.get(next.id);
       const nextArticle = nextRow?.querySelector<HTMLElement>(
         'article[data-slot^="session-turn-"]',
@@ -256,27 +168,13 @@ const MessageList = memo(function MessageList({
       nextArticle?.focus({ preventScroll: false });
       nextArticle?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     },
-    [messages, shouldVirtualize, virtualizer],
+    [messages],
   );
 
   useEffect(() => {
-    const targetId = activeSearchMatchId ?? deepLinkMessageId;
-    if (!targetId) return;
-    if (shouldVirtualize) {
-      const index = messages.findIndex((m) => m.id === targetId);
-      if (index !== -1) {
-        virtualizer.scrollToIndex(index, {
-          align: 'center',
-          behavior: 'smooth',
-        });
-      }
-      return;
-    }
     if (!activeSearchMatchId) return;
     const node = rowRefs.current.get(activeSearchMatchId);
     if (!node) return;
-    // Scroll the match to the center of the scroll container if available,
-    // otherwise fall back to the element's default `scrollIntoView` behavior.
     const container = scrollContainerRef?.current;
     if (container) {
       const containerRect = container.getBoundingClientRect();
@@ -289,19 +187,7 @@ const MessageList = memo(function MessageList({
       return;
     }
     node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [
-    activeSearchMatchId,
-    deepLinkMessageId,
-    messages,
-    scrollContainerRef,
-    shouldVirtualize,
-    virtualizer,
-  ]);
-
-  useLayoutEffect(() => {
-    if (!shouldVirtualize) return;
-    virtualizer.measure();
-  }, [messages, shouldVirtualize, virtualizer]);
+  }, [activeSearchMatchId, scrollContainerRef]);
 
   const renderMessage = useCallback(
     (msg: UnifiedMessage, index: number): React.ReactElement => {
@@ -365,69 +251,22 @@ const MessageList = memo(function MessageList({
     ],
   );
 
-  if (shouldVirtualize) {
-    return (
-      <div
-        ref={contentRef}
-        data-slot="session-turn-list"
-        className="px-2 py-3"
-        style={{
-          height: `${virtualizer.getTotalSize()}px`,
-          position: 'relative',
-        }}
-      >
-        <div
-          className="absolute left-0 top-0 flex w-full flex-col gap-3"
-          style={{
-            transform: `translateY(${virtualItems[0]?.start ?? 0}px)`,
-          }}
-        >
-          {virtualItems.map((virtualItem) => {
-            const msg = messages[virtualItem.index];
-            if (!msg) return null;
-            return (
-              <div
-                key={virtualItem.key}
-                data-index={virtualItem.index}
-                data-message-id={msg.id}
-                style={{
-                  contentVisibility: 'auto',
-                  containIntrinsicSize: 'auto 120px',
-                }}
-                ref={(node) => setMeasuredRowRef(msg.id, node)}
-              >
-                {renderMessage(msg, virtualItem.index)}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    );
-  }
-
   return (
     <div
       ref={contentRef}
       data-slot="session-turn-list"
       className="flex flex-col gap-3 px-2 py-3"
     >
-      {messages.map((msg, index) => {
-        return (
-          <div
-            key={msg.id}
-            data-index={index}
-            data-message-id={msg.id}
-            ref={getRefSetter(msg.id)}
-            style={{
-              contentVisibility:
-                msg.id === streamingMessageId ? 'visible' : 'auto',
-              containIntrinsicSize: 'auto 120px',
-            }}
-          >
-            {renderMessage(msg, index)}
-          </div>
-        );
-      })}
+      {messages.map((msg, index) => (
+        <div
+          key={msg.id}
+          data-index={index}
+          data-message-id={msg.id}
+          ref={getRefSetter(msg.id)}
+        >
+          {renderMessage(msg, index)}
+        </div>
+      ))}
     </div>
   );
 });

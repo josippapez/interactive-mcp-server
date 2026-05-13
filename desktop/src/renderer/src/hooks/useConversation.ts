@@ -91,7 +91,8 @@ function releaseIpcListener(): void {
  * seeded, live events keep the store current.
  */
 const seededSessions = new Set<string>();
-const MAX_SEEDED_SESSIONS = 8;
+const MAX_SEEDED_SESSIONS = 20;
+export const CONVERSATION_REST_SEED_LIMIT = 500;
 const seededSessionOrder: string[] = [];
 
 function markSeeded(sessionId: string): void {
@@ -113,7 +114,7 @@ async function seedOnce(sessionId: string): Promise<void> {
     const api = window.api;
     if (!api?.fetchConversationMessages) return;
     const messages = await api.fetchConversationMessages(sessionId, {
-      limit: 100,
+      limit: CONVERSATION_REST_SEED_LIMIT,
     });
     if (messages.length > 0) seedMessages(sessionId, messages);
     markSeeded(sessionId);

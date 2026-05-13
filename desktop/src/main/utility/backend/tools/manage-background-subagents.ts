@@ -69,6 +69,7 @@ This tool creates child OpenCode sessions and sends their prompt with prompt_asy
 - (!important!) The child session appears in the desktop session tree, so humans can inspect it while it runs.
 - (!important!) Completion is detected from OpenCode session status events and injected into the parent session with noReply=false so the waiting parent agent resumes; polling is only a manual fallback.
 - (!important!) Use this instead of the harness Task tool when you need true fire-and-forget parallel work from the desktop MCP server.
+- (!important!) When both this tool and a native task/subagent tool are available, prefer this tool for background subagent work so the child session is visible in the desktop app, can be inspected by humans, and can be coordinated with status/output/cancel actions.
 - (!important!) Keep prompts bounded and include a clear final deliverable; background output is retrieved from the child session's assistant messages.
 - (!important!) Model selection is optional. Omit providerId/modelId to let the child session use the current OpenCode connection defaults, call action="models" and pass one connected provider/model pair from that returned list, or pass preset="deep"|"labor"|"fast" to auto-select from recommendations.
 - (!important!) For deeper thinking, precise code changes, reviews, and multi-step debugging, prefer a higher-tier connected model from action="models" such as gpt-5.5, Claude Opus 4.7, or another Opus-class model when available, and pass a high reasoning variant such as variant="high" or variant="xhigh"/"max" if the returned model lists that variant.
@@ -154,9 +155,9 @@ export function buildBackgroundSubagentModel(input: {
   modelId?: string;
 }): SessionCreateBody['model'] | undefined {
   const providerID = input.providerId?.trim();
-  const modelID = input.modelId?.trim();
-  if (!providerID || !modelID) return undefined;
-  return { providerID, id: modelID };
+  const id = input.modelId?.trim();
+  if (!providerID || !id) return undefined;
+  return { providerID, id };
 }
 
 export function buildBackgroundSubagentPromptModel(input: {
@@ -728,6 +729,7 @@ export function registerManageBackgroundSubagentsTool(
             providerId: selectedProviderId,
             modelId: selectedModelId,
           });
+          const createVariant = toProviderReasoningVariant(selectedVariant);
           const promptModel = buildBackgroundSubagentPromptModel({
             providerId: selectedProviderId,
             modelId: selectedModelId,
@@ -740,7 +742,10 @@ export function registerManageBackgroundSubagentsTool(
               title: childTitle,
               parentID: parentSessionId,
               agent: agent?.trim() || undefined,
-              model: createModel,
+              model:
+                createModel && createVariant
+                  ? { ...createModel, variant: createVariant }
+                  : createModel,
             },
             {
               directory: baseDirectory,

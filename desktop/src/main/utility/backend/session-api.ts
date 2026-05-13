@@ -48,6 +48,13 @@ export interface SessionCreateBody {
       ? R
       : never
     : never;
+  variant?: Parameters<
+    ReturnType<typeof getClient>['session']['create']
+  >[0] extends infer P
+    ? P extends { variant?: infer R }
+      ? R
+      : never
+    : never;
   permission?: Parameters<
     ReturnType<typeof getClient>['session']['create']
   >[0] extends infer P

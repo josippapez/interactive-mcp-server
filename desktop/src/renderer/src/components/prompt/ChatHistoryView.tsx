@@ -94,8 +94,7 @@ type Props = {
  * 3. Turn-based history windowing via useHistoryWindow (last 15 turns initially)
  * 4. Real-time per-token streaming via split-store Map snapshots
  *    (messagesById + partsByMessageId + messageOrder in useConversation)
- * 5. Plain scrollable list (see `MessageList`) — virtualization was removed
- *    because per-token row re-measurement caused streaming jank.
+ * 5. Non-virtualized `MessageList` rendering for stable streaming scroll.
  * 6. useStaging for progressive DOM staging of large batches (opt-in)
  * 7. useAutoScroll for intelligent auto-scroll behavior
  */
@@ -126,7 +125,6 @@ export default function ChatHistoryView({
     src: string;
     name: string;
   } | null>(null);
-  const [jumpToBottomSignal, setJumpToBottomSignal] = useState(0);
 
   // Refs for the scroll container and inner content wrapper.
   // (useAutoScroll exposes a callback ref we combine with our own.)
@@ -184,23 +182,9 @@ export default function ChatHistoryView({
     contentRef.current = node;
   }, []);
 
-  // Track previous channel ID to detect channel switches
-  const prevChannelIdRef = useRef<string | null | undefined>(channelId);
-
-  // Channel switch detection - reset auto-scroll state completely
-  useEffect(() => {
-    // Detect channel switch by comparing channelId
-    if (prevChannelIdRef.current !== channelId) {
-      prevChannelIdRef.current = channelId;
-      // Reset auto-scroll state when switching channels
-      resetAutoScroll();
-    }
-  }, [channelId, resetAutoScroll]);
-
   useEffect(() => {
     if (!channelId) return;
     resetAutoScroll(channelId);
-    setJumpToBottomSignal((value) => value + 1);
   }, [channelId, resetAutoScroll]);
 
   // Outer ref-equality short-circuit for mergeMessages. During streaming,
@@ -348,7 +332,7 @@ export default function ChatHistoryView({
     initialBatch: 20,
     stagingBatch: 10,
     stagingThreshold: 30,
-    enabled: !isBusy,
+    enabled: false,
   });
 
   const [lastSeenMessageId, setLastSeenMessageId] = useState<string | null>(
@@ -406,30 +390,17 @@ export default function ChatHistoryView({
     setExpandedImage({ src, name });
   }, []);
 
-  // ---------------------------------------------------------------------------
-  // Auto-scroll driver — bottom-anchor (Vercel AI chatbot style).
-  //
-  // Whenever the rendered content changes in a way that should follow the
-  // bottom (new message, token appended during streaming) AND the user is
-  // currently sticky to the bottom, we call the hook's `forceScrollToBottom`.
-  // That routes the scroll through `useAutoScroll`'s programmatic marker so
-  // the user's sticky state is preserved (the marker classifies the ensuing
-  // scroll event as programmatic, not user-initiated).
-  //
-  // We use a content signature keyed on (message count, streaming-tail id,
-  // streaming-tail text/reasoning length) so each token tick fires exactly
-  // one scroll — no ResizeObserver / MutationObserver / rAF dance needed
-  // now that rows render their full content synchronously.
-  // ---------------------------------------------------------------------------
   const autoScrollSignature = computeAutoScrollSignature(stagedMessages);
   useEffect(() => {
     if (!isStickyToBottom) return;
     if (stagedMessages.length === 0) return;
     forceScrollToBottom();
-    // `forceScrollToBottom` and `isStickyToBottom` are deliberately read via
-    // the latest closure — the signature change is the trigger, not the
-    // message list identity.
-  }, [autoScrollSignature]);
+  }, [
+    autoScrollSignature,
+    forceScrollToBottom,
+    isStickyToBottom,
+    stagedMessages.length,
+  ]);
 
   // Stable callback for closing the image modal
   const handleCloseImage = useCallback(() => {
@@ -458,14 +429,12 @@ export default function ChatHistoryView({
     (next: boolean) => {
       if (!channelId) {
         if (next) {
-          setJumpToBottomSignal((value) => value + 1);
           jumpToBottom();
         }
         return;
       }
       setChannelStickToBottom(channelId, next);
       if (next) {
-        setJumpToBottomSignal((value) => value + 1);
         jumpToBottom();
       }
     },
@@ -487,7 +456,6 @@ export default function ChatHistoryView({
           return;
         }
         e.preventDefault();
-        setJumpToBottomSignal((value) => value + 1);
         jumpToBottom();
       }
     };
@@ -632,7 +600,7 @@ export default function ChatHistoryView({
             </div>
           )}
 
-          {/* Message list (plain, non-virtualized) */}
+          {/* Message list */}
           <MessageList
             messages={stagedMessages}
             contentRef={combinedContentRef}
@@ -648,7 +616,6 @@ export default function ChatHistoryView({
             showThinking={showThinking}
             isBusy={isBusy}
             matchedMessageIds={matchedMessageIds}
-            jumpToBottomSignal={jumpToBottomSignal}
             activeSearchMatchId={
               activeSearchMatchIndex >= 0
                 ? (matchedMessageIds[activeSearchMatchIndex] ?? null)

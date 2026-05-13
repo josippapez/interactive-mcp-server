@@ -49,9 +49,47 @@ describe('createOpenCodeSession', () => {
         parentID: 'parent_1',
         agent: 'plan',
         model: {
-          id: 'gpt-5.5',
           providerID: 'github-copilot',
+          id: 'gpt-5.5',
           variant: 'high',
+        },
+      },
+      expect.objectContaining({ directory: DIRECTORY }),
+    );
+  });
+
+  it('passes provider-normalized reasoning variant to the initial prompt', async () => {
+    await createOpenCodeSession(PORT, {
+      initialMessage: 'Start work',
+      directory: DIRECTORY,
+      model: {
+        id: 'gpt-5.5',
+        providerID: 'github-copilot',
+        variant: 'xhigh',
+      },
+    });
+
+    expect(sessionApiMocks.sessionCreate).toHaveBeenCalledWith(
+      PORT,
+      {
+        title: undefined,
+        parentID: undefined,
+        model: {
+          providerID: 'github-copilot',
+          id: 'gpt-5.5',
+          variant: 'max',
+        },
+      },
+      expect.objectContaining({ directory: DIRECTORY }),
+    );
+    expect(sessionApiMocks.sessionPromptAsync).toHaveBeenCalledWith(
+      PORT,
+      'ses_123',
+      {
+        parts: [{ type: 'text', text: 'Start work' }],
+        model: {
+          providerID: 'github-copilot',
+          modelID: 'gpt-5.5',
         },
       },
       expect.objectContaining({ directory: DIRECTORY }),

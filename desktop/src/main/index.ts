@@ -21,6 +21,7 @@ import {
 } from './opencode/server-facade';
 import { syncRemoteConfig } from './utility/opencode-client';
 import { checkOpenCodeHealth } from './opencode/health';
+import { registerMcpAfterOpenCodeHealthy } from './opencode/mcp-startup-registration';
 import {
   fetchProvidersInfo,
   refreshProvidersInfo,
@@ -500,11 +501,17 @@ app.whenReady().then(async () => {
       // Registration with OpenCode must be triggered manually via the
       // "Register provider config" button in Settings after OpenCode restarts.
       if (currentSettings.autoSyncOpencode) {
-        const syncResult = syncRemoteConfig(
-          getEffectiveMcpPort(),
-          currentSettings.promptTimeoutSeconds,
-        );
-        console.log(`[config-sync] ${syncResult}`);
+        try {
+          const syncResult = await syncRemoteConfig(
+            getEffectiveMcpPort(),
+            currentSettings.promptTimeoutSeconds,
+          );
+          appLog.info(`[config-sync] ${syncResult}`);
+        } catch (err) {
+          appLog.warn(
+            `[config-sync] failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
       }
 
       // Auto-start OpenCode serve before session probing/reconcile so cold-start
@@ -552,98 +559,102 @@ app.whenReady().then(async () => {
       // and once healthy, warm the main-side providers cache so the first
       // renderer IPC after mount returns instantly instead of racing boot.
       // (The session tree is pulled on-demand by the renderer — no warmup.)
-      void waitForOpenCodeHealthy(() => getEffectiveOpenCodePort()).then(
-        async (healthy) => {
-          if (!healthy) {
+      const openCodeHealthyPromise = waitForOpenCodeHealthy(() =>
+        getEffectiveOpenCodePort(),
+      );
+      void openCodeHealthyPromise.then(async (healthy) => {
+        if (!healthy) {
+          appLog.warn(
+            '[startup] OpenCode did not become healthy within 30s — skipping cold-start warmup',
+          );
+          return;
+        }
+        await fetchProvidersInfo(getEffectiveOpenCodePort()).catch(
+          (err: unknown) => {
             appLog.warn(
-              '[startup] OpenCode did not become healthy within 30s — skipping cold-start warmup',
+              `[startup] providers warmup failed: ${err instanceof Error ? err.message : String(err)}`,
             );
-            return;
-          }
-          await fetchProvidersInfo(getEffectiveOpenCodePort()).catch(
+          },
+        );
+
+        // Start the periodic providers-info refresh now that OpenCode is
+        // known healthy. This keeps the renderer cache warm across long
+        // idle periods so opening a new-session form never hits a cold
+        // main-side cache. Idempotent — clear any prior timer first.
+        if (providersRefreshTimer) clearInterval(providersRefreshTimer);
+        providersRefreshTimer = setInterval(() => {
+          void refreshProvidersInfo(getEffectiveOpenCodePort()).catch(
             (err: unknown) => {
               appLog.warn(
-                `[startup] providers warmup failed: ${err instanceof Error ? err.message : String(err)}`,
+                `[providers-refresh] periodic refresh failed: ${err instanceof Error ? err.message : String(err)}`,
               );
             },
           );
+        }, PROVIDERS_REFRESH_INTERVAL_MS);
 
-          // Start the periodic providers-info refresh now that OpenCode is
-          // known healthy. This keeps the renderer cache warm across long
-          // idle periods so opening a new-session form never hits a cold
-          // main-side cache. Idempotent — clear any prior timer first.
-          if (providersRefreshTimer) clearInterval(providersRefreshTimer);
-          providersRefreshTimer = setInterval(() => {
-            void refreshProvidersInfo(getEffectiveOpenCodePort()).catch(
-              (err: unknown) => {
-                appLog.warn(
-                  `[providers-refresh] periodic refresh failed: ${err instanceof Error ? err.message : String(err)}`,
-                );
-              },
+        // Kick off the health supervisor now that we've confirmed at
+        // least one successful probe. Only supervises when the user has
+        // auto-start enabled — otherwise they're running OpenCode
+        // externally and we must not interfere with its lifecycle.
+        startOpenCodeSupervisor(
+          () => getEffectiveOpenCodePort(),
+          () => currentSettings.autoStartOpenCode,
+          appLog,
+          (resolvedPort) => {
+            appLog.info(
+              `[supervisor] OpenCode rebound on port=${resolvedPort} (requested=${currentSettings.openCodePort})`,
             );
-          }, PROVIDERS_REFRESH_INTERVAL_MS);
+            resolvedPorts.openCode = resolvedPort;
+            emitResolvedPortsChanged();
+          },
+        );
+      });
 
-          // Kick off the health supervisor now that we've confirmed at
-          // least one successful probe. Only supervises when the user has
-          // auto-start enabled — otherwise they're running OpenCode
-          // externally and we must not interfere with its lifecycle.
-          startOpenCodeSupervisor(
-            () => getEffectiveOpenCodePort(),
-            () => currentSettings.autoStartOpenCode,
-            appLog,
-            (resolvedPort) => {
-              appLog.info(
-                `[supervisor] OpenCode rebound on port=${resolvedPort} (requested=${currentSettings.openCodePort})`,
-              );
-              resolvedPorts.openCode = resolvedPort;
-              emitResolvedPortsChanged();
-            },
-          );
-        },
-      );
-
-      // Start the conversation event stream (SSE → coalescer → batched
-      // IPC dispatch) inside the backend utility process. Main forwards
-      // `to-renderer` envelopes from the bridge to the focused window;
-      // see `utility/supervisor.ts`.
-      try {
-        await getUtilitySupervisor()
+      void openCodeHealthyPromise.then((healthy) => {
+        if (!healthy) return;
+        void getUtilitySupervisor()
           .getBridge()
           .request<{ ok: boolean; error?: string }>('start-event-stream', {
             openCodePort: getEffectiveOpenCodePort(),
+          })
+          .catch((err: unknown) => {
+            appLog.error(
+              `[utility] start-event-stream failed: ${
+                err instanceof Error ? err.message : String(err)
+              }`,
+            );
           });
-      } catch (err) {
-        appLog.error(
-          `[utility] start-event-stream failed: ${
-            err instanceof Error ? err.message : String(err)
-          }`,
-        );
-      }
+      });
 
-      // Reconcile persisted connections with live OpenCode sessions.
-      // At startup no folder is selected yet (renderer drives selection),
-      // so this is a no-op until the renderer calls set-selected-folder.
-      const reconResult = await reconcileSessionConnections(
-        getEffectiveOpenCodePort(),
-        null,
-      );
-      console.log(
-        `[session-reconnect] matched=${reconResult.matched} cleaned=${reconResult.cleaned} total=${reconResult.total}`,
-      );
+      void openCodeHealthyPromise.then((healthy) => {
+        if (!healthy) return;
+        void reconcileSessionConnections(getEffectiveOpenCodePort(), null)
+          .then((reconResult) => {
+            console.log(
+              `[session-reconnect] matched=${reconResult.matched} cleaned=${reconResult.cleaned} total=${reconResult.total}`,
+            );
+          })
+          .catch((err: unknown) => {
+            appLog.warn(
+              `[session-reconnect] failed: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          });
+      });
 
       // Re-register with OpenCode on every startup so its MCP client performs a
       // fresh initialize handshake instead of hanging on a stale reconnect backoff.
       // This is fire-and-forget with retries — it resolves the Cmd+Q → relaunch
       // hang where activeClients stays 0 because OpenCode's client never completes
       // re-initialization after the previous server instance was killed.
-      void registerMcpWithRetry({
-        appPort: getEffectiveMcpPort(),
-        openCodePort: getEffectiveOpenCodePort(),
-        promptTimeoutSeconds: currentSettings.promptTimeoutSeconds,
-      }).then((result) => {
-        console.log(
-          `[startup-register] status=${result.status}${result.error ? ` error=${result.error}` : ''}`,
-        );
+      void registerMcpAfterOpenCodeHealthy({
+        waitForHealthy: () => openCodeHealthyPromise,
+        register: () =>
+          registerMcpWithRetry({
+            appPort: getEffectiveMcpPort(),
+            openCodePort: getEffectiveOpenCodePort(),
+            promptTimeoutSeconds: currentSettings.promptTimeoutSeconds,
+          }),
+        log: appLog,
       });
     } else if (currentSettings.agentBackend === 'claude_sdk') {
       const claudeRuntime = await detectClaudeSdkRuntime();
