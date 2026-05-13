@@ -152,6 +152,13 @@ export function useMessageHandlers({
           messageLength: message.length,
           attachmentsCount: attachments?.length ?? 0,
           hasModelOverride: !!modelOverride,
+          modelOverride: modelOverride
+            ? {
+                providerId: modelOverride.providerId,
+                modelId: modelOverride.modelId,
+                variant: modelOverride.variant ?? '(default)',
+              }
+            : null,
           agent: agent ?? '(none)',
         },
         target?.sessionId ?? sessionId,

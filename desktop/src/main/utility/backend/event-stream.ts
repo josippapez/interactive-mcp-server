@@ -65,6 +65,7 @@ import {
 } from './prompt-event-forwarder';
 import { getSettingsSnapshot } from './settings-mirror';
 import { handleBackgroundSubagentSessionStatus } from './tools/manage-background-subagents';
+import { writeSessionLog } from '../../utils/session-logger';
 
 const log = createLogger('event-stream');
 
@@ -550,6 +551,22 @@ async function runLoop(): Promise<void> {
               sessionId: ev.sessionId,
               status,
             });
+          } else if (ev.type === 'session.next.model.switched') {
+            writeSessionLog(
+              getSettingsSnapshot().logsDir,
+              ev.sessionId,
+              'INFO',
+              'sse:session.next.model.switched',
+              `model=${ev.providerId}/${ev.modelId}/${ev.variant ?? 'default'}`,
+            );
+          } else if (ev.type === 'session.next.step.started') {
+            writeSessionLog(
+              getSettingsSnapshot().logsDir,
+              ev.sessionId,
+              'INFO',
+              'sse:session.next.step.started',
+              `messageId=${ev.messageId} agent=${ev.agent ?? '(none)'} model=${ev.providerId}/${ev.modelId}/${ev.variant ?? 'default'}`,
+            );
           }
         }
         for (const ev of mapped) enqueue(ev);

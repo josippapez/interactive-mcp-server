@@ -166,6 +166,7 @@ export default function ChatHistoryView({
     jumpThreshold: AUTO_SCROLL_JUMP_THRESHOLD_PX,
     stickyPreference: stickToBottomPreference,
     onStickyChange: handleStickyChange,
+    bottomAnchorRef: chatEndRef,
   });
 
   // Combine scroll ref with our local ref for scroll container access.
@@ -624,7 +625,7 @@ export default function ChatHistoryView({
             deepLinkMessageId={deepLinkMessageId}
           />
 
-          <div ref={chatEndRef} />
+          <div ref={chatEndRef} aria-hidden="true" />
         </div>
       </div>
 

@@ -573,6 +573,7 @@ export type ConversationEvent =
       always?: string[];
       tool?: { messageID: string; callID: string };
       metadata?: Record<string, unknown>;
+      directory?: string;
     }
   | {
       type: 'permission.replied';

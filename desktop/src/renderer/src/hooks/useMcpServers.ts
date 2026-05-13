@@ -113,6 +113,23 @@ export function useMcpServers(
     };
   }, [enabled, fetchStatus]);
 
+  // Subscribe to live MCP tool-list change events from the OpenCode SSE bridge.
+  // Upstream publishes `mcp.tools.changed` whenever a server connects (and its
+  // tool list materializes). We piggyback on that signal to refetch status
+  // promptly instead of waiting for a manual refresh.
+  useEffect(() => {
+    if (!enabled) return;
+    const unsubscribe = window.api.onConversationBatch((batch) => {
+      const sawMcpEvent = batch.events.some(
+        (ev) => ev.type === 'mcp.tools.changed',
+      );
+      if (sawMcpEvent) {
+        void fetchStatus();
+      }
+    });
+    return unsubscribe;
+  }, [enabled, fetchStatus]);
+
   // Manual refresh
   const refresh = useCallback(async () => {
     setIsLoading(true);

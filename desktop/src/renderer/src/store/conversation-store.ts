@@ -53,10 +53,54 @@ const MAX_RETAINED_CONVERSATION_SESSIONS = 20;
 
 const retainedSessionOrder: string[] = [];
 
-function touchRetainedSession(sessionId: string): void {
+/**
+ * Listeners notified when a session is evicted from the retained-session
+ * LRU. `useConversation` subscribes here to drop the matching entry from
+ * its `seededSessions` dedupe cache, so the next visit to that session
+ * triggers a fresh REST refetch (otherwise the dedupe lies — it says
+ * "already seeded" but the store messages have been pruned).
+ */
+type PruneListener = (sessionId: string) => void;
+const pruneListeners = new Set<PruneListener>();
+
+export function subscribeToConversationPrune(
+  listener: PruneListener,
+): () => void {
+  pruneListeners.add(listener);
+  return () => {
+    pruneListeners.delete(listener);
+  };
+}
+
+function notifyPruned(sessionId: string): void {
+  for (const listener of pruneListeners) {
+    try {
+      listener(sessionId);
+    } catch {
+      /* ignore listener errors */
+    }
+  }
+}
+
+/**
+ * Touch a session in the retained LRU and trim to the cap. Called from
+ * BOTH `seedMessages` (REST seed) AND `applyBatch` (live events) so a
+ * session that is actively receiving updates never gets pruned just
+ * because the user navigated away and visited 20+ other sessions.
+ *
+ * Returns the list of session ids that were evicted by the trim so the
+ * caller can also prune those slices from the store state.
+ */
+function touchRetainedSession(sessionId: string): string[] {
   const existingIndex = retainedSessionOrder.indexOf(sessionId);
   if (existingIndex !== -1) retainedSessionOrder.splice(existingIndex, 1);
   retainedSessionOrder.push(sessionId);
+  const evicted: string[] = [];
+  while (retainedSessionOrder.length > MAX_RETAINED_CONVERSATION_SESSIONS) {
+    const next = retainedSessionOrder.shift();
+    if (next !== undefined) evicted.push(next);
+  }
+  return evicted;
 }
 
 function pruneConversationState(
@@ -74,6 +118,7 @@ function pruneConversationState(
     }
     delete nextMessages[sessionId];
     clearSessionSnapshotCache(sessionId);
+    notifyPruned(sessionId);
     next = { ...next, messages: nextMessages, parts: nextParts };
   }
   return next;
@@ -94,6 +139,20 @@ export function applyBatch(batch: ConversationBatch): void {
       `hop seq=${batch.seq} count=${batch.events.length} hopMs=${hopMs}`,
     );
   }
+
+  // Mark every session that appears in this batch as retained so live
+  // activity keeps a session out of the prune set. Without this, a
+  // session that receives only live events (and was seeded long ago)
+  // gets nuked the next time some OTHER session triggers a seed-time
+  // prune — making the chat appear empty when the user navigates back.
+  const touchedInBatch = new Set<string>();
+  for (const ev of batch.events) {
+    const sessionId = (ev as { sessionId?: string }).sessionId;
+    if (!sessionId || touchedInBatch.has(sessionId)) continue;
+    touchedInBatch.add(sessionId);
+    touchRetainedSession(sessionId);
+  }
+
   conversationStore.setState((prev) => {
     if (batch.seq <= prev.lastSeq && prev.lastSeq !== 0) {
       // Out-of-order / duplicate batch; ignore.
@@ -113,9 +172,6 @@ export function seedMessages(
   messages: readonly ConversationMessage[],
 ): void {
   touchRetainedSession(sessionId);
-  while (retainedSessionOrder.length > MAX_RETAINED_CONVERSATION_SESSIONS) {
-    retainedSessionOrder.shift();
-  }
   const keepSessionIds = new Set(retainedSessionOrder);
   conversationStore.setState((prev) =>
     pruneConversationState(

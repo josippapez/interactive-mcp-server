@@ -30,6 +30,14 @@ export interface MessageTokens {
   };
 }
 
+type TokenTotalInput = number | MessageTokens | undefined | null;
+
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
 /** Cumulative context usage for a session. */
 export interface ContextUsage {
   /** Session ID. */
@@ -160,14 +168,31 @@ export function getTokenCount(tokens?: MessageTokens): number {
     return 0;
   }
 
+  const total = finiteNumber(tokens.total);
+  if (total !== undefined) {
+    return total;
+  }
+
   return (
-    tokens.total ??
-    (tokens.input ?? 0) +
-      (tokens.output ?? 0) +
-      (tokens.reasoning ?? 0) +
-      (tokens.cache?.read ?? 0) +
-      (tokens.cache?.write ?? 0)
+    (finiteNumber(tokens.input) ?? 0) +
+    (finiteNumber(tokens.output) ?? 0) +
+    (finiteNumber(tokens.reasoning) ?? 0) +
+    (finiteNumber(tokens.cache?.read) ?? 0) +
+    (finiteNumber(tokens.cache?.write) ?? 0)
   );
+}
+
+function normalizeTokenTotal(tokens: TokenTotalInput): number {
+  const total = finiteNumber(tokens);
+  if (total !== undefined) {
+    return total;
+  }
+
+  if (tokens && typeof tokens === 'object') {
+    return getTokenCount(tokens);
+  }
+
+  return 0;
 }
 
 // ─── Usage tracking ──────────────────────────────────────────────────────────
@@ -252,11 +277,16 @@ export function updateSessionTokens(
  */
 export function setSessionTotalTokens(
   sessionId: string,
-  totalTokens: number,
+  totalTokens: TokenTotalInput,
   modelId?: string,
   providerId?: string | null,
 ): ContextUsage {
-  const usage = computeUsage(sessionId, totalTokens, modelId, providerId);
+  const usage = computeUsage(
+    sessionId,
+    normalizeTokenTotal(totalTokens),
+    modelId,
+    providerId,
+  );
   _sessionUsage.set(sessionId, usage);
   return usage;
 }
@@ -347,7 +377,7 @@ export async function triggerCompaction(
 
 export interface SessionInfo {
   id: string;
-  tokens?: number;
+  tokens?: TokenTotalInput;
   modelId?: string;
   providerId?: string;
 }
@@ -432,7 +462,7 @@ export async function fetchSessionTokens(
     const data = response.data as
       | {
           id: string;
-          tokens?: number;
+          tokens?: TokenTotalInput;
           model?: { id?: string };
           provider?: { id?: string };
         }
@@ -482,7 +512,7 @@ export function _clearAllUsageForTest(): void {
  * is assumed. This matches how `message.updated` events already include
  * `modelID`/`providerID` in their payload.
  *
- * The `_port` parameter is kept in the signature for forward-compat with
+ * The `port` parameter is kept in the signature for forward-compat with
  * an async model-limit lookup variant, but is unused today — the bridge
  * can ignore it.
  */
@@ -495,8 +525,9 @@ export function computeContextUsage(
     providerID?: string;
     tokens?: MessageTokens;
   },
-  _port?: number,
+  port?: number,
 ): ContextUsage | null {
+  void port;
   if (!message.sessionID) return null;
   if (message.role !== 'assistant') return null;
   const total = getTokenCount(message.tokens);

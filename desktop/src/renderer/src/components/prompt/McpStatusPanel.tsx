@@ -494,6 +494,13 @@ export default function McpStatusPanel({
     [actionsInProgress],
   );
 
+  // Hide panel entirely when no servers are configured and not loading
+  // (matches upstream TUI session footer's <Show when={mcp()}> behavior).
+  // Preserves the loading spinner during slow MCP startup.
+  if (totalCount === 0 && !isLoading) {
+    return null;
+  }
+
   return (
     <div className="border border-[var(--color-border)] rounded-lg overflow-hidden bg-[var(--color-surface)]">
       {/* Header */}
@@ -506,9 +513,21 @@ export default function McpStatusPanel({
         <span className="text-xs font-medium flex-1 text-left">
           MCP Servers
         </span>
-        <span className="text-[10px] text-[var(--color-text-faint)]">
-          {connectedCount}/{totalCount} connected
-        </span>
+        {totalCount > 0 && (
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full ${
+              connectedCount > 0
+                ? 'bg-emerald-500'
+                : 'bg-[var(--color-text-faint)]'
+            }`}
+            aria-hidden="true"
+          />
+        )}
+        {totalCount > 0 && (
+          <span className="text-[10px] text-[var(--color-text-faint)]">
+            {connectedCount}/{totalCount} connected
+          </span>
+        )}
         {needsAuthCount > 0 && (
           <span className="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-600">
             {needsAuthCount} needs auth

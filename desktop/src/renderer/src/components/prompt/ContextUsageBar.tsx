@@ -13,22 +13,53 @@ interface ContextUsageBarProps {
 
 const MAX_PROGRESS_PERCENT = 100;
 const PERCENT_DECIMALS = 1;
+const UNKNOWN_TOKENS_LABEL = '--';
+
+function toFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
 
 /**
  * Format token count for display.
  */
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000000) {
-    return `${(tokens / 1000000).toFixed(1)}M`;
+export function formatContextTokens(tokens: unknown): string {
+  const finiteTokens = toFiniteNumber(tokens);
+  if (finiteTokens === null) return UNKNOWN_TOKENS_LABEL;
+
+  if (finiteTokens >= 1000000) {
+    return `${(finiteTokens / 1000000).toFixed(1)}M`;
   }
-  if (tokens >= 1000) {
-    return `${(tokens / 1000).toFixed(1)}k`;
+  if (finiteTokens >= 1000) {
+    return `${(finiteTokens / 1000).toFixed(1)}k`;
   }
-  return tokens.toString();
+  return finiteTokens.toString();
 }
 
-function formatPercent(value: number): string {
-  return `${value.toFixed(PERCENT_DECIMALS)}%`;
+export function formatContextPercent(value: unknown): string {
+  const finiteValue = toFiniteNumber(value);
+  return finiteValue === null
+    ? UNKNOWN_TOKENS_LABEL
+    : `${finiteValue.toFixed(PERCENT_DECIMALS)}%`;
+}
+
+export function getContextUsageDisplay(input: {
+  totalTokens: unknown;
+  contextLimit: unknown;
+}): { label: string; widthPercent: number } {
+  const totalTokens = toFiniteNumber(input.totalTokens) ?? 0;
+  const contextLimit = toFiniteNumber(input.contextLimit);
+  const percentUsedOfMax =
+    contextLimit && contextLimit > 0
+      ? (totalTokens / contextLimit) * 100
+      : null;
+
+  return {
+    label: `Context ${formatContextTokens(input.totalTokens)} / ${formatContextTokens(input.contextLimit)} (${formatContextPercent(percentUsedOfMax)})`,
+    widthPercent:
+      percentUsedOfMax === null
+        ? 0
+        : Math.min(MAX_PROGRESS_PERCENT, percentUsedOfMax),
+  };
 }
 
 /**
@@ -100,9 +131,10 @@ export function ContextUsageBar({
   const usageColor = getUsageColor(usage);
   // Use modelContextWindow if provided, otherwise fall back to cached contextLimit
   const effectiveContextLimit = modelContextWindow ?? usage.contextLimit;
-  const percentUsedOfMax = (usage.totalTokens / effectiveContextLimit) * 100;
-  const widthPercent = Math.min(MAX_PROGRESS_PERCENT, percentUsedOfMax);
-  const usageLabel = `Context ${formatTokens(usage.totalTokens)} / ${formatTokens(effectiveContextLimit)} (${formatPercent(percentUsedOfMax)})`;
+  const { label: usageLabel, widthPercent } = getContextUsageDisplay({
+    totalTokens: usage.totalTokens,
+    contextLimit: effectiveContextLimit,
+  });
 
   return (
     <div className="flex items-center gap-2">
@@ -200,8 +232,8 @@ export function ContextOverflowAlert({ sessionId }: ContextUsageBarProps) {
             : `Approaching context limit (${usage.usagePercent}%)`}
         </span>
         <span className="text-[var(--color-text-muted)] text-xs">
-          {formatTokens(usage.totalTokens)} / {formatTokens(usage.usableLimit)}{' '}
-          tokens
+          {formatContextTokens(usage.totalTokens)} /{' '}
+          {formatContextTokens(usage.usableLimit)} tokens
         </span>
       </div>
 

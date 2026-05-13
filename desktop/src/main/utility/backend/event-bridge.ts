@@ -417,6 +417,7 @@ export function bridgeEvent(
           always: p.always,
           tool: p.tool,
           metadata: p.metadata,
+          directory: envelope?.directory ?? undefined,
         },
       ];
     }

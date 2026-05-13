@@ -32,4 +32,35 @@ describe('bridgeEvent', () => {
       },
     ]);
   });
+
+  it('maps permission asked directory from the event envelope', () => {
+    const events = bridgeEvent(
+      {
+        id: 'evt_permission',
+        type: 'permission.asked',
+        properties: {
+          sessionID: 'ses_1',
+          id: 'per_1',
+          permission: 'external_directory',
+          patterns: ['/tmp/file.png'],
+          always: ['external_directory'],
+        },
+      } as SdkEvent,
+      { directory: '/repo' },
+    );
+
+    expect(events).toEqual([
+      {
+        type: 'permission.asked',
+        sessionId: 'ses_1',
+        requestId: 'per_1',
+        permission: 'external_directory',
+        patterns: ['/tmp/file.png'],
+        always: ['external_directory'],
+        tool: undefined,
+        metadata: undefined,
+        directory: '/repo',
+      },
+    ]);
+  });
 });

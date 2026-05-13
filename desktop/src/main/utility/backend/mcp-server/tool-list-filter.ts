@@ -43,6 +43,10 @@ export function applyHiddenToolListFilter(server: McpServer): void {
     return;
   }
 
+  let cachedSignature: string | null = null;
+  let cachedRegisteredTools: unknown[] | null = null;
+  let cachedToolList: unknown[] | null = null;
+
   server.server.setRequestHandler(ListToolsRequestSchema, async () => {
     const internalServer = server as unknown as {
       _registeredTools?: Record<
@@ -61,22 +65,36 @@ export function applyHiddenToolListFilter(server: McpServer): void {
     };
 
     const registeredTools = internalServer._registeredTools ?? {};
-    const tools = Object.entries(registeredTools)
-      .filter(
-        ([name, tool]) =>
-          tool.enabled !== false && !HIDDEN_TOOL_NAMES.has(name),
+    const visibleEntries = Object.entries(registeredTools).filter(
+      ([name, tool]) => tool.enabled !== false && !HIDDEN_TOOL_NAMES.has(name),
+    );
+    const signature = visibleEntries.map(([name]) => name).join('\n');
+    if (
+      cachedSignature === signature &&
+      cachedRegisteredTools &&
+      cachedToolList &&
+      cachedRegisteredTools.length === visibleEntries.length &&
+      visibleEntries.every(
+        ([, tool], index) => cachedRegisteredTools[index] === tool,
       )
-      .map(([name, tool]) => ({
-        name,
-        title: tool.title,
-        description: tool.description,
-        inputSchema: toJsonSchema(tool.inputSchema),
-        outputSchema: toJsonSchema(tool.outputSchema),
-        annotations: tool.annotations,
-        execution: tool.execution,
-        _meta: tool._meta,
-      }));
+    ) {
+      return { tools: cachedToolList };
+    }
 
+    const tools = visibleEntries.map(([name, tool]) => ({
+      name,
+      title: tool.title,
+      description: tool.description,
+      inputSchema: toJsonSchema(tool.inputSchema),
+      outputSchema: toJsonSchema(tool.outputSchema),
+      annotations: tool.annotations,
+      execution: tool.execution,
+      _meta: tool._meta,
+    }));
+
+    cachedSignature = signature;
+    cachedRegisteredTools = visibleEntries.map(([, tool]) => tool);
+    cachedToolList = tools;
     return { tools };
   });
 }

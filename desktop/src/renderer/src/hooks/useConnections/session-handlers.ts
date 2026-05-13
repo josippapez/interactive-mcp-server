@@ -8,6 +8,16 @@ interface SessionHandlersOptions {
   setNodes: React.Dispatch<React.SetStateAction<Map<string, SessionNode>>>;
 }
 
+export function resolvePermissionReplyDirectory(
+  nodes: Map<string, SessionNode>,
+  sessionID: string,
+  directory?: string,
+): string | undefined {
+  if (directory) return directory;
+  const node = nodes.get(sessionID);
+  return node?.baseDirectory ?? node?.directory ?? undefined;
+}
+
 export function useSessionHandlers({
   nodesRef,
   setNodes,
@@ -34,9 +44,14 @@ export function useSessionHandlers({
       reply: 'once' | 'always' | 'reject',
       directory?: string,
     ) => {
-      void window.api.replyPermission(sessionID, requestId, reply, directory);
+      void window.api.replyPermission(
+        sessionID,
+        requestId,
+        reply,
+        resolvePermissionReplyDirectory(nodesRef.current, sessionID, directory),
+      );
     },
-    [],
+    [nodesRef],
   );
 
   const handleReplyQuestion = useCallback(

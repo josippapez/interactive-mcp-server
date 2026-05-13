@@ -81,6 +81,7 @@ export function usePermissionHandlers({
         always: data.always,
         tool: data.tool,
         metadata: data.metadata,
+        directory: data.directory,
       });
     }),
   );
@@ -103,6 +104,7 @@ export function usePermissionHandlers({
             always: evt.always,
             tool: evt.tool,
             metadata: evt.metadata,
+            directory: evt.directory,
           });
           continue;
         }

@@ -32,6 +32,7 @@ import {
   applyBatch,
   conversationStore,
   seedMessages,
+  subscribeToConversationPrune,
   useConversationSelector,
 } from '../store/conversation-store';
 import type { ConversationSessionStatus } from '../store/conversation-reducer';
@@ -105,6 +106,24 @@ function markSeeded(sessionId: string): void {
     if (evicted) seededSessions.delete(evicted);
   }
 }
+
+/**
+ * Drop a session from the seed dedupe cache. Wired to the store's prune
+ * notifications so that when the conversation store evicts a session's
+ * messages (LRU pressure), the next mount for that session will re-seed
+ * from REST instead of believing "already seeded" and rendering empty.
+ */
+function invalidateSeeded(sessionId: string): void {
+  if (!seededSessions.has(sessionId)) return;
+  seededSessions.delete(sessionId);
+  const index = seededSessionOrder.indexOf(sessionId);
+  if (index !== -1) seededSessionOrder.splice(index, 1);
+}
+
+// Module-level subscription — single global listener for the lifetime of
+// the renderer process. Unsubscribe is unnecessary (module never unloads
+// in production) but kept for symmetry / future hot-reload safety.
+subscribeToConversationPrune(invalidateSeeded);
 
 async function seedOnce(sessionId: string): Promise<void> {
   if (seededSessions.has(sessionId)) return;

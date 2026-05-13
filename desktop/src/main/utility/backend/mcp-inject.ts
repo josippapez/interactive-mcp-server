@@ -15,6 +15,7 @@ import {
 } from '@opencode-ai/sdk/v2/client';
 import { createLogger, type Logger } from '../../utils/logger';
 import { errorMessage } from '../../utils/errors';
+import { withTimeout } from '../../utils/with-timeout';
 import { getClient } from './sdk-client';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -79,7 +80,8 @@ export interface McpInjectionOptions {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const DEFAULT_TIMEOUT_MS = 5000;
-const MCP_INJECTION_CONCURRENCY = 3;
+const MCP_REGISTRATION_TIMEOUT_MS = 30_000;
+const MCP_INJECTION_CONCURRENCY = 10;
 
 // ─── MCP Injection ────────────────────────────────────────────────────────────
 
@@ -245,18 +247,72 @@ export async function injectProjectMcps(
     `Found ${mcpEntries.length} MCP(s) to inject for ${baseDirectory}`,
   );
 
+  // Phase 2: pre-filter entries that are already connected/connecting to OpenCode
+  // (e.g. globals OpenCode loaded natively at spawn) to avoid redundant mcp.add() calls.
+  let entriesToRegister = mcpEntries;
+  try {
+    const client = getClient(openCodePort, baseDirectory);
+    const statusResponse = await client.mcp.status(
+      {},
+      { signal: AbortSignal.timeout(timeoutMs) },
+    );
+    if (!statusResponse.error && statusResponse.data) {
+      const alreadyActive = new Set(
+        Object.entries(statusResponse.data)
+          .filter(([, s]) => {
+            const status = (s as { status?: string } | undefined)?.status;
+            return status === 'connected' || status === 'connecting';
+          })
+          .map(([name]) => name),
+      );
+      if (alreadyActive.size > 0) {
+        const skipped = mcpEntries.filter(([name]) => alreadyActive.has(name));
+        entriesToRegister = mcpEntries.filter(
+          ([name]) => !alreadyActive.has(name),
+        );
+        logger.info(
+          `Skipping ${skipped.length} already-active MCP(s): ${skipped.map(([n]) => n).join(', ')}`,
+        );
+      }
+    }
+  } catch (err) {
+    logger.warn(
+      `Pre-filter mcp.status check failed (registering all entries): ${errorMessage(err)}`,
+    );
+  }
+
+  if (entriesToRegister.length === 0) {
+    return {
+      configFound: true,
+      results: mcpEntries.map(([name]) => ({
+        name,
+        status: 'skipped' as const,
+        error: 'already-active',
+      })),
+      injectedMcps: [],
+    };
+  }
+
   const results = await mapWithConcurrency(
-    mcpEntries,
+    entriesToRegister,
     MCP_INJECTION_CONCURRENCY,
     async ([name, mcpServerConfig]) =>
-      registerSingleMcp(
+      withTimeout(
+        registerSingleMcp(
+          name,
+          mcpServerConfig,
+          openCodePort,
+          baseDirectory,
+          timeoutMs,
+          logger,
+        ),
+        MCP_REGISTRATION_TIMEOUT_MS,
+        `MCP registration timed out: ${name}`,
+      ).catch((err) => ({
         name,
-        mcpServerConfig,
-        openCodePort,
-        baseDirectory,
-        timeoutMs,
-        logger,
-      ),
+        status: 'error' as const,
+        error: errorMessage(err),
+      })),
   );
 
   const injectedMcps = results

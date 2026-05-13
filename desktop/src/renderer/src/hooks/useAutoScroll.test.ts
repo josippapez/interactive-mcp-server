@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createAutoScrollMarker,
+  getProgrammaticScrollTarget,
   isWithinProgrammaticScrollWindow,
   nextStickyStateOnScroll,
   resolveAutoScrollState,
@@ -57,5 +58,18 @@ describe('useAutoScroll helpers', () => {
   it('keeps smooth scroll frames programmatic while the window is open', () => {
     expect(isWithinProgrammaticScrollWindow(1500, 1200)).toBe(true);
     expect(isWithinProgrammaticScrollWindow(1500, 1600)).toBe(false);
+  });
+
+  it('prefers the bottom anchor over scrollTop calculations', () => {
+    const element = {} as HTMLElement;
+    expect(
+      getProgrammaticScrollTarget({ bottomAnchor: element, fallbackTop: 200 }),
+    ).toEqual({ type: 'anchor', element });
+  });
+
+  it('falls back to scrollTop when no bottom anchor exists', () => {
+    expect(
+      getProgrammaticScrollTarget({ bottomAnchor: null, fallbackTop: 200 }),
+    ).toEqual({ type: 'scrollTop', top: 200 });
   });
 });

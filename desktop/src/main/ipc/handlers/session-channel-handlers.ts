@@ -37,6 +37,13 @@ import {
 import { logIpcInfo, withSkillSuggestion } from './shared';
 import { writeSessionLog } from '../../utils/session-logger';
 
+function formatModelSelectionForLog(
+  modelSelection: ModelSelectionPayload | undefined,
+): string {
+  if (!modelSelection) return '(none)';
+  return `${modelSelection.providerId}/${modelSelection.modelId}/${modelSelection.variant ?? 'default'}`;
+}
+
 export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
   // Save a base64 image (e.g. from clipboard) to the per-session attachments
   // directory under os.tmpdir().
@@ -193,14 +200,14 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
       },
     ): Promise<{ ok: boolean; error?: string; noReply?: boolean }> => {
       logIpcInfo(
-        `[inject-opencode-message] openCodeSessionId=${data.openCodeSessionId} noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0} agent=${data.agent ?? '(none)'}`,
+        `[inject-opencode-message] openCodeSessionId=${data.openCodeSessionId} noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0} agent=${data.agent ?? '(none)'} model=${formatModelSelectionForLog(data.modelOverride)}`,
       );
       writeSessionLog(
         deps.getLogsDir(),
         data.openCodeSessionId,
         'INFO',
         'ipc:inject-opencode-message',
-        `noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0} agent=${data.agent ?? '(none)'}`,
+        `noReply=${data.noReply ?? true} messageLength=${data.message.length} attachments=${data.attachments?.length ?? 0} agent=${data.agent ?? '(none)'} model=${formatModelSelectionForLog(data.modelOverride)}`,
       );
       const outbound = await withSkillSuggestion(data.message);
       const result = await injectOpenCodeMessage(

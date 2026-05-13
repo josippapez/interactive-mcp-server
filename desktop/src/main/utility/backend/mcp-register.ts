@@ -49,6 +49,35 @@ export interface McpRetryOptions extends McpRegistrationOptions {
   signal?: AbortSignal;
 }
 
+async function isMcpAlreadyConnected(
+  client: ReturnType<typeof getClient>,
+  mcpName: string,
+  appPort: number,
+): Promise<boolean> {
+  try {
+    const [statusResponse, configResponse] = await Promise.all([
+      client.mcp.status(
+        {},
+        { signal: AbortSignal.timeout(MCP_REGISTER_REQUEST_TIMEOUT_MS) },
+      ),
+      client.config?.get?.(
+        {},
+        { signal: AbortSignal.timeout(MCP_REGISTER_REQUEST_TIMEOUT_MS) },
+      ) ?? Promise.resolve({ data: undefined }),
+    ]);
+
+    const existingStatus = statusResponse.data?.[mcpName]?.status;
+    const existingConfig = configResponse.data?.mcp?.[mcpName];
+    return (
+      existingStatus === 'connected' &&
+      existingConfig?.type === 'remote' &&
+      existingConfig.url === `http://localhost:${appPort}/mcp`
+    );
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Wraps `registerMcpWithOpenCode()` with exponential backoff retries.
  */
@@ -117,6 +146,10 @@ export async function registerMcpWithOpenCode(
 
   try {
     const client = getClient(openCodePort, baseDirectory);
+    if (await isMcpAlreadyConnected(client, mcpName, appPort)) {
+      return { status: 'registered' };
+    }
+
     const response = await client.mcp.add(
       {
         name: mcpName,

@@ -58,6 +58,8 @@ export interface UseAutoScrollOptions {
    * consumer is expected to mirror this into the persisted preference.
    */
   onStickyChange?: (sticky: boolean) => void;
+  /** Invisible element after the latest rendered message. Preferred bottom anchor. */
+  bottomAnchorRef?: React.RefObject<HTMLElement | null>;
 }
 
 export interface UseAutoScrollReturn {
@@ -177,6 +179,18 @@ export function createAutoScrollMarker(): AutoScrollMarker {
   };
 }
 
+export function getProgrammaticScrollTarget(input: {
+  bottomAnchor: HTMLElement | null;
+  fallbackTop: number;
+}):
+  | { type: 'anchor'; element: HTMLElement }
+  | { type: 'scrollTop'; top: number } {
+  if (input.bottomAnchor) {
+    return { type: 'anchor', element: input.bottomAnchor };
+  }
+  return { type: 'scrollTop', top: input.fallbackTop };
+}
+
 // ---------------------------------------------------------------------------
 // The hook
 // ---------------------------------------------------------------------------
@@ -189,6 +203,7 @@ export function useAutoScroll(
     jumpThreshold = 400,
     stickyPreference,
     onStickyChange,
+    bottomAnchorRef,
   } = options;
 
   // Single source of truth.
@@ -252,10 +267,17 @@ export function useAutoScroll(
       markerRef.current.mark(targetTop);
       programmaticScrollUntilRef.current =
         Date.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
-      if (behavior === 'smooth') {
-        el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+
+      const target = getProgrammaticScrollTarget({
+        bottomAnchor: bottomAnchorRef?.current ?? null,
+        fallbackTop: el.scrollHeight,
+      });
+      if (target.type === 'anchor') {
+        target.element.scrollIntoView({ block: 'end', behavior });
+      } else if (behavior === 'smooth') {
+        el.scrollTo({ top: target.top, behavior: 'smooth' });
       } else {
-        el.scrollTop = el.scrollHeight;
+        el.scrollTop = target.top;
       }
       if (makeSticky) setSticky(true);
       requestAnimationFrame(() => {
@@ -268,7 +290,7 @@ export function useAutoScroll(
         syncDerivedState();
       });
     },
-    [setSticky, syncDerivedState],
+    [bottomAnchorRef, setSticky, syncDerivedState],
   );
 
   const scrollToBottom = useCallback(
