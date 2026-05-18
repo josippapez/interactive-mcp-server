@@ -109,6 +109,21 @@ interface RawProvidersResponse {
   connected: string[];
 }
 
+interface RawV2ProviderInfo {
+  id: string;
+  name: string;
+  enabled?: false | unknown;
+}
+
+interface RawV2ModelInfo {
+  id: string;
+  name: string;
+  providerID: string;
+  enabled?: boolean;
+  limit?: { context?: number; input?: number; output?: number };
+  variants?: Array<{ id: string }>;
+}
+
 /** Full provider info including connected status. */
 export interface ProvidersInfo {
   providers: Provider[];
@@ -268,6 +283,121 @@ function transformProvider(raw: RawProvider): Provider {
   };
 }
 
+function transformV2Model(raw: RawV2ModelInfo): ProviderModel {
+  return transformModel(
+    {
+      id: raw.id,
+      name: raw.name,
+      providerID: raw.providerID,
+      limit: raw.limit,
+      capabilities: { reasoning: (raw.variants?.length ?? 0) > 0 },
+      variants: raw.variants?.reduce<Record<string, unknown>>(
+        (acc, variant) => {
+          acc[variant.id] = true;
+          return acc;
+        },
+        {},
+      ),
+    },
+    raw.providerID,
+  );
+}
+
+function mergeV2ModelMetadata(
+  legacyModel: ProviderModel,
+  v2Model: ProviderModel | undefined,
+): ProviderModel {
+  if (!v2Model) return legacyModel;
+
+  const hasV2Variants = v2Model.variants && v2Model.variants.length > 0;
+
+  return {
+    ...legacyModel,
+    contextWindow: legacyModel.contextWindow ?? v2Model.contextWindow,
+    inputLimit: legacyModel.inputLimit ?? v2Model.inputLimit,
+    outputLimit: legacyModel.outputLimit ?? v2Model.outputLimit,
+    reasoning: hasV2Variants ? true : legacyModel.reasoning,
+    variants: hasV2Variants ? v2Model.variants : legacyModel.variants,
+    defaultVariant: hasV2Variants
+      ? v2Model.defaultVariant
+      : legacyModel.defaultVariant,
+  };
+}
+
+export function mergeV2ProviderModelInfo(
+  legacy: ProvidersInfo,
+  v2Providers: RawV2ProviderInfo[] | null | undefined,
+  v2Models: RawV2ModelInfo[] | null | undefined,
+): ProvidersInfo {
+  if (!v2Providers?.length || !v2Models?.length) return legacy;
+
+  const v2ProviderById = new Map(
+    v2Providers
+      .filter((provider) => provider.enabled !== false)
+      .map((provider) => [provider.id, provider]),
+  );
+  if (v2ProviderById.size === 0) return legacy;
+
+  const v2ModelsByProvider = new Map<string, RawV2ModelInfo[]>();
+  for (const model of v2Models) {
+    if (model.enabled === false || !v2ProviderById.has(model.providerID)) {
+      continue;
+    }
+    const bucket = v2ModelsByProvider.get(model.providerID) ?? [];
+    bucket.push(model);
+    v2ModelsByProvider.set(model.providerID, bucket);
+  }
+
+  return {
+    ...legacy,
+    providers: legacy.providers.map((provider) => {
+      const v2ModelsForProvider = v2ModelsByProvider.get(provider.id);
+      if (!v2ModelsForProvider?.length) return provider;
+      const v2ModelById = new Map(
+        v2ModelsForProvider.map((model) => [model.id, transformV2Model(model)]),
+      );
+      const legacyModelIds = new Set(provider.models.map((model) => model.id));
+      const v2OnlyModels = v2ModelsForProvider
+        .filter((model) => !legacyModelIds.has(model.id))
+        .map(transformV2Model);
+
+      return {
+        ...provider,
+        name: v2ProviderById.get(provider.id)?.name ?? provider.name,
+        models: [
+          ...provider.models.map((model) =>
+            mergeV2ModelMetadata(model, v2ModelById.get(model.id)),
+          ),
+          ...v2OnlyModels,
+        ],
+      };
+    }),
+  };
+}
+
+async function fetchV2ProviderModelInfo(openCodePort: number): Promise<{
+  providers: RawV2ProviderInfo[] | null;
+  models: RawV2ModelInfo[] | null;
+}> {
+  try {
+    const client = getClient(openCodePort);
+    const [providersResponse, modelsResponse] = await Promise.all([
+      client.v2.provider.list(undefined, { signal: AbortSignal.timeout(5000) }),
+      client.v2.model.list(undefined, { signal: AbortSignal.timeout(5000) }),
+    ]);
+    return {
+      providers: providersResponse.error
+        ? null
+        : ((providersResponse.data as RawV2ProviderInfo[] | undefined) ?? null),
+      models: modelsResponse.error
+        ? null
+        : ((modelsResponse.data as RawV2ModelInfo[] | undefined) ?? null),
+    };
+  } catch {
+    return { providers: null, models: null };
+  }
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -333,11 +463,17 @@ export async function fetchProvidersInfo(
     const providers = data.all.map(transformProvider);
     _cachedProviders = providers;
 
-    const info: ProvidersInfo = {
+    const legacyInfo: ProvidersInfo = {
       providers,
       connectedProviderIds: data.connected,
       defaults: data.default,
     };
+    const v2Info = await fetchV2ProviderModelInfo(openCodePort);
+    const info = mergeV2ProviderModelInfo(
+      legacyInfo,
+      v2Info.providers,
+      v2Info.models,
+    );
     _cachedProvidersInfo = info;
     _cachedProvidersAt = Date.now();
 

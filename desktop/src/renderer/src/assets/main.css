@@ -1251,6 +1251,29 @@ textarea::placeholder {
   gap: 0;
   overflow: hidden;
   font-family: var(--font-family-mono);
+  /* Establish positioning context for the floating actions bar (copy /
+     download buttons) below. Streamdown renders it as a sibling between
+     header and body with `sticky top-2 -mt-10`, which only renders
+     correctly when the parent's flex `gap` matches the `-mt-10` offset.
+     We collapse the gap to zero (so the header's border-bottom doubles as
+     the divider), then lift the actions bar out of flex flow entirely. */
+  position: relative;
+}
+/* Float Streamdown's copy/download buttons over the header so they don't
+   eat flex flow space. Without this, the actions bar's negative `-mt-10`
+   pulls the body up under the header, leaving the header's border-bottom
+   cutting through the first line of code. */
+[data-slot='session-turn-assistant']
+  [data-streamdown='code-block']
+  > :not([data-streamdown='code-block-header']):not(
+    [data-streamdown='code-block-body']
+  ) {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  margin: 0;
+  height: 28px;
+  z-index: 2;
 }
 [data-slot='session-turn-assistant'] [data-streamdown='code-block-header'] {
   height: 28px;
@@ -1261,7 +1284,7 @@ textarea::placeholder {
   background: transparent;
 }
 [data-slot='session-turn-assistant'] [data-streamdown='code-block-body'] {
-  padding: 0;
+  padding: 0 12px;
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1355,6 +1378,23 @@ textarea::placeholder {
   background: var(--color-surface-raised);
   overflow: hidden;
   font-family: var(--font-family-mono);
+  /* See note above: the parent must establish a positioning context so the
+     floating actions bar can be lifted out of flex flow. */
+  position: relative;
+}
+/* Float Streamdown's copy/download buttons over the header — see the
+   matching rule above for the assistant turn for the why. */
+.prose
+  [data-streamdown='code-block']
+  > :not([data-streamdown='code-block-header']):not(
+    [data-streamdown='code-block-body']
+  ) {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  margin: 0;
+  height: 28px;
+  z-index: 2;
 }
 .prose [data-streamdown='code-block-header'] {
   height: 28px;
@@ -1365,7 +1405,7 @@ textarea::placeholder {
   background: transparent;
 }
 .prose [data-streamdown='code-block-body'] {
-  padding: 0;
+  padding: 0 12px;
   border: none;
   border-radius: 0;
   background: transparent;

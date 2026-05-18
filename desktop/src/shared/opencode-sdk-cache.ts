@@ -47,10 +47,15 @@ import {
 
 import { getOpenCodePassword } from './opencode-password-source';
 
-function buildClient(port: number, directory?: string): OpencodeClient {
+function buildClient(
+  port: number,
+  directory?: string,
+  experimentalWorkspaceId?: string,
+): OpencodeClient {
   const client = createOpencodeClient({
     baseUrl: `http://localhost:${port}`,
     directory,
+    experimental_workspaceID: experimentalWorkspaceId,
   });
 
   // SDK exposes its underlying http client via `getConfig`-style helpers,
@@ -96,18 +101,29 @@ function buildClient(port: number, directory?: string): OpencodeClient {
   return client;
 }
 
-let _factory: (port: number, directory?: string) => OpencodeClient =
-  buildClient;
+let _factory: (
+  port: number,
+  directory?: string,
+  experimentalWorkspaceId?: string,
+) => OpencodeClient = buildClient;
 
 const _cache = new Map<string, OpencodeClient>();
 
-function cacheKey(port: number, directory?: string): string {
-  return `${port}::${directory ?? ''}`;
+function cacheKey(
+  port: number,
+  directory?: string,
+  experimentalWorkspaceId?: string,
+): string {
+  return `${port}::${directory ?? ''}::${experimentalWorkspaceId ?? ''}`;
 }
 
 /** Test seam — replace the factory and flush the cache. */
 export function _setClientFactory(
-  factory: (port: number, directory?: string) => OpencodeClient,
+  factory: (
+    port: number,
+    directory?: string,
+    experimentalWorkspaceId?: string,
+  ) => OpencodeClient,
 ): void {
   _factory = factory;
   _cache.clear();
@@ -120,11 +136,15 @@ export function _resetClientFactory(): void {
 }
 
 /** Get (or lazily create) a cached OpencodeClient for `(port, directory)`. */
-export function getClient(port: number, directory?: string): OpencodeClient {
-  const key = cacheKey(port, directory);
+export function getClient(
+  port: number,
+  directory?: string,
+  experimentalWorkspaceId?: string,
+): OpencodeClient {
+  const key = cacheKey(port, directory, experimentalWorkspaceId);
   let client = _cache.get(key);
   if (!client) {
-    client = _factory(port, directory);
+    client = _factory(port, directory, experimentalWorkspaceId);
     _cache.set(key, client);
   }
   return client;

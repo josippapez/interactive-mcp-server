@@ -403,6 +403,7 @@ describe('manage-background-subagents helpers', () => {
 
   it('keeps agent-facing tool description synchronized with required guidance', () => {
     expect(TOOL_DESCRIPTION).toContain('action="models"');
+    expect(TOOL_DESCRIPTION).toContain('action="wait"');
     expect(TOOL_DESCRIPTION).toContain('preset');
     expect(TOOL_DESCRIPTION).toContain('noReply=false');
     expect(TOOL_DESCRIPTION).toContain('gpt-5-mini');

@@ -4,8 +4,8 @@
  * Strategy:
  * 1. Query sessions with directory filter for directory-scoped sessions.
  * 2. If that returns nothing, fall back to all sessions.
- * 3. Sort by time.created DESC (newest first) so that freshly-spawned
- *    subagent sessions are preferred over the longer-running parent session.
+ * 3. Sort by time.updated DESC (most recent activity first), matching
+ *    OpenCode's v2 session-list ordering.
  * 4. Return { id, parentId } for the best match, or null on failure.
  */
 
@@ -34,6 +34,13 @@ export interface OpenCodeSession {
   time?: { created?: number; updated?: number };
   version?: string;
   summary?: { additions?: number; deletions?: number; files?: number };
+}
+
+function sortByRecentActivity(a: OpenCodeSession, b: OpenCodeSession): number {
+  return (
+    (b.time?.updated ?? b.time?.created ?? 0) -
+    (a.time?.updated ?? a.time?.created ?? 0)
+  );
 }
 
 /**
@@ -112,7 +119,7 @@ export async function fetchOpenCodeSessionChildren(
  * Mirrors OpenCode's per-directory client pattern: the directory is passed
  * via the `x-opencode-directory` header so the server applies its
  * project-filter to the returned session list. Returns null if the API is
- * unreachable. Sorted by `time.created` DESC (newest first).
+ * unreachable. Sorted by `time.updated` DESC (most recent activity first).
  *
  * Used by the session-tree seed, the tree-poller, and the reconcile-on-startup
  * path once the renderer has selected a project folder in the sidebar. Callers
@@ -127,9 +134,7 @@ export async function fetchSessionsForDirectory(
   const directory = trimmed.length > 0 ? trimmed : undefined;
   const sessions = await fetchSessions(openCodePort, directory);
   if (!sessions) return null;
-  return [...sessions].sort(
-    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-  );
+  return [...sessions].sort(sortByRecentActivity);
 }
 
 /**
@@ -152,9 +157,7 @@ export async function fetchAllOpenCodeSessions(
   );
 
   if (scopedDirectories.length === 0) {
-    return [...unscoped].sort(
-      (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-    );
+    return [...unscoped].sort(sortByRecentActivity);
   }
 
   const scopedResults = await Promise.all(
@@ -172,9 +175,7 @@ export async function fetchAllOpenCodeSessions(
     }
   }
 
-  return Array.from(mergedById.values()).sort(
-    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-  );
+  return Array.from(mergedById.values()).sort(sortByRecentActivity);
 }
 
 export async function fetchRootOpenCodeSessions(
@@ -195,9 +196,7 @@ export async function fetchRootOpenCodeSessions(
   );
 
   if (scopedDirectories.length === 0) {
-    return [...unscoped].sort(
-      (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-    );
+    return [...unscoped].sort(sortByRecentActivity);
   }
 
   const scopedResults = await Promise.all(
@@ -217,9 +216,7 @@ export async function fetchRootOpenCodeSessions(
     }
   }
 
-  return Array.from(mergedById.values()).sort(
-    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-  );
+  return Array.from(mergedById.values()).sort(sortByRecentActivity);
 }
 
 /**
@@ -273,9 +270,7 @@ export async function expandOpenCodeSessionTree(
     }
   }
 
-  return Array.from(byId.values()).sort(
-    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-  );
+  return Array.from(byId.values()).sort(sortByRecentActivity);
 }
 
 /**
@@ -287,7 +282,7 @@ export async function expandOpenCodeSessionTree(
  * 3. Prefer root sessions (no parentID) over subagent sessions — the caller
  *    is most likely the main agent, and we want to attach to its own session
  *    rather than a freshly-spawned child session.
- * 4. Within each tier (root vs child), sort by time.created DESC (newest first).
+ * 4. Within each tier (root vs child), sort by recent activity.
  * 5. Return { id, parentId } for the best match, or null on failure.
  */
 export async function autoDetectOpenCodeSession(
@@ -310,10 +305,8 @@ export async function autoDetectOpenCodeSession(
   const roots = sessions.filter((s) => !s.parentID);
   const candidates = roots.length > 0 ? roots : sessions;
 
-  // Within the chosen tier, pick the most recently created session.
-  const sorted = [...candidates].sort(
-    (a, b) => (b.time?.created ?? 0) - (a.time?.created ?? 0),
-  );
+  // Within the chosen tier, pick the most recently active session.
+  const sorted = [...candidates].sort(sortByRecentActivity);
 
   const best = sorted[0];
   return {

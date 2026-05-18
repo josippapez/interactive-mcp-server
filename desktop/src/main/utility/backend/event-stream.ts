@@ -378,6 +378,18 @@ function normalizeSessionNextPayload(
   };
 }
 
+function normalizeStreamEnvelope(envelope: unknown): {
+  directory?: string | null;
+  payload?: RawEventPayload;
+} {
+  const value = envelope as RawEventPayload & {
+    directory?: string | null;
+    payload?: RawEventPayload;
+  };
+  if (value?.payload) return value;
+  return { directory: null, payload: value };
+}
+
 /**
  * Outer reconnect loop. Opens an SSE stream via the SDK, pumps events
  * through the coalescing queue, and reconnects on any termination (error,
@@ -400,9 +412,9 @@ async function runLoop(): Promise<void> {
       const client = getClient(port);
 
       log.info(`Opening SSE stream on port=${port}`);
-      const result = await client.global.event({
+      const result = await client.event.subscribe(undefined, {
         signal: attempt.signal,
-        onSseError: (err) => {
+        onSseError: (err: unknown) => {
           if (isAbortError(err)) return;
           log.warn(`SSE transport error: ${String(err)}`);
         },
@@ -416,10 +428,7 @@ async function runLoop(): Promise<void> {
         // `sync` frames are bulk catch-up payloads on reconnect; we don't
         // need them — the REST seed (C2 follow-up) fetches the canonical
         // message list on mount, and live events fill in from there.
-        const typedEnvelope = envelope as {
-          directory?: string | null;
-          payload?: RawEventPayload;
-        };
+        const typedEnvelope = normalizeStreamEnvelope(envelope);
         const payload = normalizeSessionNextPayload(typedEnvelope?.payload) as
           | (BridgeablePayload & {
               properties?: { sessionID?: string; info?: unknown };

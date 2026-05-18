@@ -21,7 +21,26 @@ import { getClient } from './sdk-client';
  */
 export interface SessionApiOpts {
   directory?: string;
+  experimentalWorkspaceId?: string;
   signal?: AbortSignal;
+}
+
+export interface V2SessionListQuery {
+  limit?: number;
+  order?: 'asc' | 'desc';
+  path?: string;
+  roots?: boolean | 'true' | 'false';
+  start?: number;
+  search?: string;
+  cursor?: string;
+  workspace?: string;
+}
+
+export interface V2SessionMessagesQuery {
+  limit?: number;
+  order?: 'asc' | 'desc';
+  cursor?: string;
+  workspace?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -36,6 +55,59 @@ export interface SessionListQuery {
   limit?: number;
   workspace?: string;
 }
+
+export type WorktreeCreateBody =
+  NonNullable<
+    Parameters<ReturnType<typeof getClient>['worktree']['create']>[0]
+  > extends infer P
+    ? P extends { worktreeCreateInput?: infer R }
+      ? R
+      : never
+    : never;
+
+export type WorktreeRemoveBody =
+  NonNullable<
+    Parameters<ReturnType<typeof getClient>['worktree']['remove']>[0]
+  > extends infer P
+    ? P extends { worktreeRemoveInput?: infer R }
+      ? R
+      : never
+    : never;
+
+export type WorktreeResetBody =
+  NonNullable<
+    Parameters<ReturnType<typeof getClient>['worktree']['reset']>[0]
+  > extends infer P
+    ? P extends { worktreeResetInput?: infer R }
+      ? R
+      : never
+    : never;
+
+export interface WorkspaceCreateBody {
+  id?: string;
+  type?: string;
+  branch?: string | null;
+  extra?: unknown | null;
+}
+
+export interface WorkspaceWarpBody {
+  id?: string | null;
+  sessionID?: string;
+  copyChanges?: boolean;
+}
+
+export interface SyncReplayBody {
+  directory: string;
+  events: Array<{
+    id: string;
+    aggregateID: string;
+    seq: number;
+    type: string;
+    data: Record<string, unknown>;
+  }>;
+}
+
+export type SyncHistoryCursor = Record<string, number>;
 
 export interface SessionCreateBody {
   parentID?: string;
@@ -164,6 +236,10 @@ export interface SessionShellBody {
   workspace?: string;
 }
 
+function getScopedClient(port: number, opts?: SessionApiOpts) {
+  return getClient(port, opts?.directory, opts?.experimentalWorkspaceId);
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -206,9 +282,22 @@ export async function sessionList(
   query?: SessionListQuery,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ ...(query ?? {}) }, opts?.directory);
   return client.session.list(params, buildOptions(opts));
+}
+
+/**
+ * GET /api/session — list v2 sessions with pagination/search support.
+ */
+export async function v2SessionList(
+  port: number,
+  query?: V2SessionListQuery,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ ...(query ?? {}) }, opts?.directory);
+  return client.v2.session.list(params, buildOptions(opts));
 }
 
 /**
@@ -224,7 +313,7 @@ export async function sessionCreate(
   body?: SessionCreateBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ ...(body ?? {}) }, opts?.directory);
   return client.session.create(params, buildOptions(opts));
 }
@@ -237,9 +326,51 @@ export async function sessionCreate(
  * @returns Raw SDK response `{ data, error, response }`.
  */
 export async function sessionStatus(port: number, opts?: SessionApiOpts) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({}, opts?.directory);
   return client.session.status(params, buildOptions(opts));
+}
+
+/**
+ * POST /api/session/{sessionID}/wait — wait until a v2 session is idle.
+ *
+ * @param port Local OpenCode server port.
+ * @param sessionID Session identifier.
+ * @param opts Optional `directory` and `signal`.
+ * @returns Raw SDK response `{ data, error, response }`.
+ */
+export async function sessionWait(
+  port: number,
+  sessionID: string,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ sessionID }, opts?.directory);
+  return client.v2.session.wait(params, buildOptions(opts));
+}
+
+export async function v2SessionContext(
+  port: number,
+  sessionID: string,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ sessionID }, opts?.directory);
+  return client.v2.session.context(params, buildOptions(opts));
+}
+
+export async function v2SessionMessages(
+  port: number,
+  sessionID: string,
+  query?: V2SessionMessagesQuery,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory(
+    { sessionID, ...(query ?? {}) },
+    opts?.directory,
+  );
+  return client.v2.session.messages(params, buildOptions(opts));
 }
 
 /**
@@ -255,7 +386,7 @@ export async function sessionGet(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.get(params, buildOptions(opts));
 }
@@ -275,7 +406,7 @@ export async function sessionUpdate(
   body?: SessionUpdateBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...(body ?? {}) }, opts?.directory);
   return client.session.update(params, buildOptions(opts));
 }
@@ -293,7 +424,7 @@ export async function sessionDelete(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.delete(params, buildOptions(opts));
 }
@@ -311,7 +442,7 @@ export async function sessionChildren(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.children(params, buildOptions(opts));
 }
@@ -329,7 +460,7 @@ export async function sessionTodo(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.todo(params, buildOptions(opts));
 }
@@ -349,7 +480,7 @@ export async function sessionInit(
   body?: SessionInitBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...(body ?? {}) }, opts?.directory);
   return client.session.init(params, buildOptions(opts));
 }
@@ -369,7 +500,7 @@ export async function sessionFork(
   body?: SessionForkBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...(body ?? {}) }, opts?.directory);
   return client.session.fork(params, buildOptions(opts));
 }
@@ -387,7 +518,7 @@ export async function sessionAbort(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.abort(params, buildOptions(opts));
 }
@@ -405,7 +536,7 @@ export async function sessionShare(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.share(params, buildOptions(opts));
 }
@@ -423,7 +554,7 @@ export async function sessionUnshare(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.unshare(params, buildOptions(opts));
 }
@@ -443,7 +574,7 @@ export async function sessionDiff(
   body?: SessionDiffBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...(body ?? {}) }, opts?.directory);
   return client.session.diff(params, buildOptions(opts));
 }
@@ -463,7 +594,7 @@ export async function sessionSummarize(
   body?: SessionSummarizeBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...(body ?? {}) }, opts?.directory);
   return client.session.summarize(params, buildOptions(opts));
 }
@@ -483,7 +614,7 @@ export async function sessionMessages(
   query?: SessionMessagesQuery,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory(
     { sessionID, ...(query ?? {}) },
     opts?.directory,
@@ -506,7 +637,7 @@ export async function sessionPrompt(
   body: SessionPromptBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...body }, opts?.directory);
   return client.session.prompt(params, buildOptions(opts));
 }
@@ -526,7 +657,7 @@ export async function sessionPromptAsync(
   body: SessionPromptBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...body }, opts?.directory);
   return client.session.promptAsync(params, buildOptions(opts));
 }
@@ -546,7 +677,7 @@ export async function sessionCommand(
   body: SessionCommandBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...body }, opts?.directory);
   return client.session.command(params, buildOptions(opts));
 }
@@ -566,7 +697,7 @@ export async function sessionShell(
   body: SessionShellBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...body }, opts?.directory);
   return client.session.shell(params, buildOptions(opts));
 }
@@ -586,7 +717,7 @@ export async function sessionRevert(
   body?: SessionRevertBody,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, ...(body ?? {}) }, opts?.directory);
   return client.session.revert(params, buildOptions(opts));
 }
@@ -604,7 +735,7 @@ export async function sessionUnrevert(
   sessionID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID }, opts?.directory);
   return client.session.unrevert(params, buildOptions(opts));
 }
@@ -624,7 +755,7 @@ export async function sessionMessage(
   messageID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, messageID }, opts?.directory);
   return client.session.message(params, buildOptions(opts));
 }
@@ -644,7 +775,174 @@ export async function sessionDeleteMessage(
   messageID: string,
   opts?: SessionApiOpts,
 ) {
-  const client = getClient(port, opts?.directory);
+  const client = getScopedClient(port, opts);
   const params = withDirectory({ sessionID, messageID }, opts?.directory);
   return client.session.deleteMessage(params, buildOptions(opts));
+}
+
+export async function v2ModelList(port: number, opts?: SessionApiOpts) {
+  const client = getScopedClient(port, opts);
+  return client.v2.model.list(
+    { location: { directory: opts?.directory, workspace: undefined } },
+    buildOptions(opts),
+  );
+}
+
+export async function v2ProviderList(port: number, opts?: SessionApiOpts) {
+  const client = getScopedClient(port, opts);
+  return client.v2.provider.list(
+    { location: { directory: opts?.directory, workspace: undefined } },
+    buildOptions(opts),
+  );
+}
+
+export async function v2ProviderGet(
+  port: number,
+  providerID: string,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  return client.v2.provider.get(
+    {
+      providerID,
+      location: { directory: opts?.directory, workspace: undefined },
+    },
+    buildOptions(opts),
+  );
+}
+
+export async function worktreeList(port: number, opts?: SessionApiOpts) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({}, opts?.directory);
+  return client.worktree.list(params, buildOptions(opts));
+}
+
+export async function worktreeCreate(
+  port: number,
+  body?: WorktreeCreateBody,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ worktreeCreateInput: body }, opts?.directory);
+  return client.worktree.create(params, buildOptions(opts));
+}
+
+export async function worktreeRemove(
+  port: number,
+  body?: WorktreeRemoveBody,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ worktreeRemoveInput: body }, opts?.directory);
+  return client.worktree.remove(params, buildOptions(opts));
+}
+
+export async function worktreeReset(
+  port: number,
+  body?: WorktreeResetBody,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ worktreeResetInput: body }, opts?.directory);
+  return client.worktree.reset(params, buildOptions(opts));
+}
+
+export async function experimentalWorkspaceList(
+  port: number,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({}, opts?.directory);
+  return client.experimental.workspace.list(params, buildOptions(opts));
+}
+
+export async function experimentalWorkspaceCreate(
+  port: number,
+  body?: WorkspaceCreateBody,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ ...(body ?? {}) }, opts?.directory);
+  return client.experimental.workspace.create(params, buildOptions(opts));
+}
+
+export async function experimentalWorkspaceSyncList(
+  port: number,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({}, opts?.directory);
+  return client.experimental.workspace.syncList(params, buildOptions(opts));
+}
+
+export async function experimentalWorkspaceStatus(
+  port: number,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({}, opts?.directory);
+  return client.experimental.workspace.status(params, buildOptions(opts));
+}
+
+export async function experimentalWorkspaceRemove(
+  port: number,
+  id: string,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ id }, opts?.directory);
+  return client.experimental.workspace.remove(params, buildOptions(opts));
+}
+
+export async function experimentalWorkspaceWarp(
+  port: number,
+  body?: WorkspaceWarpBody,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ ...(body ?? {}) }, opts?.directory);
+  return client.experimental.workspace.warp(params, buildOptions(opts));
+}
+
+export async function syncStart(port: number, opts?: SessionApiOpts) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({}, opts?.directory);
+  return client.sync.start(params, buildOptions(opts));
+}
+
+export async function syncSteal(
+  port: number,
+  sessionID: string,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ sessionID }, opts?.directory);
+  return client.sync.steal(params, buildOptions(opts));
+}
+
+export async function syncReplay(
+  port: number,
+  body: SyncReplayBody,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  return client.sync.replay(
+    {
+      query_directory: opts?.directory,
+      workspace: undefined,
+      body_directory: body.directory,
+      events: body.events,
+    },
+    buildOptions(opts),
+  );
+}
+
+export async function syncHistoryList(
+  port: number,
+  cursor?: SyncHistoryCursor,
+  opts?: SessionApiOpts,
+) {
+  const client = getScopedClient(port, opts);
+  const params = withDirectory({ body: cursor }, opts?.directory);
+  return client.sync.history.list(params, buildOptions(opts));
 }

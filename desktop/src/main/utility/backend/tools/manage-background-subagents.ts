@@ -18,6 +18,7 @@ import {
   sessionMessages,
   sessionPromptAsync,
   sessionStatus,
+  sessionWait,
   type SessionPromptBody,
 } from '../session-api';
 import { toProviderReasoningVariant } from '../../../../shared/reasoning-variant';
@@ -73,6 +74,7 @@ This tool creates child OpenCode sessions and sends their prompt with prompt_asy
 <importantNotes>
 - (!important!) This is desktop/OpenCode-only and requires the current session to have an openCodeSessionId.
 - (!important!) "start" returns immediately; use "status" or "output" later to check progress and collect results.
+- (!important!) Use action="wait" when you have no independent work to do and want to block until one background child becomes idle instead of repeatedly polling status/output.
 - (!important!) The child session appears in the desktop session tree, so humans can inspect it while it runs.
 - (!important!) Completion is detected from OpenCode session status events and injected into the parent session with noReply=false so the waiting parent agent resumes; polling is only a manual fallback.
 - (!important!) Use this instead of the harness Task tool when you need true fire-and-forget parallel work from the desktop MCP server.
@@ -92,6 +94,7 @@ This tool creates child OpenCode sessions and sends their prompt with prompt_asy
 - "models": List connected provider/model pairs, recommendations, and suggested variants that are valid for start providerId/modelId.
 - "list": List background subagents started through this MCP server process.
 - "status": Refresh one background subagent's status. Requires id.
+- "wait": Wait for one background subagent's OpenCode session to become idle, then refresh and return its record. Requires id.
 - "output": Return current assistant output for one background subagent. Requires id.
 - "cancel": Abort a running background subagent. Requires id.
 </actions>`;
@@ -600,8 +603,9 @@ export async function handleBackgroundSubagentSessionStatus(input: {
 
 export function registerManageBackgroundSubagentsTool(
   server: McpServer,
-  connectionId: string,
+  _connectionId: string,
 ): void {
+  void _connectionId;
   server.registerTool(
     'manage_background_subagents',
     {
@@ -613,6 +617,7 @@ export function registerManageBackgroundSubagentsTool(
           'models',
           'list',
           'status',
+          'wait',
           'output',
           'cancel',
         ]),
@@ -910,6 +915,47 @@ export function registerManageBackgroundSubagentsTool(
           return jsonResult({
             ok: true,
             action: 'status',
+            backgroundSubagent: serializeBackgroundSubagentRecord(record),
+          });
+        }
+
+        case 'wait': {
+          if (!id)
+            return jsonError('MISSING_ID', 'The "wait" action requires id.');
+          const record = getRecordById(id);
+          if (!record)
+            return jsonError(
+              'NOT_FOUND',
+              `No background subagent found for id ${id}.`,
+            );
+          if (record.status === 'running') {
+            let response: Awaited<ReturnType<typeof sessionWait>>;
+            try {
+              response = await sessionWait(openCodePort, record.sessionId, {
+                directory: record.baseDirectory ?? undefined,
+              });
+            } catch (error) {
+              return jsonError(
+                'WAIT_FAILED',
+                error instanceof Error ? error.message : String(error),
+              );
+            }
+            if (response.error) {
+              return jsonError(
+                'WAIT_FAILED',
+                `Failed to wait for background subagent session: ${JSON.stringify(response.error)}`,
+              );
+            }
+            record.status = 'completed';
+            record.updatedAt = new Date().toISOString();
+            persistRecord(record);
+            await notifyParentOfCompletion(record, openCodePort);
+          } else {
+            await refreshRecordStatus(record, openCodePort);
+          }
+          return jsonResult({
+            ok: true,
+            action: 'wait',
             backgroundSubagent: serializeBackgroundSubagentRecord(record),
           });
         }

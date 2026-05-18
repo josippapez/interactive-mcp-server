@@ -180,10 +180,19 @@ export async function fetchSessionTree(): Promise<SessionNodeData[] | null> {
   const port = state.getOpenCodePort?.() ?? 4096;
 
   const pinnedDirectories = getPinnedProjects().map((p) => p.path);
-  const sessions = await fetchAllOpenCodeSessions(port, pinnedDirectories);
+  const registeredConnections = getAllRegisteredConnections();
+  const registeredOpenCodeDirectories = registeredConnections
+    .filter(
+      (connection) =>
+        connection.providerType === 'opencode' && connection.baseDirectory,
+    )
+    .map((connection) => connection.baseDirectory as string);
+  const sessions = await fetchAllOpenCodeSessions(port, [
+    ...pinnedDirectories,
+    ...registeredOpenCodeDirectories,
+  ]);
   if (!sessions) return null;
 
-  const registeredConnections = getAllRegisteredConnections();
   const byOpenCodeId = new Map<string, RegisteredConnection>(
     registeredConnections
       .filter((rc) => rc.providerSessionId !== null)
