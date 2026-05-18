@@ -360,6 +360,10 @@ interface McpStatusPanelProps {
   onOpenSettings?: () => void;
 }
 
+export function shouldRenderMcpStatusPanel(): boolean {
+  return true;
+}
+
 export default function McpStatusPanel({
   servers,
   isLoading,
@@ -493,13 +497,6 @@ export default function McpStatusPanel({
     },
     [actionsInProgress],
   );
-
-  // Hide panel entirely when no servers are configured and not loading
-  // (matches upstream TUI session footer's <Show when={mcp()}> behavior).
-  // Preserves the loading spinner during slow MCP startup.
-  if (totalCount === 0 && !isLoading) {
-    return null;
-  }
 
   return (
     <div className="border border-[var(--color-border)] rounded-lg overflow-hidden bg-[var(--color-surface)]">

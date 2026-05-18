@@ -38,6 +38,16 @@ export interface McpServer {
   prompts?: McpPrompt[];
 }
 
+type ConversationBatchLike = {
+  events: Array<{ type: string; [key: string]: unknown }>;
+};
+
+export function shouldRefreshMcpStatusForBatch(
+  batch: ConversationBatchLike,
+): boolean {
+  return batch.events.some((ev) => ev.type === 'mcp.tools.changed');
+}
+
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 /**
@@ -49,6 +59,7 @@ export interface McpServer {
 export function useMcpServers(
   directory?: string,
   enabled = true,
+  sessionKey?: string | null,
 ): {
   servers: McpServer[];
   isLoading: boolean;
@@ -111,7 +122,7 @@ export function useMcpServers(
     return () => {
       mounted = false;
     };
-  }, [enabled, fetchStatus]);
+  }, [enabled, fetchStatus, sessionKey]);
 
   // Subscribe to live MCP tool-list change events from the OpenCode SSE bridge.
   // Upstream publishes `mcp.tools.changed` whenever a server connects (and its
@@ -120,10 +131,7 @@ export function useMcpServers(
   useEffect(() => {
     if (!enabled) return;
     const unsubscribe = window.api.onConversationBatch((batch) => {
-      const sawMcpEvent = batch.events.some(
-        (ev) => ev.type === 'mcp.tools.changed',
-      );
-      if (sawMcpEvent) {
+      if (shouldRefreshMcpStatusForBatch(batch)) {
         void fetchStatus();
       }
     });

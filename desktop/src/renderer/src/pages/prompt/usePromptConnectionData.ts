@@ -89,6 +89,7 @@ export function usePromptConnectionData({
   } = useMcpServers(
     isOpenCodeSession ? (sessionBaseDirectory ?? undefined) : undefined,
     isOpenCodeSession,
+    providerSessionId,
   );
 
   const [nativeSkills, setNativeSkills] = useState<NativeOpenCodeSkill[]>([]);

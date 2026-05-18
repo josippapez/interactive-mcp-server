@@ -9,6 +9,7 @@ import {
   buildModelRecommendations,
   extractAssistantTextFromMessages,
   getLiveStatusFromMap,
+  resolveBackgroundSubagentParentSession,
   resolveBackgroundSubagentBaseDirectory,
   resolvePresetModelSelection,
   serializeBackgroundSubagentRecord,
@@ -85,6 +86,50 @@ describe('manage-background-subagents helpers', () => {
         registeredBaseDirectory: '/repo/registered-root',
       }),
     ).toBe('/repo/registered-root');
+  });
+
+  it('uses explicit openCodeSessionId as the parent session', () => {
+    expect(
+      resolveBackgroundSubagentParentSession({
+        explicitSessionId: 'ses_explicit',
+      }),
+    ).toEqual({
+      ok: true,
+      parentSessionId: 'ses_explicit',
+      reason: 'explicit',
+    });
+  });
+
+  it('fails when openCodeSessionId is omitted', () => {
+    expect(
+      resolveBackgroundSubagentParentSession({
+        explicitSessionId: null,
+      }),
+    ).toEqual({
+      ok: false,
+      error:
+        'Pass openCodeSessionId so the background subagent can be attached as a child of the current OpenCode session.',
+    });
+  });
+
+  it('uses explicit child baseDirectory before inherited parent directory', () => {
+    expect(
+      resolveBackgroundSubagentBaseDirectory({
+        requestedBaseDirectory: ' /repo/other ',
+        parentSessionDirectory: '/repo/parent',
+        registeredBaseDirectory: '/repo/registered-root',
+      }),
+    ).toBe('/repo/other');
+  });
+
+  it('normalizes blank child baseDirectory as omitted', () => {
+    expect(
+      resolveBackgroundSubagentBaseDirectory({
+        requestedBaseDirectory: '   ',
+        parentSessionDirectory: '/repo/parent',
+        registeredBaseDirectory: '/repo/registered-root',
+      }),
+    ).toBe('/repo/parent');
   });
 
   it('omits blank agent from the prompt body', () => {

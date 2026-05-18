@@ -1998,6 +1998,10 @@ textarea::placeholder {
   white-space: pre;
   min-width: 0;
 }
+[data-component='diff-view'][data-variant='side-by-side'][data-wrap='false']
+  [data-slot='diff-row'] {
+  min-width: max-content;
+}
 [data-component='diff-view'][data-variant='side-by-side']
   [data-slot='diff-row'][data-kind='removal'] {
   background: var(--surface-diff-delete-weak);

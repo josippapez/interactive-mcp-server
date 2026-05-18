@@ -2,7 +2,6 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { staleSessionError } from './connection-guard';
-import { resolveProviderSessionId } from '../resolver';
 import {
   type BackgroundSubagentRecord,
   getRegisteredConnectionBySessionId,
@@ -46,6 +45,14 @@ type ModelRecommendation = {
   suggestedVariant?: string;
 };
 
+type BackgroundSubagentParentSelection =
+  | {
+      ok: true;
+      parentSessionId: string;
+      reason: 'explicit';
+    }
+  | { ok: false; error: string };
+
 const INVALID_MODEL_SELECTION_MESSAGE =
   'Invalid model selection. Use action="models" and choose a connected provider/model from the returned list.';
 const STALLED_AFTER_MS = 10 * 60_000;
@@ -74,14 +81,14 @@ This tool creates child OpenCode sessions and sends their prompt with prompt_asy
 - (!important!) Model selection is optional. Omit providerId/modelId to let the child session use the current OpenCode connection defaults, call action="models" and pass one connected provider/model pair from that returned list, or pass preset="deep"|"labor"|"fast" to auto-select from recommendations.
 - (!important!) For deeper thinking, precise code changes, reviews, and multi-step debugging, prefer a higher-tier connected model from action="models" such as gpt-5.5, Claude Opus 4.7, or another Opus-class model when available, and pass a high reasoning variant such as variant="high" or variant="xhigh"/"max" if the returned model lists that variant.
 - (!important!) For labor-intensive but well-defined work where the steps are already clear, prefer lower-tier connected models from action="models" such as gpt-5-mini, Claude Sonnet, or Claude Haiku when available; use lower/default reasoning unless the task unexpectedly requires deeper judgment.
-- (!important!) Child sessions run in the current session's registered baseDirectory; start fails if the parent working directory cannot be resolved.
+- (!important!) Child sessions attach to the current parent OpenCode session. By default they run in the parent's resolved baseDirectory; pass baseDirectory only when the child should run in a different working directory while still staying attached to the same parent session.
 - (!important!) For cross-agent coordination (pausing work, requesting a wait, signalling handoff, sharing intermediate findings, reporting progress, or notifying completion outside of the normal completion-notification path) use the companion tool \`message_background_subagent\`. Do NOT spawn an extra subagent just to deliver a message, and do NOT rely on polling \`status\`/\`output\` when an explicit message is more appropriate.
 - (!important!) \`message_background_subagent\` is bidirectional. Parent → child: pass \`direction="to_subagent"\` and either \`backgroundId\` (returned from \`start\`) or \`targetSessionId\`. Child → parent: pass \`direction="to_parent"\` plus its own \`openCodeSessionId\`; the message is injected into the parent session. Sibling → sibling: pass \`targetSessionId\` of the peer (no automatic sibling discovery — the parent must hand peer session ids to children in their spawn prompts when sibling coordination is required).
 - (!important!) When you start a background subagent that may need to coordinate, include in its initial prompt the peer/parent session ids it will be allowed to talk to, plus an instruction to use \`message_background_subagent\` for those specific coordination events.
 </importantNotes>
 
 <actions>
-- "start": Create a child session and launch the prompt asynchronously. Requires prompt. Optional title, agent, providerId, modelId, variant, and preset.
+- "start": Create a child session and launch the prompt asynchronously. Requires prompt. Optional title, agent, providerId, modelId, variant, preset, and baseDirectory.
 - "models": List connected provider/model pairs, recommendations, and suggested variants that are valid for start providerId/modelId.
 - "list": List background subagents started through this MCP server process.
 - "status": Refresh one background subagent's status. Requires id.
@@ -266,13 +273,35 @@ export function validateBackgroundSubagentModelSelection(
 }
 
 export function resolveBackgroundSubagentBaseDirectory(input: {
+  requestedBaseDirectory?: string | null;
   parentSessionDirectory?: string | null;
   registeredBaseDirectory?: string | null;
 }): string | null {
+  const requestedBaseDirectory = input.requestedBaseDirectory?.trim();
+  if (requestedBaseDirectory) return requestedBaseDirectory;
   const parentDirectory = input.parentSessionDirectory?.trim();
   if (parentDirectory) return parentDirectory;
   const registeredBaseDirectory = input.registeredBaseDirectory?.trim();
   return registeredBaseDirectory || null;
+}
+
+export function resolveBackgroundSubagentParentSession(input: {
+  explicitSessionId?: string | null;
+}): BackgroundSubagentParentSelection {
+  const explicitSessionId = input.explicitSessionId?.trim();
+  if (explicitSessionId) {
+    return {
+      ok: true,
+      parentSessionId: explicitSessionId,
+      reason: 'explicit',
+    };
+  }
+
+  return {
+    ok: false,
+    error:
+      'Pass openCodeSessionId so the background subagent can be attached as a child of the current OpenCode session.',
+  };
 }
 
 export function summarizeBackgroundSubagentStatus(input: {
@@ -619,9 +648,15 @@ export function registerManageBackgroundSubagentsTool(
           .describe(
             'Optional model selection preset. Use deep for high-reasoning work, labor for predefined work, fast for quick checks.',
           ),
-        openCodeSessionId: z
+        baseDirectory: z
           .string()
           .optional()
+          .describe(
+            'Optional child working directory. Does not affect parent session selection.',
+          ),
+        openCodeSessionId: z
+          .string()
+          .min(1)
           .describe('Current/root OpenCode session id used as parent.'),
       },
     },
@@ -635,23 +670,18 @@ export function registerManageBackgroundSubagentsTool(
       modelId,
       variant,
       preset,
+      baseDirectory: requestedBaseDirectory,
       openCodeSessionId,
     }): Promise<CallToolResult> => {
-      const parentSessionId = await resolveProviderSessionId(
-        connectionId,
-        openCodeSessionId,
-      );
-      const staleErr = parentSessionId
-        ? staleSessionError(parentSessionId)
-        : null;
-      if (staleErr) return staleErr;
-
-      if (!parentSessionId) {
-        return jsonError(
-          'MISSING_SESSION_ID',
-          'Pass openCodeSessionId so the background subagent can be attached as a child of the current OpenCode session.',
-        );
+      const parentSelection = resolveBackgroundSubagentParentSession({
+        explicitSessionId: openCodeSessionId,
+      });
+      if (!parentSelection.ok) {
+        return jsonError('MISSING_SESSION_ID', parentSelection.error);
       }
+      const parentSessionId = parentSelection.parentSessionId;
+      const staleErr = staleSessionError(parentSessionId);
+      if (staleErr) return staleErr;
 
       const openCodePort = getOpenCodePort();
       if (openCodePort === null) {
@@ -693,6 +723,7 @@ export function registerManageBackgroundSubagentsTool(
             registeredBaseDirectory,
           );
           const baseDirectory = resolveBackgroundSubagentBaseDirectory({
+            requestedBaseDirectory,
             parentSessionDirectory,
             registeredBaseDirectory,
           });
