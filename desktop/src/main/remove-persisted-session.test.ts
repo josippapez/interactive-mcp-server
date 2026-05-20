@@ -8,6 +8,7 @@ vi.mock('./utility/backend/renderer-emit', () => ({
   emitToRenderer: vi.fn(),
 }));
 
+import { emitToRenderer } from './utility/backend/renderer-emit';
 import { removePersistedSession } from './remove-persisted-session';
 import type { RemovePersistedSessionDeps } from './remove-persisted-session';
 
@@ -163,5 +164,25 @@ describe('removePersistedSession — OpenCode delete integration', () => {
     await removePersistedSession('some-uuid-not-opencode', deps);
 
     expect(deps.deleteOpenCodeSession).not.toHaveBeenCalled();
+  });
+
+  it('deletes and emits both connectionId and providerSessionId when they differ', async () => {
+    const { deps } = makeDeps({
+      getRegisteredConnection: vi.fn(async () => ({
+        providerSessionId: 'ses_provider123',
+        providerType: 'opencode',
+      })),
+    });
+
+    await removePersistedSession('conn_transport456', deps);
+
+    expect(deps.deleteSessionChannel).toHaveBeenCalledWith('conn_transport456');
+    expect(deps.deleteSessionChannel).toHaveBeenCalledWith('ses_provider123');
+    expect(emitToRenderer).toHaveBeenCalledWith('session-channel-deleted', {
+      sessionId: 'conn_transport456',
+    });
+    expect(emitToRenderer).toHaveBeenCalledWith('session-channel-deleted', {
+      sessionId: 'ses_provider123',
+    });
   });
 });

@@ -91,18 +91,20 @@ describe('event-stream session lifecycle handling', () => {
     vi.mocked(bridgeEvent).mockClear();
   });
 
-  it('uses scoped event.subscribe and routes raw lifecycle events', async () => {
-    const subscribe = vi.fn().mockResolvedValue({
+  it('uses global.event for the desktop-wide stream and routes lifecycle events', async () => {
+    const globalEvent = vi.fn().mockResolvedValue({
       stream: {
         async *[Symbol.asyncIterator]() {
-          yield makeEnvelope('session.created.1').payload;
-          yield makeEnvelope('session.updated.1').payload;
-          yield makeEnvelope('session.deleted.1').payload;
+          yield makeEnvelope('session.created.1');
+          yield makeEnvelope('session.updated.1');
+          yield makeEnvelope('session.deleted.1');
         },
       },
     });
+    const subscribe = vi.fn();
 
     vi.mocked(getClient).mockReturnValue({
+      global: { event: globalEvent },
       event: { subscribe },
     } as never);
 
@@ -110,25 +112,26 @@ describe('event-stream session lifecycle handling', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     stopEventStream();
 
-    expect(subscribe).toHaveBeenCalledWith(undefined, {
+    expect(globalEvent).toHaveBeenCalledWith({
       signal: expect.any(AbortSignal),
       onSseError: expect.any(Function),
     });
+    expect(subscribe).not.toHaveBeenCalled();
     expect(treeHandlerMocks.handleSessionCreated).toHaveBeenCalledTimes(1);
     expect(treeHandlerMocks.handleSessionUpdated).toHaveBeenCalledTimes(1);
     expect(treeHandlerMocks.handleSessionDeleted).toHaveBeenCalledTimes(1);
   });
 
-  it('still accepts legacy wrapped global event envelopes', async () => {
+  it('still accepts raw event frames for compatibility', async () => {
     const stream = {
       async *[Symbol.asyncIterator]() {
-        yield makeEnvelope('session.created.1');
+        yield makeEnvelope('session.created.1').payload;
       },
     };
 
     vi.mocked(getClient).mockReturnValue({
-      event: {
-        subscribe: vi.fn().mockResolvedValue({ stream }),
+      global: {
+        event: vi.fn().mockResolvedValue({ stream }),
       },
     } as never);
 
@@ -139,14 +142,20 @@ describe('event-stream session lifecycle handling', () => {
     expect(treeHandlerMocks.handleSessionCreated).toHaveBeenCalledTimes(1);
   });
 
-  it('passes null directory to bridgeEvent for raw event.subscribe frames', async () => {
+  it('passes envelope directory to bridgeEvent for global event frames', async () => {
     vi.mocked(bridgeEvent).mockReturnValue([]);
     vi.mocked(getClient).mockReturnValue({
-      event: {
-        subscribe: vi.fn().mockResolvedValue({
+      global: {
+        event: vi.fn().mockResolvedValue({
           stream: {
             async *[Symbol.asyncIterator]() {
-              yield { type: 'message.updated', properties: { sessionID: 's' } };
+              yield {
+                directory: '/Volumes/encrypted/Sciensus.Digital.Core.NX',
+                payload: {
+                  type: 'message.updated',
+                  properties: { sessionID: 's' },
+                },
+              };
             },
           },
         }),
@@ -159,7 +168,7 @@ describe('event-stream session lifecycle handling', () => {
 
     expect(bridgeEvent).toHaveBeenCalledWith(
       { type: 'message.updated', properties: { sessionID: 's' } },
-      { directory: null, port: 4096 },
+      { directory: '/Volumes/encrypted/Sciensus.Digital.Core.NX', port: 4096 },
     );
   });
 });

@@ -144,7 +144,7 @@ const ActionBadge = memo(function ActionBadge({
     <span
       data-slot="subagent-action-badge"
       data-action={action}
-      className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[calc(var(--chat-message-size,13px)-2px)] font-medium uppercase tracking-wide ${meta.colorClass}`}
+      className={`inline-flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide ${meta.colorClass}`}
       aria-label={`Action: ${meta.label}`}
     >
       {meta.icon}

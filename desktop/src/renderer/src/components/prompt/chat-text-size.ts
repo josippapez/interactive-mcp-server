@@ -9,19 +9,19 @@ export function isChatTextSize(value: string): value is ChatTextSize {
 export function getChatTextSizeClasses(size: ChatTextSize): string {
   switch (size) {
     case 'sm':
-      return '[--chat-message-size:12px] [--chat-message-line-height:1.55]';
-    case 'lg':
       return '[--chat-message-size:15px] [--chat-message-line-height:1.7]';
+    case 'lg':
+      return '[--chat-message-size:18px] [--chat-message-line-height:1.78]';
     case 'md':
     default:
-      return '[--chat-message-size:13px] [--chat-message-line-height:1.6]';
+      return '[--chat-message-size:16px] [--chat-message-line-height:1.72]';
   }
 }
 
 export function getToolCallLabelTextClass(): string {
-  return 'text-[calc(var(--chat-message-size,13px)-4px)]';
+  return 'text-[11px]';
 }
 
 export function getToolCallMonoTextClass(): string {
-  return 'text-[calc(var(--chat-message-size,13px)-3px)]';
+  return 'text-[12px]';
 }

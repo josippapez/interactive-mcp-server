@@ -24,14 +24,14 @@
 
 ### Tier 2: Medium-Value Migrations (Wrapper + Custom Logic)
 
-| Desktop Module                              | SDK Equivalent                                    | Status     | Notes                                                |
-| ------------------------------------------- | ------------------------------------------------- | ---------- | ---------------------------------------------------- |
-| `project-manager` (current, list, init git) | `client.project.current()`, `list()`, `initGit()` | ⚠️ Partial | SDK provides basics; keep custom git logic           |
-| `vcs-operations` (diff, status)             | `client.vcs.get()`, `diff()`                      | ⚠️ Partial | SDK provides diff; keep custom git blame/log         |
-| `pty-manager` (create, list, connect)       | `client.pty.create()`, `list()`, `connect()`      | ⚠️ Partial | SDK provides PTY lifecycle; keep Electron PTY bridge |
-| `question-handler` (list, reply, reject)    | `client.question.list()`, `reply()`, `reject()`   | ⚠️ Partial | SDK handles Q&A; keep TUI integration                |
-| `auth-manager` (set, remove credentials)    | `client.auth.set()`, `remove()` or `auth2.*`      | ⚠️ Partial | SDK handles OAuth; keep credential storage           |
-| `event-stream` (subscribe to SSE)           | `client.event.subscribe()` or `global.event()`    | ⚠️ Partial | SDK provides SSE; keep Electron event bridge         |
+| Desktop Module                              | SDK Equivalent                                    | Status     | Notes                                                                                                                                                                                        |
+| ------------------------------------------- | ------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project-manager` (current, list, init git) | `client.project.current()`, `list()`, `initGit()` | ⚠️ Partial | SDK provides basics; keep custom git logic                                                                                                                                                   |
+| `vcs-operations` (diff, status)             | `client.vcs.get()`, `diff()`                      | ⚠️ Partial | SDK provides diff; keep custom git blame/log                                                                                                                                                 |
+| `pty-manager` (create, list, connect)       | `client.pty.create()`, `list()`, `connect()`      | ⚠️ Partial | SDK provides PTY lifecycle; keep Electron PTY bridge                                                                                                                                         |
+| `question-handler` (list, reply, reject)    | `client.question.list()`, `reply()`, `reject()`   | ⚠️ Partial | SDK handles Q&A; keep TUI integration                                                                                                                                                        |
+| `auth-manager` (set, remove credentials)    | `client.auth.set()`, `remove()` or `auth2.*`      | ⚠️ Partial | SDK handles OAuth; keep credential storage                                                                                                                                                   |
+| `event-stream` (subscribe to SSE)           | `client.global.event()`                           | ⚠️ Partial | Desktop requires the app-wide `/global/event` stream; `event.subscribe()` is instance/workspace scoped and does not cover sessions in other project directories. Keep Electron event bridge. |
 
 ### Tier 3: Low-Value Migrations (Keep Custom)
 

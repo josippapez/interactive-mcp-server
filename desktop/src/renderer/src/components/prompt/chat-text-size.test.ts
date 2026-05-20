@@ -24,17 +24,13 @@ describe('chat-text-size', () => {
       ]),
     ) as Record<ChatTextSize, string>;
 
-    expect(classes.sm).toContain('--chat-message-size:12px');
-    expect(classes.md).toContain('--chat-message-size:13px');
-    expect(classes.lg).toContain('--chat-message-size:15px');
+    expect(classes.sm).toContain('--chat-message-size:15px');
+    expect(classes.md).toContain('--chat-message-size:16px');
+    expect(classes.lg).toContain('--chat-message-size:18px');
   });
 
   it('exposes reusable tool-call text size helpers', () => {
-    expect(getToolCallLabelTextClass()).toContain(
-      'var(--chat-message-size,13px)-4px',
-    );
-    expect(getToolCallMonoTextClass()).toContain(
-      'var(--chat-message-size,13px)-3px',
-    );
+    expect(getToolCallLabelTextClass()).toBe('text-[11px]');
+    expect(getToolCallMonoTextClass()).toBe('text-[12px]');
   });
 });

@@ -20,13 +20,7 @@
  */
 
 import { join, resolve, sep } from 'path';
-import {
-  promises as fsp,
-  readdirSync,
-  readFileSync,
-  existsSync,
-  statSync,
-} from 'fs';
+import { promises as fsp, readFileSync, existsSync } from 'fs';
 import {
   getGlobalAgentDir,
   getProjectAgentDir,
@@ -356,101 +350,11 @@ function readAgentFromDisk(
   return agent;
 }
 
-function scanDir(
-  dir: string,
-  scope: 'global' | 'project',
-  baseDirectory?: string,
-): AgentDefinition[] {
-  if (!existsSync(dir)) return [];
-  let entries: string[];
-  try {
-    entries = readdirSync(dir);
-  } catch {
-    return [];
-  }
-  const agents: AgentDefinition[] = [];
-  for (const entry of entries.sort()) {
-    if (!entry.endsWith('.md')) continue;
-    const full = join(dir, entry);
-    try {
-      if (!statSync(full).isFile()) continue;
-    } catch {
-      continue;
-    }
-    try {
-      const agent = readAgentFromDisk(full, scope, baseDirectory);
-      if (agent) agents.push(agent);
-    } catch (err) {
-      // Malformed file — log and skip.
-
-      console.warn(
-        `[agents] skipping malformed agent file ${full}:`,
-        (err as Error).message,
-      );
-    }
-  }
-  return agents;
-}
-
 export async function listAgents(
   openCodePort?: number,
   baseDirectory?: string,
 ): Promise<AgentDefinition[]> {
-  const sdkAgents = await listSdkAgents(openCodePort, baseDirectory);
-  const globals = scanDir(globalAgentDir(), 'global');
-  const projects = baseDirectory
-    ? scanDir(projectAgentDir(baseDirectory), 'project', baseDirectory)
-    : [];
-
-  const projectNames = new Set(projects.map((a) => a.name));
-  for (const g of globals) {
-    if (projectNames.has(g.name)) g.overridden = true;
-  }
-  return mergeAgentSources(sdkAgents, projects, globals);
-}
-
-export function mergeAgentSources(
-  sdkAgents: AgentDefinition[],
-  projectAgents: AgentDefinition[],
-  globalAgents: AgentDefinition[],
-): AgentDefinition[] {
-  const localByName = new Map<string, AgentDefinition>();
-  for (const agent of [...globalAgents, ...projectAgents]) {
-    localByName.set(agent.name, agent);
-  }
-
-  const result: AgentDefinition[] = [];
-  const seen = new Set<string>();
-
-  for (const sdkAgent of sdkAgents) {
-    const local = localByName.get(sdkAgent.name);
-    seen.add(sdkAgent.name);
-    result.push(local ? mergeSdkAgentWithLocal(sdkAgent, local) : sdkAgent);
-  }
-
-  for (const agent of [...projectAgents, ...globalAgents]) {
-    if (seen.has(agent.name)) continue;
-    seen.add(agent.name);
-    result.push(agent);
-  }
-
-  return result;
-}
-
-function mergeSdkAgentWithLocal(
-  sdkAgent: AgentDefinition,
-  localAgent: AgentDefinition,
-): AgentDefinition {
-  return {
-    ...sdkAgent,
-    filePath: localAgent.filePath,
-    scope: localAgent.scope,
-    baseDirectory: localAgent.baseDirectory,
-    body: localAgent.body,
-    rawContents: localAgent.rawContents,
-    overridden: localAgent.overridden,
-    editable: true,
-  };
+  return listSdkAgents(openCodePort, baseDirectory);
 }
 
 async function listSdkAgents(
@@ -476,7 +380,7 @@ async function listSdkAgents(
   }
 }
 
-function mapSdkAgent(agent: SdkAgent): AgentDefinition {
+export function mapSdkAgent(agent: SdkAgent): AgentDefinition {
   return {
     name: agent.name,
     filePath: `opencode-sdk:${agent.name}`,

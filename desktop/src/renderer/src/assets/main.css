@@ -33,42 +33,37 @@
      Accent family mirrors the light theme's amber warmth but tuned
      for dark-surface legibility.
 
-     Contrast checks (WCAG AA ≥ 4.5:1 for normal text on #1f2228):
-       --color-agent       #f59e0b on #1f2228  ≈ 8.2:1  ✓
-       --color-agent-info  #d97706 on #1f2228  ≈ 6.1:1  ✓
-       --color-user        #fb923c on #1f2228  ≈ 6.8:1  ✓
-       --color-tool        #a08060 on #1f2228  ≈ 4.5:1  ✓
+     Contrast checks (WCAG AA ≥ 4.5:1 for normal text on #20232a):
+       --color-agent       #fcd34d on #20232a  ≈ 10.7:1 ✓
+       --color-agent-info  #fb923c on #20232a  ≈ 7.3:1  ✓
+       --color-user        #fdba74 on #20232a  ≈ 9.7:1  ✓
+       --color-tool        #e5b47d on #20232a  ≈ 7.9:1  ✓
   ---------------------------------------------------------------- */
-  --color-user: #fb923c;
-  --color-agent: #f59e0b;
-  --color-agent-info: #d97706;
-  --color-tool: #a08060;
-  --color-surface: #2f3238;
-  --color-surface-alt: #272a30;
-  --color-surface-raised: #24272d;
-  --color-border: #2c323a;
+  --color-user: #fdba74;
+  --color-agent: #fcd34d;
+  --color-agent-info: #fb923c;
+  --color-tool: #e5b47d;
+  --color-surface: #3b3f49;
+  --color-surface-alt: #30343e;
+  --color-surface-raised: #464b57;
+  --color-border: #5f513e;
   /* Softer border used for chat surfaces (user bubble, code blocks, tool cards)
      to match opencode `--border-weak-base` (~8% alpha white on dark). */
-  --color-border-weak: #242830;
-  --sidebar-gradient: linear-gradient(
-    180deg,
-    #24272d 0%,
-    #20232a 50%,
-    #1c1f25 100%
-  );
+  --color-border-weak: #4a4033;
   --color-error: #f87171;
   --color-warning: #facc15;
   --color-success: #4ade80;
-  --color-bg: #1f2228;
+  --color-bg: #20232a;
   --color-text: #e8ebf0;
   --color-inverse-text: #ffffff;
-  --color-text-muted: #a9b0bc;
-  /* Bumped from #7f8794 (3.7:1 on surface) to #8d96a4 (~4.5:1) for WCAG AA. */
-  --color-text-faint: #8d96a4;
-  --color-input-bg: #2b2f36;
-  --color-input-border: #4a5260;
-  --color-scrollbar: #596273;
-  --color-kbd-bg: #3a404b;
+  --color-accent-text: #1c1008;
+  --color-text-muted: #b4bbc6;
+  /* Kept above AA contrast on the lighter daytime-friendly dark canvas. */
+  --color-text-faint: #9aa3b0;
+  --color-input-bg: #363b46;
+  --color-input-border: #76624a;
+  --color-scrollbar: #8a7759;
+  --color-kbd-bg: #505662;
 
   /* =============================================================
      Opencode reference tokens (dark) — tool-call design-system parity
@@ -228,7 +223,7 @@
   --border: var(--color-border);
   --input: var(--color-input-border);
   --primary: var(--color-agent);
-  --primary-foreground: var(--color-inverse-text);
+  --primary-foreground: var(--color-accent-text);
   --secondary: var(--color-surface-alt);
   --secondary-foreground: var(--color-text);
   --accent: var(--color-surface-alt);
@@ -243,7 +238,7 @@
   --sidebar: var(--color-surface-alt);
   --sidebar-foreground: var(--color-text);
   --sidebar-primary: var(--color-agent);
-  --sidebar-primary-foreground: var(--color-inverse-text);
+  --sidebar-primary-foreground: var(--color-accent-text);
   --sidebar-accent: var(--color-surface);
   --sidebar-accent-foreground: var(--color-text);
   --sidebar-border: var(--color-border-weak);

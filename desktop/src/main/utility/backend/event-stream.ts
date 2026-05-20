@@ -3,7 +3,7 @@
  *
  * ──────────────────────────────────────────────────────────────────────────
  * This is the **main-side pump** for the new streaming pipeline. It runs a
- * fetch-based SSE loop against the OpenCode server's `/event` endpoint (via
+ * fetch-based SSE loop against the OpenCode server's `/global/event` endpoint (via
  * the SDK's `client.global.event()` async-iterator), maps each raw payload
  * through `event-bridge` to our `ConversationEvent` union, coalesces events
  * in-flight, and flushes coalesced batches to the renderer via
@@ -412,7 +412,7 @@ async function runLoop(): Promise<void> {
       const client = getClient(port);
 
       log.info(`Opening SSE stream on port=${port}`);
-      const result = await client.event.subscribe(undefined, {
+      const result = await client.global.event({
         signal: attempt.signal,
         onSseError: (err: unknown) => {
           if (isAbortError(err)) return;

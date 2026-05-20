@@ -470,16 +470,16 @@ export async function fetchSessionTokens(
 
     if (!data) return null;
 
-    const fallback =
-      data.tokens === undefined
-        ? await fetchLatestAssistantMessageTokens(sessionId, openCodePort)
-        : null;
+    const latestMessage = await fetchLatestAssistantMessageTokens(
+      sessionId,
+      openCodePort,
+    );
 
     return {
       id: data.id,
-      tokens: data.tokens ?? fallback?.tokens,
-      modelId: data.model?.id ?? fallback?.modelId,
-      providerId: data.provider?.id ?? fallback?.providerId,
+      tokens: latestMessage.tokens ?? data.tokens,
+      modelId: latestMessage.modelId ?? data.model?.id,
+      providerId: latestMessage.providerId ?? data.provider?.id,
     };
   } catch {
     return null;

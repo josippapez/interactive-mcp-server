@@ -113,6 +113,9 @@ export async function removePersistedSession(
 
   // Always clean up DB state — even if the transport close failed.
   await deps.deleteSessionChannel(sessionId);
+  if (providerSessionId !== sessionId) {
+    await deps.deleteSessionChannel(providerSessionId);
+  }
   await deps.deleteRegisteredConnection(providerSessionId);
   await deps.markSessionDeleted(providerSessionId);
 
@@ -177,6 +180,9 @@ export async function removePersistedSession(
     connectionId: sessionId,
   });
   emitToRenderer('session-channel-deleted', { sessionId });
+  if (providerSessionId !== sessionId) {
+    emitToRenderer('session-channel-deleted', { sessionId: providerSessionId });
+  }
 
   return closeOk;
 }

@@ -47,7 +47,7 @@ export const ToolSpinner = memo(function ToolSpinner({
 });
 
 const STATUS_PILL_BASE =
-  'inline-flex items-center rounded-full px-1.5 py-0.5 text-[calc(var(--chat-message-size,13px)-2px)] font-medium uppercase tracking-wide shrink-0';
+  'inline-flex items-center rounded-full px-1.5 py-0.5 text-[11px] font-medium uppercase tracking-wide shrink-0';
 
 export const TOOL_CALL_LABEL_TEXT_CLASS = getToolCallLabelTextClass();
 export const TOOL_CALL_MONO_TEXT_CLASS = getToolCallMonoTextClass();
@@ -397,7 +397,7 @@ export const ToolDurationBadge = memo(function ToolDurationBadge({
   const ms = getToolDurationMs(tool);
   if (ms === null) return null;
   const base =
-    'text-[calc(var(--chat-message-size,13px)-2px)] text-[var(--text-weak)] font-mono shrink-0 tabular-nums';
+    'text-[11px] text-[var(--text-weak)] font-mono shrink-0 tabular-nums';
   return (
     <span className={className ? `${base} ${className}` : base}>
       {formatDuration(ms)}

@@ -322,20 +322,18 @@ mcp.disconnect(params: {
 ## Event Namespace (1 method - SSE Streaming)
 
 ```typescript
-// Subscribe to real-time events (STREAMING SSE)
+// Subscribe to one instance/workspace event stream (STREAMING SSE).
+// Desktop's app-wide live chat should use `client.global.event()` instead.
 event.subscribe(params?: {
   directory?: string;
   workspace?: string;
-  topics?: string[];
 }): Promise<ServerSentEventsResult<EventSubscribeResponses>>;
 ```
 
 ### Usage Example
 
 ```typescript
-const stream = await client.event.subscribe({
-  topics: ['session.*', 'message.*', 'permission.*'],
-});
+const stream = await client.event.subscribe({ directory: process.cwd() });
 
 for await (const event of stream) {
   console.log(event.type, event.data);
@@ -371,11 +369,8 @@ global.health(params?: {
   workspace?: string;
 }): Promise<GlobalHealthResponses>;
 
-// Subscribe to global events (STREAMING SSE)
-global.event(params?: {
-  directory?: string;
-  workspace?: string;
-}): Promise<ServerSentEventsResult<GlobalEventResponses>>;
+// Subscribe to app-wide global events (STREAMING SSE).
+global.event(): Promise<ServerSentEventsResult<GlobalEventResponses>>;
 
 // Dispose resources
 global.dispose(params?: {
@@ -431,13 +426,11 @@ for await (const chunk of stream) {
 ### Pattern: Streaming Events
 
 ```typescript
-// Streaming events
-const stream = await client.event.subscribe({
-  topics: ['session.*', 'message.*'],
-});
+// Desktop app-wide live events across project directories
+const stream = await client.global.event();
 
-for await (const event of stream) {
-  console.log('Event:', event.type, event.data);
+for await (const envelope of stream) {
+  console.log('Event:', envelope.payload.type, envelope.directory);
   // Handle event
 }
 ```
