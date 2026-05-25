@@ -1,11 +1,18 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import type { SessionNode } from '../../types';
+import type { ChannelSelectionSource } from '../../store/channel-selection';
 import { getRemoveSessionTarget } from '../remove-session-target';
 import { removePendingQuestion } from './remove-pending-question';
 
 interface SessionHandlersOptions {
   nodesRef: React.MutableRefObject<Map<string, SessionNode>>;
   setNodes: React.Dispatch<React.SetStateAction<Map<string, SessionNode>>>;
+  selectChannel: (
+    channelId: string | null,
+    source: ChannelSelectionSource,
+    intentional?: boolean,
+  ) => void;
+  activateRef: React.RefObject<() => void>;
 }
 
 export function resolvePermissionReplyDirectory(
@@ -18,10 +25,31 @@ export function resolvePermissionReplyDirectory(
   return node?.baseDirectory ?? node?.directory ?? undefined;
 }
 
+export function resolveNotificationSessionTarget(
+  nodes: Map<string, SessionNode>,
+  providerSessionId: string,
+): string | null {
+  return nodes.has(providerSessionId) ? providerSessionId : null;
+}
+
 export function useSessionHandlers({
   nodesRef,
   setNodes,
+  selectChannel,
+  activateRef,
 }: SessionHandlersOptions) {
+  useEffect(() => {
+    return window.api.onPromptNotificationClicked?.((data) => {
+      const target = resolveNotificationSessionTarget(
+        nodesRef.current,
+        data.providerSessionId,
+      );
+      if (!target) return;
+      selectChannel(target, 'url-navigation');
+      activateRef.current?.();
+    });
+  }, [activateRef, nodesRef, selectChannel]);
+
   const handleDismissSession = useCallback((connectionId: string) => {
     void window.api.dismissSession?.(connectionId);
   }, []);

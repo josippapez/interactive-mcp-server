@@ -59,20 +59,30 @@ describe('buildStartupContextMessage', () => {
     expect(message).not.toContain('disabled-skill');
   });
 
-  it('describes SDK auto-registration and repo docs/libs tools only', () => {
+  it('omits operational session metadata from the injected context', () => {
     const message = buildStartupContextMessage({
       channelName: 'Test Agent',
       projectName: 'interactive-mcp-server',
+      baseDirectory: '/tmp/project',
       openCodeSessionId: 'ses_abc123',
       entries: [],
     });
 
-    expect(message).toContain(
-      'this session was auto-registered by the desktop app from OpenCode SDK session events; do not call register_connection',
-    );
-    expect(message).toContain(
-      'Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs, manage_skills_and_instructions, manage_memories, manage_background_subagents, message_background_subagent.',
-    );
+    expect(message).toBe('<system-reminder>\n</system-reminder>');
+    expect(message).not.toContain('Interactive MCP Desktop session bootstrap');
+    expect(message).not.toContain('Registered agent');
+    expect(message).not.toContain('Test Agent');
+    expect(message).not.toContain('Project');
+    expect(message).not.toContain('interactive-mcp-server');
+    expect(message).not.toContain('Base directory');
+    expect(message).not.toContain('/tmp/project');
+    expect(message).not.toContain('OpenCode session ID');
+    expect(message).not.toContain('ses_abc123');
+    expect(message).not.toContain('openCodeSessionId');
+    expect(message).not.toContain('auto-registered');
+    expect(message).not.toContain('Exposed MCP tools');
+    expect(message).not.toContain('built-in questions tool');
+    expect(message).not.toContain('register_connection');
     expect(message).not.toContain('request_user_input');
     expect(message).not.toContain('interactive prompt tools');
   });

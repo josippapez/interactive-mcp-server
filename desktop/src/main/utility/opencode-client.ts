@@ -92,6 +92,8 @@ function call<T>(
   return bridge().request<T>(name, { args }, opts);
 }
 
+const MCP_OPERATION_BRIDGE_TIMEOUT_MS = 60_000;
+
 // ─── session-api ────────────────────────────────────────────────────────────
 
 import type {
@@ -582,8 +584,9 @@ import type {
 export function fetchMcpStatus(
   openCodePort: number,
   directory?: string,
+  options?: Parameters<typeof import('./backend/mcp-status').fetchMcpStatus>[2],
 ): Promise<McpStatusResult> {
-  return call('opencode.fetchMcpStatus', [openCodePort, directory], {
+  return call('opencode.fetchMcpStatus', [openCodePort, directory, options], {
     timeoutMs: 30_000,
   });
 }
@@ -593,7 +596,9 @@ export function connectMcp(
   name: string,
   directory?: string,
 ): Promise<McpOperationResult> {
-  return call('opencode.connectMcp', [openCodePort, name, directory]);
+  return call('opencode.connectMcp', [openCodePort, name, directory], {
+    timeoutMs: MCP_OPERATION_BRIDGE_TIMEOUT_MS,
+  });
 }
 
 export function disconnectMcp(
@@ -601,7 +606,9 @@ export function disconnectMcp(
   name: string,
   directory?: string,
 ): Promise<McpOperationResult> {
-  return call('opencode.disconnectMcp', [openCodePort, name, directory]);
+  return call('opencode.disconnectMcp', [openCodePort, name, directory], {
+    timeoutMs: MCP_OPERATION_BRIDGE_TIMEOUT_MS,
+  });
 }
 
 export function registerMcp(

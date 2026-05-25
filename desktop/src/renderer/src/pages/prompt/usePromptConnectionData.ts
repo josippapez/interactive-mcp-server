@@ -90,6 +90,7 @@ export function usePromptConnectionData({
     isOpenCodeSession ? (sessionBaseDirectory ?? undefined) : undefined,
     isOpenCodeSession,
     providerSessionId,
+    { providerId: currentProviderId, modelId: currentModelId },
   );
 
   const [nativeSkills, setNativeSkills] = useState<NativeOpenCodeSkill[]>([]);

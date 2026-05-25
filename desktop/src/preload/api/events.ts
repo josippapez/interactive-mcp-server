@@ -370,6 +370,19 @@ export function createEventsApi() {
       };
     },
 
+    onPromptNotificationClicked: (
+      callback: (data: { providerSessionId: string }) => void,
+    ): (() => void) => {
+      const handler = (
+        _event: Electron.IpcRendererEvent,
+        data: { providerSessionId: string },
+      ) => callback(data);
+      ipcRenderer.on('prompt-notification-clicked', handler);
+      return () => {
+        ipcRenderer.removeListener('prompt-notification-clicked', handler);
+      };
+    },
+
     onSkillsUpdated: (callback: () => void): (() => void) => {
       const handler = () => callback();
       ipcRenderer.on('skills-updated', handler);

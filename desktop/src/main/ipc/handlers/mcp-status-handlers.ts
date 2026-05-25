@@ -19,7 +19,15 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
     'fetch-mcp-status',
     async (
       _event,
-      { directory }: { directory?: string } = {},
+      {
+        directory,
+        providerId,
+        modelId,
+      }: {
+        directory?: string;
+        providerId?: string | null;
+        modelId?: string | null;
+      } = {},
     ): Promise<{
       ok: boolean;
       servers?: Array<{
@@ -51,7 +59,10 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return fetchMcpStatus(settings.openCodePort, directory);
+      return fetchMcpStatus(settings.openCodePort, directory, {
+        providerId,
+        modelId,
+      });
     },
   );
 

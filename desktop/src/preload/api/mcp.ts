@@ -18,6 +18,7 @@ export function createMcpApi() {
      */
     fetchMcpStatus: (
       directory?: string,
+      options?: { providerId?: string | null; modelId?: string | null },
     ): Promise<{
       ok: boolean;
       servers?: Array<{
@@ -44,7 +45,7 @@ export function createMcpApi() {
         prompts?: Array<{ name: string; description?: string }>;
       }>;
       error?: string;
-    }> => ipcRenderer.invoke('fetch-mcp-status', { directory }),
+    }> => ipcRenderer.invoke('fetch-mcp-status', { directory, ...options }),
 
     /**
      * Connect or reconnect an MCP server.

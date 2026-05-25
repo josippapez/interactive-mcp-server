@@ -11,6 +11,10 @@ import type {
   McpRemoteConfig,
   McpStatus,
 } from '@opencode-ai/sdk/v2';
+import { Client as McpClient } from '@modelcontextprotocol/sdk/client/index.js';
+import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createLogger } from '../../utils/logger';
 import { getClient } from './sdk-client';
 import { errorMessage } from '../../utils/errors';
@@ -18,6 +22,7 @@ import { errorMessage } from '../../utils/errors';
 const log = createLogger('mcp-status');
 const MCP_STATUS_REQUEST_TIMEOUT_MS = 10_000;
 const MCP_OPERATION_TIMEOUT_MS = 10_000;
+const MCP_DIRECT_TOOL_LIST_TIMEOUT_MS = 10_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -112,6 +117,17 @@ type NormalizedSdkMcpStatus =
     };
 
 type ConfiguredMcp = McpLocalConfig | McpRemoteConfig;
+type ToolListItemResponse = { id: string; description?: string };
+type ToolListResponse = { data?: ToolListItemResponse[]; error?: unknown };
+type ToolIdsResponse = { data?: string[]; error?: unknown };
+type ToolFetchOptions = { providerId?: string | null; modelId?: string | null };
+
+function getToolSample(tools: readonly McpTool[]): string {
+  return tools
+    .slice(0, 8)
+    .map((tool) => tool.name)
+    .join(', ');
+}
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -170,6 +186,62 @@ function getConfiguredMcp(
   return value;
 }
 
+function getEnabledConfiguredMcpEntries(
+  config: OpenCodeConfig | undefined,
+): Array<[string, ConfiguredMcp]> {
+  const mcp = config?.mcp;
+  if (!mcp || typeof mcp !== 'object') return [];
+
+  return Object.entries(mcp).filter(
+    (entry): entry is [string, ConfiguredMcp] => {
+      const [, value] = entry;
+      return (
+        Boolean(value) &&
+        typeof value === 'object' &&
+        'type' in value &&
+        value.enabled !== false
+      );
+    },
+  );
+}
+
+async function registerMissingConfiguredMcps(
+  client: ReturnType<typeof getClient>,
+  config: OpenCodeConfig | undefined,
+  statusData: Record<string, NormalizedSdkMcpStatus>,
+): Promise<boolean> {
+  const missingEntries = getEnabledConfiguredMcpEntries(config).filter(
+    ([name]) => !Object.hasOwn(statusData, name),
+  );
+
+  if (missingEntries.length === 0) return false;
+
+  const results = await Promise.all(
+    missingEntries.map(async ([name, mcpConfig]) => {
+      try {
+        const response = await client.mcp.add(
+          { name, config: mcpConfig },
+          { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+        );
+        if (response.error) {
+          log.warn(
+            `Failed to register missing configured MCP ${name}: ${String(response.error)}`,
+          );
+          return false;
+        }
+        return true;
+      } catch (err) {
+        log.warn(
+          `Failed to register missing configured MCP ${name}: ${errorMessage(err)}`,
+        );
+        return false;
+      }
+    }),
+  );
+
+  return results.some(Boolean);
+}
+
 function getServerType(
   config: ConfiguredMcp | undefined,
   status: McpServerStatus['status'],
@@ -193,6 +265,229 @@ function getEnvironmentKeys(
   return keys.length > 0 ? keys : undefined;
 }
 
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function getToolServerNameCandidates(serverName: string): string[] {
+  const normalized = serverName
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  return Array.from(
+    new Set([
+      serverName,
+      serverName.replace(/-/g, '_'),
+      serverName.replace(/_/g, '-'),
+      normalized,
+      normalized.replace(/_/g, '-'),
+    ]),
+  ).filter(Boolean);
+}
+
+export function matchMcpToolIdToServer(
+  toolId: string,
+  serverName: string,
+): string | null {
+  for (const candidate of getToolServerNameCandidates(serverName)) {
+    const singleUnderscorePrefix = `${candidate}_`;
+    const patterns = [
+      new RegExp(`^mcp__${escapeRegExp(candidate)}__(.+)$`),
+      new RegExp(`^${escapeRegExp(candidate)}__(.+)$`),
+      new RegExp(`^${escapeRegExp(candidate)}::(.+)$`),
+    ];
+
+    for (const pattern of patterns) {
+      const match = toolId.match(pattern);
+      if (match?.[1]) return match[1];
+    }
+
+    if (toolId.startsWith(singleUnderscorePrefix)) {
+      return toolId.slice(singleUnderscorePrefix.length);
+    }
+  }
+
+  return null;
+}
+
+async function fetchToolItems(
+  client: ReturnType<typeof getClient>,
+  directory?: string,
+  options: ToolFetchOptions = {},
+): Promise<McpTool[]> {
+  if (options.providerId && options.modelId) {
+    try {
+      const response = (await client.tool?.list?.(
+        { directory, provider: options.providerId, model: options.modelId },
+        { signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS) },
+      )) as ToolListResponse | undefined;
+
+      if (response?.error) {
+        log.warn(`Failed to fetch MCP tool list: ${String(response.error)}`);
+      } else if (Array.isArray(response?.data)) {
+        const tools = response.data.map((tool) => ({
+          name: tool.id,
+          description: tool.description,
+        }));
+        log.info(
+          `Fetched model-scoped OpenCode tools provider=${options.providerId} model=${options.modelId} count=${tools.length} sample=${getToolSample(tools)}`,
+        );
+        return tools;
+      } else {
+        log.warn(
+          `OpenCode tool list returned unexpected shape provider=${options.providerId} model=${options.modelId}`,
+        );
+      }
+    } catch (err) {
+      log.warn(
+        `Failed to fetch MCP tool list provider=${options.providerId} model=${options.modelId}: ${errorMessage(err)}`,
+      );
+    }
+  } else {
+    log.info(
+      `Skipping model-scoped OpenCode tool list provider=${options.providerId ?? 'missing'} model=${options.modelId ?? 'missing'}`,
+    );
+  }
+
+  try {
+    const response = (await client.tool?.ids?.(directory ? { directory } : {}, {
+      signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS),
+    })) as ToolIdsResponse | undefined;
+
+    if (!response || response.error || !Array.isArray(response.data)) {
+      if (response?.error) {
+        log.warn(`Failed to fetch MCP tool IDs: ${String(response.error)}`);
+      }
+      return [];
+    }
+
+    const tools = response.data.map((name) => ({ name }));
+    log.info(
+      `Fetched OpenCode tool IDs count=${tools.length} sample=${getToolSample(tools)}`,
+    );
+    return tools;
+  } catch (err) {
+    log.warn(`Failed to fetch MCP tool IDs: ${errorMessage(err)}`);
+    return [];
+  }
+}
+
+function getServerTools(
+  name: string,
+  toolItems: readonly McpTool[],
+): McpTool[] {
+  return toolItems.reduce<McpTool[]>((tools, tool) => {
+    const toolName = matchMcpToolIdToServer(tool.name, name);
+    if (toolName) tools.push({ ...tool, name: toolName });
+    return tools;
+  }, []);
+}
+
+async function listToolsFromMcpClient(
+  name: string,
+  transport: ConstructorParameters<typeof McpClient>[0] extends never
+    ? never
+    : unknown,
+): Promise<McpTool[]> {
+  const client = new McpClient({ name: 'eden-desktop', version: '1.0.0' });
+
+  try {
+    await client.connect(transport as Parameters<typeof client.connect>[0], {
+      timeout: MCP_DIRECT_TOOL_LIST_TIMEOUT_MS,
+    });
+    const result = await client.listTools(undefined, {
+      timeout: MCP_DIRECT_TOOL_LIST_TIMEOUT_MS,
+    });
+    return result.tools.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+    }));
+  } catch (err) {
+    log.warn(
+      `Failed to list tools directly from MCP ${name}: ${errorMessage(err)}`,
+    );
+    return [];
+  } finally {
+    try {
+      await client.close();
+    } catch {
+      // Best effort cleanup for short-lived discovery clients.
+    }
+  }
+}
+
+async function fetchDirectConfiguredMcpTools(
+  name: string,
+  config: ConfiguredMcp,
+  directory?: string,
+): Promise<McpTool[]> {
+  const timeout = config.timeout ?? MCP_DIRECT_TOOL_LIST_TIMEOUT_MS;
+
+  if (config.type === 'local') {
+    const [command, ...args] = config.command;
+    if (!command) return [];
+    const transport = new StdioClientTransport({
+      command,
+      args,
+      cwd: directory,
+      env: {
+        ...process.env,
+        ...config.environment,
+      },
+      stderr: 'ignore',
+    });
+    return listToolsFromMcpClient(name, transport);
+  }
+
+  const url = URL.canParse(config.url) ? new URL(config.url) : null;
+  if (!url) return [];
+
+  const requestInit = config.headers ? { headers: config.headers } : undefined;
+  const transports = [
+    new StreamableHTTPClientTransport(url, { requestInit }),
+    new SSEClientTransport(url, { requestInit }),
+  ];
+
+  for (const transport of transports) {
+    const tools = await listToolsFromMcpClient(name, transport);
+    if (tools.length > 0) return tools;
+  }
+
+  log.info(
+    `No tools found by direct MCP listing for ${name} timeout=${timeout}`,
+  );
+  return [];
+}
+
+async function fetchDirectConfiguredMcpToolMap(
+  config: OpenCodeConfig | undefined,
+  statusData: Record<string, NormalizedSdkMcpStatus>,
+  toolItems: readonly McpTool[],
+  directory?: string,
+): Promise<Record<string, McpTool[]>> {
+  const entries = getEnabledConfiguredMcpEntries(config).filter(
+    ([name]) =>
+      statusData[name] &&
+      mapSdkStatus(statusData[name]) === 'connected' &&
+      getServerTools(name, toolItems).length === 0,
+  );
+
+  const results = await Promise.all(
+    entries.map(async ([name, mcpConfig]) => {
+      const tools = await fetchDirectConfiguredMcpTools(
+        name,
+        mcpConfig,
+        directory,
+      );
+      return [name, tools] as const;
+    }),
+  );
+
+  return Object.fromEntries(results.filter(([, tools]) => tools.length > 0));
+}
+
 // ─── API Functions ────────────────────────────────────────────────────────────
 
 /**
@@ -204,21 +499,23 @@ function getEnvironmentKeys(
 export async function fetchMcpStatus(
   openCodePort: number,
   directory?: string,
+  options: ToolFetchOptions = {},
 ): Promise<McpStatusResult> {
   log.info(`Fetching MCP status from port ${openCodePort}`);
 
   try {
     const client = getClient(openCodePort, directory);
-    const [statusResponse, configResponse] = await Promise.all([
-      client.mcp.status(
-        {},
-        { signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS) },
-      ),
-      client.config?.get?.(
-        {},
-        { signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS) },
-      ) ?? Promise.resolve({ data: undefined, error: undefined }),
-    ]);
+    const requestContext = directory ? { directory } : {};
+    const [statusResponse, configResponse, initialToolItems] =
+      await Promise.all([
+        client.mcp.status(requestContext, {
+          signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS),
+        }),
+        client.config?.get?.(requestContext, {
+          signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS),
+        }) ?? Promise.resolve({ data: undefined, error: undefined }),
+        fetchToolItems(client, directory, options),
+      ]);
 
     if (statusResponse.error) {
       const error =
@@ -234,15 +531,46 @@ export async function fetchMcpStatus(
         `Failed to fetch MCP config metadata: ${String(configResponse.error)}`,
       );
     }
-
-    const data = statusResponse.data ?? {};
+    let data = statusResponse.data ?? {};
+    let toolItems = initialToolItems;
     const config = configResponse.error ? undefined : configResponse.data;
+
+    log.info(
+      `Fetched MCP status servers=${Object.keys(data).length} toolItems=${toolItems.length} provider=${options.providerId ?? 'missing'} model=${options.modelId ?? 'missing'}`,
+    );
+
+    if (await registerMissingConfiguredMcps(client, config, data)) {
+      const [refreshedStatusResponse, refreshedToolItems] = await Promise.all([
+        client.mcp.status(requestContext, {
+          signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS),
+        }),
+        fetchToolItems(client, directory, options),
+      ]);
+      if (refreshedStatusResponse.error) {
+        log.warn(
+          `Failed to refresh MCP status after registering missing config entries: ${String(refreshedStatusResponse.error)}`,
+        );
+      } else {
+        data = refreshedStatusResponse.data ?? data;
+      }
+      toolItems = refreshedToolItems;
+    }
+
+    const directToolMap = await fetchDirectConfiguredMcpToolMap(
+      config,
+      data,
+      toolItems,
+      directory,
+    );
 
     // Transform SDK response to our internal format
     const servers: McpServerStatus[] = Object.entries(data).map(
       ([name, serverStatus]) => {
         const status = mapSdkStatus(serverStatus);
         const mcpConfig = getConfiguredMcp(config, name);
+        const mappedTools = getServerTools(name, toolItems);
+        const tools =
+          mappedTools.length > 0 ? mappedTools : (directToolMap[name] ?? []);
         return {
           name,
           type: getServerType(
@@ -254,6 +582,7 @@ export async function fetchMcpStatus(
           url: mcpConfig?.type === 'remote' ? mcpConfig.url : undefined,
           command: mcpConfig?.type === 'local' ? mcpConfig.command : undefined,
           environmentKeys: getEnvironmentKeys(mcpConfig),
+          tools: tools.length > 0 ? tools : undefined,
         };
       },
     );

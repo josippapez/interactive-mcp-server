@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionNode } from '../../types';
-import { resolvePermissionReplyDirectory } from './session-handlers';
+import {
+  resolveNotificationSessionTarget,
+  resolvePermissionReplyDirectory,
+} from './session-handlers';
 
 function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
@@ -66,5 +69,23 @@ describe('resolvePermissionReplyDirectory', () => {
     expect(resolvePermissionReplyDirectory(nodes, 'ses_existing')).toBe(
       '/session-dir',
     );
+  });
+});
+
+describe('resolveNotificationSessionTarget', () => {
+  it('selects an existing provider session id from a notification click', () => {
+    const nodes = new Map<string, SessionNode>([
+      ['ses_existing', makeNode({ providerSessionId: 'ses_existing' })],
+    ]);
+
+    expect(resolveNotificationSessionTarget(nodes, 'ses_existing')).toBe(
+      'ses_existing',
+    );
+  });
+
+  it('returns null when the notification session is not in the renderer tree yet', () => {
+    expect(
+      resolveNotificationSessionTarget(new Map(), 'ses_missing'),
+    ).toBeNull();
   });
 });

@@ -68,43 +68,13 @@ export interface StartupContextParams {
 export function buildStartupContextMessage(
   params: StartupContextParams,
 ): string {
-  const {
-    channelName,
-    projectName,
-    baseDirectory,
-    openCodeSessionId,
-    entries,
-    sessionOptInNames,
-    sessionMutedNames,
-    memories,
-  } = params;
+  const { entries, sessionOptInNames, sessionMutedNames, memories } = params;
   const optIn = new Set(sessionOptInNames ?? []);
   const muted = new Set(sessionMutedNames ?? []);
-
-  const locationLine = baseDirectory
-    ? `- Base directory: ${escapeXmlText(baseDirectory)}`
-    : '- Base directory: not provided';
 
   const lines: string[] = [];
 
   lines.push('<system-reminder>');
-  lines.push('Interactive MCP Desktop session bootstrap:');
-  lines.push(`- Registered agent: ${escapeXmlText(channelName)}`);
-  lines.push(`- Project: ${escapeXmlText(projectName)}`);
-  lines.push(locationLine);
-
-  if (openCodeSessionId) {
-    lines.push(`- OpenCode session ID: ${escapeXmlText(openCodeSessionId)}`);
-    lines.push(
-      '- Pass this as openCodeSessionId when calling repo docs/libs tools that include that parameter.',
-    );
-  }
-
-  lines.push(
-    '- Registration: this session was auto-registered by the desktop app from OpenCode SDK session events; do not call register_connection.',
-    '- Exposed MCP tools: find_docs, find_repo_docs, list_docs, read_doc, find_libs, manage_skills_and_instructions, manage_memories, manage_background_subagents, message_background_subagent.',
-    '- Interactive prompt/channel tools are not exposed by this MCP surface; use your harness-native user interaction tools when you need to ask the user.',
-  );
 
   // Filter to only enabled entries that are either:
   // - scope='global' AND not muted for this session, OR

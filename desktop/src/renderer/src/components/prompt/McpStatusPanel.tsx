@@ -273,7 +273,7 @@ const McpServerItem = memo(function McpServerItem({
                 Tools ({server.tools.length})
               </div>
               <div className="flex flex-wrap gap-1">
-                {server.tools.slice(0, 10).map((tool) => (
+                {getVisibleMcpTools(server.tools).map((tool) => (
                   <span
                     key={tool.name}
                     className="text-[9px] px-1.5 py-0.5 rounded bg-[var(--color-agent)]/10 text-[var(--color-agent)]"
@@ -282,12 +282,14 @@ const McpServerItem = memo(function McpServerItem({
                     {tool.name}
                   </span>
                 ))}
-                {server.tools.length > 10 && (
-                  <span className="text-[9px] px-1.5 py-0.5 text-[var(--color-text-faint)]">
-                    +{server.tools.length - 10} more
-                  </span>
-                )}
               </div>
+            </div>
+          )}
+
+          {server.status === 'connected' && toolCount === 0 && (
+            <div className="text-[10px] text-[var(--color-text-faint)] bg-[var(--color-surface-alt)] px-2 py-1 rounded">
+              No tools reported by OpenCode for this MCP server yet. Try
+              refreshing after the server finishes connecting.
             </div>
           )}
 
@@ -362,6 +364,12 @@ interface McpStatusPanelProps {
 
 export function shouldRenderMcpStatusPanel(): boolean {
   return true;
+}
+
+export function getVisibleMcpTools(
+  tools: NonNullable<McpServer['tools']>,
+): NonNullable<McpServer['tools']> {
+  return tools;
 }
 
 export default function McpStatusPanel({

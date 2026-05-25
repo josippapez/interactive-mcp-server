@@ -379,8 +379,12 @@ export function registerOpencodeRpcHandlers(bridge: Bridge): void {
 
   // ── mcp-status ───────────────────────────────────────────────────────────
   bridge.handle('opencode.fetchMcpStatus', (p) => {
-    const [port, dir] = argsOf(p) as [number, string | undefined];
-    return mcpStatus.fetchMcpStatus(port, dir);
+    const [port, dir, options] = argsOf(p) as [
+      number,
+      string | undefined,
+      Parameters<typeof mcpStatus.fetchMcpStatus>[2],
+    ];
+    return mcpStatus.fetchMcpStatus(port, dir, options);
   });
 
   bridge.handle('opencode.connectMcp', (p) => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  buildPromptNotificationClickPayload,
   getPermissionNotificationText,
   getQuestionNotificationText,
   shouldRequestNotificationPermission,
@@ -133,5 +134,17 @@ describe('shouldShowNotificationSettingsPrompt', () => {
     expect(
       shouldShowNotificationSettingsPrompt('darwin', 'granted', false),
     ).toBe(false);
+  });
+});
+
+describe('buildPromptNotificationClickPayload', () => {
+  it('targets the prompt session when a provider session id is available', () => {
+    expect(buildPromptNotificationClickPayload('ses_123')).toEqual({
+      providerSessionId: 'ses_123',
+    });
+  });
+
+  it('does not emit a click payload when no provider session id is available', () => {
+    expect(buildPromptNotificationClickPayload(null)).toBeNull();
   });
 });

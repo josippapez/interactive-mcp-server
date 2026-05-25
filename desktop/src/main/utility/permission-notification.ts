@@ -2,13 +2,19 @@ import { Notification, dialog, shell } from 'electron';
 import type { BrowserWindow } from 'electron';
 
 type PermissionNotificationPayload = {
+  sessionID?: string;
   permission: string;
   metadata?: Record<string, unknown>;
   patterns?: string[];
 };
 
 type QuestionNotificationPayload = {
+  sessionID?: string;
   questions: Array<{ question?: unknown; header?: unknown }>;
+};
+
+type PromptNotificationClickPayload = {
+  providerSessionId: string;
 };
 
 type NotificationPermissionState = 'default' | 'denied' | 'granted';
@@ -114,6 +120,13 @@ export function shouldShowNotificationSettingsPrompt(
   return platform === 'darwin' && permission === 'denied' && !alreadyShown;
 }
 
+export function buildPromptNotificationClickPayload(
+  providerSessionId: string | null | undefined,
+): PromptNotificationClickPayload | null {
+  if (!providerSessionId) return null;
+  return { providerSessionId };
+}
+
 function openNotificationSettings(): void {
   void shell.openExternal(
     'x-apple.systempreferences:com.apple.Notifications-Settings.extension',
@@ -183,6 +196,7 @@ export function requestNativeNotificationPermission(
 function showNativePromptNotification(
   win: BrowserWindow | null | undefined,
   text: { title: string; body: string },
+  providerSessionId?: string,
 ): void {
   if (!Notification.isSupported()) {
     return;
@@ -200,6 +214,11 @@ function showNativePromptNotification(
       if (!win || win.isDestroyed()) return;
       win.show();
       win.focus();
+      const clickPayload =
+        buildPromptNotificationClickPayload(providerSessionId);
+      if (clickPayload) {
+        win.webContents.send('prompt-notification-clicked', clickPayload);
+      }
     });
 
     notification.show();
@@ -214,12 +233,20 @@ export function showPermissionNotification(
     return;
   }
 
-  showNativePromptNotification(win, getPermissionNotificationText(payload));
+  showNativePromptNotification(
+    win,
+    getPermissionNotificationText(payload),
+    payload.sessionID,
+  );
 }
 
 export function showQuestionNotification(
   win: BrowserWindow | null | undefined,
   payload: QuestionNotificationPayload,
 ): void {
-  showNativePromptNotification(win, getQuestionNotificationText(payload));
+  showNativePromptNotification(
+    win,
+    getQuestionNotificationText(payload),
+    payload.sessionID,
+  );
 }

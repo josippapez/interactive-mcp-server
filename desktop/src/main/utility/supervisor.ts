@@ -218,12 +218,17 @@ export function createUtilitySupervisor(): UtilitySupervisor {
           const permissionPayload = p.payload as
             | {
                 permission?: unknown;
+                sessionID?: unknown;
                 metadata?: Record<string, unknown>;
                 patterns?: string[];
               }
             | undefined;
           if (typeof permissionPayload?.permission === 'string') {
             showPermissionNotification(win, {
+              sessionID:
+                typeof permissionPayload.sessionID === 'string'
+                  ? permissionPayload.sessionID
+                  : undefined,
               permission: permissionPayload.permission,
               metadata: permissionPayload.metadata,
               patterns: permissionPayload.patterns,
@@ -234,10 +239,15 @@ export function createUtilitySupervisor(): UtilitySupervisor {
           const questionPayload = p.payload as
             | {
                 questions?: Array<{ question?: unknown; header?: unknown }>;
+                sessionID?: unknown;
               }
             | undefined;
           if (Array.isArray(questionPayload?.questions)) {
             showQuestionNotification(win, {
+              sessionID:
+                typeof questionPayload.sessionID === 'string'
+                  ? questionPayload.sessionID
+                  : undefined,
               questions: questionPayload.questions,
             });
           }

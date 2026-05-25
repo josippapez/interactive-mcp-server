@@ -186,6 +186,8 @@ export function useConnections(onActivatePromptTab: () => void) {
   } = useSessionHandlers({
     nodesRef,
     setNodes,
+    selectChannel,
+    activateRef,
   });
 
   const {

@@ -60,6 +60,7 @@ export function useMcpServers(
   directory?: string,
   enabled = true,
   sessionKey?: string | null,
+  model?: { providerId?: string | null; modelId?: string | null },
 ): {
   servers: McpServer[];
   isLoading: boolean;
@@ -85,7 +86,7 @@ export function useMcpServers(
     }, 12_000);
 
     try {
-      const result = await window.api.fetchMcpStatus(directory);
+      const result = await window.api.fetchMcpStatus(directory, model);
       window.clearTimeout(uiTimeout);
       if (ignoreResult) return;
       if (result.ok && result.servers) {
@@ -99,7 +100,7 @@ export function useMcpServers(
       if (ignoreResult) return;
       setError(err instanceof Error ? err.message : 'Unknown error');
     }
-  }, [directory, enabled]);
+  }, [directory, enabled, model?.modelId, model?.providerId]);
 
   // Initial fetch
   useEffect(() => {

@@ -4,28 +4,24 @@ This guide owns the agent-facing bootstrap message that the desktop app injects 
 
 ## Current contract
 
-- OpenCode sessions are registered automatically from SDK/SSE session events.
-- Agents do **not** call `register_connection` as a prerequisite.
-- The advertised desktop MCP surface is repository context plus skills/instructions catalog management:
-  - `find_docs`
-  - `find_repo_docs` (compatibility alias)
-  - `list_docs`
-  - `read_doc`
-  - `find_libs` (searches the root `package.json` package names in `dependencies`/`devDependencies`; it does not query external registries or inspect nested manifests)
-  - `manage_skills_and_instructions`
-- Interactive prompt/channel tools are not part of the exposed agent workflow.
-- For OpenCode-backed sessions, repo docs/libs tools may still require `openCodeSessionId` for routing because OpenCode shares one MCP client across sessions.
+- The bootstrap message is a minimal `<system-reminder>` that directly injects available DB-stored skills, catalog instructions, always-mode instruction content, and memories.
+- It does not describe desktop registration mechanics, session identity, project metadata, base directory, exposed tool lists, or prompt-tool policy.
+- Skills and catalog-mode instructions are advertised by name and description only; agents fetch full content on demand with `manage_skills_and_instructions`.
+- Always-mode instructions and memories are injected inline with XML escaping.
+- Empty skills/instructions/memories sections are not emitted.
 
 ## Bootstrap message requirements
 
 The injected `<system-reminder>` must:
 
-1. Say that the session was auto-registered by the desktop app.
-2. Include the OpenCode session ID when known.
-3. Tell agents to pass `openCodeSessionId` only to repo docs/libs tools that accept it.
-4. List only the exposed repo docs/libs and skills/instructions catalog-management tools.
-5. Avoid instructions to call `register_connection`.
-6. Avoid references to `request_user_input`, intensive chat, status push, `send_message`, or other hidden/removed interactive tools.
+1. Start with `<system-reminder>` and end with `</system-reminder>`.
+2. Include `<available_skills source="db">` only when enabled, in-scope skills exist.
+3. Include `<available_instructions source="db">` only when enabled, in-scope catalog-mode instructions exist.
+4. Include `<instructions source="db">` only when enabled, in-scope always-mode instructions exist.
+5. Include `<memories source="db">` only when memories exist for the session.
+6. Preserve XML escaping for injected names, descriptions, content, memory project paths, and memory content.
+7. Include on-demand retrieval notes only when skills or catalog-mode instructions are present.
+8. Avoid operational metadata such as registered agent, project, base directory, OpenCode session ID, auto-registration explanation, exposed MCP tool list, and prompt-tool policy.
 
 ## Files that should stay aligned
 
