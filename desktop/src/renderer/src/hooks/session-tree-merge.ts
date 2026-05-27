@@ -177,13 +177,9 @@ export function mergeSessionTreeSnapshot(
       continue;
     }
 
-    if (
-      !node.isDirectConnection &&
-      node.sessionChannel &&
-      !snapshotSessionIds.has(node.providerSessionId ?? id)
-    ) {
-      next.set(id, node);
-    }
+    // OpenCode tree snapshots are authoritative. Nodes missing from the
+    // limited snapshot must drop out so per-project pagination actually limits
+    // the sidebar instead of keeping stale sessions from earlier full loads.
   }
 
   return next;
@@ -232,7 +228,7 @@ function buildSubtreeStats(
 ): Map<string, SubtreeStats> {
   const statsById = new Map<string, SubtreeStats>();
   const visit = (node: SessionNode): SubtreeStats => {
-    const cached = statsById.get(node.providerSessionId);
+    const cached = statsById.get(node.providerSessionId ?? '');
     if (cached) return cached;
 
     let stats: SubtreeStats = {
@@ -255,7 +251,7 @@ function buildSubtreeStats(
       };
     }
 
-    statsById.set(node.providerSessionId, stats);
+    statsById.set(node.providerSessionId ?? '', stats);
     return stats;
   };
 
@@ -285,8 +281,8 @@ export function partitionNodes(nodes: Map<string, SessionNode>): {
 
   // Sort roots by: running subtrees first, then by most recent subtree activity
   const sortedRoots = [...roots].sort((a, b) => {
-    const aStats = subtreeStats.get(a.providerSessionId);
-    const bStats = subtreeStats.get(b.providerSessionId);
+    const aStats = subtreeStats.get(a.providerSessionId ?? '');
+    const bStats = subtreeStats.get(b.providerSessionId ?? '');
     const aRunning = aStats?.isRunning ?? false;
     const bRunning = bStats?.isRunning ?? false;
 
@@ -365,6 +361,8 @@ export type Project = {
   latestSessionCreatedAt: number;
   /** Whether this project was manually pinned (vs auto-detected from sessions) */
   isPinned: boolean;
+  /** Whether more root sessions are available for this project. */
+  hasMoreSessions?: boolean;
 };
 
 /**
@@ -372,7 +370,7 @@ export type Project = {
  * Prefers baseDirectory, falls back to directory, then "Unknown".
  */
 function getProjectPath(node: SessionNode): string {
-  return node.baseDirectory ?? node.directory ?? 'Unknown';
+  return node.baseDirectory?.trim() || node.directory?.trim() || 'Unknown';
 }
 
 /**
@@ -394,6 +392,7 @@ function getProjectName(projectPath: string): string {
 export function groupByProject(
   nodes: Map<string, SessionNode>,
   pinnedPaths: string[] = [],
+  projectPages: Map<string, { hasMore: boolean }> = new Map(),
 ): Project[] {
   const all = Array.from(nodes.values());
   const ocNodes = all.filter((n) => !n.isDirectConnection);
@@ -443,6 +442,7 @@ export function groupByProject(
         earliestSessionCreatedAt: 0,
         latestSessionCreatedAt: 0,
         isPinned,
+        hasMoreSessions: projectPages.get(path)?.hasMore ?? false,
       });
       continue;
     }
@@ -466,14 +466,17 @@ export function groupByProject(
 
     // Calculate project-level stats
     const isRunning = sortedRoots.some(
-      (root) => subtreeStats.get(root.providerSessionId)?.isRunning ?? false,
+      (root) =>
+        subtreeStats.get(root.providerSessionId ?? '')?.isRunning ?? false,
     );
     const hasUnread = sortedRoots.some(
-      (root) => subtreeStats.get(root.providerSessionId)?.hasUnread ?? false,
+      (root) =>
+        subtreeStats.get(root.providerSessionId ?? '')?.hasUnread ?? false,
     );
     const latestActivity = Math.max(
       ...sortedRoots.map(
-        (root) => subtreeStats.get(root.providerSessionId)?.latestActivity ?? 0,
+        (root) =>
+          subtreeStats.get(root.providerSessionId ?? '')?.latestActivity ?? 0,
       ),
       0,
     );
@@ -499,6 +502,7 @@ export function groupByProject(
           : earliestSessionCreatedAt,
       latestSessionCreatedAt,
       isPinned,
+      hasMoreSessions: projectPages.get(path)?.hasMore ?? false,
     });
   }
 
@@ -521,4 +525,13 @@ export function groupByProject(
   });
 
   return projects;
+}
+
+export function toPinnedProjectOptions(
+  projects: readonly Project[],
+): Array<{ path: string; name: string }> {
+  return projects.map((project) => ({
+    path: project.path,
+    name: project.name,
+  }));
 }

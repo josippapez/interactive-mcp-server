@@ -7,6 +7,7 @@ import type {
 } from '../../types';
 import { findKeyByConnectionId } from '../useIpcListeners';
 import type { StartupPromptBuffer } from './types';
+import { appendChannelMessage } from './channel-message-state';
 
 interface UseStartupPromptsOptions {
   setNodes: React.Dispatch<React.SetStateAction<Map<string, SessionNode>>>;
@@ -38,15 +39,12 @@ export function useStartupPrompts({ setNodes }: UseStartupPromptsOptions) {
         return node.channelMessages;
       }
 
-      return [
-        ...node.channelMessages,
-        {
-          id: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          kind: 'question' as const,
-          text: promptData.message,
-          timestamp: new Date(),
-        },
-      ];
+      return appendChannelMessage(node.channelMessages, {
+        id: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        kind: 'question' as const,
+        text: promptData.message,
+        timestamp: new Date(),
+      });
     },
     [],
   );

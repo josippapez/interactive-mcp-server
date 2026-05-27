@@ -18,7 +18,11 @@ import {
   reResolveStaleSession,
 } from '../../utility/session-client';
 import { IpcHandlerDeps } from './types';
-import { logIpcInfo } from './shared';
+import {
+  getEffectiveMcpPort,
+  getEffectiveOpenCodePort,
+  logIpcInfo,
+} from './shared';
 import { errorMessage } from '../../utils/errors';
 import { withIpcResult } from './ipc-result';
 
@@ -35,13 +39,13 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
         return 'skipped: agentBackend is not opencode';
       }
       const regResult = await registerMcpAcrossReachablePorts({
-        appPort: settings.port,
-        openCodePort: settings.openCodePort,
+        appPort: getEffectiveMcpPort(deps),
+        openCodePort: getEffectiveOpenCodePort(deps),
         promptTimeoutSeconds: settings.promptTimeoutSeconds,
         baseDirectory,
       });
       const syncResult = syncRemoteConfig(
-        settings.port,
+        getEffectiveMcpPort(deps),
         settings.promptTimeoutSeconds,
       );
       return `register=${regResult.status}, config=${syncResult}`;
@@ -78,11 +82,13 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'fetch-opencode-config-defaults',
     withIpcResult(async (_event, baseDirectory?: string) => {
-      const settings = deps.getSettings();
       logIpcInfo(
         `fetch-opencode-config-defaults: baseDirectory=${baseDirectory ?? '<none>'}`,
       );
-      return fetchOpenCodeConfigDefaults(settings.openCodePort, baseDirectory);
+      return fetchOpenCodeConfigDefaults(
+        getEffectiveOpenCodePort(deps),
+        baseDirectory,
+      );
     }),
   );
 
@@ -119,7 +125,7 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
     'detect-opencode-session',
     async (_event, baseDirectory?: string): Promise<string | null> => {
       return autoDetectOpenCodeSessionId(
-        deps.getSettings().openCodePort,
+        getEffectiveOpenCodePort(deps),
         baseDirectory,
       );
     },
@@ -134,7 +140,7 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
       return resolveSession({
         connectionId: data.connectionId,
         backend: settings.agentBackend,
-        openCodePort: settings.openCodePort,
+        openCodePort: getEffectiveOpenCodePort(deps),
         baseDirectory: data.baseDirectory,
       });
     },
@@ -147,7 +153,7 @@ export function registerOpenCodeCoreHandlers(deps: IpcHandlerDeps): void {
       return reResolveStaleSession({
         connectionId: data.connectionId,
         backend: settings.agentBackend,
-        openCodePort: settings.openCodePort,
+        openCodePort: getEffectiveOpenCodePort(deps),
         baseDirectory: data.baseDirectory,
       });
     },

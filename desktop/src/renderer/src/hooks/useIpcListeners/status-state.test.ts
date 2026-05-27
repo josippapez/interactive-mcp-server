@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionNode } from '../../types';
-import { clearTerminalSessionState } from './status-state';
+import {
+  MAX_SESSION_STATUSES,
+  clearTerminalSessionState,
+  trimSessionStatuses,
+} from './status-state';
 
 function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
   return {
@@ -34,6 +38,23 @@ function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
 }
 
 describe('clearTerminalSessionState', () => {
+  it('keeps the newest session statuses when trimming past the cap', () => {
+    const statuses = Array.from(
+      { length: MAX_SESSION_STATUSES + 1 },
+      (_, index) => ({
+        status: `status ${index}`,
+        type: 'info' as const,
+        timestamp: new Date(index),
+      }),
+    );
+
+    const trimmed = trimSessionStatuses(statuses);
+
+    expect(trimmed).toHaveLength(MAX_SESSION_STATUSES);
+    expect(trimmed[0]?.status).toBe('status 1');
+    expect(trimmed.at(-1)?.status).toBe(`status ${MAX_SESSION_STATUSES}`);
+  });
+
   it('clears working statuses and stale pending questions when a session becomes terminal', () => {
     const prev = new Map<string, SessionNode>([
       [

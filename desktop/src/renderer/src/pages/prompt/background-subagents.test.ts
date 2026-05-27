@@ -74,8 +74,24 @@ describe('deriveBackgroundSubagents', () => {
   it('counts only running background subagents', () => {
     expect(
       countRunningBackgroundSubagents([
-        { id: 'ses_running', title: 'Running', status: 'running', depth: 1 },
-        { id: 'ses_ended', title: 'Ended', status: 'ended', depth: 1 },
+        {
+          id: 'ses_running',
+          title: 'Running',
+          status: 'running' as const,
+          depth: 1,
+          model: null,
+          variant: null,
+          isStalled: false,
+        },
+        {
+          id: 'ses_ended',
+          title: 'Ended',
+          status: 'ended' as const,
+          depth: 1,
+          model: null,
+          variant: null,
+          isStalled: false,
+        },
       ]),
     ).toBe(1);
   });

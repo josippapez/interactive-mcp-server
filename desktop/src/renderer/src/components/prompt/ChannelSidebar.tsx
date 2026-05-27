@@ -128,6 +128,7 @@ const ChannelSidebar = memo(function ChannelSidebar({
     handlePinProject,
     handleRemoveProject,
     handleSelectProject,
+    handleLoadMoreSessions,
   } = useSidebarState({ activeConnectionId });
 
   useEffect(() => {
@@ -315,6 +316,7 @@ const ChannelSidebar = memo(function ChannelSidebar({
                 onSelect={onSelect}
                 getStatus={getStatus}
                 onCreateSession={onCreateSession}
+                onLoadMoreSessions={handleLoadMoreSessions}
                 collapsedSessions={collapsedSessions}
                 onToggleSession={handleToggleSession}
                 hasDirectConnections={filteredDirectConnections.length > 0}

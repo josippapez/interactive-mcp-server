@@ -4,6 +4,7 @@ import type {
   OpenCodeFileNode,
   OpenCodeSdkStatus,
   OpenCodeUtilitySnapshot,
+  SessionTreeResult,
   SessionTreeNode,
 } from './types';
 
@@ -53,8 +54,11 @@ export function createOpenCodeSessionsApi() {
     // Returns `null` when the main-process REST fetch failed (cold-start race
     // or transient transport error); the renderer treats `null` as
     // "retry shortly" while `[]` means "no sessions exist".
-    getSessionTree: (): Promise<SessionTreeNode[] | null> =>
+    getSessionTree: (): Promise<SessionTreeResult | null> =>
       ipcRenderer.invoke('get-session-tree'),
+
+    loadMoreSessionTree: (baseDirectory: string): Promise<number> =>
+      ipcRenderer.invoke('load-more-session-tree', baseDirectory),
 
     // Fetch todos for an OpenCode session
     fetchSessionTodos: (

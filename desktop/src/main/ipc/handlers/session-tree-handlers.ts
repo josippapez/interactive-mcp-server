@@ -8,6 +8,10 @@ import {
 import { createOpenCodeSession } from '../../utility/opencode-client';
 import { injectOpenCodeMessage } from '../../utility/opencode-client';
 import {
+  fetchRepositoryIndexStatus,
+  startRepositoryIndex,
+} from '../../utility/repository-index-client';
+import {
   replyToOpenCodeQuestion,
   rejectOpenCodeQuestion,
 } from '../../utility/opencode-client';
@@ -18,6 +22,7 @@ import {
   fetchSessionTree,
   getSelectedFolder,
   invalidateSessionTree,
+  loadMoreSessionTreeForDirectory,
   setSelectedFolder,
 } from '../../utility/session-client';
 import { reconcileSessionConnections } from '../../utility/session-client';
@@ -27,7 +32,11 @@ import {
   AttachmentPayload,
   ModelSelectionPayload,
 } from './types';
-import { logIpcInfo } from './shared';
+import {
+  getEffectiveMcpPort,
+  getEffectiveOpenCodePort,
+  logIpcInfo,
+} from './shared';
 import { writeSessionLog } from '../../utils/session-logger';
 import {
   buildSessionLogOpenResult,
@@ -41,6 +50,13 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('get-session-tree', async () => {
     return fetchSessionTree();
   });
+
+  ipcMain.handle(
+    'load-more-session-tree',
+    async (_event, baseDirectory: string) => {
+      return loadMoreSessionTreeForDirectory(baseDirectory);
+    },
+  );
 
   ipcMain.handle('get-session-log-path', (_event, sessionId: string) => {
     return buildSessionLogFilePath(deps.getLogsDir(), sessionId);
@@ -103,7 +119,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       await setSelectedFolder(nextFolder);
 
       if (nextFolder) {
-        const { openCodePort } = deps.getSettings();
+        const openCodePort = getEffectiveOpenCodePort(deps);
         // Reconcile stale DB entries for this folder before the renderer
         // pulls the fresh tree.
         await reconcileSessionConnections(openCodePort, nextFolder);
@@ -124,7 +140,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
         directory?: string;
       },
     ): Promise<{ ok: boolean; error?: string }> => {
-      const { openCodePort } = deps.getSettings();
+      const openCodePort = getEffectiveOpenCodePort(deps);
       logIpcInfo(
         `reply-permission session=${data.sessionID} request=${data.requestID} reply=${data.reply}`,
       );
@@ -153,7 +169,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       _event,
       data: { requestID: string; answers: string[][]; sessionID: string },
     ): Promise<{ ok: boolean; error?: string }> => {
-      const { openCodePort } = deps.getSettings();
+      const openCodePort = getEffectiveOpenCodePort(deps);
       logIpcInfo(
         `reply-question: requestID=${data.requestID} sessionID=${data.sessionID} answers=${JSON.stringify(data.answers)}`,
       );
@@ -193,7 +209,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       _event,
       data: { requestID: string; sessionID: string },
     ): Promise<{ ok: boolean; error?: string }> => {
-      const { openCodePort } = deps.getSettings();
+      const openCodePort = getEffectiveOpenCodePort(deps);
       logIpcInfo(
         `reject-question: requestID=${data.requestID} sessionID=${data.sessionID}`,
       );
@@ -234,7 +250,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       todos: { content: string; status: string; priority: string }[] | null;
       error?: string;
     }> => {
-      const { openCodePort } = deps.getSettings();
+      const openCodePort = getEffectiveOpenCodePort(deps);
       const todos = await fetchTodosForSession(openCodePort, sessionId);
       if (todos === null) {
         return { todos: null, error: 'Failed to fetch todos' };
@@ -249,7 +265,7 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       _event,
       sessionId: string,
     ): Promise<{ success: boolean; error?: string }> => {
-      const { openCodePort } = deps.getSettings();
+      const openCodePort = getEffectiveOpenCodePort(deps);
       logIpcInfo(
         `abort-session: sessionId=${sessionId} openCodePort=${openCodePort}`,
       );
@@ -333,11 +349,9 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       logIpcInfo(
         `create-opencode-session: title=${data.title ?? '(none)'} parentID=${data.parentID ?? '(none)'} baseDirectory=${data.baseDirectory ?? '(none)'} agent=${data.agent ?? '(none)'}`,
       );
-      const {
-        openCodePort,
-        agentBackend,
-        port: mcpServerPort,
-      } = deps.getSettings();
+      const { agentBackend } = deps.getSettings();
+      const openCodePort = getEffectiveOpenCodePort(deps);
+      const mcpServerPort = getEffectiveMcpPort(deps);
       if (agentBackend !== 'opencode') {
         return {
           ok: false,
@@ -427,6 +441,15 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
           baseDirectory: data.baseDirectory,
           parentSessionId: existing?.parentSessionId ?? data.parentID ?? null,
         });
+        if (deps.getSettings().docIndexingEnabled) {
+          void startRepositoryIndexIfMissing(data.baseDirectory).catch(
+            (error: unknown) => {
+              console.warn(
+                `[repository-index] automatic indexing failed: ${error instanceof Error ? error.message : String(error)}`,
+              );
+            },
+          );
+        }
         const corrected = await getRegisteredConnectionBySessionId(
           result.session.id,
           'opencode',
@@ -455,4 +478,14 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
       return { ok: true, sessionId: result.session?.id };
     },
   );
+}
+
+async function startRepositoryIndexIfMissing(
+  baseDirectory: string,
+): Promise<void> {
+  const status = await fetchRepositoryIndexStatus(baseDirectory);
+  if (status.index?.status === 'ready' || status.index?.status === 'indexing') {
+    return;
+  }
+  await startRepositoryIndex(baseDirectory, true);
 }

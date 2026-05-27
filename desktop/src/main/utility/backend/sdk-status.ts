@@ -1,7 +1,4 @@
-import type {
-  FormatterStatus,
-  LspStatus,
-} from '@opencode-ai/sdk/v2/gen/types.gen.js';
+import type { FormatterStatus, LspStatus } from '@opencode-ai/sdk/v2/client';
 import { getClient } from './sdk-client';
 
 const SDK_STATUS_TIMEOUT_MS = 5_000;

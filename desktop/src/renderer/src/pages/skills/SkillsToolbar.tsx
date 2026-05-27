@@ -99,7 +99,9 @@ export const SkillsToolbar = memo(function SkillsToolbar({
           <Input
             ref={inputRef}
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setSearch(e.target.value)
+            }
             onKeyDown={handleSearchKeyDown}
             onBlur={collapseSearch}
             placeholder="Search…"

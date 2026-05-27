@@ -162,7 +162,7 @@ export function SkillEditor({
   return (
     <Sheet
       open={open}
-      onOpenChange={(nextOpen) => {
+      onOpenChange={(nextOpen: boolean) => {
         onOpenChange(nextOpen);
         if (!nextOpen) onCancel();
       }}
@@ -209,7 +209,7 @@ export function SkillEditor({
                 <Label>Type</Label>
                 <Tabs
                   value={formType}
-                  onValueChange={(val) =>
+                  onValueChange={(val: string) =>
                     setFormType(val as 'skill' | 'instruction')
                   }
                 >
@@ -232,7 +232,7 @@ export function SkillEditor({
                   value={
                     formFolderId === null ? '__none__' : String(formFolderId)
                   }
-                  onValueChange={(val) =>
+                  onValueChange={(val: string) =>
                     setFormFolderId(val === '__none__' ? null : Number(val))
                   }
                 >

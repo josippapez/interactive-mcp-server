@@ -3,6 +3,7 @@ import type { SessionNode } from '../types';
 import {
   groupByProject,
   mergeSessionTreeSnapshot,
+  toPinnedProjectOptions,
   type SnapshotNode,
 } from './session-tree-merge';
 
@@ -57,7 +58,7 @@ function makeSnapshotNode(overrides: Partial<SnapshotNode> = {}): SnapshotNode {
 }
 
 describe('mergeSessionTreeSnapshot', () => {
-  it('preserves persisted session-channel nodes missing from the live snapshot', () => {
+  it('drops stale OpenCode nodes missing from the limited live snapshot', () => {
     const prev = new Map<string, SessionNode>([
       [
         'ses_inactive',
@@ -66,6 +67,16 @@ describe('mergeSessionTreeSnapshot', () => {
           providerSessionId: 'ses_inactive',
           title: 'Inactive Session',
           connectionId: null,
+        }),
+      ],
+      [
+        'direct_agent',
+        makeNode({
+          id: 'direct_agent',
+          providerSessionId: 'direct_agent',
+          title: 'Direct Agent',
+          connectionId: 'direct_agent',
+          isDirectConnection: true,
         }),
       ],
       [
@@ -86,11 +97,8 @@ describe('mergeSessionTreeSnapshot', () => {
       }),
     ]);
 
-    expect(next.has('ses_inactive')).toBe(true);
-    expect(next.get('ses_inactive')).toMatchObject({
-      title: 'Inactive Session',
-      sessionChannel: { sessionId: 'ses_inactive' },
-    });
+    expect(next.has('ses_inactive')).toBe(false);
+    expect(next.has('direct_agent')).toBe(true);
     expect(next.get('ses_live')?.title).toBe('Live Session');
   });
 });
@@ -167,5 +175,70 @@ describe('groupByProject', () => {
     const projects = groupByProject(nodes, ['', '\t', ' ']);
 
     expect(projects).toEqual([]);
+  });
+
+  it('groups empty session directories as Unknown instead of rendering a blank project', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'empty_path',
+        makeNode({
+          id: 'empty_path',
+          providerSessionId: 'empty_path',
+          baseDirectory: '',
+          directory: '',
+        }),
+      ],
+    ]);
+
+    const projects = groupByProject(nodes);
+
+    expect(projects[0].path).toBe('Unknown');
+    expect(projects[0].name).toBe('Unknown');
+  });
+
+  it('attaches per-project pagination metadata', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'project_session',
+        makeNode({
+          id: 'project_session',
+          providerSessionId: 'project_session',
+          baseDirectory: '/tmp/project',
+          directory: '/tmp/project',
+        }),
+      ],
+    ]);
+
+    const projects = groupByProject(
+      nodes,
+      [],
+      new Map([['/tmp/project', { hasMore: true }]]),
+    );
+
+    expect(projects[0].hasMoreSessions).toBe(true);
+  });
+});
+
+describe('toPinnedProjectOptions', () => {
+  it('includes detected session projects that are not pinned so the new-session picker matches the sidebar', () => {
+    const projects = groupByProject(
+      new Map<string, SessionNode>([
+        [
+          'session_project',
+          makeNode({
+            id: 'session_project',
+            providerSessionId: 'session_project',
+            baseDirectory: '/tmp/session-project',
+            directory: '/tmp/session-project',
+          }),
+        ],
+      ]),
+      ['/tmp/pinned-project'],
+    );
+
+    expect(toPinnedProjectOptions(projects)).toEqual([
+      { path: '/tmp/pinned-project', name: 'pinned-project' },
+      { path: '/tmp/session-project', name: 'session-project' },
+    ]);
   });
 });

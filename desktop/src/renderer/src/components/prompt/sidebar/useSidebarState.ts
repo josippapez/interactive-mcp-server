@@ -106,6 +106,10 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     }
   }, [isUserRefreshing, refreshSessionStatus]);
 
+  const handleLoadMoreSessions = useCallback(async (baseDirectory: string) => {
+    await window.api.loadMoreSessionTree?.(baseDirectory);
+  }, []);
+
   // Show the spinner as rotating during cold-start while OpenCode is still
   // coming up and we don't yet have any projects to display. As soon as the
   // backend is healthy and the retry loop has populated the session tree,
@@ -185,5 +189,6 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     handlePinProject,
     handleRemoveProject,
     handleSelectProject,
+    handleLoadMoreSessions,
   };
 }

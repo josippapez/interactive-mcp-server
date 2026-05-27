@@ -72,16 +72,16 @@ beforeEach(() => {
       listTools: sdkMocks.mcpClientListTools,
     };
   });
-  sdkMocks.sseTransport.mockImplementation(function (url) {
+  sdkMocks.sseTransport.mockImplementation(function (url: string) {
     return { type: 'sse', url };
   });
-  sdkMocks.stdioTransport.mockImplementation(function (options) {
+  sdkMocks.stdioTransport.mockImplementation(function (options: unknown) {
     return {
       type: 'stdio',
       options,
     };
   });
-  sdkMocks.streamableHttpTransport.mockImplementation(function (url) {
+  sdkMocks.streamableHttpTransport.mockImplementation(function (url: string) {
     return {
       type: 'streamable-http',
       url,
@@ -152,21 +152,13 @@ describe('matchMcpToolIdToServer', () => {
 });
 
 describe('fetchMcpStatus', () => {
-  it('registers enabled config MCPs missing from status before returning servers', async () => {
-    sdkMocks.mcpStatus
-      .mockResolvedValueOnce({
-        data: {
-          existing: { status: 'connected' },
-        },
-        error: undefined,
-      })
-      .mockResolvedValueOnce({
-        data: {
-          existing: { status: 'connected' },
-          added: { status: 'connected' },
-        },
-        error: undefined,
-      });
+  it('does not dynamically register configured MCPs that are missing from native status', async () => {
+    sdkMocks.mcpStatus.mockResolvedValue({
+      data: {
+        existing: { status: 'connected' },
+      },
+      error: undefined,
+    });
     sdkMocks.configGet.mockResolvedValue({
       data: {
         mcp: {
@@ -193,20 +185,10 @@ describe('fetchMcpStatus', () => {
       { directory: DIRECTORY },
       expect.any(Object),
     );
-    expect(sdkMocks.mcpAdd).toHaveBeenCalledOnce();
-    expect(sdkMocks.mcpAdd).toHaveBeenCalledWith(
-      {
-        name: 'added',
-        config: { type: 'remote', url: 'http://localhost:3000/mcp' },
-      },
-      expect.any(Object),
-    );
-    expect(sdkMocks.mcpStatus).toHaveBeenCalledTimes(2);
+    expect(sdkMocks.mcpAdd).not.toHaveBeenCalled();
+    expect(sdkMocks.mcpStatus).toHaveBeenCalledTimes(1);
     expect(result.ok).toBe(true);
-    expect(result.servers?.map((server) => server.name)).toEqual([
-      'existing',
-      'added',
-    ]);
+    expect(result.servers?.map((server) => server.name)).toEqual(['existing']);
   });
 
   it('maps tool IDs onto returned MCP servers', async () => {

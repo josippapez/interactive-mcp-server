@@ -194,7 +194,9 @@ export function OpenCodeConfigSection(): React.ReactElement {
             <Input
               id="opencode-config-project"
               value={selectedProject}
-              onChange={(e) => setSelectedProject(e.target.value)}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                setSelectedProject(e.target.value)
+              }
               placeholder="/absolute/path/to/project"
             />
           )}
@@ -225,7 +227,9 @@ export function OpenCodeConfigSection(): React.ReactElement {
           <Input
             id="opencode-config-model"
             value={commonFields.model}
-            onChange={(e) => updateCommonField('model', e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              updateCommonField('model', e.target.value)
+            }
             placeholder="anthropic/claude-sonnet-4"
             disabled={!parseResult.ok}
           />
@@ -240,7 +244,9 @@ export function OpenCodeConfigSection(): React.ReactElement {
           <Input
             id="opencode-config-theme"
             value={commonFields.theme}
-            onChange={(e) => updateCommonField('theme', e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              updateCommonField('theme', e.target.value)
+            }
             placeholder="system"
             disabled={!parseResult.ok}
           />
@@ -255,7 +261,9 @@ export function OpenCodeConfigSection(): React.ReactElement {
           <Input
             id="opencode-config-provider"
             value={commonFields.provider}
-            onChange={(e) => updateCommonField('provider', e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              updateCommonField('provider', e.target.value)
+            }
             placeholder="anthropic"
             disabled={!parseResult.ok}
           />

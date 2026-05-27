@@ -24,6 +24,22 @@ const snapshotCache = new Map<
     joined: SessionSnapshot;
   }
 >();
+const snapshotCacheOrder: string[] = [];
+export const SNAPSHOT_CACHE_MAX = 50;
+
+function setSnapshotCache(
+  sessionId: string,
+  entry: NonNullable<ReturnType<typeof snapshotCache.get>>,
+): void {
+  snapshotCache.set(sessionId, entry);
+  const existingIndex = snapshotCacheOrder.indexOf(sessionId);
+  if (existingIndex !== -1) snapshotCacheOrder.splice(existingIndex, 1);
+  snapshotCacheOrder.push(sessionId);
+  while (snapshotCacheOrder.length > SNAPSHOT_CACHE_MAX) {
+    const evicted = snapshotCacheOrder.shift();
+    if (evicted) snapshotCache.delete(evicted);
+  }
+}
 
 function messagePartsUnchanged(
   messages: readonly ConversationMessage[],
@@ -94,7 +110,7 @@ export function selectSession(
   }
 
   const snapshot: SessionSnapshot = { messages: joined, status };
-  snapshotCache.set(sessionId, {
+  setSnapshotCache(sessionId, {
     messages: rawMessages,
     partsByMessageId,
     status,
@@ -117,8 +133,15 @@ export const NULL_SNAPSHOT: SessionSnapshot = {
 
 export function clearSnapshotCache(): void {
   snapshotCache.clear();
+  snapshotCacheOrder.splice(0, snapshotCacheOrder.length);
 }
 
 export function clearSessionSnapshotCache(sessionId: string): void {
   snapshotCache.delete(sessionId);
+  const index = snapshotCacheOrder.indexOf(sessionId);
+  if (index !== -1) snapshotCacheOrder.splice(index, 1);
+}
+
+export function getSnapshotCacheSizeForTests(): number {
+  return snapshotCache.size;
 }

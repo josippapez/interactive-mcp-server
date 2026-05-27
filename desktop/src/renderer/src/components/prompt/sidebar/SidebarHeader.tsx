@@ -84,7 +84,9 @@ export const SidebarHeader = memo(function SidebarHeader({
 
         <Tabs
           value={filter}
-          onValueChange={(value) => onFilterChange(value as ProviderFilter)}
+          onValueChange={(value: string) =>
+            onFilterChange(value as ProviderFilter)
+          }
           className="w-full"
         >
           <TabsList className="flex h-auto w-full flex-wrap items-center justify-start gap-1 bg-transparent p-0">

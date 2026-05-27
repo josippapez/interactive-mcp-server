@@ -47,8 +47,8 @@ export function deriveBackgroundSubagents(
       const status = node.sessionStatuses.some(
         (entry) => entry.type === 'working',
       )
-        ? 'running'
-        : 'ended';
+        ? ('running' as const)
+        : ('ended' as const);
       return {
         id: node.providerSessionId as string,
         title: node.title,

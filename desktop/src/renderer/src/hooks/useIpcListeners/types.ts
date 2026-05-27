@@ -19,6 +19,11 @@ export type IpcListenerOpts = {
   getIsIntentionalNullSelection: () => boolean;
   activateRef: React.RefObject<() => void>;
   setNodes: React.Dispatch<React.SetStateAction<Map<string, SessionNode>>>;
+  setSessionTreeResult: (input: {
+    nodes: Map<string, SessionNode>;
+    limit: number;
+    hasMore: boolean;
+  }) => void;
   /**
    * Select a channel using the global Jotai store.
    * This replaces the old setActiveId dispatch.

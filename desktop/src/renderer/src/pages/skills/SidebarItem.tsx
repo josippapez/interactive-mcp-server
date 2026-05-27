@@ -107,7 +107,7 @@ export const SidebarItem = memo(function SidebarItem({
           />
           <DropdownMenuContent align="end" className="min-w-[160px]">
             <DropdownMenuItem
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.stopPropagation();
                 onToggleEnabled(entry.name, entry.enabled);
               }}
@@ -123,7 +123,7 @@ export const SidebarItem = memo(function SidebarItem({
               <DropdownMenuSubTrigger>Move to folder</DropdownMenuSubTrigger>
               <DropdownMenuSubContent className="min-w-[160px]">
                 <DropdownMenuItem
-                  onClick={(e) => {
+                  onClick={(e: React.MouseEvent) => {
                     e.stopPropagation();
                     onMoveEntry(entry.name, null);
                   }}
@@ -135,7 +135,7 @@ export const SidebarItem = memo(function SidebarItem({
                 {folders.map((f) => (
                   <DropdownMenuItem
                     key={f.id}
-                    onClick={(e) => {
+                    onClick={(e: React.MouseEvent) => {
                       e.stopPropagation();
                       onMoveEntry(entry.name, f.id);
                     }}
@@ -149,7 +149,7 @@ export const SidebarItem = memo(function SidebarItem({
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
-              onClick={(e) => {
+              onClick={(e: React.MouseEvent) => {
                 e.stopPropagation();
                 onDelete(entry.name);
               }}

@@ -1,6 +1,6 @@
 import { memo, useMemo, useState, useRef, useCallback, useEffect } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
-import type { Attachment, SessionStatus } from '../../types';
+import type { Attachment } from '../../types';
 import type { Model } from '../../hooks/useProviders';
 import AttachmentPreview from './AttachmentPreview';
 import AutocompleteDropdown from './AutocompleteDropdown';
@@ -47,6 +47,8 @@ type Props = {
   onNoReplyChange?: (noReply: boolean) => void;
   /** OpenCode session ID for command execution */
   sessionId?: string | null;
+  /** OpenCode provider session ID for repository index status */
+  providerSessionId?: string | null;
   /** Whether the command palette is open (controlled from parent for Cmd+K) */
   commandPaletteOpen?: boolean;
   /** Called when command palette open state changes */
@@ -61,14 +63,7 @@ type Props = {
   onModelSelect?: (model: Model, variant?: string) => void;
   /** Whether this is an OpenCode session (shows model selector) */
   isOpenCodeSession?: boolean;
-  /** Latest session status for inline display */
-  latestStatus?: SessionStatus | null;
-  /** Connection ID for status dismissal */
   connectionId?: string | null;
-  /** Callback to dismiss a status */
-  onDismissStatus?: (connectionId: string, timestamp: Date) => void;
-  /** Whether the agent is busy (shows working indicator) */
-  isBusy?: boolean;
   /** Whether doc context is enabled */
   docContextEnabled?: boolean;
   /** Callback to toggle doc context */
@@ -86,6 +81,7 @@ function ChannelComposer({
   noReply = true,
   onNoReplyChange,
   sessionId,
+  providerSessionId,
   commandPaletteOpen: externalPaletteOpen,
   onCommandPaletteChange,
   modelId,
@@ -93,10 +89,7 @@ function ChannelComposer({
   variant,
   onModelSelect,
   isOpenCodeSession,
-  latestStatus,
   connectionId,
-  onDismissStatus,
-  isBusy = false,
   docContextEnabled = false,
   onToggleDocContext,
 }: Props): React.ReactElement {
@@ -370,10 +363,6 @@ function ChannelComposer({
     ta.style.height = `${newHeight}px`;
   }, [value]);
 
-  // Submit keybinding: Enter submits, Shift+Enter inserts newline (parity
-  // with opencode reference composer). Shortcut label reflects that.
-  const sendShortcut = '↵';
-
   // Handle popover toggle
   const handlePopoverToggle = useCallback(() => {
     if (!modelsLoading) {
@@ -518,13 +507,10 @@ function ChannelComposer({
             onAgentSelect={handleAgentSelect}
             onDefaultAgentResolved={handleDefaultAgentResolved}
             agentBaseDirectory={baseDirectory}
-            isBusy={isBusy}
-            latestStatus={latestStatus}
-            connectionId={connectionId}
-            onDismissStatus={onDismissStatus}
-            sendShortcut={sendShortcut}
             docContextEnabled={docContextEnabled}
             onToggleDocContext={onToggleDocContext}
+            baseDirectory={baseDirectory}
+            providerSessionId={providerSessionId}
             onFilePicker={handleFilePicker}
             showReplyButton={showReplyButton}
             noReply={noReply}

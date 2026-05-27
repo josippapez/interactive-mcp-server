@@ -121,7 +121,9 @@ export function AgentsSection(): React.ReactElement {
           <Input
             id="agents-project-select"
             value={selectedProject}
-            onChange={(e) => setSelectedProject(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setSelectedProject(e.target.value)
+            }
             placeholder="/absolute/path/to/project"
           />
         )}

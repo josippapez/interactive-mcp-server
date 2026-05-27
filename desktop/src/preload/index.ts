@@ -6,6 +6,7 @@ import { createMcpApi } from './api/mcp';
 import { createOpenCodeConfigApi } from './api/opencode-config';
 import { createOpenCodeSessionsApi } from './api/opencode-sessions';
 import { createProvidersApi } from './api/providers';
+import { createRepositoryIndexApi } from './api/repository-index';
 import { createSessionsApi } from './api/sessions';
 import { createSettingsApi } from './api/settings';
 import { createSkillsApi } from './api/skills';
@@ -34,6 +35,10 @@ export type {
   PromptWhen,
   ProviderActionResult,
   ProviderStatus,
+  RepositoryIndexRecord,
+  RepositoryIndexStatus,
+  RepositoryIndexStatusPayload,
+  RepositoryIndexSummary,
   SelectPrompt,
   SessionChannelHistoryRecord,
   NativeOpenCodeSkill,
@@ -59,6 +64,7 @@ const api = {
   ...createSettingsApi(),
   ...createSystemApi(),
   ...createProvidersApi(),
+  ...createRepositoryIndexApi(),
   ...createOpenCodeSessionsApi(),
   ...createOpenCodeConfigApi(),
   ...createAgentsApi(),

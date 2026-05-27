@@ -221,6 +221,36 @@ export type FolderRecord = {
   updatedAt: string;
 };
 
+export type RepositoryIndexStatus = 'idle' | 'indexing' | 'ready' | 'error';
+
+export type RepositoryIndexRecord = {
+  repositoryRoot: string;
+  status: RepositoryIndexStatus;
+  fileCount: number;
+  edgeCount: number;
+  indexedFileCount: number;
+  startedAt: string | null;
+  completedAt: string | null;
+  lastError: string | null;
+  indexVersion: number;
+  watcherEnabled: boolean;
+  updatedAt: string;
+};
+
+export type RepositoryIndexStatusPayload = {
+  repositoryRoot: string;
+  index: RepositoryIndexRecord | null;
+  watchedRepositoryRoots: string[];
+  disabled?: boolean;
+  unavailableReason?: string;
+};
+
+export type RepositoryIndexSummary = {
+  status: RepositoryIndexRecord;
+  filesIndexed: number;
+  edgesIndexed: number;
+};
+
 export type AgentDefinition = {
   name: string;
   filePath: string;
@@ -607,8 +637,8 @@ export type ConversationEvent =
       type: 'session.diff';
       sessionId: string;
       diff: Array<{
-        file: string;
-        patch: string;
+        file?: string;
+        patch?: string;
         additions: number;
         deletions: number;
         status?: 'added' | 'deleted' | 'modified';
@@ -662,4 +692,15 @@ export type SessionTreeNode = {
     deletions: number;
     files: number;
   } | null;
+};
+
+export type SessionTreeResult = {
+  nodes: SessionTreeNode[];
+  limit: number;
+  hasMore: boolean;
+  projectPages: Array<{
+    path: string;
+    limit: number;
+    hasMore: boolean;
+  }>;
 };

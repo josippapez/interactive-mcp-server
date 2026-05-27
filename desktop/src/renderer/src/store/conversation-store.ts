@@ -296,6 +296,9 @@ export function replaceSessionStatusSnapshot(
   });
 }
 
+const subscribeConversationStore = (listener: () => void): (() => void) =>
+  conversationStore.subscribe(listener);
+
 /**
  * Memoizing `useSyncExternalStore` wrapper. Pattern borrowed from
  * `session-graph.ts`: cache the last selector result and return it
@@ -309,7 +312,7 @@ export function useConversationSelector<T>(
   const cacheRef = useRef<T | undefined>(undefined);
 
   return useSyncExternalStore(
-    (listener) => conversationStore.subscribe(listener),
+    subscribeConversationStore,
     () => {
       const next = selector(conversationStore.state);
       const previous = cacheRef.current;

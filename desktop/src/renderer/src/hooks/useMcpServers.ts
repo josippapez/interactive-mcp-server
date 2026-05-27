@@ -42,6 +42,8 @@ type ConversationBatchLike = {
   events: Array<{ type: string; [key: string]: unknown }>;
 };
 
+export const MCP_STATUS_REFRESH_EVENT = 'interactive-mcp:mcp-status-refresh';
+
 export function shouldRefreshMcpStatusForBatch(
   batch: ConversationBatchLike,
 ): boolean {
@@ -137,6 +139,20 @@ export function useMcpServers(
       }
     });
     return unsubscribe;
+  }, [enabled, fetchStatus]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const handleRefreshRequest = () => {
+      void fetchStatus();
+    };
+    window.addEventListener(MCP_STATUS_REFRESH_EVENT, handleRefreshRequest);
+    return () => {
+      window.removeEventListener(
+        MCP_STATUS_REFRESH_EVENT,
+        handleRefreshRequest,
+      );
+    };
   }, [enabled, fetchStatus]);
 
   // Manual refresh

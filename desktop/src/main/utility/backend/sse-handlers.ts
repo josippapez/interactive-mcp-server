@@ -8,7 +8,7 @@
  * RPC/emit so utility code never touches better-sqlite3 directly.
  */
 
-import type { Session } from '@opencode-ai/sdk/v2/gen/types.gen.js';
+import type { Session } from '@opencode-ai/sdk/v2/client';
 import {
   autoRegisterSession,
   reinjectDbContextAfterCompaction,

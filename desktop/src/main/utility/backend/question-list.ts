@@ -30,6 +30,28 @@ export type PendingQuestionRecord = {
 const questionLog = createLogger('question');
 const QUESTION_REPLY_STILL_PENDING_ERROR =
   'Question reply was accepted but the request is still pending.';
+const clearedQuestionRequestIds = new Set<string>();
+
+function serializeQuestionError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
+function isUnknownQuestionRequestError(error: unknown): boolean {
+  return serializeQuestionError(error)
+    .toLowerCase()
+    .includes('reply for unknown request');
+}
+
+function markQuestionCleared(requestID: string): void {
+  clearedQuestionRequestIds.add(requestID);
+}
 
 async function resolveSessionDirectory(
   openCodePort: number,
@@ -113,6 +135,7 @@ export async function fetchPendingQuestions(
         continue;
       }
       for (const question of result.value) {
+        if (clearedQuestionRequestIds.has(question.requestId)) continue;
         if (!byRequestId.has(question.requestId)) {
           byRequestId.set(question.requestId, question);
         }
@@ -124,6 +147,10 @@ export async function fetchPendingQuestions(
     questionLog.error(`fetchPendingQuestions error: ${errorMessage(err)}`);
     return [];
   }
+}
+
+export function _resetClearedQuestionRequestIdsForTest(): void {
+  clearedQuestionRequestIds.clear();
 }
 
 export async function replyToOpenCodeQuestion(
@@ -150,10 +177,37 @@ export async function replyToOpenCodeQuestion(
     });
 
     if (result.error) {
+      const serializedError = serializeQuestionError(result.error as unknown);
       questionLog.error(
-        `reply error session=${sessionID} request=${requestID} error=${String(result.error)}`,
+        `reply error session=${sessionID} request=${requestID} error=${serializedError}`,
       );
-      return { ok: false, error: String(result.error) };
+      if (isUnknownQuestionRequestError(result.error as unknown)) {
+        markQuestionCleared(requestID);
+        questionLog.info(
+          `reply error says question is unknown session=${sessionID} request=${requestID}; suppressing stale pending item`,
+        );
+        return { ok: true };
+      }
+      // Even though the reply returned an error, the question may have already
+      // been consumed by OpenCode (for example, "reply for unknown request"
+      // means it
+      // timed out or was cleared server-side). Check whether the question is
+      // still pending and treat its absence as a success. This prevents the
+      // caller from showing a stuck question that the user retries indefinitely.
+      const listAfterError = await client.question.list({
+        directory: effectiveDirectory,
+      });
+      const isStillPendingAfterError = (listAfterError.data ?? []).some(
+        (item) => item?.id === requestID,
+      );
+      if (!isStillPendingAfterError) {
+        markQuestionCleared(requestID);
+        questionLog.info(
+          `reply error but question already cleared session=${sessionID} request=${requestID}; treating as success`,
+        );
+        return { ok: true };
+      }
+      return { ok: false, error: serializedError };
     }
 
     const listResult = await client.question.list({
@@ -163,6 +217,7 @@ export async function replyToOpenCodeQuestion(
       (item) => item?.id === requestID,
     );
     if (!stillPending) {
+      markQuestionCleared(requestID);
       questionLog.info(
         `reply success session=${sessionID} request=${requestID}`,
       );
@@ -179,10 +234,18 @@ export async function replyToOpenCodeQuestion(
       answers,
     });
     if (retry.error) {
+      const serializedError = serializeQuestionError(retry.error as unknown);
       questionLog.error(
-        `reply retry error session=${sessionID} request=${requestID} error=${String(retry.error)}`,
+        `reply retry error session=${sessionID} request=${requestID} error=${serializedError}`,
       );
-      return { ok: false, error: String(retry.error) };
+      if (isUnknownQuestionRequestError(retry.error as unknown)) {
+        markQuestionCleared(requestID);
+        questionLog.info(
+          `reply retry error says question is unknown session=${sessionID} request=${requestID}; suppressing stale pending item`,
+        );
+        return { ok: true };
+      }
+      return { ok: false, error: serializedError };
     }
 
     const listAfterRetry = await unscopedClient.question.list();
@@ -196,6 +259,7 @@ export async function replyToOpenCodeQuestion(
       return { ok: false, error: QUESTION_REPLY_STILL_PENDING_ERROR };
     }
 
+    markQuestionCleared(requestID);
     questionLog.info(`reply success session=${sessionID} request=${requestID}`);
     return { ok: true };
   } catch (err: unknown) {

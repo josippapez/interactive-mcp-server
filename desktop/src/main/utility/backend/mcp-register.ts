@@ -68,10 +68,16 @@ async function isMcpAlreadyConnected(
 
     const existingStatus = statusResponse.data?.[mcpName]?.status;
     const existingConfig = configResponse.data?.mcp?.[mcpName];
+    const isRemoteConfig =
+      existingConfig != null &&
+      'type' in existingConfig &&
+      existingConfig.type === 'remote' &&
+      'url' in existingConfig;
     return (
       existingStatus === 'connected' &&
-      existingConfig?.type === 'remote' &&
-      existingConfig.url === `http://localhost:${appPort}/mcp`
+      isRemoteConfig &&
+      (existingConfig as { url: string }).url ===
+        `http://localhost:${appPort}/mcp`
     );
   } catch {
     return false;

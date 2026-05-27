@@ -792,6 +792,7 @@ export const HighlightedCodeBlock = memo(function HighlightedCodeBlock({
   preClassName,
   containerClassName,
   copySlot = 'bash-copy',
+  autoScroll = false,
 }: {
   text: string;
   language: BundledLanguage;
@@ -799,10 +800,12 @@ export const HighlightedCodeBlock = memo(function HighlightedCodeBlock({
   preClassName?: string;
   containerClassName?: string;
   copySlot?: string;
+  autoScroll?: boolean;
 }): React.ReactElement {
   const settings = useSettings();
   const updateSettings = useUpdateSettings();
   const wrapLines = settings.wrapCodeBlocks;
+  const preRef = useRef<HTMLPreElement | null>(null);
 
   const [tokenized, setTokenized] = useState<ThemedToken[][] | null>(() => {
     const cached = highlightCode(text, language);
@@ -811,9 +814,13 @@ export const HighlightedCodeBlock = memo(function HighlightedCodeBlock({
 
   useEffect(() => {
     let cancelled = false;
-    const cached = highlightCode(text, language, (result) => {
-      if (!cancelled) setTokenized(result.tokens);
-    });
+    const cached = highlightCode(
+      text,
+      language,
+      (result: { tokens: ThemedToken[][] }) => {
+        if (!cancelled) setTokenized(result.tokens);
+      },
+    );
     setTokenized(cached ? cached.tokens : null);
     return () => {
       cancelled = true;
@@ -830,6 +837,19 @@ export const HighlightedCodeBlock = memo(function HighlightedCodeBlock({
       // Non-fatal: optimistic state still applied this session.
     }
   };
+
+  useLayoutEffect(() => {
+    if (!autoScroll) return;
+    const pre = preRef.current;
+    if (!pre) return;
+    const frame = window.requestAnimationFrame(() => {
+      pre.scrollTop = pre.scrollHeight;
+      if (pre.parentElement) {
+        pre.parentElement.scrollTop = pre.parentElement.scrollHeight;
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [autoScroll, text]);
 
   const lines = text.split('\n');
 
@@ -853,6 +873,7 @@ export const HighlightedCodeBlock = memo(function HighlightedCodeBlock({
         data-wrap={wrapLines ? 'true' : 'false'}
       >
         <pre
+          ref={preRef}
           data-slot="bash-pre"
           className={preClassName}
           data-wrap={wrapLines ? 'true' : 'false'}
@@ -894,5 +915,18 @@ export function guessOutputLanguage(text: string): BundledLanguage | null {
       // fallthrough
     }
   }
+
+  if (looksLikeBashOutput(trimmed)) return 'bash';
+
   return null;
+}
+
+const BASH_PROMPT_RE = /^(?:[$#]|>)\s+\S+/;
+const BASH_COMMAND_RE =
+  /^(?:bun|cd|chmod|cp|curl|docker|git|ls|mkdir|mv|node|npm|npx|pnpm|python3?|rm|touch|yarn)\b/;
+
+function looksLikeBashOutput(text: string): boolean {
+  return text
+    .split('\n')
+    .some((line) => BASH_PROMPT_RE.test(line) || BASH_COMMAND_RE.test(line));
 }

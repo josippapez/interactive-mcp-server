@@ -115,6 +115,8 @@ const MessageItem = memo(function MessageItem({
   onKeyNavigate,
 }: MessageItemProps): React.ReactElement {
   const settings = useSettings();
+  const msgRef = useRef(msg);
+  msgRef.current = msg;
   const roleLabel = unifiedRoleLabel(msg);
   const costInfo = formatCost(msg.cost);
   const { agentBadgeLabel, effortBadge, modelLabel } =
@@ -217,9 +219,9 @@ const MessageItem = memo(function MessageItem({
   }, [copy, msg.id, closeMenu]);
 
   const handleCopyRawMessage = useCallback(() => {
-    void copy(JSON.stringify(msg, null, 2));
+    void copy(JSON.stringify(msgRef.current, null, 2));
     closeMenu();
-  }, [copy, msg, closeMenu]);
+  }, [copy, closeMenu]);
 
   const handleCopyTools = useCallback(() => {
     const tools = msg.toolCalls ?? [];

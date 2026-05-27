@@ -4,6 +4,7 @@ import {
   injectWithSessionRecovery,
   buildInjectionSuccessStatus,
 } from './provider-injection-flow';
+import { trimSessionStatuses } from './useIpcListeners/status-state';
 
 type WithNodeFn = (
   id: string,
@@ -179,7 +180,7 @@ export function useProviderInjection(
               channelMessages: n.channelMessages.map((m) =>
                 m.id === outboundId ? { ...m, sent: result.ok } : m,
               ),
-              sessionStatuses: [
+              sessionStatuses: trimSessionStatuses([
                 ...n.sessionStatuses,
                 {
                   status: result.ok
@@ -188,7 +189,7 @@ export function useProviderInjection(
                   type: result.ok ? 'success' : 'error',
                   timestamp: new Date(),
                 },
-              ],
+              ]),
             }));
           }
         } catch (err: unknown) {
@@ -200,14 +201,14 @@ export function useProviderInjection(
               channelMessages: n.channelMessages.map((m) =>
                 m.id === outboundId ? { ...m, sent: false } : m,
               ),
-              sessionStatuses: [
+              sessionStatuses: trimSessionStatuses([
                 ...n.sessionStatuses,
                 {
                   status: `Claude SDK inject error: ${msg}`,
                   type: 'error' as const,
                   timestamp: new Date(),
                 },
-              ],
+              ]),
             }));
           }
         }
@@ -233,14 +234,14 @@ export function useProviderInjection(
         if (ambiguousKey) {
           withNode(ambiguousKey, (n) => ({
             ...n,
-            sessionStatuses: [
+            sessionStatuses: trimSessionStatuses([
               ...n.sessionStatuses,
               {
                 status: `Session routing ambiguous: ${resolved.message ?? 'multiple candidates'}. Message queued locally.`,
                 type: 'working',
                 timestamp: new Date(),
               },
-            ],
+            ]),
             // Mark message as sent (it's in the SQLite queue for polling)
             channelMessages: n.channelMessages.map((m) =>
               m.id === outboundId ? { ...m, sent: true } : m,
@@ -343,7 +344,7 @@ export function useProviderInjection(
                 result.retried,
               )
                 ? {
-                    sessionStatuses: [
+                    sessionStatuses: trimSessionStatuses([
                       ...n.sessionStatuses,
                       {
                         status: buildInjectionSuccessStatus(
@@ -353,7 +354,7 @@ export function useProviderInjection(
                         type: 'success' as const,
                         timestamp: new Date(),
                       },
-                    ],
+                    ]),
                   }
                 : {}),
             }));
@@ -379,7 +380,7 @@ export function useProviderInjection(
               ...(result.sessionId !== providerSessionId
                 ? { providerSessionId: result.sessionId }
                 : {}),
-              sessionStatuses: [
+              sessionStatuses: trimSessionStatuses([
                 ...n.sessionStatuses,
                 ...(result.retried
                   ? [
@@ -396,7 +397,7 @@ export function useProviderInjection(
                   type: 'error' as const,
                   timestamp: new Date(),
                 },
-              ],
+              ]),
             };
           });
         } else {
@@ -422,14 +423,14 @@ export function useProviderInjection(
             channelMessages: n.channelMessages.map((m) =>
               m.id === outboundId ? { ...m, sent: false } : m,
             ),
-            sessionStatuses: [
+            sessionStatuses: trimSessionStatuses([
               ...n.sessionStatuses,
               {
                 status: `Provider inject error: ${msg}`,
                 type: 'error' as const,
                 timestamp: new Date(),
               },
-            ],
+            ]),
           }));
         }
       }

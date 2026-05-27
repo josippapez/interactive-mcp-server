@@ -38,7 +38,8 @@ describe('opencode-mapping', () => {
 
     expect(mapPart(part)?.toolMetadata).toEqual({
       exitCode: 0,
-      attachments: part.state.attachments,
+      attachments:
+        part.state.status === 'completed' ? part.state.attachments : undefined,
     });
     expect(mapPart(part)?.toolTitle).toBe('Run tests');
   });
@@ -128,6 +129,16 @@ describe('opencode-mapping', () => {
       parentID: 'user_1',
       modelID: 'gpt-5.5',
       providerID: 'github-copilot',
+      mode: 'build',
+      agent: 'build',
+      path: { cwd: '/repo', root: '/repo' },
+      cost: 0,
+      tokens: {
+        input: 0,
+        output: 0,
+        reasoning: 0,
+        cache: { read: 0, write: 0 },
+      },
       variant: 'default',
     };
 

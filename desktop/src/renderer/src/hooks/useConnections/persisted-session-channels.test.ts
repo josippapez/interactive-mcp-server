@@ -38,7 +38,7 @@ function makeNode(overrides: Partial<SessionNode> = {}): SessionNode {
 }
 
 describe('hydratePersistedSessionChannels', () => {
-  it('adds persisted channels that are missing from the live session tree', () => {
+  it('does not add persisted channels that are missing from the live session tree by default', () => {
     const prev = new Map<string, SessionNode>([['ses_live', makeNode()]]);
 
     const persisted: PersistedSessionChannel[] = [
@@ -60,7 +60,27 @@ describe('hydratePersistedSessionChannels', () => {
 
     const next = hydratePersistedSessionChannels(prev, persisted);
 
-    expect(next.size).toBe(2);
+    expect(next.size).toBe(1);
+    expect(next.has('ses_persisted')).toBe(false);
+  });
+
+  it('adds missing persisted channels when auto-restore is enabled', () => {
+    const prev = new Map<string, SessionNode>([['ses_live', makeNode()]]);
+
+    const persisted: PersistedSessionChannel[] = [
+      {
+        sessionId: 'ses_persisted',
+        label: 'Persisted Session',
+        createdAt: '2026-04-22T09:00:00.000Z',
+        providerSessionId: null,
+        parentSessionId: null,
+      },
+    ];
+
+    const next = hydratePersistedSessionChannels(prev, persisted, {
+      includeMissing: true,
+    });
+
     expect(next.get('ses_persisted')).toMatchObject({
       id: 'ses_persisted',
       providerSessionId: 'ses_persisted',
@@ -112,5 +132,21 @@ describe('hydratePersistedSessionChannels', () => {
       hasPendingPrompt: true,
       sessionChannel: { sessionId: 'ses_live', label: 'Persisted Label' },
     });
+  });
+
+  it('does not hydrate orphaned transport UUID channels as OpenCode sessions', () => {
+    const persisted: PersistedSessionChannel[] = [
+      {
+        sessionId: '871a6bf8-1a26-43e0-801f-9be84d7118a7',
+        label: 'OpenCode - Main Channel',
+        createdAt: '2026-05-25T10:44:29.388Z',
+        providerSessionId: null,
+        parentSessionId: null,
+      },
+    ];
+
+    const next = hydratePersistedSessionChannels(new Map(), persisted);
+
+    expect(next.size).toBe(0);
   });
 });

@@ -23,6 +23,7 @@ vi.mock('./session', () => ({
 }));
 
 import {
+  _resetClearedQuestionRequestIdsForTest,
   fetchPendingQuestions,
   replyToOpenCodeQuestion,
   rejectPendingQuestionsForSession,
@@ -44,6 +45,7 @@ beforeEach(() => {
   mocks.getClient.mockReset();
   mocks.fetchAllOpenCodeSessions.mockReset();
   mocks.fetchOpenCodeSession.mockReset();
+  _resetClearedQuestionRequestIdsForTest();
   mocks.fetchAllOpenCodeSessions.mockResolvedValue([]);
   mocks.fetchOpenCodeSession.mockResolvedValue(null);
 });
@@ -212,6 +214,60 @@ describe('replyToOpenCodeQuestion', () => {
       answers: [['Yes']],
       directory: '/repo-a',
     });
+  });
+
+  it('treats reply as success when the server returns an error but the question is already cleared', async () => {
+    // Simulates a structured SDK error where OpenCode has also removed the
+    // question from the pending list. The desktop should detect that the
+    // question is gone and return ok:true instead of propagating the error.
+    const reply = vi
+      .fn()
+      .mockResolvedValue({ error: { message: 'request failed' } });
+    const list = vi.fn().mockResolvedValue({ data: [] }); // question already gone
+    mocks.getRegisteredConnectionBySessionId.mockResolvedValue({
+      providerType: 'opencode',
+      providerSessionId: 'ses_a',
+      baseDirectory: '/repo-a',
+    });
+    mocks.getClient.mockReturnValue({ question: { reply, list } });
+
+    const result = await replyToOpenCodeQuestion(
+      PORT,
+      'req_a',
+      [['Yes']],
+      'ses_a',
+    );
+
+    expect(result).toEqual({ ok: true });
+    expect(list).toHaveBeenCalledTimes(1);
+  });
+
+  it('suppresses a stale pending question when OpenCode reports it as unknown', async () => {
+    const reply = vi
+      .fn()
+      .mockResolvedValue({ error: { message: 'reply for unknown request' } });
+    const list = vi
+      .fn()
+      .mockResolvedValue({ data: [question('req_unknown', 'ses_a')] });
+    mocks.getAllRegisteredConnections.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_a',
+        baseDirectory: '/repo-a',
+      },
+    ]);
+    mocks.getRegisteredConnectionBySessionId.mockResolvedValue({
+      providerType: 'opencode',
+      providerSessionId: 'ses_a',
+      baseDirectory: '/repo-a',
+    });
+    mocks.getClient.mockReturnValue({ question: { reply, list } });
+
+    await expect(
+      replyToOpenCodeQuestion(PORT, 'req_unknown', [['Yes']], 'ses_a'),
+    ).resolves.toEqual({ ok: true });
+
+    await expect(fetchPendingQuestions(PORT)).resolves.toEqual([]);
   });
 
   it('retries unscoped and reports failure when the question remains pending', async () => {

@@ -132,7 +132,7 @@ function VcsBadge({ vcsInfo }: { vcsInfo: VcsInfo }): React.ReactElement {
   );
 }
 
-export default function ChannelHeader({
+function ChannelHeader({
   label,
   sessionId,
   promptActive,
@@ -867,8 +867,10 @@ export default function ChannelHeader({
                   ref={searchInputRef}
                   type="text"
                   value={searchQuery}
-                  onChange={(e) => onSearchQueryChange(e.target.value)}
-                  onKeyDown={(e) => {
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                    onSearchQueryChange(e.target.value)
+                  }
+                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       if (e.shiftKey) {
@@ -970,3 +972,5 @@ export default function ChannelHeader({
     </>
   );
 }
+
+export default React.memo(ChannelHeader);

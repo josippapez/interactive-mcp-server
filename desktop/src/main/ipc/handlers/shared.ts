@@ -53,3 +53,13 @@ export async function withSkillSuggestion(message: string): Promise<string> {
 export function logIpcInfo(message: string): void {
   ipcLog.info(message);
 }
+
+export function getEffectiveOpenCodePort(deps: IpcHandlerDeps): number {
+  const resolvedPort = deps.getResolvedPorts().openCode;
+  return resolvedPort ?? deps.getSettings().openCodePort;
+}
+
+export function getEffectiveMcpPort(deps: IpcHandlerDeps): number {
+  const resolvedPort = deps.getResolvedPorts().mcp;
+  return resolvedPort ?? deps.getSettings().port;
+}

@@ -26,7 +26,7 @@ import {
   getProjectAgentDir,
 } from '../../utils/opencode-paths';
 import { getClient } from './sdk-client';
-import type { Agent as SdkAgent } from '@opencode-ai/sdk/v2/gen/types.gen.js';
+import type { Agent as SdkAgent } from '@opencode-ai/sdk/v2/client';
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

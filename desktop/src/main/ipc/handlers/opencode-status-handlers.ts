@@ -13,24 +13,27 @@ import {
 } from '../../utility/opencode-client';
 import { withIpcResult } from './ipc-result';
 import { IpcHandlerDeps } from './types';
+import { getEffectiveOpenCodePort } from './shared';
 
 export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'get-pending-permissions',
     async (_event, baseDirectory?: string) => {
-      const { openCodePort, agentBackend } = deps.getSettings();
+      const { agentBackend } = deps.getSettings();
       if (agentBackend !== 'opencode') {
         return [];
       }
+      const openCodePort = getEffectiveOpenCodePort(deps);
       return fetchPendingPermissions(openCodePort, baseDirectory);
     },
   );
 
   ipcMain.handle('get-pending-questions', async () => {
-    const { openCodePort, agentBackend } = deps.getSettings();
+    const { agentBackend } = deps.getSettings();
     if (agentBackend !== 'opencode') {
       return [];
     }
+    const openCodePort = getEffectiveOpenCodePort(deps);
     return fetchPendingQuestions(openCodePort);
   });
 
@@ -42,14 +45,8 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
       version: string | null;
       error?: string;
     }> => {
-      const { openCodePort, agentBackend } = deps.getSettings();
-      console.log(
-        `[health-check] agentBackend=${agentBackend} openCodePort=${openCodePort}`,
-      );
+      const { agentBackend } = deps.getSettings();
       if (agentBackend !== 'opencode') {
-        console.log(
-          `[health-check] Backend is not opencode, returning unavailable`,
-        );
         return {
           available: false,
           healthy: false,
@@ -57,11 +54,8 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
           error: `OpenCode backend not enabled (current: ${agentBackend})`,
         };
       }
-      const result = await checkOpenCodeHealth(openCodePort);
-      console.log(
-        `[health-check] Result: available=${result.available} healthy=${result.healthy} error=${result.error ?? 'none'}`,
-      );
-      return result;
+      const openCodePort = getEffectiveOpenCodePort(deps);
+      return checkOpenCodeHealth(openCodePort);
     },
   );
 
@@ -74,10 +68,11 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
       branch: string | null;
       defaultBranch: string | null;
     } | null> => {
-      const { openCodePort, agentBackend } = deps.getSettings();
+      const { agentBackend } = deps.getSettings();
       if (agentBackend !== 'opencode') {
         return null;
       }
+      const openCodePort = getEffectiveOpenCodePort(deps);
       return fetchVcsInfo(openCodePort, baseDirectory);
     },
   );
@@ -85,10 +80,11 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'fetch-opencode-sdk-status',
     withIpcResult(async (_event, baseDirectory?: string) => {
-      const { openCodePort, agentBackend } = deps.getSettings();
+      const { agentBackend } = deps.getSettings();
       if (agentBackend !== 'opencode') {
         return { lsp: [], formatter: [] };
       }
+      const openCodePort = getEffectiveOpenCodePort(deps);
       return fetchOpenCodeSdkStatus(openCodePort, baseDirectory);
     }),
   );
@@ -96,10 +92,11 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
     'fetch-opencode-utility-snapshot',
     withIpcResult(async (_event, baseDirectory?: string) => {
-      const { openCodePort, agentBackend } = deps.getSettings();
+      const { agentBackend } = deps.getSettings();
       if (agentBackend !== 'opencode') {
         return { path: null, project: null, toolIds: [], fileStatus: [] };
       }
+      const openCodePort = getEffectiveOpenCodePort(deps);
       return fetchOpenCodeUtilitySnapshot(openCodePort, baseDirectory);
     }),
   );
@@ -116,8 +113,9 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
           type?: 'file' | 'directory';
         },
       ) => {
-        const { openCodePort, agentBackend } = deps.getSettings();
+        const { agentBackend } = deps.getSettings();
         if (agentBackend !== 'opencode') return [];
+        const openCodePort = getEffectiveOpenCodePort(deps);
         return findOpenCodeFiles(openCodePort, options);
       },
     ),
@@ -133,8 +131,9 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
           baseDirectory?: string;
         },
       ) => {
-        const { openCodePort, agentBackend } = deps.getSettings();
+        const { agentBackend } = deps.getSettings();
         if (agentBackend !== 'opencode') return [];
+        const openCodePort = getEffectiveOpenCodePort(deps);
         return listOpenCodeFiles(openCodePort, options);
       },
     ),
@@ -146,10 +145,11 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
       string,
       { type: 'busy' | 'idle' | 'error' | 'unknown' }
     > | null> => {
-      const { openCodePort, agentBackend } = deps.getSettings();
+      const { agentBackend } = deps.getSettings();
       if (agentBackend !== 'opencode') {
         return null;
       }
+      const openCodePort = getEffectiveOpenCodePort(deps);
       return fetchSessionStatus(openCodePort);
     },
   );

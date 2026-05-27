@@ -1,7 +1,7 @@
 import type { HandlerContext, SessionStatusType } from './types';
 import { findKeyByConnectionId } from './helpers';
 import type { ConversationEvent } from '../../../../preload/api/types';
-import { clearTerminalSessionState } from './status-state';
+import { clearTerminalSessionState, trimSessionStatuses } from './status-state';
 import type { SessionNode } from '../../types';
 
 /**
@@ -83,7 +83,7 @@ function applySideChannelStatus(
   const next = new Map(prev);
   next.set(nodeId, {
     ...node,
-    sessionStatuses: [
+    sessionStatuses: trimSessionStatuses([
       ...node.sessionStatuses.filter(
         (status) =>
           !(
@@ -97,7 +97,7 @@ function applySideChannelStatus(
         type: sideChannelStatus.type,
         timestamp,
       },
-    ],
+    ]),
   });
   return next;
 }
@@ -117,14 +117,14 @@ function applyConversationStatus(
     const next = new Map(prev);
     next.set(nodeId, {
       ...node,
-      sessionStatuses: [
+      sessionStatuses: trimSessionStatuses([
         ...node.sessionStatuses,
         {
           status: 'Session active',
           type: 'working',
           timestamp,
         },
-      ],
+      ]),
     });
     return next;
   }
@@ -183,14 +183,14 @@ export function useStatusHandlers({
               );
         next.set(nodeId, {
           ...node,
-          sessionStatuses: [
+          sessionStatuses: trimSessionStatuses([
             ...previousStatuses,
             {
               status: data.status,
               type: incomingType,
               timestamp: new Date(),
             },
-          ],
+          ]),
         });
         return next;
       });

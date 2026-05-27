@@ -298,7 +298,9 @@ export const SkillsTree = memo(function SkillsTree({
           <Input
             autoFocus
             value={newFolderName}
-            onChange={(e) => setNewFolderName(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setNewFolderName(e.target.value)
+            }
             onKeyDown={handleNewFolderKeyDown}
             onBlur={() => void handleCreateFolder()}
             placeholder="Folder name…"

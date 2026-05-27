@@ -1,4 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { usePinnedProjects } from '../../components/prompt/sidebar/usePinnedProjects';
+import { toPinnedProjectOptions } from '../../hooks/session-tree-merge';
+import { useSessionGraphProjects } from '../../store/session-graph';
 import type { Attachment } from '../../types';
 import type { PendingNewSessionAgent } from './pending-agent-assignment';
 
@@ -11,9 +14,12 @@ type CreateSessionModelSelection = {
 export function usePromptProjectState(
   onSelectConnection: (connectionId: string | null) => void,
 ) {
-  const [pinnedProjects, setPinnedProjects] = useState<
-    { path: string; name: string }[]
-  >([]);
+  const { pinnedPaths } = usePinnedProjects();
+  const projects = useSessionGraphProjects(pinnedPaths);
+  const pinnedProjects = useMemo(
+    () => toPinnedProjectOptions(projects),
+    [projects],
+  );
   const [pendingNewSessionProject, setPendingNewSessionProject] = useState<
     string | null
   >(null);
@@ -27,23 +33,6 @@ export function usePromptProjectState(
   // the user's choice instead of falling back to "default".
   const [pendingNewSessionAgent, setPendingNewSessionAgent] =
     useState<PendingNewSessionAgent | null>(null);
-
-  useEffect(() => {
-    const loadPinnedProjects = async () => {
-      const projects = await window.api.getPinnedProjects();
-      setPinnedProjects(projects.map((p) => ({ path: p.path, name: p.name })));
-    };
-    void loadPinnedProjects();
-    // Subscribe to live updates so the new-session dropdown reflects folders
-    // added/removed via the project rail (or any other surface). Without this
-    // the dropdown showed a stale snapshot taken at mount time.
-    const unsubscribe = window.api.onPinnedProjectsUpdated(() => {
-      void loadPinnedProjects();
-    });
-    return () => {
-      unsubscribe?.();
-    };
-  }, []);
 
   const handleCreateSession = useCallback(
     async (
@@ -95,7 +84,6 @@ export function usePromptProjectState(
     const name = folderPath.split('/').filter(Boolean).pop() || folderPath;
     if (!name.trim()) return null;
     await window.api.addPinnedProject(folderPath, name);
-    setPinnedProjects((prev) => [...prev, { path: folderPath, name }]);
     return folderPath;
   }, []);
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { IpcResult } from '@/lib/ipc-result';
+import type { IpcResult } from '../lib/ipc-result';
 
 /**
  * Result of `useIpcQuery`.

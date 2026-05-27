@@ -31,6 +31,7 @@ import { buildStartupContextMessage } from './startup-context';
 import { createLogger } from '../../utils/logger';
 import { invalidateSessionTree } from './session-tree-service';
 import type { SessionInfo } from './session-types';
+import { startMissingIndexForBaseDirectory } from './repository-index/autostart';
 
 const log = createLogger('session-auto-register');
 
@@ -172,6 +173,7 @@ export function autoRegisterSession(
       baseDirectory: effectiveBaseDirectory,
       parentSessionId: info.parentID ?? undefined,
     });
+    startMissingIndexForBaseDirectory(effectiveBaseDirectory);
     log.info(`registered connection upserted for session ${info.id}`);
 
     // Build the skills/instructions context payload INSIDE the transaction

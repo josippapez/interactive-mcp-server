@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { ConversationMessage } from '../../../preload/api/types';
 import type { ConversationState } from '../store/conversation-reducer';
 import {
+  SNAPSHOT_CACHE_MAX,
   clearSnapshotCache,
+  getSnapshotCacheSizeForTests,
   selectSession,
   shallowEqualMessage,
 } from './useConversation.helpers';
@@ -68,7 +70,7 @@ describe('useConversation.helpers', () => {
 
   it('reuses snapshots when unrelated session parts change', () => {
     const message = makeMessage({ id: 'msg-1', sessionId: 'ses-1' });
-    const part = { id: 'part-1', type: 'text', text: 'hello' };
+    const part = { id: 'part-1', type: 'text' as const, text: 'hello' };
     const initial: ConversationState = {
       ...makeState(message),
       parts: { 'msg-1': [part] },
@@ -84,5 +86,15 @@ describe('useConversation.helpers', () => {
     );
 
     expect(updatedSnapshot).toBe(initialSnapshot);
+  });
+
+  it('evicts old session snapshots after the cache cap', () => {
+    for (let index = 0; index < SNAPSHOT_CACHE_MAX + 1; index += 1) {
+      const sessionId = `ses-${index}`;
+      const message = makeMessage({ id: `msg-${index}`, sessionId });
+      selectSession(makeState(message), sessionId);
+    }
+
+    expect(getSnapshotCacheSizeForTests()).toBe(SNAPSHOT_CACHE_MAX);
   });
 });

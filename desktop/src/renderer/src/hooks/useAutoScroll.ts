@@ -224,6 +224,14 @@ export function useAutoScroll(
   useEffect(() => {
     onStickyChangeRef.current = onStickyChange;
   }, [onStickyChange]);
+  // Keep working in a ref so the ResizeObserver closure always reads the
+  // latest value without needing to be listed as a dep (which causes the
+  // observer to disconnect/reconnect on every busy-state toggle, creating a
+  // gap where resize events are missed at the start of streaming).
+  const workingRef = useRef(options.working);
+  useEffect(() => {
+    workingRef.current = options.working;
+  }, [options.working]);
   // Keep refs in sync with React state so event handlers always read fresh values.
   useEffect(() => {
     stickyRef.current = isStickyToBottom;
@@ -393,7 +401,7 @@ export function useAutoScroll(
         syncDerivedState();
         return;
       }
-      if (options.working && stickyRef.current) {
+      if (workingRef.current && stickyRef.current) {
         scrollToBottomInternal('auto', false);
         return;
       }
@@ -403,7 +411,7 @@ export function useAutoScroll(
     observer.observe(content);
 
     return () => observer.disconnect();
-  }, [options.working, scrollToBottomInternal, setSticky, syncDerivedState]);
+  }, [scrollToBottomInternal, setSticky, syncDerivedState]);
 
   // External stick-to-bottom preference (Bug 3). When the consumer flips the
   // preference (e.g. via the toggle button or on channel switch), reflect it

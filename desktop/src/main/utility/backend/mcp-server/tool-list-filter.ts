@@ -73,12 +73,12 @@ export function applyHiddenToolListFilter(server: McpServer): void {
       cachedSignature === signature &&
       cachedRegisteredTools &&
       cachedToolList &&
-      cachedRegisteredTools.length === visibleEntries.length &&
-      visibleEntries.every(
-        ([, tool], index) => cachedRegisteredTools[index] === tool,
-      )
+      cachedRegisteredTools.length === visibleEntries.length
     ) {
-      return { tools: cachedToolList };
+      const cached = cachedRegisteredTools;
+      if (visibleEntries.every(([, tool], index) => cached[index] === tool)) {
+        return { tools: cachedToolList };
+      }
     }
 
     const tools = visibleEntries.map(([name, tool]) => ({

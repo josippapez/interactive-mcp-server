@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   conversationToMarkdown,
   mergeMessages,
@@ -21,6 +21,7 @@ import { usePromptProjectState } from './usePromptProjectState';
 import { usePromptRuntimeState } from './usePromptRuntimeState';
 import { usePromptSettingsState } from './usePromptSettingsState';
 import type { PromptViewProps } from './prompt-view-types';
+import { resolveSessionRepositoryRoot } from './session-repository-root';
 import { resolveDisplayedSessionModel } from './session-model-display';
 
 export function usePromptViewState(props: PromptViewProps) {
@@ -72,17 +73,21 @@ export function usePromptViewState(props: PromptViewProps) {
     setPendingNewSessionAgent,
   });
 
-  const providerSessionId = activeNode?.providerSessionId ?? null;
-  const isOpenCodeSession = activeNode?.providerType === 'opencode';
-  const sessionBaseDirectory =
-    activeNode?.baseDirectory ?? activeNode?.directory ?? null;
+  const providerSessionId =
+    activeNode?.providerSessionId ??
+    (activeConnectionId?.startsWith('ses_') ? activeConnectionId : null);
+  const isOpenCodeSession =
+    activeNode?.providerType === 'opencode' || providerSessionId !== null;
+  const sessionBaseDirectory = resolveSessionRepositoryRoot(
+    activeNode ?? null,
+    connections,
+  );
   const backgroundSubagents = deriveBackgroundSubagents(
     connections,
     providerSessionId,
   );
   const runningBackgroundSubagentCount =
     countRunningBackgroundSubagents(backgroundSubagents);
-
   const {
     noReply,
     expandAllTools,
@@ -176,6 +181,13 @@ export function usePromptViewState(props: PromptViewProps) {
   });
 
   const canAbort = Boolean(providerSessionId);
+  const activeTaskCount = useMemo(
+    () =>
+      todos.filter(
+        (todo) => todo.status === 'pending' || todo.status === 'in_progress',
+      ).length + runningBackgroundSubagentCount,
+    [runningBackgroundSubagentCount, todos],
+  );
   const [channelSearchQuery, setChannelSearchQuery] = useState('');
   const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(-1);
   const [channelSearchOpen, setChannelSearchOpen] = useState(false);
@@ -342,6 +354,14 @@ export function usePromptViewState(props: PromptViewProps) {
     }
   }, [activeConnectionId, providerSessionId]);
 
+  const handleToggleExpandAllTools = useCallback(() => {
+    void handleExpandAllToolsChange(!expandAllTools);
+  }, [expandAllTools, handleExpandAllToolsChange]);
+
+  const handleToggleShowThinking = useCallback(() => {
+    void handleShowThinkingChange(!showThinking);
+  }, [handleShowThinkingChange, showThinking]);
+
   return {
     chatEndRef,
     activeNode,
@@ -352,6 +372,7 @@ export function usePromptViewState(props: PromptViewProps) {
     handleNavigateToSession,
     backgroundSubagents,
     runningBackgroundSubagentCount,
+    activeTaskCount,
     todos,
     todosLoading,
     todosError,
@@ -428,10 +449,8 @@ export function usePromptViewState(props: PromptViewProps) {
     setChannelSearchOpen,
     setChannelSearchMatchCount,
     handleToggleChatFullWidth,
-    handleToggleExpandAllTools: () =>
-      void handleExpandAllToolsChange(!expandAllTools),
-    handleToggleShowThinking: () =>
-      void handleShowThinkingChange(!showThinking),
+    handleToggleExpandAllTools,
+    handleToggleShowThinking,
     promptComposerBaseDirectory: getPromptComposerBaseDirectory(
       prompt,
       activeConnectionId,

@@ -201,6 +201,17 @@ export type SessionNode = {
   vcsInfo: VcsInfo | null;
 };
 
+export type SessionTreeResult = {
+  nodes: SessionNode[];
+  limit: number;
+  hasMore: boolean;
+  projectPages: Array<{
+    path: string;
+    limit: number;
+    hasMore: boolean;
+  }>;
+};
+
 /**
  * Legacy alias kept so existing callers that still reference `ConnectionState`
  * don't need to be updated all at once.

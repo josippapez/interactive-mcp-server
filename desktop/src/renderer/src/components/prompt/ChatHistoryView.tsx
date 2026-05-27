@@ -17,6 +17,7 @@ import ImageModal from './chat/ImageModal';
 import ScrollToBottomButton from './chat/ScrollToBottomButton';
 import MessageList from './chat/MessageList';
 import { computeAutoScrollSignature } from './chat/auto-scroll-signature';
+import { shouldDelayStreamingAutoScroll } from './chat/streaming-auto-scroll';
 import { messageAnchorId, messageIdFromHash } from './message-id-from-hash';
 import { useSettings } from '../../store';
 import { getChatTextSizeClasses, type ChatTextSize } from './chat-text-size';
@@ -336,21 +337,10 @@ export default function ChatHistoryView({
     enabled: false,
   });
 
-  const [lastSeenMessageId, setLastSeenMessageId] = useState<string | null>(
-    lastReadMessageId ?? null,
-  );
-
-  useEffect(() => {
-    setLastSeenMessageId(lastReadMessageId ?? null);
-  }, [lastReadMessageId]);
-
   const latestStagedMessageId = stagedMessages.at(-1)?.id ?? null;
-
-  useEffect(() => {
-    if (userScrolled) return;
-    if (!latestStagedMessageId) return;
-    setLastSeenMessageId(latestStagedMessageId);
-  }, [userScrolled, latestStagedMessageId]);
+  const lastSeenMessageId = userScrolled
+    ? (lastReadMessageId ?? null)
+    : (latestStagedMessageId ?? lastReadMessageId ?? null);
 
   // Memoize unread divider calculations (use staged messages for index)
   const { unreadStartIndex, showUnreadDivider, unreadCount } = useMemo(() => {
@@ -392,10 +382,33 @@ export default function ChatHistoryView({
   }, []);
 
   const autoScrollSignature = computeAutoScrollSignature(stagedMessages);
+  const previousAutoScrollSignatureRef = useRef<string | null>(null);
+  const autoScrollCancelRef = useRef<(() => void) | null>(null);
   useEffect(() => {
+    const previousSignature = previousAutoScrollSignatureRef.current;
+    previousAutoScrollSignatureRef.current = autoScrollSignature;
     if (!isStickyToBottom) return;
     if (stagedMessages.length === 0) return;
-    forceScrollToBottom();
+    autoScrollCancelRef.current?.();
+    const delayScroll = shouldDelayStreamingAutoScroll({
+      previousSignature,
+      nextSignature: autoScrollSignature,
+    });
+    const scroll = () => {
+      autoScrollCancelRef.current = null;
+      forceScrollToBottom();
+    };
+    if (delayScroll) {
+      const timeout = window.setTimeout(scroll, 50);
+      autoScrollCancelRef.current = () => window.clearTimeout(timeout);
+    } else {
+      const frame = requestAnimationFrame(scroll);
+      autoScrollCancelRef.current = () => cancelAnimationFrame(frame);
+    }
+    return () => {
+      autoScrollCancelRef.current?.();
+      autoScrollCancelRef.current = null;
+    };
   }, [
     autoScrollSignature,
     forceScrollToBottom,

@@ -29,6 +29,7 @@ export function extractVcsInfo(session: SessionInfo): VcsInfo | null {
 
   return {
     branch,
+    defaultBranch: null,
     additions: summary?.additions ?? 0,
     deletions: summary?.deletions ?? 0,
     files: summary?.files ?? 0,

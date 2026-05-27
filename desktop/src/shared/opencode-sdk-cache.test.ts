@@ -12,11 +12,13 @@ describe('OpenCode SDK client cache', () => {
   });
 
   it('keys cached clients by directory and experimental workspace id', () => {
-    const factory = vi.fn((port, directory, workspaceId) => ({
-      port,
-      directory,
-      workspaceId,
-    }));
+    const factory = vi.fn(
+      (port: number, directory: string, workspaceId: string) => ({
+        port,
+        directory,
+        workspaceId,
+      }),
+    );
     _setClientFactory(factory as never);
 
     const first = getClient(4096, '/repo', 'workspace-a');

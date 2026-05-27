@@ -54,7 +54,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { cpus, homedir } from 'node:os';
 
 import { app } from 'electron';
@@ -68,6 +68,35 @@ const LISTEN_TIMEOUT_MS = 10_000;
 const IS_POSIX = process.platform !== 'win32';
 
 type SpawnArgs = Parameters<ProcessStrategy['spawn']>[0];
+
+export interface ResolveOpenCodeSpawnCwdOptions {
+  rawCwd?: string;
+  home?: string;
+  userProfile?: string;
+  isPackaged?: boolean;
+  exists?: (path: string) => boolean;
+}
+
+export function resolveOpenCodeSpawnCwd({
+  rawCwd = process.cwd(),
+  home = process.env.HOME,
+  userProfile = process.env.USERPROFILE,
+  isPackaged = app.isPackaged,
+  exists = existsSync,
+}: ResolveOpenCodeSpawnCwdOptions = {}): string {
+  if (rawCwd === '/' || rawCwd === '') {
+    return home ?? userProfile ?? rawCwd;
+  }
+
+  if (!isPackaged && basename(rawCwd) === 'desktop') {
+    const parent = resolve(rawCwd, '..');
+    if (exists(join(parent, '.opencode'))) {
+      return parent;
+    }
+  }
+
+  return rawCwd;
+}
 
 // ─── Process-group / tree kill helpers ───
 //
@@ -259,11 +288,7 @@ export class NativeBinaryStrategy implements ProcessStrategy {
     // OpenCode report "Working directory: /" to every session and breaks
     // tools that resolve relative paths. Fall back to HOME (matches the
     // mcp-server/auto-register.ts:46-53 fallback).
-    const rawCwd = process.cwd();
-    const spawnCwd =
-      rawCwd === '/' || rawCwd === ''
-        ? (process.env.HOME ?? process.env.USERPROFILE ?? rawCwd)
-        : rawCwd;
+    const spawnCwd = resolveOpenCodeSpawnCwd();
     console.info(
       `${LOG_PREFIX} spawning ${binPath} serve --port ${port} --hostname 127.0.0.1`,
     );

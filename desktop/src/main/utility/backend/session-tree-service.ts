@@ -34,13 +34,27 @@ import {
 } from './database';
 import { createKeyedDebouncer } from './debounce-tree-invalidate';
 import { getMainRpcOrNull } from './rpc';
-import { fetchAllOpenCodeSessions, type OpenCodeSession } from './session';
-import type { SessionInfo, SessionNodeData } from './session-types';
+import {
+  expandOpenCodeSessionTree,
+  fetchRootSessionsForDirectory,
+  type OpenCodeSession,
+} from './session';
+import type {
+  SessionInfo,
+  SessionNodeData,
+  SessionTreeResult,
+} from './session-types';
 import { extractVcsInfo } from './vcs';
 import { fetchVcsInfo } from './vcs-api';
+import { startMissingIndexForBaseDirectory } from './repository-index/autostart';
 
 const log = createLogger('session-tree-service');
 void log;
+
+const INVALIDATE_COALESCE_MS = 50;
+const KEYED_INVALIDATE_DEBOUNCE_MS = 200;
+const SESSION_RECENT_LIMIT = 10;
+const SESSION_LOAD_MORE_STEP = 10;
 
 // ─── Module state ────────────────────────────────────────────────────────────
 
@@ -48,6 +62,8 @@ interface ServiceState {
   getOpenCodePort: (() => number) | null;
   /** Currently selected project folder (null = empty sidebar state). */
   selectedFolder: string | null;
+  /** Root-session page size per base directory. */
+  sessionLimitsByDirectory: Map<string, number>;
   /** User-deleted sessions; excluded from every build until restart. */
   tombstones: Set<string>;
   /** Coalesce rapid invalidate() bursts into one IPC event per ~50 ms. */
@@ -57,12 +73,10 @@ interface ServiceState {
 const state: ServiceState = {
   getOpenCodePort: null,
   selectedFolder: null,
+  sessionLimitsByDirectory: new Map(),
   tombstones: new Set(),
   invalidateTimer: null,
 };
-
-const INVALIDATE_COALESCE_MS = 50;
-const KEYED_INVALIDATE_DEBOUNCE_MS = 200;
 
 /**
  * Per-key debouncer used by `invalidateSessionTreeForKey`. SSE bursts during
@@ -109,6 +123,14 @@ export function setSelectedFolder(folder: string | null): void {
   if (state.selectedFolder === folder) return;
   state.selectedFolder = folder;
   invalidateSessionTree();
+}
+
+export function increaseSessionTreeLimit(baseDirectory: string): number {
+  const key = normalizeDirectoryKey(baseDirectory);
+  const next = getSessionLimitForDirectory(key) + SESSION_LOAD_MORE_STEP;
+  state.sessionLimitsByDirectory.set(key, next);
+  invalidateSessionTree();
+  return next;
 }
 
 // ─── Tombstones ──────────────────────────────────────────────────────────────
@@ -176,22 +198,47 @@ export function invalidateSessionTreeForKey(key: string): void {
  * `[]` as "no sessions exist". Without this distinction the sidebar would
  * blank out on every transient cold-start fetch failure.
  */
-export async function fetchSessionTree(): Promise<SessionNodeData[] | null> {
+export async function fetchSessionTree(): Promise<SessionTreeResult | null> {
   const port = state.getOpenCodePort?.() ?? 4096;
 
-  const pinnedDirectories = getPinnedProjects().map((p) => p.path);
+  const pinnedDirectories = getPinnedProjects()
+    .map((p) => normalizeDirectoryKey(p.path))
+    .filter(Boolean);
   const registeredConnections = getAllRegisteredConnections();
   const registeredOpenCodeDirectories = registeredConnections
     .filter(
       (connection) =>
         connection.providerType === 'opencode' && connection.baseDirectory,
     )
-    .map((connection) => connection.baseDirectory as string);
-  const sessions = await fetchAllOpenCodeSessions(port, [
-    ...pinnedDirectories,
-    ...registeredOpenCodeDirectories,
-  ]);
-  if (!sessions) return null;
+    .map((connection) => normalizeDirectoryKey(connection.baseDirectory))
+    .filter(Boolean);
+  const directories = Array.from(
+    new Set([...pinnedDirectories, ...registeredOpenCodeDirectories]),
+  );
+  for (const directory of directories) {
+    startMissingIndexForBaseDirectory(directory);
+  }
+
+  const pages = await Promise.all(
+    directories.map(async (directory) => {
+      const limit = getSessionLimitForDirectory(directory);
+      const roots = await fetchRootSessionsForDirectory(port, directory, limit);
+      return roots ? { directory, limit, roots } : null;
+    }),
+  );
+  if (pages.some((page) => page === null)) return null;
+
+  const projectPages = pages.map((page) => {
+    const rootCount = new Set(page!.roots.map((session) => session.id)).size;
+    return {
+      path: page!.directory,
+      limit: page!.limit,
+      hasMore: rootCount >= page!.limit,
+    };
+  });
+  const rootSessions = pages.flatMap((page) => page!.roots);
+  const hasMore = projectPages.some((page) => page.hasMore);
+  const sessions = await expandOpenCodeSessionTree(port, rootSessions);
 
   const byOpenCodeId = new Map<string, RegisteredConnection>(
     registeredConnections
@@ -229,10 +276,23 @@ export async function fetchSessionTree(): Promise<SessionNodeData[] | null> {
       ),
     );
   }
-  return result;
+  return {
+    nodes: result,
+    limit: SESSION_RECENT_LIMIT,
+    hasMore,
+    projectPages,
+  };
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function normalizeDirectoryKey(directory: string | null | undefined): string {
+  return directory?.trim() ?? '';
+}
+
+function getSessionLimitForDirectory(directory: string): number {
+  return state.sessionLimitsByDirectory.get(directory) ?? SESSION_RECENT_LIMIT;
+}
 
 function hasTombstonedAncestor(
   sessionId: string,

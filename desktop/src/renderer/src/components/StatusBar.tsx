@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useTheme } from '../ThemeContext';
 import { useOpenCodeHealth } from '../hooks/useOpenCodeHealth';
+import { MCP_STATUS_REFRESH_EVENT } from '../hooks/useMcpServers';
 import {
   Tooltip,
   TooltipContent,
@@ -65,7 +66,10 @@ export default function StatusBar({
   const handleForceReconnect = async (): Promise<void> => {
     setReconnecting(true);
     try {
-      await window.api.reconnectMcpServer?.();
+      const result = await window.api.reconnectMcpServer?.();
+      if (result?.ok) {
+        window.dispatchEvent(new Event(MCP_STATUS_REFRESH_EVENT));
+      }
     } finally {
       setTimeout(() => setReconnecting(false), 1500);
     }

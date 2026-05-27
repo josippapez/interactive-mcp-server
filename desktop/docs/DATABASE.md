@@ -101,7 +101,7 @@ The database file is opened synchronously with `new Database(dbPath)`.
 
 ### Current schema version
 
-`SCHEMA_VERSION` is currently **15**.
+`SCHEMA_VERSION` is currently **17**.
 
 The database stores the applied schema version in `PRAGMA user_version`. On
 startup, `initDatabase()` compares the stored version with `SCHEMA_VERSION`:
@@ -166,7 +166,7 @@ Read PRAGMA user_version
         |                       drop known tables
         |                       create current tables
         |                       restore selected rows
-        |                       set PRAGMA user_version = 15
+        |                       set PRAGMA user_version = 17
         |
         +-- version match ----> create current tables idempotently
         |
@@ -479,6 +479,55 @@ Injection consumers:
 - `desktop/src/main/utility/backend/tools/db-context-injection.ts` lists memories
   for auto-registration/startup context injection.
 - External clients manipulate this table through the `manage_memories` MCP tool.
+
+### `repository_indexes`, `repository_files`, `repository_dependency_edges`
+
+Rebuildable repository dependency graph used by MCP repository index tools.
+
+```sql
+CREATE TABLE IF NOT EXISTS repository_indexes (
+  repository_root    TEXT    PRIMARY KEY,
+  status             TEXT    NOT NULL CHECK(status IN ('idle', 'indexing', 'ready', 'error')),
+  file_count         INTEGER NOT NULL DEFAULT 0,
+  edge_count         INTEGER NOT NULL DEFAULT 0,
+  indexed_file_count INTEGER NOT NULL DEFAULT 0,
+  started_at         DATETIME,
+  completed_at       DATETIME,
+  last_error         TEXT,
+  index_version      INTEGER NOT NULL DEFAULT 1,
+  watcher_enabled    INTEGER NOT NULL DEFAULT 0,
+  updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
+)
+
+CREATE TABLE IF NOT EXISTS repository_files (
+  repository_root TEXT    NOT NULL,
+  path            TEXT    NOT NULL,
+  language        TEXT    NOT NULL,
+  size            INTEGER NOT NULL,
+  mtime_ms        REAL    NOT NULL,
+  content_hash    TEXT    NOT NULL,
+  updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (repository_root, path)
+)
+
+CREATE TABLE IF NOT EXISTS repository_dependency_edges (
+  repository_root TEXT    NOT NULL,
+  from_path       TEXT    NOT NULL,
+  to_path         TEXT,
+  specifier       TEXT    NOT NULL,
+  kind            TEXT    NOT NULL,
+  is_external     INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (repository_root, from_path, specifier, kind)
+)
+
+CREATE INDEX IF NOT EXISTS idx_repository_edges_to_path
+  ON repository_dependency_edges(repository_root, to_path)
+```
+
+The graph is keyed by normalized repository root. `repository_dependency_edges`
+stores both internal edges (`to_path` set) and external package references
+(`is_external = 1`, `to_path = NULL`). Index data is not preserved across schema
+bumps because it can be rebuilt from disk.
 
 ---
 

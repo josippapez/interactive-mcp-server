@@ -1,9 +1,4 @@
-import type {
-  FileNode,
-  File,
-  Path,
-  Project,
-} from '@opencode-ai/sdk/v2/gen/types.gen.js';
+import type { FileNode, File, Path, Project } from '@opencode-ai/sdk/v2/client';
 import { getClient } from './sdk-client';
 
 const SDK_UTILITY_TIMEOUT_MS = 5_000;

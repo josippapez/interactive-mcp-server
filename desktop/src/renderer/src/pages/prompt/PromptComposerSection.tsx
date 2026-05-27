@@ -3,7 +3,7 @@ import { SessionLoadedSkillsPanel } from '../../components/prompt/SessionLoadedS
 import type { ModelOverride } from '../../hooks/useProviderInjection';
 import type { Model } from '../../hooks/useProviders';
 import type { NativeOpenCodeSkill } from '../../../../preload/api/types';
-import type { Attachment, SessionStatus } from '../../types';
+import type { Attachment } from '../../types';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
 
 type Props = {
@@ -15,16 +15,15 @@ type Props = {
   sessionChannelId?: string;
   dispatchSessionId?: string;
   providerSessionId: string | null;
+  sessionBaseDirectory?: string | null;
   isOpenCodeSession: boolean;
   noReply: boolean;
   commandPaletteOpen: boolean;
   modelId?: string | null;
   providerId?: string | null;
   variant?: string;
-  latestStatus: SessionStatus | null;
   activeSkills: NativeOpenCodeSkill[];
   connectionId: string | null;
-  isBusy: boolean;
   docContextEnabled: boolean;
   onSubmit: (text: string, attachments?: Attachment[]) => void;
   onQueueSubmit: (text: string, attachments?: Attachment[]) => void;
@@ -38,7 +37,6 @@ type Props = {
   onNoReplyChange: (value: boolean) => void;
   onCommandPaletteChange: (open: boolean) => void;
   onModelSelect: (model: Model, variant?: string) => void;
-  onDismissStatus: (connectionId: string, timestamp: Date) => void;
   onToggleDocContext: () => void;
   currentModelOverride?: ModelOverride;
 };
@@ -52,16 +50,15 @@ export function PromptComposerSection({
   sessionChannelId,
   dispatchSessionId,
   providerSessionId,
+  sessionBaseDirectory,
   isOpenCodeSession,
   noReply,
   commandPaletteOpen,
   modelId,
   providerId,
   variant,
-  latestStatus,
   activeSkills,
   connectionId,
-  isBusy,
   docContextEnabled,
   onSubmit,
   onQueueSubmit,
@@ -69,7 +66,6 @@ export function PromptComposerSection({
   onNoReplyChange,
   onCommandPaletteChange,
   onModelSelect,
-  onDismissStatus,
   onToggleDocContext,
   currentModelOverride,
 }: Props): React.ReactElement {
@@ -106,10 +102,11 @@ export function PromptComposerSection({
     return (
       <ChannelComposer
         enabled
-        baseDirectory={promptBaseDirectory}
+        baseDirectory={sessionBaseDirectory ?? promptBaseDirectory}
         placeholder={promptPlaceholder}
         onSubmit={onSubmit}
         sessionId={providerSessionId}
+        providerSessionId={providerSessionId}
         commandPaletteOpen={commandPaletteOpen}
         onCommandPaletteChange={onCommandPaletteChange}
         modelId={modelId ?? undefined}
@@ -117,10 +114,7 @@ export function PromptComposerSection({
         variant={variant}
         onModelSelect={onModelSelect}
         isOpenCodeSession={isOpenCodeSession}
-        latestStatus={latestStatus}
         connectionId={connectionId}
-        onDismissStatus={onDismissStatus}
-        isBusy={isBusy}
         docContextEnabled={docContextEnabled}
         onToggleDocContext={onToggleDocContext}
       />
@@ -133,7 +127,7 @@ export function PromptComposerSection({
       <ChannelComposer
         enabled={enabled}
         submitLabel="Queue"
-        baseDirectory={queueBaseDirectory}
+        baseDirectory={sessionBaseDirectory ?? queueBaseDirectory}
         placeholder="Message the agent… (/ for commands, ⌘+Enter to queue, ↵ to trigger reply)"
         onSubmit={(text, attachments) => {
           logComposerSubmit('queue', text, attachments);
@@ -155,6 +149,7 @@ export function PromptComposerSection({
         noReply={noReply}
         onNoReplyChange={onNoReplyChange}
         sessionId={providerSessionId}
+        providerSessionId={providerSessionId}
         commandPaletteOpen={commandPaletteOpen}
         onCommandPaletteChange={onCommandPaletteChange}
         modelId={modelId ?? undefined}
@@ -162,10 +157,7 @@ export function PromptComposerSection({
         variant={variant}
         onModelSelect={onModelSelect}
         isOpenCodeSession={isOpenCodeSession}
-        latestStatus={latestStatus}
         connectionId={connectionId}
-        onDismissStatus={onDismissStatus}
-        isBusy={isBusy}
         docContextEnabled={docContextEnabled}
         onToggleDocContext={onToggleDocContext}
       />

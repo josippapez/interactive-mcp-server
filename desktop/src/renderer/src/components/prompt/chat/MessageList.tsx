@@ -126,10 +126,14 @@ const MessageList = memo(function MessageList({
 
   // Which message currently holds keyboard focus (null = none).
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const previousMessageCountRef = useRef(messages.length);
 
   // If the focused message is removed (e.g. history trimmed), drop focus.
   useEffect(() => {
+    const previousMessageCount = previousMessageCountRef.current;
+    previousMessageCountRef.current = messages.length;
     if (!focusedId) return;
+    if (messages.length >= previousMessageCount) return;
     const exists = messages.some((m) => m.id === focusedId);
     if (!exists) setFocusedId(null);
   }, [focusedId, messages]);
@@ -189,84 +193,54 @@ const MessageList = memo(function MessageList({
     node.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [activeSearchMatchId, scrollContainerRef]);
 
-  const renderMessage = useCallback(
-    (msg: UnifiedMessage, index: number): React.ReactElement => {
-      const isActive = msg.isActivePrompt ?? false;
-      const showOptions = Boolean(
-        isActive &&
-        predefinedOptions &&
-        predefinedOptions.length > 0 &&
-        onSelectOption,
-      );
-
-      const showDividerBefore = showUnreadDivider && index === unreadStartIndex;
-
-      const isNewMessage = newMessageIds.has(msg.id);
-      const isStreamingMessage = msg.id === streamingMessageId;
-
-      return (
-        <>
-          {showDividerBefore && <UnreadDivider />}
-          <MessageItem
-            msg={msg}
-            isActive={isActive}
-            showOptions={showOptions}
-            predefinedOptions={predefinedOptions}
-            onSelectOption={onSelectOption}
-            onExpandImage={onExpandImage}
-            expandAllTools={expandAllTools}
-            toolAutoExpandExclusions={toolAutoExpandExclusions}
-            onNavigateToSession={onNavigateToSession}
-            showThinking={showThinking}
-            isNew={isNewMessage}
-            isStreaming={isStreamingMessage}
-            isSearchMatch={matchedIdSet.has(msg.id)}
-            isActiveSearchMatch={activeSearchMatchId === msg.id}
-            isFocused={focusedId === msg.id}
-            isDeepLinkTarget={deepLinkMessageId === msg.id}
-            onRequestFocus={handleRequestFocus}
-            onKeyNavigate={handleKeyNavigate}
-          />
-        </>
-      );
-    },
-    [
-      activeSearchMatchId,
-      deepLinkMessageId,
-      expandAllTools,
-      focusedId,
-      handleKeyNavigate,
-      handleRequestFocus,
-      matchedIdSet,
-      newMessageIds,
-      onExpandImage,
-      onNavigateToSession,
-      onSelectOption,
-      predefinedOptions,
-      showThinking,
-      showUnreadDivider,
-      streamingMessageId,
-      toolAutoExpandExclusions,
-      unreadStartIndex,
-    ],
-  );
-
   return (
     <div
       ref={contentRef}
       data-slot="session-turn-list"
       className="flex flex-col gap-3 px-2 py-3"
     >
-      {messages.map((msg, index) => (
-        <div
-          key={msg.id}
-          data-index={index}
-          data-message-id={msg.id}
-          ref={getRefSetter(msg.id)}
-        >
-          {renderMessage(msg, index)}
-        </div>
-      ))}
+      {messages.map((msg, index) => {
+        const isActive = msg.isActivePrompt ?? false;
+        const showOptions = Boolean(
+          isActive &&
+          predefinedOptions &&
+          predefinedOptions.length > 0 &&
+          onSelectOption,
+        );
+        const showDividerBefore =
+          showUnreadDivider && index === unreadStartIndex;
+
+        return (
+          <div
+            key={msg.id}
+            data-index={index}
+            data-message-id={msg.id}
+            ref={getRefSetter(msg.id)}
+          >
+            {showDividerBefore && <UnreadDivider />}
+            <MessageItem
+              msg={msg}
+              isActive={isActive}
+              showOptions={showOptions}
+              predefinedOptions={predefinedOptions}
+              onSelectOption={onSelectOption}
+              onExpandImage={onExpandImage}
+              expandAllTools={expandAllTools}
+              toolAutoExpandExclusions={toolAutoExpandExclusions}
+              onNavigateToSession={onNavigateToSession}
+              showThinking={showThinking}
+              isNew={newMessageIds.has(msg.id)}
+              isStreaming={msg.id === streamingMessageId}
+              isSearchMatch={matchedIdSet.has(msg.id)}
+              isActiveSearchMatch={activeSearchMatchId === msg.id}
+              isFocused={focusedId === msg.id}
+              isDeepLinkTarget={deepLinkMessageId === msg.id}
+              onRequestFocus={handleRequestFocus}
+              onKeyNavigate={handleKeyNavigate}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 });

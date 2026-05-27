@@ -139,12 +139,16 @@ export const SkillsTreeRow = memo(function SkillsTreeRow({
         <Input
           ref={inputRef}
           value={renameValue}
-          onChange={(e) => setRenameValue(e.target.value)}
+          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+            setRenameValue(e.target.value)
+          }
           onKeyDown={handleRenameKeyDown}
           onBlur={commitRename}
           className="h-5 flex-1 border-0 bg-transparent px-0 text-xs shadow-none focus-visible:ring-1"
           aria-label="Rename folder"
-          onClick={(e) => e.stopPropagation()}
+          onClick={(e: React.MouseEvent<HTMLInputElement>) =>
+            e.stopPropagation()
+          }
         />
       ) : (
         <span
@@ -170,7 +174,7 @@ export const SkillsTreeRow = memo(function SkillsTreeRow({
                 'focus-visible:ring-ring focus-visible:ring-2 focus-visible:outline-none',
               )}
               aria-label={`Actions for ${folder.name}`}
-              onClick={(e) => e.stopPropagation()}
+              onClick={(e: React.MouseEvent) => e.stopPropagation()}
             >
               <MoreHorizontal className="h-3 w-3" aria-hidden="true" />
             </button>

@@ -18,6 +18,9 @@ type SessionGraphState = {
   quickSwitcherActions: QuickSwitcherAction[];
   connectionCount: number;
   hasPendingPrompt: boolean;
+  sessionTreeLimit: number;
+  sessionTreeHasMore: boolean;
+  sessionTreeProjectPages: Map<string, { limit: number; hasMore: boolean }>;
 };
 
 const EMPTY_NODES = new Map<string, SessionNode>();
@@ -61,6 +64,11 @@ function sameQuickSwitcherActions(
 function createState(
   nodes: Map<string, SessionNode>,
   previous?: SessionGraphState,
+  metadata?: {
+    limit: number;
+    hasMore: boolean;
+    projectPages?: Array<{ path: string; limit: number; hasMore: boolean }>;
+  },
 ): SessionGraphState {
   const { openCodeTree, directConnections } = partitionNodes(nodes);
   const quickSwitcherActions = buildSessionActions(nodes);
@@ -91,6 +99,17 @@ function createState(
     quickSwitcherActions: nextQuickSwitcherActions,
     connectionCount: nodes.size,
     hasPendingPrompt,
+    sessionTreeLimit: metadata?.limit ?? previous?.sessionTreeLimit ?? 50,
+    sessionTreeHasMore:
+      metadata?.hasMore ?? previous?.sessionTreeHasMore ?? false,
+    sessionTreeProjectPages: metadata?.projectPages
+      ? new Map(
+          metadata.projectPages.map((page) => [
+            page.path,
+            { limit: page.limit, hasMore: page.hasMore },
+          ]),
+        )
+      : (previous?.sessionTreeProjectPages ?? new Map()),
   };
 }
 
@@ -103,6 +122,21 @@ export function setSessionGraphNodes(nodes: Map<string, SessionNode>): void {
     if (prev.nodes === nodes) return prev;
     return createState(nodes, prev);
   });
+}
+
+export function setSessionGraphTreeResult(input: {
+  nodes: Map<string, SessionNode>;
+  limit: number;
+  hasMore: boolean;
+  projectPages?: Array<{ path: string; limit: number; hasMore: boolean }>;
+}): void {
+  sessionGraphStore.setState((prev) =>
+    createState(input.nodes, prev, {
+      limit: input.limit,
+      hasMore: input.hasMore,
+      projectPages: input.projectPages,
+    }),
+  );
 }
 
 export function useSessionGraphSelector<T>(
@@ -129,6 +163,7 @@ export function useSessionGraphSelector<T>(
 type ProjectCacheEntry = {
   nodes: Map<string, SessionNode>;
   pinnedKey: string;
+  projectPages: Map<string, { limit: number; hasMore: boolean }>;
   projects: Project[];
 };
 
@@ -137,23 +172,25 @@ let projectCache: ProjectCacheEntry | null = null;
 function getProjects(
   nodes: Map<string, SessionNode>,
   pinnedPaths: string[],
+  projectPages: Map<string, { limit: number; hasMore: boolean }>,
 ): Project[] {
   const pinnedKey = pinnedPaths.join('\u0000');
   if (
     projectCache &&
     projectCache.nodes === nodes &&
-    projectCache.pinnedKey === pinnedKey
+    projectCache.pinnedKey === pinnedKey &&
+    projectCache.projectPages === projectPages
   ) {
     return projectCache.projects;
   }
 
-  const projects = groupByProject(nodes, pinnedPaths);
-  projectCache = { nodes, pinnedKey, projects };
+  const projects = groupByProject(nodes, pinnedPaths, projectPages);
+  projectCache = { nodes, pinnedKey, projectPages, projects };
   return projects;
 }
 
 export function useSessionGraphProjects(pinnedPaths: string[]): Project[] {
   return useSessionGraphSelector((state) =>
-    getProjects(state.nodes, pinnedPaths),
+    getProjects(state.nodes, pinnedPaths, state.sessionTreeProjectPages),
   );
 }

@@ -9,7 +9,10 @@ import {
   type ChannelSelectionSource,
 } from '../../store/channel-selection';
 import { useUpdateNodesMap } from '../../store/message-dispatch';
-import { setSessionGraphNodes } from '../../store/session-graph';
+import {
+  setSessionGraphNodes,
+  setSessionGraphTreeResult,
+} from '../../store/session-graph';
 import { useStartupHistory } from './startup-history';
 import { useStartupPrompts } from './startup-prompts';
 import { useChannelHistoryLoader } from './channel-history';
@@ -19,6 +22,7 @@ import { useSessionHandlers } from './session-handlers';
 import { useMessageHandlers } from './message-handlers';
 import { useUiHandlers } from './ui-handlers';
 import { hydratePersistedSessionChannels } from './persisted-session-channels';
+import { useSettings } from '../../store';
 
 export function useConnections(onActivatePromptTab: () => void) {
   // ---------------------------------------------------------------------------
@@ -29,6 +33,7 @@ export function useConnections(onActivatePromptTab: () => void) {
   const [clientInfo, setClientInfo] = useState<
     { model?: string; mode?: string } | undefined
   >();
+  const settings = useSettings();
 
   // Use global Jotai store for channel selection
   const { activeId, isIntentionalNull, selectChannel } = useChannelSelection();
@@ -100,7 +105,11 @@ export function useConnections(onActivatePromptTab: () => void) {
         return;
       }
 
-      setNodes((prev) => hydratePersistedSessionChannels(prev, channels));
+      setNodes((prev) =>
+        hydratePersistedSessionChannels(prev, channels, {
+          includeMissing: settings.autoRestoreSessions,
+        }),
+      );
     };
 
     void hydrate();
@@ -108,7 +117,7 @@ export function useConnections(onActivatePromptTab: () => void) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [settings.autoRestoreSessions]);
 
   useIpcListeners({
     getActiveConnectionId: getActiveChannelIdSnapshot,
@@ -117,6 +126,7 @@ export function useConnections(onActivatePromptTab: () => void) {
     setNodes,
     selectChannel,
     setClientInfo,
+    setSessionTreeResult: setSessionGraphTreeResult,
     withNode,
     clearAllNodes,
     loadChannelHistory,

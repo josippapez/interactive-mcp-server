@@ -11,7 +11,6 @@ import McpSettingsModal from '../components/prompt/McpSettingsModal';
 import QuestionDock from '../components/prompt/QuestionDock';
 import { ContextUsageBar } from '../components/prompt/ContextUsageBar';
 import { PromptComposerSection } from './prompt/PromptComposerSection';
-import React from 'react';
 import {
   getPromptComposerBaseDirectory,
   getPromptPlaceholder,
@@ -34,7 +33,6 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
     docContextEnabled,
     onSubmit,
     onSelectOption,
-    onDismissStatus,
     onQueueSessionMessage,
     onInjectWithReply,
     onToggleDocContext,
@@ -70,7 +68,6 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
       ? sessionChannel.sessionId
       : null) ??
     (activeConnectionId?.startsWith('ses_') ? activeConnectionId : null);
-
   return (
     <SidebarProvider defaultOpen className="flex h-full min-h-0 w-full">
       <div className="anim-prompt-shell h-full min-h-0 flex">
@@ -146,12 +143,7 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                       ? view.handleToggleTasksOverlay
                       : undefined
                   }
-                  activeTaskCount={
-                    view.todos.filter(
-                      (t) =>
-                        t.status === 'pending' || t.status === 'in_progress',
-                    ).length + view.runningBackgroundSubagentCount
-                  }
+                  activeTaskCount={view.activeTaskCount}
                 />
 
                 {view.removeError && (
@@ -272,16 +264,15 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     sessionChannelId={sessionChannel?.sessionId}
                     dispatchSessionId={activeConnectionId}
                     providerSessionId={view.providerSessionId}
+                    sessionBaseDirectory={view.sessionBaseDirectory}
                     isOpenCodeSession={view.isOpenCodeSession}
                     noReply={view.noReply}
                     commandPaletteOpen={view.commandPaletteOpen}
                     modelId={view.displayedSessionModel.modelId}
                     providerId={view.displayedSessionModel.providerId}
                     variant={view.displayedSessionModel.variant ?? undefined}
-                    latestStatus={view.latestStatus}
                     activeSkills={view.activeSkills}
                     connectionId={activeConnectionId}
-                    isBusy={view.sessionBusy && view.isOpenCodeSession}
                     docContextEnabled={docContextEnabled}
                     onSubmit={onSubmit}
                     onQueueSubmit={(text, attachments) => {
@@ -297,7 +288,6 @@ export default function PromptView(props: PromptViewProps): React.ReactElement {
                     onNoReplyChange={view.handleNoReplyChange}
                     onCommandPaletteChange={view.setCommandPaletteOpen}
                     onModelSelect={view.handleModelSelect}
-                    onDismissStatus={onDismissStatus}
                     onToggleDocContext={onToggleDocContext}
                     currentModelOverride={
                       view.sessionModelSelection.currentModelOverride

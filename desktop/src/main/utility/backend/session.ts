@@ -36,6 +36,11 @@ export interface OpenCodeSession {
   summary?: { additions?: number; deletions?: number; files?: number };
 }
 
+export interface SessionListOptions {
+  roots?: boolean;
+  limit?: number;
+}
+
 function sortByRecentActivity(a: OpenCodeSession, b: OpenCodeSession): number {
   return (
     (b.time?.updated ?? b.time?.created ?? 0) -
@@ -49,12 +54,12 @@ function sortByRecentActivity(a: OpenCodeSession, b: OpenCodeSession): number {
 async function fetchSessions(
   openCodePort: number,
   directory?: string,
-  options?: { roots?: boolean },
+  options?: SessionListOptions,
 ): Promise<OpenCodeSession[] | null> {
   try {
     const response = await sessionList(
       openCodePort,
-      { roots: options?.roots },
+      { roots: options?.roots, limit: options?.limit },
       { directory, signal: AbortSignal.timeout(2000) },
     );
 
@@ -137,6 +142,21 @@ export async function fetchSessionsForDirectory(
   return [...sessions].sort(sortByRecentActivity);
 }
 
+export async function fetchRootSessionsForDirectory(
+  openCodePort: number,
+  baseDirectory: string,
+  limit: number,
+): Promise<OpenCodeSession[] | null> {
+  const trimmed = baseDirectory.trim();
+  if (trimmed.length === 0) return [];
+  const sessions = await fetchSessions(openCodePort, trimmed, {
+    roots: true,
+    limit,
+  });
+  if (!sessions) return null;
+  return [...sessions].sort(sortByRecentActivity);
+}
+
 /**
  * Fetch every session known to the OpenCode API (no directory filter).
  * Returns null if the API is unreachable.
@@ -144,8 +164,9 @@ export async function fetchSessionsForDirectory(
 export async function fetchAllOpenCodeSessions(
   openCodePort: number,
   fallbackDirectories: string[] = [],
+  options: SessionListOptions = {},
 ): Promise<OpenCodeSession[] | null> {
-  const unscoped = await fetchSessions(openCodePort);
+  const unscoped = await fetchSessions(openCodePort, undefined, options);
   if (!unscoped) return null;
 
   const scopedDirectories = Array.from(
@@ -161,7 +182,7 @@ export async function fetchAllOpenCodeSessions(
   }
 
   const scopedResults = await Promise.all(
-    scopedDirectories.map((dir) => fetchSessions(openCodePort, dir)),
+    scopedDirectories.map((dir) => fetchSessions(openCodePort, dir, options)),
   );
 
   const mergedById = new Map<string, OpenCodeSession>();

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { ChannelMessage, SessionNode } from '../../types';
 import type { IpcListenerOpts } from './types';
+import { appendChannelMessage } from '../useConnections/channel-message-state';
 import { useSessionTreeHandler as registerSessionTreeHandler } from './useSessionTreeHandler';
 import { useConnectionHandlers as registerConnectionHandlers } from './useConnectionHandlers';
 import { usePromptHandlers as registerPromptHandlers } from './usePromptHandlers';
@@ -53,13 +54,10 @@ export function useIpcListeners(opts: IpcListenerOpts): void {
     ): void => {
       optsRef.current.withNode(nodeId, (node: SessionNode) => ({
         ...node,
-        channelMessages: [
-          ...node.channelMessages,
-          {
-            ...message,
-            id: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-          },
-        ],
+        channelMessages: appendChannelMessage(node.channelMessages, {
+          ...message,
+          id: `live-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+        }),
         unreadCount:
           optsRef.current.getActiveConnectionId() === nodeId
             ? node.unreadCount
@@ -83,6 +81,9 @@ export function useIpcListeners(opts: IpcListenerOpts): void {
       },
       setNodes: ((updater) =>
         optsRef.current.setNodes(updater)) as IpcListenerOpts['setNodes'],
+      setSessionTreeResult: (
+        ...args: Parameters<IpcListenerOpts['setSessionTreeResult']>
+      ) => optsRef.current.setSessionTreeResult(...args),
       selectChannel: ((...args) =>
         optsRef.current.selectChannel(
           ...args,

@@ -35,6 +35,7 @@ import {
 } from '../../utility/backend/tools/skills-broadcast';
 import { listNativeOpenCodeSkills } from '../../utility/opencode-client';
 import { IpcHandlerDeps } from './types';
+import { getEffectiveOpenCodePort } from './shared';
 
 export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
@@ -42,7 +43,10 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
     async (_event, baseDirectory?: string) => {
       const settings = deps.getSettings();
       if (settings.agentBackend !== 'opencode') return [];
-      return listNativeOpenCodeSkills(settings.openCodePort, baseDirectory);
+      return listNativeOpenCodeSkills(
+        getEffectiveOpenCodePort(deps),
+        baseDirectory,
+      );
     },
   );
 
@@ -70,7 +74,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
           existing ? 'updated' : 'registered',
           data.type,
           data.name,
-          deps.getSettings().openCodePort,
+          getEffectiveOpenCodePort(deps),
           result.type === 'instruction' ? result.deliveryMode : undefined,
         );
       }
@@ -110,7 +114,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
             'deleted',
             existing.type,
             existing.name,
-            deps.getSettings().openCodePort,
+            getEffectiveOpenCodePort(deps),
             existing.type === 'instruction' ? existing.deliveryMode : undefined,
           );
         }
@@ -132,7 +136,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
           'updated',
           result.type,
           result.name,
-          deps.getSettings().openCodePort,
+          getEffectiveOpenCodePort(deps),
           result.type === 'instruction' ? result.deliveryMode : undefined,
         );
       }
@@ -314,7 +318,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
             'updated',
             entry.type,
             entry.name,
-            deps.getSettings().openCodePort,
+            getEffectiveOpenCodePort(deps),
             entry.type === 'instruction' ? entry.deliveryMode : undefined,
           );
         }
@@ -336,7 +340,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
           'updated',
           result.type,
           result.name,
-          deps.getSettings().openCodePort,
+          getEffectiveOpenCodePort(deps),
           result.deliveryMode,
         );
       }
@@ -403,7 +407,7 @@ export function registerSkillsHandlers(deps: IpcHandlerDeps): void {
           providerType,
           data.providerSessionId,
           { added, removed },
-          deps.getSettings().openCodePort,
+          getEffectiveOpenCodePort(deps),
         );
       }
       return true;

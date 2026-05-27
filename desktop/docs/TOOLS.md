@@ -14,13 +14,17 @@ MCP used by other AI harnesses.
 
 Current discoverable desktop MCP tool surface:
 
-| Tool                                | Purpose                                         | Blocking                 |
-| ----------------------------------- | ----------------------------------------------- | ------------------------ |
-| [`find_docs`](#find_docs)           | Search repository documentation by query        | No — returns immediately |
-| [`read_doc`](#read_doc)             | Read a discovered repository documentation file | No — returns immediately |
-| [`list_docs`](#list_docs)           | List available repository documentation paths   | No — returns immediately |
-| [`find_libs`](#find_libs)           | Search package.json dependencies                | No — returns immediately |
-| [`find_repo_docs`](#find_repo_docs) | Backward-compatible alias for `find_docs`       | No — returns immediately |
+| Tool                                                     | Purpose                                         | Blocking                 |
+| -------------------------------------------------------- | ----------------------------------------------- | ------------------------ |
+| [`find_docs`](#find_docs)                                | Search repository documentation by query        | No — returns immediately |
+| [`read_doc`](#read_doc)                                  | Read a discovered repository documentation file | No — returns immediately |
+| [`list_docs`](#list_docs)                                | List available repository documentation paths   | No — returns immediately |
+| [`find_libs`](#find_libs)                                | Search package.json dependencies                | No — returns immediately |
+| [`find_repo_docs`](#find_repo_docs)                      | Backward-compatible alias for `find_docs`       | No — returns immediately |
+| [`get_repository_index_status`](#repository-index-tools) | Inspect dependency graph index status           | No — returns immediately |
+| [`get_file_dependencies`](#repository-index-tools)       | List dependencies imported by a file            | No — returns immediately |
+| [`get_file_dependents`](#repository-index-tools)         | List files that import/use a file               | No — returns immediately |
+| [`get_blast_radius`](#repository-index-tools)            | Return transitive impacted files for changes    | No — returns immediately |
 
 Hidden but callable tool handlers:
 
@@ -607,6 +611,23 @@ The embedding worker runs in a separate thread and does not block the main proce
 #### Settings
 
 Doc indexing can be disabled via the **Repository Doc Indexing** toggle in Settings (`docIndexingEnabled`, default `true`). When disabled, `register_connection` skips manifest injection and background indexing, and `find_repo_docs` falls back to keyword-only search.
+
+#### Repository Index Tools
+
+**Description:** Query a local dependency graph for the current session repository. The graph stores repository files and dependency edges so agents can ask for direct dependencies, reverse dependents, and transitive blast radius without repeatedly searching the whole codebase.
+
+All repository index tools resolve the repository root from the auto-registered session `baseDirectory`; agents must pass `openCodeSessionId` for correct multi-agent routing.
+
+Use these graph tools before broad file reads or repeated text searches when you need dependencies, direct usages, or change impact.
+
+| Tool                          | Parameters                                                                             | Description                                                                               |
+| ----------------------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `get_repository_index_status` | `openCodeSessionId?: string`                                                           | Use to confirm graph readiness before dependency or impact queries.                       |
+| `get_file_dependencies`       | `path: string`, `openCodeSessionId?: string`                                           | Use to see what one file imports/requires before opening imports one-by-one.              |
+| `get_file_dependents`         | `path: string`, `openCodeSessionId?: string`                                           | Use to answer "where is this file used?" before broad searches.                           |
+| `get_blast_radius`            | `paths: string[]`, `maxDepth?: number`, `limit?: number`, `openCodeSessionId?: string` | Use to get the likely impact set for changed files before editing, testing, or reviewing. |
+
+Indexing is gated by the same repository doc-indexing setting. The indexer refuses unsafe roots such as `/` and the user's home directory, skips common generated folders such as `node_modules`, `.git`, `dist`, `build`, `.next`, `.turbo`, and `coverage`, and caps initial discovery at 50,000 files.
 
 #### Example (pseudocode)
 

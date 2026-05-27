@@ -3,6 +3,7 @@ import { fetchProvidersInfo } from '../../utility/opencode-client';
 import { createLogger } from '../../utils/logger';
 import { getUtilitySupervisor } from '../../utility/supervisor';
 import { IpcHandlerDeps } from './types';
+import { getEffectiveOpenCodePort } from './shared';
 
 const ipcLog = createLogger('ipc');
 
@@ -19,12 +20,13 @@ export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle('get-context-usage', async (_event, sessionId: string) => {
     const settings = deps.getSettings();
     if (settings.agentBackend !== 'opencode') return null;
+    const openCodePort = getEffectiveOpenCodePort(deps);
     try {
       return await getUtilitySupervisor()
         .getBridge()
         .request('get-context-usage', {
           sessionId,
-          openCodePort: settings.openCodePort,
+          openCodePort,
         });
     } catch (err) {
       ipcLog.warn(
@@ -44,7 +46,7 @@ export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
         modelId,
       }: { sessionId: string; providerId?: string; modelId?: string },
     ) => {
-      const settings = deps.getSettings();
+      const openCodePort = getEffectiveOpenCodePort(deps);
       ipcLog.info(`trigger-compaction: sessionId=${sessionId}`);
 
       // If providerId or modelId not provided, get defaults from OpenCode API.
@@ -52,7 +54,7 @@ export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
       let finalModelId = modelId;
 
       if (!finalProviderId || !finalModelId) {
-        const providersInfo = await fetchProvidersInfo(settings.openCodePort);
+        const providersInfo = await fetchProvidersInfo(openCodePort);
         if (providersInfo) {
           const connectedProvider = providersInfo.connectedProviderIds[0];
           if (connectedProvider) {
@@ -75,7 +77,7 @@ export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
           .getBridge()
           .request('trigger-compaction', {
             sessionId,
-            openCodePort: settings.openCodePort,
+            openCodePort,
             providerId: finalProviderId,
             modelId: finalModelId,
           });
@@ -89,13 +91,13 @@ export function registerContextTrackingHandlers(deps: IpcHandlerDeps): void {
   );
 
   ipcMain.handle('fetch-session-tokens', async (_event, sessionId: string) => {
-    const settings = deps.getSettings();
+    const openCodePort = getEffectiveOpenCodePort(deps);
     try {
       return await getUtilitySupervisor()
         .getBridge()
         .request('fetch-session-tokens', {
           sessionId,
-          openCodePort: settings.openCodePort,
+          openCodePort,
         });
     } catch (err) {
       ipcLog.warn(

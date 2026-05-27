@@ -1,4 +1,13 @@
-import type { SessionNode } from '../../types';
+import type { SessionNode, SessionStatus } from '../../types';
+
+export const MAX_SESSION_STATUSES = 100;
+
+export function trimSessionStatuses(
+  statuses: readonly SessionStatus[],
+): SessionStatus[] {
+  if (statuses.length <= MAX_SESSION_STATUSES) return [...statuses];
+  return statuses.slice(statuses.length - MAX_SESSION_STATUSES);
+}
 
 export function clearTerminalSessionState(
   prev: Map<string, SessionNode>,
@@ -7,8 +16,8 @@ export function clearTerminalSessionState(
   const node = prev.get(nodeId);
   if (!node) return prev;
 
-  const filteredStatuses = node.sessionStatuses.filter(
-    (status) => status.type !== 'working',
+  const filteredStatuses = trimSessionStatuses(
+    node.sessionStatuses.filter((status) => status.type !== 'working'),
   );
   if (
     filteredStatuses.length === node.sessionStatuses.length &&

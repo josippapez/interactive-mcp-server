@@ -1,6 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { ConversationMessage } from '../../preload/api/types';
-import { conversationToUnified, mergeMessages } from './unified-message';
+import {
+  PART_SIGNATURE_BY_ID_CACHE_MAX,
+  conversationToUnified,
+  getPartSignatureByIdCacheSizeForTests,
+  mergeMessages,
+  resetUnifiedMessageCachesForTests,
+} from './unified-message';
 
 function assistantMessage(
   id: string,
@@ -61,7 +67,6 @@ describe('mergeMessages', () => {
       [
         {
           id: 'channel_1',
-          sessionId: 'ses_1',
           kind: 'outbound',
           text: 'prompt user_1',
           timestamp: new Date(98),
@@ -139,7 +144,6 @@ describe('mergeMessages', () => {
       [
         {
           id: 'channel_agent_message',
-          sessionId: 'ses_1',
           kind: 'agent_message',
           text: 'You have a few Shopify-native ways to handle this.',
           timestamp: new Date(1000),
@@ -171,6 +175,10 @@ describe('mergeMessages', () => {
 });
 
 describe('conversationToUnified', () => {
+  afterEach(() => {
+    resetUnifiedMessageCachesForTests();
+  });
+
   it('hides synthetic and ignored text parts', () => {
     const unified = conversationToUnified(
       userMessage('user_1', {
@@ -277,5 +285,32 @@ describe('conversationToUnified', () => {
       cost: 0.02,
       tokens: { input: 1, output: 2, reasoning: 0 },
     });
+  });
+
+  it('evicts old part signatures after the cache cap', () => {
+    for (
+      let index = 0;
+      index < PART_SIGNATURE_BY_ID_CACHE_MAX + 1;
+      index += 1
+    ) {
+      mergeMessages(
+        [],
+        [
+          assistantMessage(`msg_${index}`, {
+            parts: [
+              {
+                id: `part_${index}`,
+                type: 'text',
+                text: `answer ${index}`,
+              },
+            ],
+          }),
+        ],
+      );
+    }
+
+    expect(getPartSignatureByIdCacheSizeForTests()).toBe(
+      PART_SIGNATURE_BY_ID_CACHE_MAX,
+    );
   });
 });

@@ -1,10 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  fetchAllOpenCodeSessions: vi.fn(),
+  expandOpenCodeSessionTree: vi.fn(),
+  fetchRootSessionsForDirectory: vi.fn(),
   fetchVcsInfo: vi.fn(),
   getAllRegisteredConnections: vi.fn(),
   getPinnedProjects: vi.fn(),
+  startMissingIndexForBaseDirectory: vi.fn(),
 }));
 
 vi.mock('./database', () => ({
@@ -13,15 +15,21 @@ vi.mock('./database', () => ({
 }));
 
 vi.mock('./session', () => ({
-  fetchAllOpenCodeSessions: mocks.fetchAllOpenCodeSessions,
+  expandOpenCodeSessionTree: mocks.expandOpenCodeSessionTree,
+  fetchRootSessionsForDirectory: mocks.fetchRootSessionsForDirectory,
 }));
 
 vi.mock('./vcs-api', () => ({
   fetchVcsInfo: mocks.fetchVcsInfo,
 }));
 
+vi.mock('./repository-index/autostart', () => ({
+  startMissingIndexForBaseDirectory: mocks.startMissingIndexForBaseDirectory,
+}));
+
 import {
   fetchSessionTree,
+  increaseSessionTreeLimit,
   startSessionTreeService,
   stopSessionTreeService,
 } from './session-tree-service';
@@ -30,11 +38,16 @@ const PORT = 4321;
 
 beforeEach(() => {
   stopSessionTreeService();
-  mocks.fetchAllOpenCodeSessions.mockReset();
+  mocks.fetchRootSessionsForDirectory.mockReset();
+  mocks.expandOpenCodeSessionTree.mockReset();
   mocks.fetchVcsInfo.mockReset();
   mocks.getAllRegisteredConnections.mockReset();
   mocks.getPinnedProjects.mockReset();
-  mocks.fetchAllOpenCodeSessions.mockResolvedValue([]);
+  mocks.startMissingIndexForBaseDirectory.mockReset();
+  mocks.fetchRootSessionsForDirectory.mockResolvedValue([]);
+  mocks.expandOpenCodeSessionTree.mockImplementation(
+    async (_port: number, roots: unknown[]) => roots,
+  );
   mocks.fetchVcsInfo.mockResolvedValue(null);
   mocks.getAllRegisteredConnections.mockReturnValue([]);
   mocks.getPinnedProjects.mockReturnValue([]);
@@ -82,7 +95,7 @@ describe('fetchSessionTree', () => {
         updatedAt: '',
       },
     ]);
-    mocks.fetchAllOpenCodeSessions.mockResolvedValue([
+    mocks.fetchRootSessionsForDirectory.mockResolvedValue([
       {
         id: 'ses_child',
         parentID: 'ses_parent',
@@ -93,10 +106,49 @@ describe('fetchSessionTree', () => {
 
     await fetchSessionTree();
 
-    expect(mocks.fetchAllOpenCodeSessions).toHaveBeenCalledWith(PORT, [
+    expect(mocks.fetchRootSessionsForDirectory).toHaveBeenCalledWith(
+      PORT,
       '/pinned-repo',
+      10,
+    );
+    expect(mocks.fetchRootSessionsForDirectory).toHaveBeenCalledWith(
+      PORT,
       '/parent-repo',
+      10,
+    );
+    expect(mocks.fetchRootSessionsForDirectory).toHaveBeenCalledWith(
+      PORT,
       '/child-repo',
+      10,
+    );
+  });
+
+  it('returns per-project load-more metadata and increases limit by ten', async () => {
+    mocks.getPinnedProjects.mockReturnValue([{ path: '/repo' }]);
+    mocks.fetchRootSessionsForDirectory.mockResolvedValue(
+      Array.from({ length: 10 }, (_, index) => ({
+        id: `ses_${index}`,
+        title: `Session ${index}`,
+        directory: '/repo',
+        time: { created: index, updated: index },
+      })),
+    );
+
+    const first = await fetchSessionTree();
+
+    expect(first?.limit).toBe(10);
+    expect(first?.hasMore).toBe(true);
+    expect(first?.projectPages).toEqual([
+      { path: '/repo', limit: 10, hasMore: true },
     ]);
+
+    increaseSessionTreeLimit('/repo');
+    await fetchSessionTree();
+
+    expect(mocks.fetchRootSessionsForDirectory).toHaveBeenLastCalledWith(
+      PORT,
+      '/repo',
+      20,
+    );
   });
 });

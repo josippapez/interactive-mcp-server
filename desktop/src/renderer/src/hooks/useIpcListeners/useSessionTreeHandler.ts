@@ -5,6 +5,25 @@ import {
 import { mergeSessionTreeSnapshot } from '../session-tree-merge';
 import type { HandlerContext } from './types';
 
+type SessionTreePayload = Awaited<
+  ReturnType<NonNullable<typeof window.api.getSessionTree>>
+>;
+type SnapshotNodes = Parameters<typeof mergeSessionTreeSnapshot>[1];
+
+function normalizeSessionTreePayload(
+  payload: Exclude<SessionTreePayload, null | undefined>,
+): {
+  nodes: SnapshotNodes;
+  limit: number;
+  hasMore: boolean;
+  projectPages?: Array<{ path: string; limit: number; hasMore: boolean }>;
+} {
+  if (Array.isArray(payload)) {
+    return { nodes: payload, limit: payload.length, hasMore: false };
+  }
+  return payload;
+}
+
 export { resolveNewlyCreatedSessionNodeId } from './auto-select-decision';
 
 /**
@@ -23,6 +42,7 @@ export function useSessionTreeHandler({
   getActiveConnectionId,
   getIsIntentionalNullSelection,
   activateRef,
+  setSessionTreeResult,
   setNodes,
   selectChannel,
   applyStartupPromptBuffer,
@@ -40,9 +60,13 @@ export function useSessionTreeHandler({
   let isFetching = false;
   let pendingRefetch = false;
 
-  const applySnapshot = (
-    snapshotNodes: Parameters<typeof mergeSessionTreeSnapshot>[1],
-  ): void => {
+  const applySnapshot = (payload: {
+    nodes: SnapshotNodes;
+    limit: number;
+    hasMore: boolean;
+    projectPages?: Array<{ path: string; limit: number; hasMore: boolean }>;
+  }): void => {
+    const snapshotNodes = payload.nodes;
     // Track candidate for auto-selection before updating state
     let candidateForSelection: ReturnType<
       typeof resolveNewlyCreatedSessionNodeId
@@ -53,7 +77,14 @@ export function useSessionTreeHandler({
         prev,
         snapshotNodes,
       );
-      return mergeSessionTreeSnapshot(prev, snapshotNodes);
+      const next = mergeSessionTreeSnapshot(prev, snapshotNodes);
+      setSessionTreeResult({
+        nodes: next,
+        limit: payload.limit,
+        hasMore: payload.hasMore,
+        projectPages: payload.projectPages,
+      });
+      return next;
     });
 
     // Apply buffered prompts, permissions, and questions AFTER the state
@@ -110,7 +141,7 @@ export function useSessionTreeHandler({
           return;
         }
         cancelPendingRetry();
-        applySnapshot(snapshotNodes);
+        applySnapshot(normalizeSessionTreePayload(snapshotNodes));
       })
       .finally(() => {
         isFetching = false;

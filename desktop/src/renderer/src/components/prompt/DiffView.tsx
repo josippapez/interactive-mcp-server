@@ -265,9 +265,13 @@ function useTokenizedLines(
 
   useEffect(() => {
     let cancelled = false;
-    const cached = highlightCode(source, language, (result) => {
-      if (!cancelled) setTokens(result.tokens);
-    });
+    const cached = highlightCode(
+      source,
+      language,
+      (result: { tokens: ThemedToken[][] }) => {
+        if (!cancelled) setTokens(result.tokens);
+      },
+    );
     if (cached) {
       setTokens(cached.tokens);
     } else {

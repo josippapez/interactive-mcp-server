@@ -42,7 +42,7 @@ interface FakeWorkerOptions {
   buildReply?: (req: WorkerRequestShape) => WorkerResponseShape;
 }
 
-class FakeWorker extends EventEmitter implements WorkerLike {
+class FakeWorker extends EventEmitter {
   public received: WorkerRequestShape[] = [];
   public terminated = false;
 
@@ -81,6 +81,10 @@ class FakeWorker extends EventEmitter implements WorkerLike {
   }
 }
 
+function fakeWorkerFactory(fake: FakeWorker): () => WorkerLike {
+  return () => fake as unknown as WorkerLike;
+}
+
 afterEach(async () => {
   await __shutdownWorkerForTests();
   __setWorkerFactoryForTests(null);
@@ -109,7 +113,7 @@ describe('searchDocsInWorker', () => {
         };
       },
     });
-    __setWorkerFactoryForTests(() => fake);
+    __setWorkerFactoryForTests(fakeWorkerFactory(fake));
 
     const out = await searchDocsInWorker('hello world', '/repo', 4);
 
@@ -126,7 +130,7 @@ describe('searchDocsInWorker', () => {
 
   it('routes concurrent requests by id', async () => {
     const fake = new FakeWorker({ manual: true });
-    __setWorkerFactoryForTests(() => fake);
+    __setWorkerFactoryForTests(fakeWorkerFactory(fake));
 
     const p1 = searchDocsInWorker('a', '/repo', 1);
     const p2 = searchDocsInWorker('b', '/repo', 2);
@@ -156,7 +160,7 @@ describe('searchDocsInWorker', () => {
     const fake = new FakeWorker({
       errorAfterFirstMessage: new Error('boom'),
     });
-    __setWorkerFactoryForTests(() => fake);
+    __setWorkerFactoryForTests(fakeWorkerFactory(fake));
 
     // Empty query short-circuits searchDocs to []. We use that to verify the
     // fallback path executes without touching disk.
@@ -178,7 +182,7 @@ describe('searchDocsInWorker', () => {
     const fake = new FakeWorker();
     __setWorkerFactoryForTests(() => {
       spawnCount += 1;
-      return fake;
+      return fake as unknown as WorkerLike;
     });
 
     await searchDocsInWorker('q1', '/repo');

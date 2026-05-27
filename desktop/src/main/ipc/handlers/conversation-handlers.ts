@@ -17,12 +17,13 @@
  */
 
 import { ipcMain } from 'electron';
-import type { IpcHandlerDeps } from './types';
 import { sessionMessages } from '../../utility/opencode-client';
 import { mapMessage, mapPart } from '../../../shared/opencode-mapping';
 import { checkOpenCodeHealth } from '../../opencode/health';
 import { createLogger } from '../../utils/logger';
 import type { ConversationMessage } from '../../../preload/api/types';
+import { getEffectiveOpenCodePort } from './shared';
+import type { IpcHandlerDeps } from './types';
 
 const log = createLogger('conversation-ipc');
 
@@ -40,7 +41,7 @@ export function registerConversationHandlers(deps: IpcHandlerDeps): void {
         const hasQuery =
           payload.limit !== undefined || payload.before !== undefined;
         const response = (await sessionMessages(
-          settings.openCodePort,
+          getEffectiveOpenCodePort(deps),
           payload.sessionId,
           hasQuery
             ? { limit: payload.limit, before: payload.before }
@@ -73,17 +74,14 @@ export function registerConversationHandlers(deps: IpcHandlerDeps): void {
     },
   );
 
-  ipcMain.handle(
-    'is-conversation-available',
-    async (_event, _providerId?: string): Promise<boolean> => {
-      const settings = deps.getSettings();
-      if (settings.agentBackend !== 'opencode') return false;
-      try {
-        const health = await checkOpenCodeHealth(settings.openCodePort);
-        return health.available === true;
-      } catch {
-        return false;
-      }
-    },
-  );
+  ipcMain.handle('is-conversation-available', async (): Promise<boolean> => {
+    const settings = deps.getSettings();
+    if (settings.agentBackend !== 'opencode') return false;
+    try {
+      const health = await checkOpenCodeHealth(getEffectiveOpenCodePort(deps));
+      return health.available === true;
+    } catch {
+      return false;
+    }
+  });
 }

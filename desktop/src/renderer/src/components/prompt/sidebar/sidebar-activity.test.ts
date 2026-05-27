@@ -39,7 +39,7 @@ describe('filterVisibleSessionIds', () => {
   it('keeps sessions with local working status visible', () => {
     const workingNode = createNode({
       sessionStatuses: [
-        { type: 'working', message: 'Busy', timestamp: new Date() },
+        { type: 'working', status: 'Busy', timestamp: new Date() },
       ],
     });
 

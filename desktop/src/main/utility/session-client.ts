@@ -20,6 +20,7 @@ import type {
 import type {
   SessionInfo,
   SessionNodeData,
+  SessionTreeResult,
   VcsInfo,
 } from './backend/session-types';
 import type { ReconnectResult } from './backend/session-reconnect';
@@ -30,6 +31,7 @@ export type {
   ResolutionMethod,
   SessionInfo,
   SessionNodeData,
+  SessionTreeResult,
   VcsInfo,
   ReconnectResult,
 };
@@ -104,8 +106,18 @@ export function stopSessionTreeService(): Promise<void> {
   }
 }
 
-export function fetchSessionTree(): Promise<SessionNodeData[] | null> {
+export function fetchSessionTree(): Promise<SessionTreeResult | null> {
   return call('session.tree.fetch', []);
+}
+
+export function loadMoreSessionTree(): Promise<number> {
+  return call('session.tree.loadMore', []);
+}
+
+export function loadMoreSessionTreeForDirectory(
+  baseDirectory: string,
+): Promise<number> {
+  return call('session.tree.loadMoreForDirectory', [baseDirectory]);
 }
 
 export function invalidateSessionTree(): Promise<void> {

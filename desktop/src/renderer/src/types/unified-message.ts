@@ -425,6 +425,20 @@ const partSignatureCache = new WeakMap<
  * only the text tail grew and no tool fields changed.
  */
 const partSignatureByIdCache = new Map<string, PartCacheEntry>();
+const partSignatureByIdCacheOrder: string[] = [];
+export const PART_SIGNATURE_BY_ID_CACHE_MAX = 1000;
+
+function setPartSignatureByIdCache(id: string, entry: PartCacheEntry): void {
+  partSignatureByIdCache.set(id, entry);
+  const existingIndex = partSignatureByIdCacheOrder.indexOf(id);
+  if (existingIndex !== -1)
+    partSignatureByIdCacheOrder.splice(existingIndex, 1);
+  partSignatureByIdCacheOrder.push(id);
+  while (partSignatureByIdCacheOrder.length > PART_SIGNATURE_BY_ID_CACHE_MAX) {
+    const evicted = partSignatureByIdCacheOrder.shift();
+    if (evicted) partSignatureByIdCache.delete(evicted);
+  }
+}
 
 /**
  * Compute a short hash of the full signature without scanning every char.
@@ -655,7 +669,7 @@ function hashParts(parts: ConversationMessage['parts']): string {
 
       partSignatureCache.set(part, entry);
       if (part.id != null) {
-        partSignatureByIdCache.set(part.id, entry);
+        setPartSignatureByIdCache(part.id, entry);
       }
     }
 
@@ -663,6 +677,17 @@ function hashParts(parts: ConversationMessage['parts']): string {
   }
 
   return `${parts.length}:${hash}`;
+}
+
+export function resetUnifiedMessageCachesForTests(): void {
+  channelUnifiedCache.clear();
+  conversationUnifiedCache.clear();
+  partSignatureByIdCache.clear();
+  partSignatureByIdCacheOrder.splice(0, partSignatureByIdCacheOrder.length);
+}
+
+export function getPartSignatureByIdCacheSizeForTests(): number {
+  return partSignatureByIdCache.size;
 }
 
 function buildConversationSignature(msg: ConversationMessage): string {

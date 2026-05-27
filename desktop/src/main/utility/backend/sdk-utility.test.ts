@@ -24,7 +24,8 @@ const PORT = 4321;
 const BASE_DIR = '/repo';
 
 beforeEach(() => {
-  for (const mock of Object.values(sdkMocks)) mock.mockReset();
+  for (const mock of Object.values(sdkMocks))
+    (mock as ReturnType<typeof vi.fn>).mockReset();
   sdkMocks.getClient.mockReturnValue({
     file: { list: sdkMocks.fileList, status: sdkMocks.fileStatus },
     find: { files: sdkMocks.findFiles },

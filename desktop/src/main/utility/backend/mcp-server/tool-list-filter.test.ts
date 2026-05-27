@@ -32,11 +32,10 @@ describe('HIDDEN_TOOL_NAMES', () => {
       | null = null;
     const server = {
       server: {
-        setRequestHandler: (
-          _schema: unknown,
-          handler: () => Promise<{ tools: Array<{ name: string }> }>,
-        ) => {
-          listHandler = handler;
+        setRequestHandler: (_schema: unknown, handler: unknown) => {
+          listHandler = handler as () => Promise<{
+            tools: Array<{ name: string }>;
+          }>;
         },
       },
       _registeredTools: {
@@ -57,8 +56,10 @@ describe('HIDDEN_TOOL_NAMES', () => {
 
     applyHiddenToolListFilter(server);
 
-    const result = await listHandler?.();
-    expect(result?.tools.map((tool) => tool.name)).toEqual([
+    const result = await (
+      listHandler as (() => Promise<{ tools: Array<{ name: string }> }>) | null
+    )?.();
+    expect(result?.tools.map((tool: { name: string }) => tool.name)).toEqual([
       'find_docs',
       'read_doc',
       'list_docs',
@@ -77,11 +78,10 @@ describe('HIDDEN_TOOL_NAMES', () => {
       | null = null;
     const server = {
       server: {
-        setRequestHandler: (
-          _schema: unknown,
-          handler: () => Promise<{ tools: Array<{ name: string }> }>,
-        ) => {
-          listHandler = handler;
+        setRequestHandler: (_schema: unknown, handler: unknown) => {
+          listHandler = handler as () => Promise<{
+            tools: Array<{ name: string }>;
+          }>;
         },
       },
       _registeredTools: {
@@ -92,8 +92,12 @@ describe('HIDDEN_TOOL_NAMES', () => {
 
     applyHiddenToolListFilter(server);
 
-    const first = await listHandler?.();
-    const second = await listHandler?.();
+    const first = await (
+      listHandler as (() => Promise<{ tools: Array<{ name: string }> }>) | null
+    )?.();
+    const second = await (
+      listHandler as (() => Promise<{ tools: Array<{ name: string }> }>) | null
+    )?.();
     expect(second?.tools).toBe(first?.tools);
   });
 
@@ -103,11 +107,10 @@ describe('HIDDEN_TOOL_NAMES', () => {
       | null = null;
     const server = {
       server: {
-        setRequestHandler: (
-          _schema: unknown,
-          handler: () => Promise<{ tools: Array<{ name: string }> }>,
-        ) => {
-          listHandler = handler;
+        setRequestHandler: (_schema: unknown, handler: unknown) => {
+          listHandler = handler as () => Promise<{
+            tools: Array<{ name: string }>;
+          }>;
         },
       },
       _registeredTools: {
@@ -117,13 +120,17 @@ describe('HIDDEN_TOOL_NAMES', () => {
 
     applyHiddenToolListFilter(server);
 
-    const first = await listHandler?.();
+    const first = await (
+      listHandler as (() => Promise<{ tools: Array<{ name: string }> }>) | null
+    )?.();
     (
       server as unknown as {
         _registeredTools: Record<string, { inputSchema: unknown }>;
       }
     )._registeredTools.find_docs = { inputSchema: {} };
-    const second = await listHandler?.();
+    const second = await (
+      listHandler as (() => Promise<{ tools: Array<{ name: string }> }>) | null
+    )?.();
     expect(second?.tools).not.toBe(first?.tools);
   });
 });

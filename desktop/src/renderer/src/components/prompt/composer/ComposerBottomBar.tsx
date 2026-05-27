@@ -1,5 +1,4 @@
 import { memo } from 'react';
-import type { SessionStatus } from '../../../types';
 import type { Model } from '../../../hooks/useProviders';
 import AgentChip from '../AgentChip';
 import AgentPopover from '../AgentPopover';
@@ -8,7 +7,7 @@ import ModelPopover from '../ModelPopover';
 import VariantSelector from '../VariantSelector';
 import { ArrowUpIcon, AttachIcon, DocIcon } from './ComposerIcons';
 import { ReplyToggle } from './ReplyToggle';
-import { StatusDisplay } from './StatusDisplay';
+import { RepositoryIndexBadge } from './RepositoryIndexBadge';
 import type { Provider } from '../../../hooks/useProviders';
 
 type ComposerBottomBarProps = {
@@ -35,17 +34,11 @@ type ComposerBottomBarProps = {
   onAgentSelect: (agent: string | null) => void;
   onDefaultAgentResolved?: (agent: string | null) => void;
   agentBaseDirectory: string | undefined;
-  // Status props
-  isBusy: boolean;
-  latestStatus: SessionStatus | null | undefined;
-  connectionId: string | null | undefined;
-  onDismissStatus:
-    | ((connectionId: string, timestamp: Date) => void)
-    | undefined;
-  sendShortcut: string;
   // Doc context props
   docContextEnabled: boolean;
   onToggleDocContext: (() => void) | undefined;
+  baseDirectory?: string | null;
+  providerSessionId: string | null | undefined;
   // Attachment props
   onFilePicker: () => void;
   // Reply toggle props
@@ -58,7 +51,7 @@ type ComposerBottomBarProps = {
   submitLabel: string;
 };
 
-/** Bottom toolbar with model selector, status, and action buttons */
+/** Bottom toolbar with model selector and action buttons. */
 function ComposerBottomBarComponent({
   enabled,
   showModelSelector,
@@ -81,13 +74,10 @@ function ComposerBottomBarComponent({
   onAgentSelect,
   onDefaultAgentResolved,
   agentBaseDirectory,
-  isBusy,
-  latestStatus,
-  connectionId,
-  onDismissStatus,
-  sendShortcut,
   docContextEnabled,
   onToggleDocContext,
+  baseDirectory,
+  providerSessionId,
   onFilePicker,
   showReplyButton,
   noReply,
@@ -129,6 +119,10 @@ function ComposerBottomBarComponent({
             disabled={!enabled}
           />
         )}
+        <RepositoryIndexBadge
+          baseDirectory={baseDirectory}
+          providerSessionId={providerSessionId}
+        />
       </div>
 
       {/* Model popover - positioned above the model chip */}
@@ -154,16 +148,7 @@ function ComposerBottomBarComponent({
         />
       )}
 
-      {/* Center - Status or keyboard hint */}
-      <div className="flex-1 flex items-center justify-center min-w-0 overflow-hidden">
-        <StatusDisplay
-          isBusy={isBusy}
-          latestStatus={latestStatus ?? undefined}
-          connectionId={connectionId}
-          onDismissStatus={onDismissStatus}
-          sendShortcut={sendShortcut}
-        />
-      </div>
+      <div className="flex-1" />
 
       {/* Right side - Actions */}
       <div className="flex items-center gap-1.5 shrink-0">
@@ -217,7 +202,7 @@ function ComposerBottomBarComponent({
               ? noReply
                 ? 'Queue message (no agent response)'
                 : 'Send and trigger agent response'
-              : `${submitLabel} (${sendShortcut})`
+              : submitLabel
           }
           aria-label={submitLabel}
           className={`flex h-8 w-8 items-center justify-center rounded-full text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${

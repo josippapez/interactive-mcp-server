@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import type { Attachment, SessionNode } from '../../types';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
 import { resolvePromptTarget } from '../../store/message-dispatch';
+import { appendChannelMessage } from './channel-message-state';
 
 interface PromptHandlersOptions {
   nodesRef: React.MutableRefObject<Map<string, SessionNode>>;
@@ -22,15 +23,12 @@ export function usePromptHandlers({
       return node.channelMessages;
     }
 
-    return [
-      ...node.channelMessages,
-      {
-        id: `local-question-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-        kind: 'question' as const,
-        text: promptMessage,
-        timestamp: new Date(),
-      },
-    ];
+    return appendChannelMessage(node.channelMessages, {
+      id: `local-question-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      kind: 'question' as const,
+      text: promptMessage,
+      timestamp: new Date(),
+    });
   };
 
   const handleSubmit = useCallback(
@@ -65,16 +63,13 @@ export function usePromptHandlers({
         const next = new Map(prev);
         next.set(nodeKey, {
           ...node,
-          channelMessages: [
-            ...channelMessages,
-            {
-              id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              kind: 'answer' as const,
-              text: answer,
-              timestamp: new Date(),
-              attachments,
-            },
-          ],
+          channelMessages: appendChannelMessage(channelMessages, {
+            id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            kind: 'answer' as const,
+            text: answer,
+            timestamp: new Date(),
+            attachments,
+          }),
           prompt: null,
           hasPendingPrompt: false,
         });
@@ -133,15 +128,12 @@ export function usePromptHandlers({
         const next = new Map(prev);
         next.set(nodeKey, {
           ...node,
-          channelMessages: [
-            ...channelMessages,
-            {
-              id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
-              kind: 'answer' as const,
-              text: option,
-              timestamp: new Date(),
-            },
-          ],
+          channelMessages: appendChannelMessage(channelMessages, {
+            id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            kind: 'answer' as const,
+            text: option,
+            timestamp: new Date(),
+          }),
           prompt: null,
           hasPendingPrompt: false,
         });

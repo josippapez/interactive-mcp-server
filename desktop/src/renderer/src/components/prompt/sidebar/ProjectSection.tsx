@@ -18,6 +18,7 @@ type ProjectSectionProps = {
   onSelect: (id: string) => void;
   getStatus: (sessionId: string) => SessionStatusType | null;
   onCreateSession?: (baseDirectory: string) => void;
+  onLoadMoreSessions?: (baseDirectory: string) => void;
   collapsedSessions: Set<string>;
   onToggleSession: (sessionId: string) => void;
 };
@@ -35,6 +36,7 @@ export const ProjectSection = memo(function ProjectSection({
   onSelect,
   getStatus,
   onCreateSession,
+  onLoadMoreSessions,
   collapsedSessions,
   onToggleSession,
 }: ProjectSectionProps): React.ReactElement {
@@ -42,11 +44,11 @@ export const ProjectSection = memo(function ProjectSection({
   const hasActive = project.sessions.some((s) => s.id === activeConnectionId);
 
   return (
-    <div className="group mb-2 min-w-0 rounded-2xl border border-[var(--color-border-weak)]/75 bg-[var(--color-surface)]/35 p-1.5">
+    <div className="group mb-1 min-w-0 rounded-lg border border-[var(--color-border-weak)]/60 bg-[var(--color-surface)]/25 p-1">
       <div className="relative flex min-w-0 items-center">
         <SidebarMenuButton
           isActive={hasActive}
-          className={`h-auto min-w-0 rounded-xl px-3 py-2.5 hover:bg-[var(--color-border)]/55 flex min-w-0 w-full items-center gap-2.5 overflow-hidden text-left ${
+          className={`h-auto min-w-0 rounded-md px-2 py-1.5 hover:bg-[var(--color-border)]/55 flex min-w-0 w-full items-center gap-2 overflow-hidden text-left ${
             hasActive
               ? 'bg-[var(--color-agent)]/6 text-[var(--color-text)] ring-1 ring-[var(--color-agent)]/12'
               : ''
@@ -55,8 +57,8 @@ export const ProjectSection = memo(function ProjectSection({
         >
           <svg
             xmlns="http://www.w3.org/2000/svg"
-            width="10"
-            height="10"
+            width="9"
+            height="9"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -73,8 +75,8 @@ export const ProjectSection = memo(function ProjectSection({
 
           <svg
             xmlns="http://www.w3.org/2000/svg"
-            width="12"
-            height="12"
+            width="11"
+            height="11"
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -94,7 +96,7 @@ export const ProjectSection = memo(function ProjectSection({
           </svg>
 
           <span
-            className={`block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-sm ${
+            className={`block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs ${
               project.isRunning
                 ? 'font-medium text-[var(--color-text)]'
                 : project.isPinned && sessionCount === 0
@@ -107,7 +109,7 @@ export const ProjectSection = memo(function ProjectSection({
           </span>
 
           {sessionCount > 0 && (
-            <span className="rounded-full border border-[var(--color-border)] px-1.5 py-0.5 text-[10px] text-[var(--color-text-faint)]">
+            <span className="rounded-full border border-[var(--color-border)] px-1 py-px text-[9px] text-[var(--color-text-faint)]">
               {sessionCount}
             </span>
           )}
@@ -123,7 +125,7 @@ export const ProjectSection = memo(function ProjectSection({
         {(onRemove || onPin) && (
           <SidebarMenuAction
             showOnHover
-            onClick={(e) => {
+            onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
               e.stopPropagation();
               if (onRemove) {
                 onRemove();
@@ -164,15 +166,15 @@ export const ProjectSection = memo(function ProjectSection({
       </div>
 
       {!isCollapsed && sessionCount === 0 && (
-        <div className="px-4 py-2">
-          <p className="mb-2 text-xs italic text-[var(--color-text-faint)]">
+        <div className="px-3 py-1.5">
+          <p className="mb-1.5 text-[11px] italic text-[var(--color-text-faint)]">
             No sessions yet
           </p>
           {onCreateSession && (
             <button
               type="button"
               onClick={() => onCreateSession(project.path)}
-              className="flex items-center gap-1.5 text-xs text-[var(--color-agent)] transition-colors hover:text-[var(--color-agent)]/80"
+              className="flex items-center gap-1.5 text-[11px] text-[var(--color-agent)] transition-colors hover:text-[var(--color-agent)]/80"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -195,7 +197,7 @@ export const ProjectSection = memo(function ProjectSection({
       )}
 
       {!isCollapsed && sessionCount > 0 && (
-        <SidebarMenuSub className="mx-0 mt-1 gap-1 border-l border-[var(--color-border-weak)] px-2 pb-1 pt-2">
+        <SidebarMenuSub className="mx-0 mt-0.5 gap-0.5 border-l border-[var(--color-border-weak)] px-1.5 pb-0.5 pt-1">
           {project.sessions
             .filter((node) => {
               if (!node.openCodeParentId) return true;
@@ -239,7 +241,7 @@ export const ProjectSection = memo(function ProjectSection({
             <button
               type="button"
               onClick={() => onCreateSession(project.path)}
-              className="flex w-full items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-agent)]"
+              className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-[11px] text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-agent)]"
             >
               <svg
                 xmlns="http://www.w3.org/2000/svg"
@@ -256,6 +258,15 @@ export const ProjectSection = memo(function ProjectSection({
                 <path d="M12 5v14M5 12h14" />
               </svg>
               <span>New Session</span>
+            </button>
+          )}
+          {project.hasMoreSessions && onLoadMoreSessions && (
+            <button
+              type="button"
+              onClick={() => onLoadMoreSessions(project.path)}
+              className="flex w-full items-center rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-agent)]"
+            >
+              Load more
             </button>
           )}
         </SidebarMenuSub>

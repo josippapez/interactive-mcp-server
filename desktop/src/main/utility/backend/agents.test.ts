@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { mapSdkAgent } from './agents';
-import type { Agent as SdkAgent } from '@opencode-ai/sdk/v2/gen/types.gen.js';
+import type { Agent as SdkAgent } from '@opencode-ai/sdk/v2/client';
 
 function agent(name: string, overrides: Partial<SdkAgent> = {}): SdkAgent {
   return {
     name,
     description: `${name} from sdk`,
     mode: 'subagent',
-    permission: {},
+    permission: [],
     options: {},
     ...overrides,
   };

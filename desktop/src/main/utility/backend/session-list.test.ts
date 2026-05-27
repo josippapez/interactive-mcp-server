@@ -96,4 +96,26 @@ describe('OpenCode session list helpers', () => {
       'unscoped',
     ]);
   });
+
+  it('passes roots and limit through to unscoped and scoped session list requests', async () => {
+    sessionApiMocks.sessionList.mockResolvedValue({
+      data: [],
+      error: undefined,
+    });
+
+    await fetchAllOpenCodeSessions(PORT, ['/repo'], { roots: true, limit: 50 });
+
+    expect(sessionApiMocks.sessionList).toHaveBeenNthCalledWith(
+      1,
+      PORT,
+      { roots: true, limit: 50 },
+      { directory: undefined, signal: expect.any(AbortSignal) },
+    );
+    expect(sessionApiMocks.sessionList).toHaveBeenNthCalledWith(
+      2,
+      PORT,
+      { roots: true, limit: 50 },
+      { directory: '/repo', signal: expect.any(AbortSignal) },
+    );
+  });
 });

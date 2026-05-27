@@ -6,6 +6,7 @@ import { registerManageSkillsAndInstructionsTool } from '../tools/manage-skills-
 import { registerManageMemoriesTool } from '../tools/manage-memories';
 import { registerManageBackgroundSubagentsTool } from '../tools/manage-background-subagents';
 import { registerMessageBackgroundSubagentTool } from '../tools/message-background-subagent';
+import { registerRepositoryIndexTools } from '../tools/repository-index';
 import { getEffectiveProvider } from './provider-detection';
 import { applyHiddenToolListFilter } from './tool-list-filter';
 
@@ -36,6 +37,12 @@ export function createMcpServerWithTools(
   const requireSessionId = providerType === 'opencode';
 
   registerRepoDocsTools(server, connectionId, requireSessionId);
+  registerRepositoryIndexTools(
+    server,
+    connectionId,
+    getDocIndexingEnabled,
+    requireSessionId,
+  );
   registerManageSkillsAndInstructionsTool(
     server,
     getWindow,
@@ -47,7 +54,6 @@ export function createMcpServerWithTools(
   registerMessageBackgroundSubagentTool(server, connectionId);
 
   void connectionName;
-  void getDocIndexingEnabled;
   void getSessionEntries;
   void cleanupConnection;
 

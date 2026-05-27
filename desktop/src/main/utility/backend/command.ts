@@ -64,12 +64,10 @@ export async function fetchCommands(
 
     if (response.error) return null;
 
-    const data = response.data as CommandsResponse | undefined;
-    if (!data?.commands) return null;
+    const data = response.data as unknown as Command[] | undefined;
+    if (!data) return null;
 
-    const commands = data.commands.filter(
-      (command) => command.source !== 'skill',
-    );
+    const commands = data.filter((command) => command.source !== 'skill');
     _cachedCommands = commands;
     return commands;
   } catch {

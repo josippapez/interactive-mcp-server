@@ -96,6 +96,12 @@ const MAX_SEEDED_SESSIONS = 20;
 export const CONVERSATION_REST_SEED_LIMIT = 500;
 const seededSessionOrder: string[] = [];
 
+export function shouldCacheConversationSeedResult(
+  messages: readonly ConversationMessage[],
+): boolean {
+  return messages.length > 0;
+}
+
 function markSeeded(sessionId: string): void {
   const existingIndex = seededSessionOrder.indexOf(sessionId);
   if (existingIndex !== -1) seededSessionOrder.splice(existingIndex, 1);
@@ -136,7 +142,11 @@ async function seedOnce(sessionId: string): Promise<void> {
       limit: CONVERSATION_REST_SEED_LIMIT,
     });
     if (messages.length > 0) seedMessages(sessionId, messages);
-    markSeeded(sessionId);
+    if (shouldCacheConversationSeedResult(messages)) {
+      markSeeded(sessionId);
+    } else {
+      seededSessions.delete(sessionId);
+    }
   } catch {
     // Best-effort seed — if it fails the live stream will still fill in
     // whatever the user is actively doing.

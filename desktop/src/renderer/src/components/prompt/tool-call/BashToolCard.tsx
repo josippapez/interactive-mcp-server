@@ -7,7 +7,6 @@ import {
   CollapsibleTrigger,
 } from '../../ui/collapsible';
 import {
-  HighlightedCodeBlock,
   TOOL_CALL_LABEL_TEXT_CLASS,
   TOOL_CALL_MONO_TEXT_CLASS,
   ToolChevron,
@@ -206,18 +205,21 @@ export const BashToolCard = memo(function BashToolCard({
 
       <CollapsibleContent className="pl-6 pr-0 py-1 flex flex-col gap-[var(--tool-content-gap,6px)]">
         {command && (
-          <HighlightedCodeBlock
+          <WrapToggleCodeBlock
             text={command}
-            language="bash"
             containerClassName="group relative"
-            preClassName="whitespace-pre-wrap break-all"
+            preClassName={`whitespace-pre-wrap break-all ${TOOL_CALL_MONO_TEXT_CLASS}`}
           />
         )}
 
         {parsedOutput && (
           <div className="flex flex-col gap-1.5">
             {combinedOutput && (
-              <WrapToggleCodeBlock text={combinedOutput} autoScroll={true} />
+              <WrapToggleCodeBlock
+                text={combinedOutput}
+                autoScroll={true}
+                preClassName={TOOL_CALL_MONO_TEXT_CLASS}
+              />
             )}
 
             {parsedOutput.reminder && (

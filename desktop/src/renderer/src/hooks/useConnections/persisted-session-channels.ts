@@ -8,6 +8,10 @@ export type PersistedSessionChannel = {
   parentSessionId: string | null;
 };
 
+type HydratePersistedSessionChannelsOptions = {
+  includeMissing?: boolean;
+};
+
 function createPersistedSessionNode(
   channel: PersistedSessionChannel,
   fallback?: SessionNode,
@@ -50,6 +54,7 @@ function createPersistedSessionNode(
 export function hydratePersistedSessionChannels(
   prev: Map<string, SessionNode>,
   channels: PersistedSessionChannel[],
+  options: HydratePersistedSessionChannelsOptions = {},
 ): Map<string, SessionNode> {
   if (channels.length === 0) {
     return prev;
@@ -67,6 +72,10 @@ export function hydratePersistedSessionChannels(
           node.providerSessionId === channel.providerSessionId ||
           node.sessionChannel?.sessionId === channel.sessionId,
       );
+
+    if (!existing && !options.includeMissing) {
+      continue;
+    }
 
     next.set(nodeKey, createPersistedSessionNode(channel, existing));
   }

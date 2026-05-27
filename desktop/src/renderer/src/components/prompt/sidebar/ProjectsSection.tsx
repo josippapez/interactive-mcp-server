@@ -106,6 +106,7 @@ type ProjectsSectionProps = {
   onSelect: (id: string) => void;
   getStatus: (sessionId: string) => SessionStatusType | null;
   onCreateSession?: (baseDirectory: string) => void;
+  onLoadMoreSessions?: (baseDirectory: string) => void;
   collapsedSessions: Set<string>;
   onToggleSession: (sessionId: string) => void;
   hasDirectConnections: boolean;
@@ -128,6 +129,7 @@ export const ProjectsSection = memo(function ProjectsSection({
   onSelect,
   getStatus,
   onCreateSession,
+  onLoadMoreSessions,
   collapsedSessions,
   onToggleSession,
   hasDirectConnections,
@@ -161,15 +163,15 @@ export const ProjectsSection = memo(function ProjectsSection({
         </SidebarGroupContent>
       )}
       {groupedProjects.map((group, index) => (
-        <div key={group.key} className={index > 0 ? 'mt-3' : ''}>
-          <div className="flex items-center gap-2 px-3 py-1.5">
-            <SidebarGroupLabel className="h-auto px-0 py-0 text-[10px] font-semibold uppercase tracking-[0.16em] text-[var(--color-text-faint)]/90">
+        <div key={group.key} className={index > 0 ? 'mt-2' : ''}>
+          <div className="flex items-center gap-2 px-2 py-1">
+            <SidebarGroupLabel className="h-auto px-0 py-0 text-[9px] font-semibold uppercase tracking-[0.18em] text-[var(--color-text-faint)]/75">
               {group.label}
             </SidebarGroupLabel>
-            <div className="h-px flex-1 bg-[var(--color-border)]" />
+            <div className="h-px flex-1 bg-[var(--color-border)]/70" />
           </div>
           <SidebarGroupContent>
-            <SidebarMenu className="gap-1 px-2">
+            <SidebarMenu className="gap-0.5 px-2">
               {group.projects.map((project) => (
                 <ProjectSection
                   key={project.path}
@@ -190,6 +192,7 @@ export const ProjectsSection = memo(function ProjectsSection({
                   onSelect={onSelect}
                   getStatus={getStatus}
                   onCreateSession={onCreateSession}
+                  onLoadMoreSessions={onLoadMoreSessions}
                   collapsedSessions={collapsedSessions}
                   onToggleSession={onToggleSession}
                 />

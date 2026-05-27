@@ -30,6 +30,7 @@ export type SyncedSettings = {
   defaultShowThinking: boolean;
   toolAutoExpandExclusions: string[];
   agentBackend: string;
+  autoRestoreSessions: boolean;
   hideSystemReminders: boolean;
   hideDocInjections: boolean;
   chatTextSize: 'sm' | 'md' | 'lg';
@@ -53,6 +54,7 @@ const DEFAULT_SETTINGS: SyncedSettings = {
   defaultShowThinking: false,
   toolAutoExpandExclusions: [],
   agentBackend: '',
+  autoRestoreSessions: false,
   hideSystemReminders: false,
   hideDocInjections: false,
   chatTextSize: 'md',
@@ -116,6 +118,7 @@ export const fetchSettingsAtom = atom(null, async (_get, set) => {
       defaultShowThinking: s.defaultShowThinking ?? false,
       toolAutoExpandExclusions: s.toolAutoExpandExclusions ?? [],
       agentBackend: s.agentBackend ?? '',
+      autoRestoreSessions: s.autoRestoreSessions ?? false,
       hideSystemReminders: s.hideSystemReminders ?? false,
       hideDocInjections: s.hideDocInjections ?? false,
       chatTextSize: isChatTextSize(s.chatTextSize ?? '')

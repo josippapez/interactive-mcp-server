@@ -78,12 +78,14 @@ export interface SessionInfo {
 export interface VcsInfo {
   /** Git branch name extracted from version string. */
   branch: string | null;
+  /** Default branch name (e.g. main/master). */
+  defaultBranch: string | null;
   /** Number of added lines. */
-  additions: number;
+  additions?: number;
   /** Number of deleted lines. */
-  deletions: number;
+  deletions?: number;
   /** Number of changed files. */
-  files: number;
+  files?: number;
 }
 
 /** The data shape emitted over IPC to the renderer per session. */
@@ -119,6 +121,17 @@ export interface SessionNodeData {
   providerType: RegisteredConnection['providerType'] | null;
   /** VCS (git) information for this session. */
   vcsInfo: VcsInfo | null;
+}
+
+export interface SessionTreeResult {
+  nodes: SessionNodeData[];
+  limit: number;
+  hasMore: boolean;
+  projectPages: Array<{
+    path: string;
+    limit: number;
+    hasMore: boolean;
+  }>;
 }
 
 // ─── Timing constants ────────────────────────────────────────────────────────

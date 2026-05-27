@@ -3,6 +3,7 @@ import type { Attachment, SessionNode } from '../../types';
 import { resolveInteractiveMessageTarget } from '../../store/message-dispatch';
 import type { ModelOverride } from '../useProviderInjection';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
+import { appendChannelMessage } from './channel-message-state';
 
 /**
  * Persist message handler diagnostics to the main-process log file.
@@ -94,16 +95,13 @@ export function useMessageHandlers({
         const next = new Map(prev);
         next.set(key, {
           ...node,
-          channelMessages: [
-            ...node.channelMessages,
-            {
-              id: outboundId,
-              kind: 'outbound' as const,
-              text: message,
-              timestamp: new Date(),
-              attachments,
-            },
-          ],
+          channelMessages: appendChannelMessage(node.channelMessages, {
+            id: outboundId,
+            kind: 'outbound' as const,
+            text: message,
+            timestamp: new Date(),
+            attachments,
+          }),
         });
         return next;
       });
@@ -202,16 +200,13 @@ export function useMessageHandlers({
         const next = new Map(prev);
         next.set(key, {
           ...node,
-          channelMessages: [
-            ...node.channelMessages,
-            {
-              id: outboundId,
-              kind: 'outbound' as const,
-              text: message,
-              timestamp: new Date(),
-              attachments,
-            },
-          ],
+          channelMessages: appendChannelMessage(node.channelMessages, {
+            id: outboundId,
+            kind: 'outbound' as const,
+            text: message,
+            timestamp: new Date(),
+            attachments,
+          }),
         });
         logHandler(
           'handleInjectWithReply',

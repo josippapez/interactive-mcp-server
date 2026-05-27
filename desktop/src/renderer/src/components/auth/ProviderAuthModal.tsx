@@ -161,7 +161,9 @@ function TextPromptInput({
         ref={inputRef}
         type={isApiKey ? 'password' : 'text'}
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          onChange(e.target.value)
+        }
         placeholder={prompt.placeholder ?? ''}
         className="rounded-md bg-[var(--color-surface)] focus:ring-1 focus:ring-[var(--color-agent)]"
       />
@@ -335,7 +337,9 @@ function OAuthPendingStep({
           <Input
             type="text"
             value={code}
-            onChange={(e) => setCode(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+              setCode(e.target.value)
+            }
             placeholder="Enter code..."
             className="rounded-md bg-[var(--color-surface)] focus:ring-1 focus:ring-[var(--color-agent)]"
           />

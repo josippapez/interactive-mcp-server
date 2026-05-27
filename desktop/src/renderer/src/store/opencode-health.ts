@@ -25,6 +25,18 @@ export interface OpenCodeHealthStatus {
   error?: string;
 }
 
+export function areOpenCodeHealthStatusesEqual(
+  a: OpenCodeHealthStatus,
+  b: OpenCodeHealthStatus,
+): boolean {
+  return (
+    a.available === b.available &&
+    a.healthy === b.healthy &&
+    a.version === b.version &&
+    a.error === b.error
+  );
+}
+
 // -----------------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------------
@@ -82,6 +94,7 @@ export const checkHealthAtom = atom(null, async (get, set) => {
     return;
   }
 
+  if (get(healthCheckingAtom)) return;
   set(healthCheckingAtom, true);
 
   try {
@@ -91,27 +104,35 @@ export const checkHealthAtom = atom(null, async (get, set) => {
     if (!get(healthEnabledAtom)) return;
 
     if (result) {
-      set(healthStatusAtom, result);
+      if (!areOpenCodeHealthStatusesEqual(get(healthStatusAtom), result)) {
+        set(healthStatusAtom, result);
+      }
       set(lastHealthCheckAtom, Date.now());
     } else {
-      set(healthStatusAtom, {
+      const nextStatus = {
         available: false,
         healthy: false,
         version: null,
         error: 'Health check unavailable',
-      });
+      } satisfies OpenCodeHealthStatus;
+      if (!areOpenCodeHealthStatusesEqual(get(healthStatusAtom), nextStatus)) {
+        set(healthStatusAtom, nextStatus);
+      }
     }
   } catch (err) {
     // Check if still enabled after async call
     if (!get(healthEnabledAtom)) return;
 
     const message = err instanceof Error ? err.message : 'Unknown error';
-    set(healthStatusAtom, {
+    const nextStatus = {
       available: false,
       healthy: false,
       version: null,
       error: message,
-    });
+    } satisfies OpenCodeHealthStatus;
+    if (!areOpenCodeHealthStatusesEqual(get(healthStatusAtom), nextStatus)) {
+      set(healthStatusAtom, nextStatus);
+    }
     window.api.log?.('warn', 'health-store', `Health check failed: ${message}`);
   } finally {
     if (get(healthEnabledAtom)) {

@@ -11,6 +11,7 @@ import {
 } from '../../utility/opencode-client';
 import { createLogger } from '../../utils/logger';
 import { IpcHandlerDeps } from './types';
+import { getEffectiveOpenCodePort } from './shared';
 
 const ipcLog = createLogger('ipc');
 
@@ -59,7 +60,7 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return fetchMcpStatus(settings.openCodePort, directory, {
+      return fetchMcpStatus(getEffectiveOpenCodePort(deps), directory, {
         providerId,
         modelId,
       });
@@ -79,7 +80,7 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return connectMcp(settings.openCodePort, name, directory);
+      return connectMcp(getEffectiveOpenCodePort(deps), name, directory);
     },
   );
 
@@ -96,7 +97,7 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return disconnectMcp(settings.openCodePort, name, directory);
+      return disconnectMcp(getEffectiveOpenCodePort(deps), name, directory);
     },
   );
 
@@ -127,7 +128,12 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return registerMcp(settings.openCodePort, name, config, directory);
+      return registerMcp(
+        getEffectiveOpenCodePort(deps),
+        name,
+        config,
+        directory,
+      );
     },
   );
 
@@ -144,7 +150,7 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return startMcpAuth(settings.openCodePort, name, directory);
+      return startMcpAuth(getEffectiveOpenCodePort(deps), name, directory);
     },
   );
 
@@ -175,7 +181,12 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return callbackMcpAuth(settings.openCodePort, name, code, directory);
+      return callbackMcpAuth(
+        getEffectiveOpenCodePort(deps),
+        name,
+        code,
+        directory,
+      );
     },
   );
 
@@ -202,7 +213,7 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return authenticateMcp(settings.openCodePort, name, directory);
+      return authenticateMcp(getEffectiveOpenCodePort(deps), name, directory);
     },
   );
 
@@ -219,7 +230,7 @@ export function registerMcpStatusHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
-      return removeMcpAuth(settings.openCodePort, name, directory);
+      return removeMcpAuth(getEffectiveOpenCodePort(deps), name, directory);
     },
   );
 }

@@ -83,7 +83,9 @@ export function NumberInput({
         id={id}
         type="number"
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+          onChange(e.target.value)
+        }
         min={min}
         max={max}
         aria-invalid={!isValid}

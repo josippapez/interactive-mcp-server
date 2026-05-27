@@ -10,6 +10,7 @@ import {
 import { executeCommand, fetchCommands } from '../../utility/opencode-client';
 import { createLogger } from '../../utils/logger';
 import { IpcHandlerDeps } from './types';
+import { getEffectiveOpenCodePort } from './shared';
 
 const ipcLog = createLogger('ipc');
 
@@ -21,7 +22,7 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
     if (settings.agentBackend !== 'opencode') {
       return null;
     }
-    return fetchProviders(settings.openCodePort);
+    return fetchProviders(getEffectiveOpenCodePort(deps));
   });
 
   ipcMain.handle('fetch-providers-info', async () => {
@@ -29,7 +30,7 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
     if (settings.agentBackend !== 'opencode') {
       return null;
     }
-    return fetchProvidersInfo(settings.openCodePort);
+    return fetchProvidersInfo(getEffectiveOpenCodePort(deps));
   });
 
   // ─── Slash Command IPC Handlers ────────────────────────────────────────────
@@ -39,7 +40,7 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
     if (settings.agentBackend !== 'opencode') {
       return [];
     }
-    return fetchCommands(settings.openCodePort, baseDirectory);
+    return fetchCommands(getEffectiveOpenCodePort(deps), baseDirectory);
   });
 
   ipcMain.handle(
@@ -63,7 +64,7 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
         return { ok: false, error: 'Not in OpenCode mode' };
       }
       return executeCommand(
-        settings.openCodePort,
+        getEffectiveOpenCodePort(deps),
         sessionId,
         commandName,
         args,
@@ -79,7 +80,7 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
     if (settings.agentBackend !== 'opencode') {
       return null;
     }
-    return fetchProviderAuthMethods(settings.openCodePort);
+    return fetchProviderAuthMethods(getEffectiveOpenCodePort(deps));
   });
 
   ipcMain.handle(
@@ -104,7 +105,7 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
         return null;
       }
       return authorizeProvider(
-        settings.openCodePort,
+        getEffectiveOpenCodePort(deps),
         providerId,
         method,
         inputs,
@@ -130,7 +131,12 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return false;
       }
-      return callbackProvider(settings.openCodePort, providerId, method, code);
+      return callbackProvider(
+        getEffectiveOpenCodePort(deps),
+        providerId,
+        method,
+        code,
+      );
     },
   );
 
@@ -150,7 +156,11 @@ export function registerProviderHandlers(deps: IpcHandlerDeps): void {
       if (settings.agentBackend !== 'opencode') {
         return false;
       }
-      return setProviderApiKey(settings.openCodePort, providerId, apiKey);
+      return setProviderApiKey(
+        getEffectiveOpenCodePort(deps),
+        providerId,
+        apiKey,
+      );
     },
   );
 }

@@ -23,6 +23,7 @@ import {
   startSessionTreeService,
   stopSessionTreeService,
   fetchSessionTree,
+  increaseSessionTreeLimit,
   invalidateSessionTree,
   invalidateSessionTreeForKey,
   tombstoneOpenCodeSession,
@@ -30,6 +31,7 @@ import {
   setSelectedFolder,
 } from './session-tree-service';
 import { reconcileSessionConnections } from './session-reconnect';
+import { startMissingIndexesForRegisteredConnections } from './repository-index/autostart';
 
 interface ArgsEnvelope {
   args?: unknown[];
@@ -100,6 +102,7 @@ export function registerSessionRpcHandlers(bridge: Bridge): void {
     treePortGetter = () => openCodePort;
     if (!treeServiceStarted) {
       startSessionTreeService(() => treePortGetter?.() ?? openCodePort);
+      startMissingIndexesForRegisteredConnections();
       treeServiceStarted = true;
     }
     return { ok: true };
@@ -114,6 +117,15 @@ export function registerSessionRpcHandlers(bridge: Bridge): void {
 
   bridge.handle('session.tree.fetch', async () => {
     return fetchSessionTree();
+  });
+
+  bridge.handle('session.tree.loadMore', () => {
+    return increaseSessionTreeLimit('');
+  });
+
+  bridge.handle('session.tree.loadMoreForDirectory', (payload) => {
+    const [baseDirectory] = argsOf(payload) as [string];
+    return increaseSessionTreeLimit(baseDirectory);
   });
 
   bridge.handle('session.tree.invalidate', () => {

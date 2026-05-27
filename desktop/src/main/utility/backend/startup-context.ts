@@ -29,6 +29,16 @@ const SKILL_GET_NOTE =
 const CATALOG_INSTRUCTION_GET_NOTE =
   'Use the manage_skills_and_instructions tool with action "get" to retrieve the full content of any catalog instruction by name.';
 
+const REPOSITORY_GRAPH_TOOL_GUIDANCE = [
+  '<repository_graph_tools>',
+  'Use repository graph tools before broad file reads or repeated text searches when you need dependencies, direct usages, or change impact.',
+  'Use get_repository_index_status before graph queries when readiness is unknown.',
+  'Use get_file_dependencies to see what a file imports before reading imports one-by-one.',
+  'Use get_file_dependents to answer "where is this file used?" before broad searches.',
+  'Use get_blast_radius as soon as changed files are known to find likely impacted files before editing, testing, or reviewing.',
+  '</repository_graph_tools>',
+];
+
 function escapeXmlText(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -75,6 +85,9 @@ export function buildStartupContextMessage(
   const lines: string[] = [];
 
   lines.push('<system-reminder>');
+
+  lines.push('');
+  lines.push(...REPOSITORY_GRAPH_TOOL_GUIDANCE);
 
   // Filter to only enabled entries that are either:
   // - scope='global' AND not muted for this session, OR

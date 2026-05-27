@@ -4,6 +4,13 @@ import Database, {
 import { join } from 'path';
 import { unlinkSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
+import type {
+  BlastRadiusEntry,
+  RepositoryDependencyEdge,
+  RepositoryFileRecord,
+  RepositoryIndexRecord,
+  RepositoryIndexStatus,
+} from './repository-index/types';
 
 let db: BetterSqliteDatabase | null = null;
 let dbPath = '';
@@ -14,7 +21,7 @@ let dbPath = '';
  * dropped and recreated from scratch. This eliminates all incremental
  * migration code.
  */
-const SCHEMA_VERSION = 16;
+const SCHEMA_VERSION = 18;
 
 // ─── Public interfaces ─────────────────────────────────────────────────────
 
@@ -401,6 +408,53 @@ function createTables(): void {
     CREATE INDEX IF NOT EXISTS idx_memories_scope_project
       ON memories(scope, project_path)
   `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repository_indexes (
+      repository_root    TEXT    PRIMARY KEY,
+      status             TEXT    NOT NULL CHECK(status IN ('idle', 'indexing', 'ready', 'error')),
+      file_count         INTEGER NOT NULL DEFAULT 0,
+      edge_count         INTEGER NOT NULL DEFAULT 0,
+      indexed_file_count INTEGER NOT NULL DEFAULT 0,
+      started_at         DATETIME,
+      completed_at       DATETIME,
+      last_error         TEXT,
+      index_version      INTEGER NOT NULL DEFAULT 1,
+      watcher_enabled    INTEGER NOT NULL DEFAULT 0,
+      updated_at         DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repository_files (
+      repository_root TEXT    NOT NULL,
+      path            TEXT    NOT NULL,
+      language        TEXT    NOT NULL,
+      size            INTEGER NOT NULL,
+      mtime_ms        REAL    NOT NULL,
+      content_hash    TEXT    NOT NULL,
+      updated_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+      PRIMARY KEY (repository_root, path)
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS repository_dependency_edges (
+      repository_root TEXT    NOT NULL,
+      from_path       TEXT    NOT NULL,
+      to_path         TEXT,
+      specifier       TEXT    NOT NULL,
+      kind            TEXT    NOT NULL,
+      is_external     INTEGER NOT NULL DEFAULT 0,
+      line_number     INTEGER NOT NULL DEFAULT 0,
+      line_snippet    TEXT    NOT NULL DEFAULT '',
+      PRIMARY KEY (repository_root, from_path, specifier, kind)
+    )
+  `);
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_repository_edges_to_path
+      ON repository_dependency_edges(repository_root, to_path)
+  `);
 }
 
 // ─── Initialization ────────────────────────────────────────────────────────
@@ -523,6 +577,9 @@ function dropAllTables(): void {
     'pinned_projects',
     'folders',
     'memories',
+    'repository_dependency_edges',
+    'repository_files',
+    'repository_indexes',
   ];
   for (const table of tables) {
     db.exec(`DROP TABLE IF EXISTS ${table}`);
@@ -855,6 +912,9 @@ export function resetDatabase(): {
   const clearedTables = [
     'session_scoped_entries',
     'session_muted_entries',
+    'repository_dependency_edges',
+    'repository_files',
+    'repository_indexes',
     'session_messages',
     'session_channel_history',
     'session_channels',
@@ -1904,6 +1964,465 @@ export function deleteContextInjectionsForSession(
   db.prepare(
     `DELETE FROM pending_context_injections WHERE provider_type = ? AND provider_session_id = ?`,
   ).run(providerType, providerSessionId);
+}
+
+// ─── Repository Index ───────────────────────────────────────────────────────
+
+interface RepositoryIndexRow {
+  repository_root: string;
+  status: RepositoryIndexStatus;
+  file_count: number;
+  edge_count: number;
+  indexed_file_count: number;
+  started_at: string | null;
+  completed_at: string | null;
+  last_error: string | null;
+  index_version: number;
+  watcher_enabled: number;
+  updated_at: string;
+}
+
+interface RepositoryFileRow {
+  repository_root: string;
+  path: string;
+  language: string;
+  size: number;
+  mtime_ms: number;
+  content_hash: string;
+  updated_at: string;
+}
+
+interface RepositoryDependencyEdgeRow {
+  repository_root: string;
+  from_path: string;
+  to_path: string | null;
+  specifier: string;
+  kind: RepositoryDependencyEdge['kind'];
+  is_external: number;
+  line_number: number;
+  line_snippet: string;
+}
+
+function mapRepositoryIndexRow(row: RepositoryIndexRow): RepositoryIndexRecord {
+  return {
+    repositoryRoot: row.repository_root,
+    status: row.status,
+    fileCount: row.file_count,
+    edgeCount: row.edge_count,
+    indexedFileCount: row.indexed_file_count,
+    startedAt: row.started_at,
+    completedAt: row.completed_at,
+    lastError: row.last_error,
+    indexVersion: row.index_version,
+    watcherEnabled: row.watcher_enabled === 1,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapRepositoryFileRow(row: RepositoryFileRow): RepositoryFileRecord {
+  return {
+    repositoryRoot: row.repository_root,
+    path: row.path,
+    language: row.language,
+    size: row.size,
+    mtimeMs: row.mtime_ms,
+    contentHash: row.content_hash,
+    updatedAt: row.updated_at,
+  };
+}
+
+function mapRepositoryDependencyEdgeRow(
+  row: RepositoryDependencyEdgeRow,
+): RepositoryDependencyEdge {
+  return {
+    repositoryRoot: row.repository_root,
+    fromPath: row.from_path,
+    toPath: row.to_path,
+    specifier: row.specifier,
+    kind: row.kind,
+    isExternal: row.is_external === 1,
+    lineNumber: row.line_number,
+    lineSnippet: row.line_snippet,
+  };
+}
+
+export function getRepositoryIndex(
+  repositoryRoot: string,
+): RepositoryIndexRecord | null {
+  if (!db) return null;
+  const row = db
+    .prepare(
+      `SELECT repository_root, status, file_count, edge_count, indexed_file_count, started_at, completed_at, last_error, index_version, watcher_enabled, updated_at
+       FROM repository_indexes WHERE repository_root = ?`,
+    )
+    .get(repositoryRoot) as RepositoryIndexRow | undefined;
+  return row ? mapRepositoryIndexRow(row) : null;
+}
+
+export function markRepositoryIndexing(
+  repositoryRoot: string,
+  watcherEnabled: boolean,
+  fileCount = 0,
+): RepositoryIndexRecord | null {
+  if (!db) return null;
+  db.prepare(
+    `INSERT INTO repository_indexes
+       (repository_root, status, file_count, edge_count, indexed_file_count, started_at, completed_at, last_error, watcher_enabled, updated_at)
+     VALUES (?, 'indexing', ?, 0, 0, CURRENT_TIMESTAMP, NULL, NULL, ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(repository_root) DO UPDATE SET
+       status = 'indexing',
+       file_count = excluded.file_count,
+       edge_count = 0,
+       indexed_file_count = 0,
+       started_at = CURRENT_TIMESTAMP,
+       completed_at = NULL,
+       last_error = NULL,
+       watcher_enabled = excluded.watcher_enabled,
+       updated_at = CURRENT_TIMESTAMP`,
+  ).run(repositoryRoot, fileCount, watcherEnabled ? 1 : 0);
+  return getRepositoryIndex(repositoryRoot);
+}
+
+export function updateRepositoryIndexProgress(
+  repositoryRoot: string,
+  indexedFileCount: number,
+  edgeCount: number,
+): RepositoryIndexRecord | null {
+  if (!db) return null;
+  db.prepare(
+    `UPDATE repository_indexes
+     SET indexed_file_count = ?, edge_count = ?, updated_at = CURRENT_TIMESTAMP
+     WHERE repository_root = ?`,
+  ).run(indexedFileCount, edgeCount, repositoryRoot);
+  return getRepositoryIndex(repositoryRoot);
+}
+
+export function markRepositoryIndexError(
+  repositoryRoot: string,
+  error: string,
+): RepositoryIndexRecord | null {
+  if (!db) return null;
+  db.prepare(
+    `INSERT INTO repository_indexes
+       (repository_root, status, last_error, updated_at)
+     VALUES (?, 'error', ?, CURRENT_TIMESTAMP)
+     ON CONFLICT(repository_root) DO UPDATE SET
+       status = 'error',
+       last_error = excluded.last_error,
+       updated_at = CURRENT_TIMESTAMP`,
+  ).run(repositoryRoot, error);
+  return getRepositoryIndex(repositoryRoot);
+}
+
+export function replaceRepositoryIndex(data: {
+  repositoryRoot: string;
+  files: Array<Omit<RepositoryFileRecord, 'repositoryRoot' | 'updatedAt'>>;
+  edges: Array<Omit<RepositoryDependencyEdge, 'repositoryRoot'>>;
+  watcherEnabled: boolean;
+  indexVersion: number;
+}): RepositoryIndexRecord | null {
+  if (!db) return null;
+  const database = db;
+  const transaction = database.transaction(() => {
+    database
+      .prepare(
+        `DELETE FROM repository_dependency_edges WHERE repository_root = ?`,
+      )
+      .run(data.repositoryRoot);
+    database
+      .prepare(`DELETE FROM repository_files WHERE repository_root = ?`)
+      .run(data.repositoryRoot);
+
+    const insertFile = database.prepare(
+      `INSERT INTO repository_files
+         (repository_root, path, language, size, mtime_ms, content_hash, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+    );
+    for (const file of data.files) {
+      insertFile.run(
+        data.repositoryRoot,
+        file.path,
+        file.language,
+        file.size,
+        file.mtimeMs,
+        file.contentHash,
+      );
+    }
+
+    const insertEdge = database.prepare(
+      `INSERT OR REPLACE INTO repository_dependency_edges
+         (repository_root, from_path, to_path, specifier, kind, is_external, line_number, line_snippet)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const edge of data.edges) {
+      insertEdge.run(
+        data.repositoryRoot,
+        edge.fromPath,
+        edge.toPath,
+        edge.specifier,
+        edge.kind,
+        edge.isExternal ? 1 : 0,
+        edge.lineNumber,
+        edge.lineSnippet,
+      );
+    }
+
+    database
+      .prepare(
+        `INSERT INTO repository_indexes
+         (repository_root, status, file_count, edge_count, indexed_file_count, started_at, completed_at, last_error, index_version, watcher_enabled, updated_at)
+       VALUES (?, 'ready', ?, ?, ?, COALESCE((SELECT started_at FROM repository_indexes WHERE repository_root = ?), CURRENT_TIMESTAMP), CURRENT_TIMESTAMP, NULL, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(repository_root) DO UPDATE SET
+         status = 'ready',
+         file_count = excluded.file_count,
+         edge_count = excluded.edge_count,
+         indexed_file_count = excluded.indexed_file_count,
+         completed_at = CURRENT_TIMESTAMP,
+         last_error = NULL,
+         index_version = excluded.index_version,
+         watcher_enabled = excluded.watcher_enabled,
+         updated_at = CURRENT_TIMESTAMP`,
+      )
+      .run(
+        data.repositoryRoot,
+        data.files.length,
+        data.edges.length,
+        data.files.length,
+        data.repositoryRoot,
+        data.indexVersion,
+        data.watcherEnabled ? 1 : 0,
+      );
+  });
+  transaction();
+  return getRepositoryIndex(data.repositoryRoot);
+}
+
+export function upsertRepositoryFileWithEdges(data: {
+  repositoryRoot: string;
+  file: Omit<RepositoryFileRecord, 'repositoryRoot' | 'updatedAt'>;
+  edges: Array<Omit<RepositoryDependencyEdge, 'repositoryRoot'>>;
+}): void {
+  if (!db) return;
+  const database = db;
+  const transaction = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE repository_indexes
+       SET status = 'indexing', updated_at = CURRENT_TIMESTAMP
+       WHERE repository_root = ?`,
+      )
+      .run(data.repositoryRoot);
+    database
+      .prepare(
+        `INSERT INTO repository_files
+         (repository_root, path, language, size, mtime_ms, content_hash, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       ON CONFLICT(repository_root, path) DO UPDATE SET
+         language = excluded.language,
+         size = excluded.size,
+         mtime_ms = excluded.mtime_ms,
+         content_hash = excluded.content_hash,
+         updated_at = CURRENT_TIMESTAMP`,
+      )
+      .run(
+        data.repositoryRoot,
+        data.file.path,
+        data.file.language,
+        data.file.size,
+        data.file.mtimeMs,
+        data.file.contentHash,
+      );
+    database
+      .prepare(
+        `DELETE FROM repository_dependency_edges WHERE repository_root = ? AND from_path = ?`,
+      )
+      .run(data.repositoryRoot, data.file.path);
+
+    const insertEdge = database.prepare(
+      `INSERT OR REPLACE INTO repository_dependency_edges
+         (repository_root, from_path, to_path, specifier, kind, is_external, line_number, line_snippet)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const edge of data.edges) {
+      insertEdge.run(
+        data.repositoryRoot,
+        edge.fromPath,
+        edge.toPath,
+        edge.specifier,
+        edge.kind,
+        edge.isExternal ? 1 : 0,
+        edge.lineNumber,
+        edge.lineSnippet,
+      );
+    }
+    refreshRepositoryIndexCounts(data.repositoryRoot);
+  });
+  transaction();
+}
+
+export function deleteRepositoryFile(
+  repositoryRoot: string,
+  path: string,
+): void {
+  if (!db) return;
+  const database = db;
+  const transaction = database.transaction(() => {
+    database
+      .prepare(
+        `UPDATE repository_indexes
+       SET status = 'indexing', updated_at = CURRENT_TIMESTAMP
+       WHERE repository_root = ?`,
+      )
+      .run(repositoryRoot);
+    database
+      .prepare(
+        `DELETE FROM repository_dependency_edges
+       WHERE repository_root = ? AND (from_path = ? OR to_path = ?)`,
+      )
+      .run(repositoryRoot, path, path);
+    database
+      .prepare(
+        `DELETE FROM repository_files WHERE repository_root = ? AND path = ?`,
+      )
+      .run(repositoryRoot, path);
+    refreshRepositoryIndexCounts(repositoryRoot);
+  });
+  transaction();
+}
+
+export function getRepositoryFile(
+  repositoryRoot: string,
+  path: string,
+): RepositoryFileRecord | null {
+  if (!db) return null;
+  const row = db
+    .prepare(
+      `SELECT repository_root, path, language, size, mtime_ms, content_hash, updated_at
+       FROM repository_files WHERE repository_root = ? AND path = ?`,
+    )
+    .get(repositoryRoot, path) as RepositoryFileRow | undefined;
+  return row ? mapRepositoryFileRow(row) : null;
+}
+
+export function getRepositoryDependencies(
+  repositoryRoot: string,
+  path: string,
+): RepositoryDependencyEdge[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(
+      `SELECT repository_root, from_path, to_path, specifier, kind, is_external
+              , line_number, line_snippet
+       FROM repository_dependency_edges
+       WHERE repository_root = ? AND from_path = ?
+       ORDER BY is_external ASC, to_path ASC, specifier ASC`,
+    )
+    .all(repositoryRoot, path) as RepositoryDependencyEdgeRow[];
+  return rows.map(mapRepositoryDependencyEdgeRow);
+}
+
+export function getRepositoryDependents(
+  repositoryRoot: string,
+  path: string,
+): RepositoryDependencyEdge[] {
+  if (!db) return [];
+  const rows = db
+    .prepare(
+      `SELECT repository_root, from_path, to_path, specifier, kind, is_external
+              , line_number, line_snippet
+       FROM repository_dependency_edges
+       WHERE repository_root = ? AND to_path = ?
+       ORDER BY from_path ASC, kind ASC`,
+    )
+    .all(repositoryRoot, path) as RepositoryDependencyEdgeRow[];
+  return rows.map(mapRepositoryDependencyEdgeRow);
+}
+
+export function getRepositoryBlastRadius(
+  repositoryRoot: string,
+  paths: string[],
+  maxDepth: number,
+  limit: number,
+): BlastRadiusEntry[] {
+  if (!db) return [];
+  const queue: BlastRadiusEntry[] = paths.map((path) => ({
+    path,
+    distance: 0,
+    viaPath: null,
+    specifier: null,
+    lineNumber: null,
+    lineSnippet: null,
+  }));
+  const visited = new Map<
+    string,
+    {
+      distance: number;
+      viaPath: string | null;
+      specifier: string | null;
+      lineNumber: number | null;
+      lineSnippet: string | null;
+    }
+  >();
+  const dependents = db.prepare(
+    `SELECT from_path, specifier, line_number, line_snippet FROM repository_dependency_edges
+     WHERE repository_root = ? AND to_path = ?
+     ORDER BY from_path ASC, kind ASC, specifier ASC`,
+  );
+
+  while (queue.length > 0 && visited.size < limit) {
+    const current = queue.shift();
+    if (!current) break;
+    const previous = visited.get(current.path);
+    if (previous !== undefined && previous.distance <= current.distance) {
+      continue;
+    }
+    visited.set(current.path, {
+      distance: current.distance,
+      viaPath: current.viaPath,
+      specifier: current.specifier,
+      lineNumber: current.lineNumber,
+      lineSnippet: current.lineSnippet,
+    });
+    if (current.distance >= maxDepth) continue;
+
+    const rows = dependents.all(repositoryRoot, current.path) as Array<{
+      from_path: string;
+      specifier: string;
+      line_number: number;
+      line_snippet: string;
+    }>;
+    for (const row of rows) {
+      if (!visited.has(row.from_path)) {
+        queue.push({
+          path: row.from_path,
+          distance: current.distance + 1,
+          viaPath: current.path,
+          specifier: row.specifier,
+          lineNumber: row.line_number,
+          lineSnippet: row.line_snippet,
+        });
+      }
+    }
+  }
+
+  return [...visited.entries()]
+    .map(([path, metadata]) => ({ path, ...metadata }))
+    .sort((a, b) => a.distance - b.distance || a.path.localeCompare(b.path))
+    .slice(0, limit);
+}
+
+function refreshRepositoryIndexCounts(repositoryRoot: string): void {
+  if (!db) return;
+  db.prepare(
+    `UPDATE repository_indexes
+     SET status = 'ready',
+         file_count = (SELECT COUNT(*) FROM repository_files WHERE repository_root = ?),
+         indexed_file_count = (SELECT COUNT(*) FROM repository_files WHERE repository_root = ?),
+         edge_count = (SELECT COUNT(*) FROM repository_dependency_edges WHERE repository_root = ?),
+         completed_at = CURRENT_TIMESTAMP,
+         updated_at = CURRENT_TIMESTAMP
+     WHERE repository_root = ?`,
+  ).run(repositoryRoot, repositoryRoot, repositoryRoot, repositoryRoot);
 }
 
 // ─── Pinned Projects ───────────────────────────────────────────────────────

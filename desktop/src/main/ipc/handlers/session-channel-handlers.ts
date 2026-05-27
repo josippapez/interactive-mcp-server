@@ -34,7 +34,12 @@ import {
   AttachmentPayload,
   ModelSelectionPayload,
 } from './types';
-import { logIpcInfo, withSkillSuggestion } from './shared';
+import {
+  getEffectiveMcpPort,
+  getEffectiveOpenCodePort,
+  logIpcInfo,
+  withSkillSuggestion,
+} from './shared';
 import { writeSessionLog } from '../../utils/session-logger';
 
 function formatModelSelectionForLog(
@@ -69,7 +74,7 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
       if (!filename) return null;
       const dir = getAttachmentsDir(payload.sessionKey);
       const absolutePath = dir ? joinPath(dir, filename) : null;
-      const { port: mcpServerPort } = deps.getSettings();
+      const mcpServerPort = getEffectiveMcpPort(deps);
       const url =
         typeof mcpServerPort === 'number' && mcpServerPort > 0
           ? attachmentUrl(payload.sessionKey, filename, mcpServerPort)
@@ -101,7 +106,7 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
     async (_event, sessionId: string) => {
       return removePersistedSession(sessionId, {
         getOpenCodePort: () => {
-          const p = deps.getSettings().openCodePort;
+          const p = getEffectiveOpenCodePort(deps);
           return typeof p === 'number' && p > 0 ? p : null;
         },
         deleteOpenCodeSession: async (
@@ -214,8 +219,8 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
         data.openCodeSessionId,
         outbound,
         data.attachments,
-        deps.getSettings().openCodePort,
-        deps.getSettings().port,
+        getEffectiveOpenCodePort(deps),
+        getEffectiveMcpPort(deps),
         data.noReply ?? true,
         data.modelOverride,
         undefined,
@@ -287,7 +292,7 @@ export function registerSessionChannelHandlers(deps: IpcHandlerDeps): void {
       return handleInjectDocContext(
         { ...data, debug: settings.docContextDebug },
         {
-          openCodePort: settings.openCodePort,
+          openCodePort: getEffectiveOpenCodePort(deps),
           getRegisteredConnection,
           searchDocs: searchDocsInWorker,
           injectOpenCodeMessage,

@@ -48,6 +48,7 @@ import { registerDbRpcHandlers } from './backend/db-rpc';
 import { registerSessionRpcHandlers } from './backend/session-rpc';
 import { registerOpencodeServerRpcHandlers } from './backend/opencode-server-rpc';
 import { registerOpencodeRpcHandlers } from './backend/opencode-rpc';
+import { registerRepositoryIndexRpcHandlers } from './backend/repository-index/rpc';
 import { registerOpenCodeUrlBridgeHandler } from './backend/opencode/url-bridge-handler';
 import { RUNTIME_KIND } from '../opencode/runtime-mode';
 import {
@@ -180,6 +181,7 @@ function bootstrap(): void {
     // Register session RPC handlers (resolver, auto-register, tree service,
     // reconcile). Main-side proxies live in utility/session-client.ts.
     registerSessionRpcHandlers(bridge);
+    registerRepositoryIndexRpcHandlers(bridge);
 
     // Register in-process OpenCode server RPC handlers ONLY in Mode A
     // (`in-process-utility`). In Mode B/C the runtime lives in the main

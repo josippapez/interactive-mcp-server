@@ -59,6 +59,30 @@ describe('buildStartupContextMessage', () => {
     expect(message).not.toContain('disabled-skill');
   });
 
+  it('includes concise repository graph tool guidance', () => {
+    const message = buildStartupContextMessage({
+      channelName: 'Test Agent',
+      projectName: 'interactive-mcp-server',
+      baseDirectory: '/tmp/project',
+      openCodeSessionId: 'ses_abc123',
+      entries: [],
+    });
+
+    expect(message).toContain('<repository_graph_tools>');
+    expect(message).toContain(
+      'Use get_repository_index_status before graph queries when readiness is unknown.',
+    );
+    expect(message).toContain(
+      'Use get_file_dependencies to see what a file imports before reading imports one-by-one.',
+    );
+    expect(message).toContain(
+      'Use get_file_dependents to answer "where is this file used?" before broad searches.',
+    );
+    expect(message).toContain(
+      'Use get_blast_radius as soon as changed files are known to find likely impacted files before editing, testing, or reviewing.',
+    );
+  });
+
   it('omits operational session metadata from the injected context', () => {
     const message = buildStartupContextMessage({
       channelName: 'Test Agent',
@@ -68,7 +92,6 @@ describe('buildStartupContextMessage', () => {
       entries: [],
     });
 
-    expect(message).toBe('<system-reminder>\n</system-reminder>');
     expect(message).not.toContain('Interactive MCP Desktop session bootstrap');
     expect(message).not.toContain('Registered agent');
     expect(message).not.toContain('Test Agent');

@@ -29,6 +29,12 @@ describe('createMcpServerWithTools', () => {
     expect(names).toContain('list_docs');
     expect(names).toContain('find_libs');
     expect(names).toContain('find_repo_docs');
+    expect(names).toContain('get_repository_index_status');
+    expect(names).not.toContain('index_repository');
+    expect(names).not.toContain('stop_repository_index_watcher');
+    expect(names).toContain('get_file_dependencies');
+    expect(names).toContain('get_file_dependents');
+    expect(names).toContain('get_blast_radius');
     expect(names).toContain('manage_skills_and_instructions');
     expect(names).toContain('manage_memories');
     expect(names).toContain('manage_background_subagents');
@@ -38,6 +44,10 @@ describe('createMcpServerWithTools', () => {
     expect(HIDDEN_TOOL_NAMES.has('list_docs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('find_libs')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('find_repo_docs')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('get_repository_index_status')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('get_file_dependencies')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('get_file_dependents')).toBe(false);
+    expect(HIDDEN_TOOL_NAMES.has('get_blast_radius')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('manage_skills_and_instructions')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('manage_memories')).toBe(false);
     expect(HIDDEN_TOOL_NAMES.has('manage_background_subagents')).toBe(false);

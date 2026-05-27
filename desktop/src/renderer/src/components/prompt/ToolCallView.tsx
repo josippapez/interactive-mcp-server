@@ -1,4 +1,4 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect, useRef } from 'react';
 import type { ToolCallInfo } from '../../types/unified-message';
 import TodoWriteToolCard, {
   isTodoWriteToolCall,
@@ -51,6 +51,15 @@ import {
  * API or any callsite.
  */
 const animatedToolIds = new Set<string>();
+const MAX_ANIMATED_TOOL_IDS = 1000;
+
+function rememberAnimatedToolId(id: string): void {
+  if (animatedToolIds.has(id)) return;
+  animatedToolIds.add(id);
+  if (animatedToolIds.size <= MAX_ANIMATED_TOOL_IDS) return;
+  const first = animatedToolIds.values().next().value as string | undefined;
+  if (first) animatedToolIds.delete(first);
+}
 
 function resolveToolCard(
   tool: ToolCallInfo,
@@ -183,12 +192,15 @@ const ToolCallView = memo(function ToolCallView({
   // Play the enter animation once per tool ID. On first render we mark
   // the id as animated so subsequent remounts (virtualization) don't
   // replay the fade.
-  const shouldAnimate = !animatedToolIds.has(tool.id);
-  if (shouldAnimate) animatedToolIds.add(tool.id);
+  const shouldAnimateRef = useRef(!animatedToolIds.has(tool.id));
+
+  useEffect(() => {
+    if (shouldAnimateRef.current) rememberAnimatedToolId(tool.id);
+  }, [tool.id]);
 
   return (
     <div
-      className={shouldAnimate ? 'anim-tool-enter' : undefined}
+      className={shouldAnimateRef.current ? 'anim-tool-enter' : undefined}
       data-component="tool-card-shell"
       data-tool-category={getToolCategory(tool.name)}
       data-tool-status={tool.status ?? 'completed'}

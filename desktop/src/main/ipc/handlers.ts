@@ -5,6 +5,7 @@ import { registerMcpStatusHandlers } from './handlers/mcp-status-handlers';
 import { registerOpenCodeCoreHandlers } from './handlers/opencode-core-handlers';
 import { registerOpenCodeStatusHandlers } from './handlers/opencode-status-handlers';
 import { registerProviderHandlers } from './handlers/provider-handlers';
+import { registerRepositoryIndexHandlers } from './handlers/repository-index-handlers';
 import { registerSessionChannelHandlers } from './handlers/session-channel-handlers';
 import { registerSessionTreeHandlers } from './handlers/session-tree-handlers';
 import { registerSettingsHandlers } from './handlers/settings-handlers';
@@ -27,6 +28,7 @@ export function registerIpcHandlers(deps: IpcHandlerDeps): void {
   registerContextTrackingHandlers(deps);
   registerConversationHandlers(deps);
   registerProviderHandlers(deps);
+  registerRepositoryIndexHandlers(deps);
   registerMcpStatusHandlers(deps);
   registerAgentsHandlers(deps);
 }

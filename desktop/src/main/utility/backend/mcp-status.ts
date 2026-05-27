@@ -26,6 +26,16 @@ const MCP_DIRECT_TOOL_LIST_TIMEOUT_MS = 10_000;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/** Normalizes SDK response type to allow `.error` access regardless of ThrowOnError resolution. */
+type SdkResponse<T> =
+  | { data: T; error?: unknown }
+  | { data?: undefined; error: unknown };
+
+/** Cast SDK response to allow `.error` access. SDK 1.15.10 changed how ThrowOnError=boolean resolves. */
+function asSdkResponse<T>(r: unknown): SdkResponse<T> {
+  return r as SdkResponse<T>;
+}
+
 /**
  * MCP server status normalized for internal use.
  */
@@ -203,43 +213,6 @@ function getEnabledConfiguredMcpEntries(
       );
     },
   );
-}
-
-async function registerMissingConfiguredMcps(
-  client: ReturnType<typeof getClient>,
-  config: OpenCodeConfig | undefined,
-  statusData: Record<string, NormalizedSdkMcpStatus>,
-): Promise<boolean> {
-  const missingEntries = getEnabledConfiguredMcpEntries(config).filter(
-    ([name]) => !Object.hasOwn(statusData, name),
-  );
-
-  if (missingEntries.length === 0) return false;
-
-  const results = await Promise.all(
-    missingEntries.map(async ([name, mcpConfig]) => {
-      try {
-        const response = await client.mcp.add(
-          { name, config: mcpConfig },
-          { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
-        );
-        if (response.error) {
-          log.warn(
-            `Failed to register missing configured MCP ${name}: ${String(response.error)}`,
-          );
-          return false;
-        }
-        return true;
-      } catch (err) {
-        log.warn(
-          `Failed to register missing configured MCP ${name}: ${errorMessage(err)}`,
-        );
-        return false;
-      }
-    }),
-  );
-
-  return results.some(Boolean);
 }
 
 function getServerType(
@@ -432,10 +405,11 @@ async function fetchDirectConfiguredMcpTools(
       command,
       args,
       cwd: directory,
-      env: {
-        ...process.env,
-        ...config.environment,
-      },
+      env: Object.fromEntries(
+        Object.entries({ ...process.env, ...config.environment }).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
+      ),
       stderr: 'ignore',
     });
     return listToolsFromMcpClient(name, transport);
@@ -506,7 +480,7 @@ export async function fetchMcpStatus(
   try {
     const client = getClient(openCodePort, directory);
     const requestContext = directory ? { directory } : {};
-    const [statusResponse, configResponse, initialToolItems] =
+    const [statusResponseRaw, configResponse, initialToolItems] =
       await Promise.all([
         client.mcp.status(requestContext, {
           signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS),
@@ -516,6 +490,8 @@ export async function fetchMcpStatus(
         }) ?? Promise.resolve({ data: undefined, error: undefined }),
         fetchToolItems(client, directory, options),
       ]);
+    const statusResponse =
+      asSdkResponse<Record<string, McpStatus>>(statusResponseRaw);
 
     if (statusResponse.error) {
       const error =
@@ -531,30 +507,13 @@ export async function fetchMcpStatus(
         `Failed to fetch MCP config metadata: ${String(configResponse.error)}`,
       );
     }
-    let data = statusResponse.data ?? {};
-    let toolItems = initialToolItems;
+    const data = statusResponse.data ?? {};
+    const toolItems = initialToolItems;
     const config = configResponse.error ? undefined : configResponse.data;
 
     log.info(
       `Fetched MCP status servers=${Object.keys(data).length} toolItems=${toolItems.length} provider=${options.providerId ?? 'missing'} model=${options.modelId ?? 'missing'}`,
     );
-
-    if (await registerMissingConfiguredMcps(client, config, data)) {
-      const [refreshedStatusResponse, refreshedToolItems] = await Promise.all([
-        client.mcp.status(requestContext, {
-          signal: AbortSignal.timeout(MCP_STATUS_REQUEST_TIMEOUT_MS),
-        }),
-        fetchToolItems(client, directory, options),
-      ]);
-      if (refreshedStatusResponse.error) {
-        log.warn(
-          `Failed to refresh MCP status after registering missing config entries: ${String(refreshedStatusResponse.error)}`,
-        );
-      } else {
-        data = refreshedStatusResponse.data ?? data;
-      }
-      toolItems = refreshedToolItems;
-    }
 
     const directToolMap = await fetchDirectConfiguredMcpToolMap(
       config,
@@ -612,9 +571,11 @@ export async function connectMcp(
 
   try {
     const client = getClient(openCodePort, directory);
-    const response = await client.mcp.connect(
-      { name: mcpName },
-      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    const response = asSdkResponse<boolean>(
+      await client.mcp.connect(
+        { name: mcpName },
+        { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+      ),
     );
 
     if (response.error) {
@@ -651,9 +612,11 @@ export async function disconnectMcp(
 
   try {
     const client = getClient(openCodePort, directory);
-    const response = await client.mcp.disconnect(
-      { name: mcpName },
-      { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+    const response = asSdkResponse<boolean>(
+      await client.mcp.disconnect(
+        { name: mcpName },
+        { signal: AbortSignal.timeout(MCP_OPERATION_TIMEOUT_MS) },
+      ),
     );
 
     if (response.error) {

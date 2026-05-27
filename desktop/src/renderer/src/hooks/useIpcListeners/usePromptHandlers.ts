@@ -1,6 +1,7 @@
 import type { ChannelMessage } from '../../types';
 import type { HandlerContext } from './types';
 import { findKeyByConnectionId, findPromptTargetKey } from './helpers';
+import { appendChannelMessage } from '../useConnections/channel-message-state';
 
 function makeLiveMessageId(prefix: 'question' | 'answer'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
@@ -18,15 +19,12 @@ function appendUniqueQuestionMessage(
     return channelMessages;
   }
 
-  return [
-    ...channelMessages,
-    {
-      id: makeLiveMessageId('question'),
-      kind: 'question' as const,
-      text: promptMessage,
-      timestamp: new Date(),
-    },
-  ];
+  return appendChannelMessage(channelMessages, {
+    id: makeLiveMessageId('question'),
+    kind: 'question' as const,
+    text: promptMessage,
+    timestamp: new Date(),
+  });
 }
 
 /**
@@ -133,9 +131,9 @@ export function usePromptHandlers({
         // Only clear if it's still the same prompt (guard against races).
         if (node.prompt?.id !== data.id) return prev;
 
-        const nextMessages = [...node.channelMessages];
+        let nextMessages = node.channelMessages;
         if (typeof data.answer === 'string' && data.answer.length > 0) {
-          nextMessages.push({
+          nextMessages = appendChannelMessage(nextMessages, {
             id: makeLiveMessageId('answer'),
             kind: 'answer' as const,
             text: data.answer,

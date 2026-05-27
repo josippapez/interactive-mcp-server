@@ -84,11 +84,20 @@ export function useSessionHandlers({
 
   const handleReplyQuestion = useCallback(
     (requestId: string, answers: string[][], sessionID: string) => {
+      // Optimistically remove the question from the UI immediately. The reply
+      // has been dispatched to OpenCode; leaving it displayed risks the user
+      // clicking again and producing duplicate "reply for unknown request" spam.
+      setNodes((prev) => removePendingQuestion(prev, requestId));
       void window.api
         .replyQuestion(requestId, answers, sessionID)
         .then((result) => {
-          if (result?.ok) {
-            setNodes((prev) => removePendingQuestion(prev, requestId));
+          if (!result?.ok) {
+            window.api.log?.(
+              'warn',
+              'session-handlers',
+              `replyQuestion returned not-ok: ${result?.error ?? 'unknown'}`,
+              sessionID,
+            );
           }
         })
         .catch((err) => {
