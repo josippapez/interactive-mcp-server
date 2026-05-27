@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { getNextPacedTextEnd } from './paced-streaming-text';
+import {
+  getNextPacedTextEnd,
+  getPacedStreamingTextUpdate,
+} from './paced-streaming-text';
 
 describe('getNextPacedTextEnd', () => {
   it('advances small chunks and snaps to nearby word boundaries', () => {
@@ -14,5 +17,37 @@ describe('getNextPacedTextEnd', () => {
     const text = 'x'.repeat(400);
 
     expect(getNextPacedTextEnd(text, 0)).toBe(24);
+  });
+});
+
+describe('getPacedStreamingTextUpdate', () => {
+  it('reveals only the next paced slice while streaming text grows', () => {
+    expect(
+      getPacedStreamingTextUpdate({
+        text: 'hello world',
+        shown: '',
+        streaming: true,
+      }),
+    ).toEqual({ value: 'hello ', done: false });
+  });
+
+  it('syncs immediately when streaming stops', () => {
+    expect(
+      getPacedStreamingTextUpdate({
+        text: 'hello world',
+        shown: 'hello ',
+        streaming: false,
+      }),
+    ).toEqual({ value: 'hello world', done: true });
+  });
+
+  it('syncs immediately when streamed text is replaced instead of appended', () => {
+    expect(
+      getPacedStreamingTextUpdate({
+        text: 'replacement',
+        shown: 'hello ',
+        streaming: true,
+      }),
+    ).toEqual({ value: 'replacement', done: true });
   });
 });

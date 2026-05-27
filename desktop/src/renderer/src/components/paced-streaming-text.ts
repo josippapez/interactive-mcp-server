@@ -14,6 +14,21 @@ export function getNextPacedTextEnd(text: string, start: number): number {
   return end;
 }
 
+export function getPacedStreamingTextUpdate(input: {
+  text: string;
+  shown: string;
+  streaming: boolean;
+}): { value: string; done: boolean } {
+  const { text, shown, streaming } = input;
+  if (!streaming) return { value: text, done: true };
+  if (!text.startsWith(shown) || text.length <= shown.length) {
+    return { value: text, done: true };
+  }
+
+  const end = getNextPacedTextEnd(text, shown.length);
+  return { value: text.slice(0, end), done: end >= text.length };
+}
+
 function getPacedTextStep(size: number): number {
   if (size <= 12) return 2;
   if (size <= 48) return 4;

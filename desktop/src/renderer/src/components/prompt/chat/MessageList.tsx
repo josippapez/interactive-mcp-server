@@ -374,7 +374,7 @@ const MessageList = memo(function MessageList({
         ref={contentRef}
         data-slot="session-turn-list"
         data-virtualized="true"
-        className="px-2 py-3"
+        className="px-4 py-4 md:px-5"
       >
         <div
           className="relative w-full"
@@ -394,7 +394,7 @@ const MessageList = memo(function MessageList({
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
-                <div className="pb-3">
+                <div className="pb-5">
                   {renderMessageRow(msg, virtualRow.index)}
                 </div>
               </div>
@@ -409,7 +409,7 @@ const MessageList = memo(function MessageList({
     <div
       ref={contentRef}
       data-slot="session-turn-list"
-      className="flex flex-col gap-3 px-2 py-3"
+      className="flex flex-col gap-5 px-4 py-4 md:px-5"
     >
       {messages.map((msg, index) => {
         return (

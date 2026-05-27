@@ -1,7 +1,11 @@
-import { memo, useEffect, useMemo, useRef } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useTheme } from '../ThemeContext';
 import { Response } from './ai-elements/response';
 import { getMarkdownProseClasses } from './markdown-renderer';
+import {
+  getPacedStreamingTextUpdate,
+  TEXT_RENDER_PACE_MS,
+} from './paced-streaming-text';
 
 /**
  * Custom event dispatched when the user clicks a markdown link pointing to
@@ -27,8 +31,36 @@ function MarkdownContentImpl({
   const { theme } = useTheme();
   const isDark = theme === 'dark';
   const containerRef = useRef<HTMLDivElement>(null);
+  const [pacedContent, setPacedContent] = useState(() => content);
 
   const proseClasses = useMemo(() => getMarkdownProseClasses(isDark), [isDark]);
+
+  useEffect(() => {
+    setPacedContent((shown) => {
+      const next = getPacedStreamingTextUpdate({
+        text: content,
+        shown,
+        streaming,
+      });
+      return next.value;
+    });
+  }, [content, streaming]);
+
+  useEffect(() => {
+    if (!streaming) return;
+    if (pacedContent === content) return;
+    const timeout = window.setTimeout(() => {
+      setPacedContent(
+        (shown) =>
+          getPacedStreamingTextUpdate({
+            text: content,
+            shown,
+            streaming: true,
+          }).value,
+      );
+    }, TEXT_RENDER_PACE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [content, pacedContent, streaming]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -58,7 +90,7 @@ function MarkdownContentImpl({
 
   return (
     <div ref={containerRef} className={proseClasses}>
-      <Response isAnimating={streaming}>{content}</Response>
+      <Response isAnimating={streaming}>{pacedContent}</Response>
     </div>
   );
 }

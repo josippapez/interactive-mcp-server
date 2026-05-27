@@ -89,15 +89,17 @@ export function OutboundStatusBadge({
 }
 
 export function MessageHoverToolbar({
+  align = 'right',
   copied,
   onCopyText,
 }: {
+  align?: 'left' | 'right';
   copied: boolean;
   onCopyText: () => void;
 }): React.ReactElement {
   return (
     <div
-      className="pointer-events-none absolute right-1 top-1 z-10 flex gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100"
+      className={`pointer-events-none absolute top-full z-10 mt-1 flex gap-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 ${align === 'left' ? 'left-0' : 'right-0'}`}
       data-slot="message-hover-toolbar"
     >
       <button
@@ -106,7 +108,7 @@ export function MessageHoverToolbar({
           e.stopPropagation();
           onCopyText();
         }}
-        className="inline-flex h-6 items-center gap-1 rounded border border-[var(--color-border-weak)] bg-[var(--color-surface)]/90 px-1.5 text-[10px] text-[var(--color-text-muted)] shadow-sm backdrop-blur-sm transition-colors hover:border-[var(--color-agent)]/50 hover:text-[var(--color-text)]"
+        className="inline-flex h-6 items-center gap-1 rounded-md border border-transparent bg-transparent px-1.5 text-[10px] text-[var(--color-text-muted)] transition-colors hover:bg-[var(--color-surface)] hover:text-[var(--color-text)]"
         aria-label={copied ? 'Copied message' : 'Copy message'}
         title={copied ? 'Copied' : 'Copy message'}
       >
@@ -408,7 +410,7 @@ export function MessageTimestampLine({
   timestamp: number;
 }): React.ReactElement {
   return (
-    <span className="mt-1 block text-[10px] text-[var(--color-text-faint)]">
+    <span className="mt-1 block text-[10px] text-[var(--color-text-faint)] opacity-0 transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100">
       <MessageTimestamp timestamp={new Date(timestamp)} />
       {executionStatus && (
         <>

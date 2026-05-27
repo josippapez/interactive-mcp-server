@@ -1995,6 +1995,109 @@ textarea::placeholder {
   border-right: 1px solid var(--border-weaker-base);
 }
 
+[data-slot='diff-view-toggle'] {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-weaker-base);
+  background: var(--surface-weak);
+}
+[data-slot='diff-view-toggle'] button {
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-family: var(--font-family-sans);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-weak);
+  background: transparent;
+  transition:
+    background-color 0.15s ease,
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+[data-slot='diff-view-toggle'] button:hover,
+[data-slot='diff-view-toggle'] button[data-active='true'] {
+  color: var(--text-strong);
+  border-color: var(--border-weak-base);
+  background: var(--surface-base);
+}
+
+/* --- Unified diff (OpenCode-like row display) --- */
+[data-component='diff-view'][data-variant='unified'] {
+  max-height: 28rem;
+  overflow: auto;
+  width: 100%;
+  min-width: 0;
+}
+[data-component='diff-view'][data-variant='unified'] [data-slot='diff-row'] {
+  display: grid;
+  grid-template-columns: 4ch 4ch 1.5ch minmax(0, 1fr);
+  column-gap: 4px;
+  padding: 0 6px;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre;
+  min-width: 0;
+}
+[data-component='diff-view'][data-variant='unified'][data-wrap='false']
+  [data-slot='diff-row'] {
+  min-width: max-content;
+}
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-row'][data-kind='hunk'] {
+  background: var(--surface-diff-hidden-base);
+  color: var(--text-weaker);
+}
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-row'][data-kind='removal'] {
+  background: var(--surface-diff-delete-weak);
+}
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-row'][data-kind='addition'] {
+  background: var(--surface-diff-add-weak);
+}
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-gutter-old'],
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-gutter-new'] {
+  color: var(--text-weaker);
+  text-align: right;
+  user-select: none;
+}
+[data-component='diff-view'][data-variant='unified'] [data-slot='diff-marker'] {
+  color: var(--text-weaker);
+  user-select: none;
+}
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-row'][data-kind='removal']
+  [data-slot='diff-marker'] {
+  color: var(--color-error);
+}
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-row'][data-kind='addition']
+  [data-slot='diff-marker'] {
+  color: var(--color-agent-success, var(--color-agent));
+}
+[data-component='diff-view'][data-variant='unified']
+  [data-slot='diff-content'] {
+  min-width: max-content;
+  overflow: visible;
+  text-overflow: clip;
+}
+[data-component='diff-view'][data-variant='unified'][data-wrap='true']
+  [data-slot='diff-row'] {
+  min-width: 0;
+  white-space: pre-wrap;
+}
+[data-component='diff-view'][data-variant='unified'][data-wrap='true']
+  [data-slot='diff-content'] {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 /* --- Side-by-side diff (OLD | NEW) ---
    Two-column grid with per-row status tint and per-side syntax
    highlighting. Rows align one-to-one across the two columns. */

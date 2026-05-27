@@ -290,7 +290,11 @@ const MessageItem = memo(function MessageItem({
     : '';
 
   const hoverToolbar = (
-    <MessageHoverToolbar copied={copied} onCopyText={handleCopyText} />
+    <MessageHoverToolbar
+      align={userSide ? 'right' : 'left'}
+      copied={copied}
+      onCopyText={handleCopyText}
+    />
   );
 
   const contextMenu = (
@@ -368,7 +372,7 @@ const MessageItem = memo(function MessageItem({
         data-slot="session-turn-user"
         data-focused={isFocused ? 'true' : undefined}
         data-deep-link-target={isDeepLinkTarget ? 'true' : undefined}
-        className={`group relative flex w-full flex-col items-end rounded-2xl outline-none ${focusRingClass} ${deepLinkClass} ${isNew ? 'msg-enter' : ''}`.trim()}
+        className={`group relative flex w-full flex-col items-end outline-none ${focusRingClass} ${deepLinkClass} ${isNew ? 'msg-enter' : ''}`.trim()}
         aria-label={`${roleLabel} message`}
         aria-current={isActive ? 'true' : undefined}
         tabIndex={-1}
@@ -380,7 +384,7 @@ const MessageItem = memo(function MessageItem({
         <div
           data-slot="session-turn-user-bubble"
           data-active-prompt={isActive ? 'true' : undefined}
-          className={`rounded-2xl border border-[var(--color-border-weak)] bg-[var(--color-surface)] px-4 py-3 shadow-sm ${searchRingClass} ${activePromptClass}`.trim()}
+          className={`max-w-[min(82%,64ch)] rounded-md border border-[var(--color-border-weak)] bg-[var(--color-surface)] px-3 py-2 text-[var(--color-text)] shadow-sm ${searchRingClass} ${activePromptClass}`.trim()}
           style={{
             contentVisibility: 'auto',
             containIntrinsicSize: 'auto 100px',
@@ -412,7 +416,7 @@ const MessageItem = memo(function MessageItem({
       data-slot="session-turn-assistant"
       data-focused={isFocused ? 'true' : undefined}
       data-deep-link-target={isDeepLinkTarget ? 'true' : undefined}
-      className={`group relative flex w-full flex-col rounded-2xl border border-[var(--color-border-weak)]/80 bg-[var(--color-surface)]/55 px-4 py-3 outline-none shadow-[0_1px_0_rgba(0,0,0,0.03)] ${focusRingClass} ${deepLinkClass} ${isNew ? 'msg-enter' : ''}`.trim()}
+      className={`group relative flex w-full flex-col items-start outline-none ${focusRingClass} ${deepLinkClass} ${isNew ? 'msg-enter' : ''}`.trim()}
       aria-label={`${roleLabel} message`}
       aria-current={isActive ? 'true' : undefined}
       tabIndex={-1}
@@ -455,7 +459,7 @@ const MessageItem = memo(function MessageItem({
       )}
 
       <div
-        className={`min-w-0 rounded-xl ${searchRingClass} ${activePromptClass}`.trim()}
+        className={`min-w-0 w-full ${searchRingClass} ${activePromptClass}`.trim()}
         data-active-prompt={isActive ? 'true' : undefined}
       >
         {metaRow}

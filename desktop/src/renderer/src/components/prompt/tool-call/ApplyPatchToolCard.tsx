@@ -5,7 +5,14 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from '../../ui/collapsible';
-import { DIFF_MAX_LINES, SideBySideDiffGrid, inferLanguage } from '../DiffView';
+import {
+  buildUnifiedDiffRows,
+  DIFF_MAX_LINES,
+  DiffDisplayModeToggle,
+  inferLanguage,
+  SideBySideDiffGrid,
+  UnifiedDiffRows,
+} from '../DiffView';
 import {
   parseApplyPatchFileDiffs,
   parseApplyPatchMetadataFileDiffs,
@@ -62,32 +69,52 @@ const FileDiffBody = memo(function FileDiffBody({
   file,
   wrapLines,
   diagnostics,
+  mode,
+  onModeChange,
 }: {
   file: ApplyPatchFileDiff;
   wrapLines: boolean;
   diagnostics: ReturnType<typeof extractDiagnosticsForFile>;
+  mode: 'unified' | 'side-by-side';
+  onModeChange: (mode: 'unified' | 'side-by-side') => void;
 }): React.ReactElement {
   const language = useMemo(() => inferLanguage(file.filePath), [file.filePath]);
   const paired = useMemo(
     () => pairApplyPatchDiffLines(file.lines, DIFF_MAX_LINES),
     [file.lines],
   );
+  const unified = useMemo(
+    () => buildUnifiedDiffRows(file.lines, DIFF_MAX_LINES),
+    [file.lines],
+  );
 
   return (
     <div>
-      {file.lines.length > 0 && paired.rows.length > 0 ? (
-        <SideBySideDiffGrid
-          rows={paired.rows}
-          language={language}
-          wrapLines={wrapLines}
-        />
+      {file.lines.length > 0 &&
+      (paired.rows.length > 0 || unified.rows.length > 0) ? (
+        <>
+          <DiffDisplayModeToggle mode={mode} onModeChange={onModeChange} />
+          {mode === 'unified' ? (
+            <UnifiedDiffRows
+              rows={unified.rows}
+              language={language}
+              wrapLines={wrapLines}
+            />
+          ) : (
+            <SideBySideDiffGrid
+              rows={paired.rows}
+              language={language}
+              wrapLines={wrapLines}
+            />
+          )}
+        </>
       ) : (
         <div className="px-2 py-2 text-[10px] font-mono text-[var(--text-weaker)]">
           No diff hunks available.
         </div>
       )}
 
-      {paired.truncated && (
+      {(paired.truncated || unified.truncated) && (
         <div
           data-component="diff-view"
           data-variant="side-by-side"
@@ -96,7 +123,8 @@ const FileDiffBody = memo(function FileDiffBody({
           <div data-slot="diff-hunk-separator" className="font-mono text-[9px]">
             <span data-slot="diff-hunk-gutter">…</span>
             <span className="px-2 py-1 text-[var(--text-weaker)]">
-              Showing first {DIFF_MAX_LINES} of {paired.totalRows} diff rows.
+              Showing first {DIFF_MAX_LINES} of{' '}
+              {Math.max(paired.totalRows, unified.totalRows)} diff rows.
             </span>
           </div>
         </div>
@@ -135,6 +163,7 @@ const FileDiffAccordionItem = memo(function FileDiffAccordionItem({
     () => extractDiagnosticsForFile(metadata, file.filePath),
     [metadata, file.filePath],
   );
+  const [mode, setMode] = useState<'unified' | 'side-by-side'>('side-by-side');
   const diagnosticCounts = useMemo(
     () => countDiagnostics(diagnostics),
     [diagnostics],
@@ -188,6 +217,8 @@ const FileDiffAccordionItem = memo(function FileDiffAccordionItem({
               file={file}
               wrapLines={wrapLines}
               diagnostics={diagnostics}
+              mode={mode}
+              onModeChange={setMode}
             />
           </CollapsibleContent>
         </div>

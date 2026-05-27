@@ -100,6 +100,18 @@ interface SideBySideRow {
   right: SideCell;
 }
 
+type UnifiedDiffRowKind = 'hunk' | 'context' | 'removal' | 'addition';
+
+interface UnifiedDiffRow {
+  key: string;
+  kind: UnifiedDiffRowKind;
+  content: string;
+  oldLineNumber: number | null;
+  newLineNumber: number | null;
+}
+
+type DiffDisplayMode = 'unified' | 'side-by-side';
+
 const EMPTY_CELL: SideCell = { kind: 'empty', content: '', lineNumber: null };
 
 /**
@@ -193,6 +205,83 @@ function pairDiffLines(
       if (r) oldLine += 1;
       if (a) newLine += 1;
     }
+  }
+
+  return { rows, truncated: totalRows > maxRows, totalRows };
+}
+
+function parseHunkLineNumbers(content: string): {
+  oldLine: number;
+  newLine: number;
+} | null {
+  const match = content.match(/@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/);
+  if (!match) return null;
+  return { oldLine: Number(match[1]), newLine: Number(match[2]) };
+}
+
+export function buildUnifiedDiffRows(
+  lines: ReadonlyArray<GenericDiffLine>,
+  maxRows: number,
+): { rows: UnifiedDiffRow[]; truncated: boolean; totalRows: number } {
+  const rows: UnifiedDiffRow[] = [];
+  let oldLine = 1;
+  let newLine = 1;
+  let totalRows = 0;
+
+  const pushRow = (row: Omit<UnifiedDiffRow, 'key'>) => {
+    totalRows += 1;
+    if (rows.length >= maxRows) return;
+    rows.push({ key: `row-${rows.length}`, ...row });
+  };
+
+  for (const line of lines) {
+    if (line.type === 'header') continue;
+
+    if (line.type === 'hunk') {
+      const parsed = parseHunkLineNumbers(line.content);
+      if (parsed) {
+        oldLine = parsed.oldLine;
+        newLine = parsed.newLine;
+      }
+      pushRow({
+        kind: 'hunk',
+        content: line.content,
+        oldLineNumber: null,
+        newLineNumber: null,
+      });
+      continue;
+    }
+
+    if (line.type === 'context') {
+      pushRow({
+        kind: 'context',
+        content: line.content,
+        oldLineNumber: oldLine,
+        newLineNumber: newLine,
+      });
+      oldLine += 1;
+      newLine += 1;
+      continue;
+    }
+
+    if (line.type === 'removal') {
+      pushRow({
+        kind: 'removal',
+        content: line.content,
+        oldLineNumber: oldLine,
+        newLineNumber: null,
+      });
+      oldLine += 1;
+      continue;
+    }
+
+    pushRow({
+      kind: 'addition',
+      content: line.content,
+      oldLineNumber: null,
+      newLineNumber: newLine,
+    });
+    newLine += 1;
   }
 
   return { rows, truncated: totalRows > maxRows, totalRows };
@@ -357,6 +446,103 @@ const SideColumn = memo(function SideColumn({
   );
 });
 
+function buildUnifiedSource(rows: UnifiedDiffRow[]): {
+  source: string;
+  lineIndexByRow: (number | null)[];
+} {
+  const parts: string[] = [];
+  const lineIndexByRow: (number | null)[] = [];
+  for (const row of rows) {
+    if (row.kind === 'hunk') {
+      lineIndexByRow.push(null);
+      continue;
+    }
+    lineIndexByRow.push(parts.length);
+    parts.push(row.content);
+  }
+  return { source: parts.join('\n'), lineIndexByRow };
+}
+
+export const UnifiedDiffRows = memo(function UnifiedDiffRows({
+  rows,
+  language,
+  wrapLines = false,
+}: {
+  rows: UnifiedDiffRow[];
+  language: BundledLanguage;
+  wrapLines?: boolean;
+}): React.ReactElement {
+  const { source, lineIndexByRow } = useMemo(
+    () => buildUnifiedSource(rows),
+    [rows],
+  );
+  const tokenized = useTokenizedLines(source, language);
+
+  return (
+    <div
+      data-component="diff-view"
+      data-variant="unified"
+      data-wrap={wrapLines ? 'true' : 'false'}
+      data-scrollable="true"
+    >
+      {rows.map((row, rowIdx) => {
+        const lineIdx = lineIndexByRow[rowIdx];
+        const tokens =
+          tokenized && lineIdx !== null ? tokenized[lineIdx] : undefined;
+        return (
+          <div key={row.key} data-slot="diff-row" data-kind={row.kind}>
+            <span data-slot="diff-gutter-old">{row.oldLineNumber ?? ''}</span>
+            <span data-slot="diff-gutter-new">{row.newLineNumber ?? ''}</span>
+            <span data-slot="diff-marker">
+              {row.kind === 'removal'
+                ? '-'
+                : row.kind === 'addition'
+                  ? '+'
+                  : row.kind === 'hunk'
+                    ? '…'
+                    : ' '}
+            </span>
+            <span data-slot="diff-content">
+              {row.kind === 'hunk' ? (
+                row.content
+              ) : (
+                <HighlightedLine tokens={tokens} fallback={row.content} />
+              )}
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+});
+
+export function DiffDisplayModeToggle({
+  mode,
+  onModeChange,
+}: {
+  mode: DiffDisplayMode;
+  onModeChange: (mode: DiffDisplayMode) => void;
+}): React.ReactElement {
+  return (
+    <div data-slot="diff-view-toggle" role="group" aria-label="Diff view mode">
+      <button
+        type="button"
+        data-active={mode === 'unified' ? 'true' : undefined}
+        onClick={() => onModeChange('unified')}
+      >
+        Unified
+      </button>
+      <button
+        type="button"
+        data-active={mode === 'side-by-side' ? 'true' : undefined}
+        onClick={() => onModeChange('side-by-side')}
+      >
+        Side by side
+      </button>
+    </div>
+  );
+}
+
 /* -------------------------------------------------------------------------- */
 /*  Top-level DiffView                                                        */
 /* -------------------------------------------------------------------------- */
@@ -365,6 +551,7 @@ const DiffView = memo(function DiffView({
   tool,
 }: DiffViewProps): React.ReactElement | null {
   const { wrapLines } = useWrapCodeBlocks();
+  const [mode, setMode] = useState<DiffDisplayMode>('side-by-side');
   const diffData = useMemo(() => {
     if (!isEditToolCall(tool.name)) return null;
 
@@ -389,15 +576,17 @@ const DiffView = memo(function DiffView({
       parsedLines,
       MAX_LINES,
     );
-    if (rows.length === 0) return null;
+    const unified = buildUnifiedDiffRows(parsedLines, MAX_LINES);
+    if (rows.length === 0 && unified.rows.length === 0) return null;
 
     return {
       filePath: parsed.filePath,
       rows,
+      unifiedRows: unified.rows,
       additions,
       removals,
-      totalRows,
-      truncated,
+      totalRows: Math.max(totalRows, unified.totalRows),
+      truncated: truncated || unified.truncated,
       language: inferLanguage(parsed.filePath),
     };
   }, [tool.input, tool.name]);
@@ -406,11 +595,20 @@ const DiffView = memo(function DiffView({
 
   return (
     <div data-component="diff-view" data-variant="side-by-side">
-      <SideBySideDiffGrid
-        rows={diffData.rows}
-        language={diffData.language}
-        wrapLines={wrapLines}
-      />
+      <DiffDisplayModeToggle mode={mode} onModeChange={setMode} />
+      {mode === 'unified' ? (
+        <UnifiedDiffRows
+          rows={diffData.unifiedRows}
+          language={diffData.language}
+          wrapLines={wrapLines}
+        />
+      ) : (
+        <SideBySideDiffGrid
+          rows={diffData.rows}
+          language={diffData.language}
+          wrapLines={wrapLines}
+        />
+      )}
 
       {diffData.truncated && (
         <div data-slot="diff-hunk-separator" className="font-mono text-[9px]">
