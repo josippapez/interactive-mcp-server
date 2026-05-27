@@ -21,11 +21,9 @@ import {
 } from './opencode/server-facade';
 import { syncRemoteConfig } from './utility/opencode-client';
 import { checkOpenCodeHealth } from './opencode/health';
-import { registerMcpAfterOpenCodeHealthy } from './opencode/mcp-startup-registration';
 import {
   fetchProvidersInfo,
   refreshProvidersInfo,
-  registerMcpWithRetry,
 } from './utility/opencode-client';
 import { detectClaudeSdkRuntime } from './claude-sdk-runtime';
 import { BUILTIN_TEMPLATES } from './builtin-templates';
@@ -75,6 +73,11 @@ let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 let currentSettings: AppSettings = defaultSettings;
+
+// Temporarily disabled while testing the repo-scoped standalone OpenCode plugin
+// in opencode-plugin/. Set to true to restore automatic global
+// `mcp["interactive-desktop"]` config sync from the desktop app.
+const ENABLE_DESKTOP_MCP_CONFIG_SYNC = false;
 
 /**
  * Actually-bound ports as reported by the resolver/probe layer. May differ
@@ -461,7 +464,7 @@ app.whenReady().then(async () => {
     // is in use (e.g. another Eden instance) and returns the actually-bound
     // port. We track the resolved port in `resolvedPorts` (separate from
     // `currentSettings`) so:
-    //   1. Downstream consumers (syncRemoteConfig, registerMcpWithRetry,
+    //   1. Downstream consumers (syncRemoteConfig, OpenCode SDK calls,
     //      writeMcpConfigHint) can target the live port.
     //   2. The user's chosen hint port stays in `currentSettings.port`
     //      and is preserved on save.
@@ -497,10 +500,7 @@ app.whenReady().then(async () => {
 
     const isOpenCodeBackend = currentSettings.agentBackend === 'opencode';
     if (isOpenCodeBackend) {
-      // Sync remote MCP entry into opencode.json on startup
-      // Registration with OpenCode must be triggered manually via the
-      // "Register provider config" button in Settings after OpenCode restarts.
-      if (currentSettings.autoSyncOpencode) {
+      if (ENABLE_DESKTOP_MCP_CONFIG_SYNC && currentSettings.autoSyncOpencode) {
         try {
           const syncResult = await syncRemoteConfig(
             getEffectiveMcpPort(),
@@ -641,21 +641,9 @@ app.whenReady().then(async () => {
           });
       });
 
-      // Re-register with OpenCode on every startup so its MCP client performs a
-      // fresh initialize handshake instead of hanging on a stale reconnect backoff.
-      // This is fire-and-forget with retries — it resolves the Cmd+Q → relaunch
-      // hang where activeClients stays 0 because OpenCode's client never completes
-      // re-initialization after the previous server instance was killed.
-      void registerMcpAfterOpenCodeHealthy({
-        waitForHealthy: () => openCodeHealthyPromise,
-        register: () =>
-          registerMcpWithRetry({
-            appPort: getEffectiveMcpPort(),
-            openCodePort: getEffectiveOpenCodePort(),
-            promptTimeoutSeconds: currentSettings.promptTimeoutSeconds,
-          }),
-        log: appLog,
-      });
+      // Do not register the desktop MCP server with OpenCode. Repo context
+      // tools are provided by the project-scoped standalone OpenCode plugin,
+      // while the desktop MCP server remains available for external clients.
     } else if (currentSettings.agentBackend === 'claude_sdk') {
       const claudeRuntime = await detectClaudeSdkRuntime();
       console.log(`[claude-sdk] ${claudeRuntime.message}`);

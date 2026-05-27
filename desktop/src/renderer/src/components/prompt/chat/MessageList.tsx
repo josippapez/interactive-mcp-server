@@ -2,10 +2,12 @@ import React, {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
 } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { UnifiedMessage } from '../../../types/unified-message';
 import MessageItem from '../MessageItem';
 import UnreadDivider from './UnreadDivider';
@@ -13,6 +15,13 @@ import {
   getStreamingMessageId,
   useSeenMessageIds,
 } from './message-list-helpers';
+import {
+  VIRTUAL_MESSAGE_ESTIMATED_HEIGHT_PX,
+  VIRTUAL_MESSAGE_OVERSCAN,
+  getVirtualizedMessageIndex,
+  registerVirtualMessageRow,
+  shouldVirtualizeMessageList,
+} from './message-list-virtualization';
 
 interface MessageListProps {
   /** Messages to render */
@@ -126,7 +135,83 @@ const MessageList = memo(function MessageList({
 
   // Which message currently holds keyboard focus (null = none).
   const [focusedId, setFocusedId] = useState<string | null>(null);
+  const focusedIdRef = useRef<string | null>(focusedId);
+  focusedIdRef.current = focusedId;
   const previousMessageCountRef = useRef(messages.length);
+  const shouldVirtualize = shouldVirtualizeMessageList(messages.length);
+
+  const rowVirtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollContainerRef?.current ?? null,
+    estimateSize: () => VIRTUAL_MESSAGE_ESTIMATED_HEIGHT_PX,
+    overscan: VIRTUAL_MESSAGE_OVERSCAN,
+    enabled: shouldVirtualize,
+  });
+  const rowVirtualizerRef = useRef(rowVirtualizer);
+  rowVirtualizerRef.current = rowVirtualizer;
+
+  const virtualRefSettersRef = useRef(
+    new Map<string, (node: HTMLDivElement | null) => void>(),
+  );
+  const virtualObservedRowsRef = useRef(new Map<string, HTMLDivElement>());
+  const virtualResizeObserverRef = useRef<ResizeObserver | null>(null);
+  const getVirtualResizeObserver = useCallback((): ResizeObserver | null => {
+    if (typeof ResizeObserver === 'undefined') return null;
+    if (!virtualResizeObserverRef.current) {
+      virtualResizeObserverRef.current = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          rowVirtualizerRef.current.measureElement(
+            entry.target as HTMLDivElement,
+          );
+        }
+      });
+    }
+    return virtualResizeObserverRef.current;
+  }, []);
+  const getVirtualRefSetter = useCallback(
+    (id: string): ((node: HTMLDivElement | null) => void) => {
+      const cached = virtualRefSettersRef.current.get(id);
+      if (cached) return cached;
+      const setter = (node: HTMLDivElement | null): void => {
+        registerVirtualMessageRow(id, node, {
+          rowRefs: rowRefs.current,
+          observedRows: virtualObservedRowsRef.current,
+          resizeObserver: getVirtualResizeObserver(),
+          measureElement: (element) =>
+            rowVirtualizerRef.current.measureElement(element),
+        });
+        if (node) {
+          if (focusedIdRef.current === id) {
+            requestAnimationFrame(() => {
+              node
+                .querySelector<HTMLElement>(
+                  'article[data-slot^="session-turn-"]',
+                )
+                ?.focus({ preventScroll: true });
+            });
+          }
+        }
+      };
+      virtualRefSettersRef.current.set(id, setter);
+      return setter;
+    },
+    [getVirtualResizeObserver],
+  );
+
+  useLayoutEffect(() => {
+    if (!shouldVirtualize) return;
+    for (const node of virtualObservedRowsRef.current.values()) {
+      rowVirtualizer.measureElement(node);
+    }
+  }, [messages, rowVirtualizer, shouldVirtualize]);
+
+  useEffect(() => {
+    return () => {
+      virtualResizeObserverRef.current?.disconnect();
+      virtualResizeObserverRef.current = null;
+      virtualObservedRowsRef.current.clear();
+    };
+  }, []);
 
   // If the focused message is removed (e.g. history trimmed), drop focus.
   useEffect(() => {
@@ -166,17 +251,33 @@ const MessageList = memo(function MessageList({
       if (!next) return;
       setFocusedId(next.id);
       const nextRow = rowRefs.current.get(next.id);
+      if (!nextRow && shouldVirtualize) {
+        rowVirtualizer.scrollToIndex(nextIdx, { align: 'auto' });
+      }
       const nextArticle = nextRow?.querySelector<HTMLElement>(
         'article[data-slot^="session-turn-"]',
       );
       nextArticle?.focus({ preventScroll: false });
       nextArticle?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     },
-    [messages],
+    [messages, rowVirtualizer, shouldVirtualize],
   );
 
   useEffect(() => {
     if (!activeSearchMatchId) return;
+    if (shouldVirtualize) {
+      const targetIndex = getVirtualizedMessageIndex(
+        messages,
+        activeSearchMatchId,
+      );
+      if (targetIndex >= 0) {
+        rowVirtualizer.scrollToIndex(targetIndex, {
+          align: 'center',
+          behavior: 'smooth',
+        });
+      }
+      return;
+    }
     const node = rowRefs.current.get(activeSearchMatchId);
     if (!node) return;
     const container = scrollContainerRef?.current;
@@ -191,7 +292,118 @@ const MessageList = memo(function MessageList({
       return;
     }
     node.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [activeSearchMatchId, scrollContainerRef]);
+  }, [
+    activeSearchMatchId,
+    messages,
+    rowVirtualizer,
+    scrollContainerRef,
+    shouldVirtualize,
+  ]);
+
+  useEffect(() => {
+    if (!deepLinkMessageId || !shouldVirtualize) return;
+    const targetIndex = getVirtualizedMessageIndex(messages, deepLinkMessageId);
+    if (targetIndex < 0) return;
+    rowVirtualizer.scrollToIndex(targetIndex, {
+      align: 'start',
+      behavior: 'smooth',
+    });
+  }, [deepLinkMessageId, messages, rowVirtualizer, shouldVirtualize]);
+
+  const renderMessageRow = useCallback(
+    (msg: UnifiedMessage, index: number) => {
+      const isActive = msg.isActivePrompt ?? false;
+      const showOptions = Boolean(
+        isActive &&
+        predefinedOptions &&
+        predefinedOptions.length > 0 &&
+        onSelectOption,
+      );
+      const showDividerBefore = showUnreadDivider && index === unreadStartIndex;
+
+      return (
+        <>
+          {showDividerBefore && <UnreadDivider />}
+          <MessageItem
+            msg={msg}
+            isActive={isActive}
+            showOptions={showOptions}
+            predefinedOptions={predefinedOptions}
+            onSelectOption={onSelectOption}
+            onExpandImage={onExpandImage}
+            expandAllTools={expandAllTools}
+            toolAutoExpandExclusions={toolAutoExpandExclusions}
+            onNavigateToSession={onNavigateToSession}
+            showThinking={showThinking}
+            isNew={newMessageIds.has(msg.id)}
+            isStreaming={msg.id === streamingMessageId}
+            isSearchMatch={matchedIdSet.has(msg.id)}
+            isActiveSearchMatch={activeSearchMatchId === msg.id}
+            isFocused={focusedId === msg.id}
+            isDeepLinkTarget={deepLinkMessageId === msg.id}
+            onRequestFocus={handleRequestFocus}
+            onKeyNavigate={handleKeyNavigate}
+          />
+        </>
+      );
+    },
+    [
+      activeSearchMatchId,
+      deepLinkMessageId,
+      expandAllTools,
+      focusedId,
+      handleKeyNavigate,
+      handleRequestFocus,
+      matchedIdSet,
+      newMessageIds,
+      onExpandImage,
+      onNavigateToSession,
+      onSelectOption,
+      predefinedOptions,
+      showThinking,
+      showUnreadDivider,
+      streamingMessageId,
+      toolAutoExpandExclusions,
+      unreadStartIndex,
+    ],
+  );
+
+  if (shouldVirtualize) {
+    return (
+      <div
+        ref={contentRef}
+        data-slot="session-turn-list"
+        data-virtualized="true"
+        className="px-2 py-3"
+      >
+        <div
+          className="relative w-full"
+          style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+        >
+          {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+            const msg = messages[virtualRow.index];
+            if (!msg) return null;
+            return (
+              <div
+                key={msg.id}
+                data-index={virtualRow.index}
+                data-message-id={msg.id}
+                ref={getVirtualRefSetter(msg.id)}
+                className="absolute left-0 top-0 w-full"
+                style={{
+                  transform: `translateY(${virtualRow.start}px)`,
+                }}
+              >
+                <div className="pb-3">
+                  {renderMessageRow(msg, virtualRow.index)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -200,16 +412,6 @@ const MessageList = memo(function MessageList({
       className="flex flex-col gap-3 px-2 py-3"
     >
       {messages.map((msg, index) => {
-        const isActive = msg.isActivePrompt ?? false;
-        const showOptions = Boolean(
-          isActive &&
-          predefinedOptions &&
-          predefinedOptions.length > 0 &&
-          onSelectOption,
-        );
-        const showDividerBefore =
-          showUnreadDivider && index === unreadStartIndex;
-
         return (
           <div
             key={msg.id}
@@ -217,27 +419,7 @@ const MessageList = memo(function MessageList({
             data-message-id={msg.id}
             ref={getRefSetter(msg.id)}
           >
-            {showDividerBefore && <UnreadDivider />}
-            <MessageItem
-              msg={msg}
-              isActive={isActive}
-              showOptions={showOptions}
-              predefinedOptions={predefinedOptions}
-              onSelectOption={onSelectOption}
-              onExpandImage={onExpandImage}
-              expandAllTools={expandAllTools}
-              toolAutoExpandExclusions={toolAutoExpandExclusions}
-              onNavigateToSession={onNavigateToSession}
-              showThinking={showThinking}
-              isNew={newMessageIds.has(msg.id)}
-              isStreaming={msg.id === streamingMessageId}
-              isSearchMatch={matchedIdSet.has(msg.id)}
-              isActiveSearchMatch={activeSearchMatchId === msg.id}
-              isFocused={focusedId === msg.id}
-              isDeepLinkTarget={deepLinkMessageId === msg.id}
-              onRequestFocus={handleRequestFocus}
-              onKeyNavigate={handleKeyNavigate}
-            />
+            {renderMessageRow(msg, index)}
           </div>
         );
       })}

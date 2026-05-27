@@ -14,5 +14,5 @@
   // },
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": true,
-  // Custom plugins — each path is relative to this opencode.jsonc file
+  "plugin": ["../opencode-plugin/interactive-mcp.js"],
 }
