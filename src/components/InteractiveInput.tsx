@@ -1,4 +1,5 @@
 import * as OpenTuiReact from '@opentui/react';
+import type { ScrollBoxRenderable, TextareaRenderable } from '@opentui/core';
 import {
   useCallback,
   useEffect,
@@ -32,7 +33,6 @@ import type {
   AutocompleteTarget,
   InteractiveInputProps,
   OpenTuiKeyEvent,
-  TextareaRenderableLike,
 } from './interactive-input/types.js';
 import { MarkdownText } from './MarkdownText.js';
 import {
@@ -88,10 +88,8 @@ export function InteractiveInput({
     QueuedAttachment[]
   >([]);
 
-  const textareaRef = useRef<TextareaRenderableLike | null>(null);
-  const suggestionsScrollRef = useRef<{
-    scrollTo?: (position: number | { x: number; y: number }) => void;
-  } | null>(null);
+  const textareaRef = useRef<TextareaRenderable | null>(null);
+  const suggestionsScrollRef = useRef<ScrollBoxRenderable | null>(null);
   const latestInputValueRef = useRef(inputValue);
   const latestCaretPositionRef = useRef(caretPosition);
   const autocompleteTargetRef = useRef<AutocompleteTarget | null>(null);
@@ -728,7 +726,7 @@ export function InteractiveInput({
           textareaRows={textareaRows}
           hasSuggestions={fileSuggestions.length > 0}
           theme={theme}
-          keyBindings={textareaBindings as Array<Record<string, unknown>>}
+          keyBindings={textareaBindings}
           onFocusRequest={recoverInputFocusFromClick}
           onContentSync={syncInputStateFromTextarea}
           onSubmitFromTextarea={handleTextareaSubmit}

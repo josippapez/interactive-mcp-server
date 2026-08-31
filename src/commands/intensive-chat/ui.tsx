@@ -1,4 +1,5 @@
 import * as OpenTuiCore from '@opentui/core';
+import type { ScrollBoxRenderable } from '@opentui/core';
 import * as OpenTuiReact from '@opentui/react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import fs from 'fs/promises';
@@ -28,10 +29,6 @@ interface CliRendererLike {
 interface CliRootLike {
   render: (node: unknown) => void;
   unmount?: () => void;
-}
-
-interface ScrollBoxLike {
-  scrollTo?: (position: number | { x: number; y: number }) => void;
 }
 
 const { createCliRenderer } = OpenTuiCore as unknown as {
@@ -174,7 +171,7 @@ const App = ({
     process.argv.includes('--light') ? 'light' : 'dark',
   );
   const timerRef = useRef<NodeJS.Timeout | null>(null);
-  const scrollRef = useRef<ScrollBoxLike | null>(null);
+  const scrollRef = useRef<ScrollBoxRenderable | null>(null);
   const { width, height } = useTerminalDimensions();
   const isNarrow = width < 90;
 

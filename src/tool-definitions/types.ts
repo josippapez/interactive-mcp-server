@@ -9,8 +9,7 @@ export interface ToolCapabilityInfo {
 // Type for the 'description' part provided to server.tool()
 // It can be a simple string or a function that might use configuration (like timeout)
 export type ToolRegistrationDescription =
-  | string
-  | ((timeout: number) => string);
+  string | ((timeout: number) => string);
 
 // Define the combined structure for a single tool's definition
 export interface ToolDefinition {

@@ -61,8 +61,7 @@ export function focusTextarea(
   textareaRef: RefObject<TextareaRenderableLike | null>,
 ): boolean {
   const textarea = textareaRef.current as
-    | (TextareaRenderableLike & { focus?: () => void })
-    | null;
+    (TextareaRenderableLike & { focus?: () => void }) | null;
 
   if (!textarea) {
     return false;

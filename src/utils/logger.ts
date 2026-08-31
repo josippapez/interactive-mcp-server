@@ -31,9 +31,7 @@ const loggerOptions: LoggerOptions = {
 
 if (isDevelopment) {
   let devTransportConfig:
-    | TransportSingleOptions
-    | TransportMultiOptions
-    | TransportPipelineOptions;
+    TransportSingleOptions | TransportMultiOptions | TransportPipelineOptions;
   try {
     // Attempt to open the file in append mode to check writability before setting up transport
     const fd = fs.openSync(logFile, 'a');

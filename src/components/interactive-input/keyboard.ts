@@ -1,3 +1,4 @@
+import type { KeyBinding } from '@opentui/core';
 import type { OpenTuiKeyEvent } from './types.js';
 
 const CTRL_MODIFIED_KEY_CSI_U_SEQUENCE = new RegExp(
@@ -97,14 +98,7 @@ export const extractPastedText = (key: OpenTuiKeyEvent): string | null => {
   return key.sequence;
 };
 
-export const textareaKeyBindings: Array<{
-  name: string;
-  ctrl?: boolean;
-  meta?: boolean;
-  super?: boolean;
-  shift?: boolean;
-  action: 'submit' | 'newline' | 'select-all' | 'undo' | 'redo';
-}> = [
+export const textareaKeyBindings: KeyBinding[] = [
   { name: 's', ctrl: true, action: 'submit' },
   { name: 's', meta: true, action: 'submit' },
   { name: 's', super: true, action: 'submit' },

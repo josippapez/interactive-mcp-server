@@ -34,11 +34,13 @@ export async function validateRepositoryBaseDirectory(
     ) {
       throw new Error(
         `Invalid baseDirectory: "${normalizedPath}" does not exist. Provide an absolute path to the current repository root.`,
+        { cause: error },
       );
     }
 
     throw new Error(
       `Invalid baseDirectory: unable to access "${normalizedPath}". Provide an absolute path to the current repository root.`,
+      { cause: error },
     );
   }
 
@@ -59,11 +61,13 @@ export async function validateRepositoryBaseDirectory(
     ) {
       throw new Error(
         `Invalid baseDirectory: "${normalizedPath}" is not a git repository root (missing ".git").`,
+        { cause: error },
       );
     }
 
     throw new Error(
       `Invalid baseDirectory: unable to verify ".git" in "${normalizedPath}".`,
+      { cause: error },
     );
   }
 

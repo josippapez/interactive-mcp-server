@@ -1,5 +1,9 @@
 import type React from 'react';
-import type { TextareaRenderableLike } from './types.js';
+import type {
+  KeyBinding,
+  ScrollBoxRenderable,
+  TextareaRenderable,
+} from '@opentui/core';
 import type { ThemeColors } from '@/theme.js';
 import { openExternalLink } from '@/utils/open-external-link.js';
 import {
@@ -39,7 +43,7 @@ export const ModeTabs = ({
           justifyContent="center"
           paddingLeft={0}
           paddingRight={0}
-          onClick={onSelectOptionMode}
+          onMouseDown={onSelectOptionMode}
           backgroundColor={
             mode === 'option' ? theme.modeTabActiveBg : theme.bgModeTabs
           }
@@ -60,7 +64,7 @@ export const ModeTabs = ({
         justifyContent="center"
         paddingLeft={0}
         paddingRight={0}
-        onClick={onSelectInputMode}
+        onMouseDown={onSelectInputMode}
         backgroundColor={
           mode === 'input' ? theme.modeTabActiveBg : theme.bgModeTabs
         }
@@ -112,7 +116,7 @@ export const OptionList = ({
             width="100%"
             paddingLeft={0}
             paddingRight={1}
-            onClick={() => {
+            onMouseDown={() => {
               onSelectOption(index);
               onActivateOptionMode();
             }}
@@ -138,13 +142,13 @@ export const OptionList = ({
 interface InputEditorProps {
   questionId: string;
   textareaRenderVersion: number;
-  textareaRef: { current: TextareaRenderableLike | null };
+  textareaRef: { current: TextareaRenderable | null };
   textareaSyntaxStyle?: unknown;
   textareaContainerHeight: number;
   textareaRows: number;
   hasSuggestions: boolean;
   theme: ThemeColors;
-  keyBindings: Array<Record<string, unknown>>;
+  keyBindings: KeyBinding[];
   onFocusRequest: () => void;
   onContentSync: () => void;
   onSubmitFromTextarea: () => void;
@@ -178,7 +182,7 @@ export const InputEditor = ({
       height={textareaContainerHeight}
       paddingLeft={1}
       paddingRight={1}
-      onClick={onFocusRequest}
+      onMouseDown={onFocusRequest}
     >
       <textarea
         ref={textareaRef}
@@ -213,11 +217,7 @@ interface SuggestionsPanelProps {
   selectedSuggestionVscodeLink: string | null;
   hasSearchRoot: boolean;
   theme: ThemeColors;
-  scrollRef: {
-    current: {
-      scrollTo?: (position: number | { x: number; y: number }) => void;
-    } | null;
-  };
+  scrollRef: { current: ScrollBoxRenderable | null };
 }
 
 export const SuggestionsPanel = ({
