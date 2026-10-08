@@ -388,3 +388,7 @@ if (isToolEnabled('stop_intensive_chat')) {
 // Run the server over stdio
 const transport = new StdioServerTransport();
 await server.connect(transport);
+
+// The client closing stdin is the end of the session. Without this the server kept running
+// after its parent went away: 31 orphans had piled up on one machine in a day.
+process.stdin.on('end', () => process.exit(0));
