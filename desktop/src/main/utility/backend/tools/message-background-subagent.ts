@@ -6,6 +6,8 @@ import { resolveProviderSessionId } from '../resolver';
 import { injectOpenCodeMessage } from '../injector';
 import { getOpenCodePort } from '../session-tree-service';
 import { getBackgroundSubagentById } from './manage-background-subagents';
+export { buildBackgroundSubagentMessage } from './background-subagent-message';
+import { buildBackgroundSubagentMessage } from './background-subagent-message';
 
 type MessageDirection = 'to_parent' | 'to_subagent';
 
@@ -22,26 +24,6 @@ function jsonError(error: string, message: string): CallToolResult {
       { type: 'text' as const, text: JSON.stringify({ error, message }) },
     ],
   };
-}
-
-export function buildBackgroundSubagentMessage(input: {
-  direction: MessageDirection;
-  fromSessionId: string;
-  toSessionId: string;
-  message: string;
-  reason?: string;
-}): string {
-  const lines = [
-    '<background-subagent-message>',
-    `- Direction: ${input.direction}`,
-    `- From session: ${input.fromSessionId}`,
-    `- To session: ${input.toSessionId}`,
-  ];
-  const reason = input.reason?.trim();
-  if (reason) lines.push(`- Reason: ${reason}`);
-  lines.push('', '<message>', input.message.trim(), '</message>');
-  lines.push('</background-subagent-message>');
-  return lines.join('\n');
 }
 
 export function resolveMessageTarget(input: {

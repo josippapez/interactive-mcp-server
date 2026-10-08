@@ -4,17 +4,26 @@ import { useCollapsedState } from './useCollapsedState';
 import { usePinnedProjects } from './usePinnedProjects';
 import { useSessionFiltering } from './useSessionFiltering';
 import {
+  sessionGraphStore,
+  setSessionGraphNodes,
   useSessionGraphProjects,
   useSessionGraphSelector,
 } from '../../../store/session-graph';
 import { useHealthStatus } from '../../../store/opencode-health';
+import { applyOptimisticArchiveState } from '../../../hooks/session-tree-merge';
+import {
+  getBulkArchiveSessionIds,
+  getVisibleSessionIds,
+  resolveSessionSelection,
+} from './session-multi-select';
 
 /** Local storage key for persisted selected project */
 const SELECTED_PROJECT_KEY = 'sidebar-selected-project';
+const SHOW_ARCHIVED_KEY = 'sidebar-show-archived';
 const MIN_REFRESH_SPINNER_MS = 350;
 
 type UseSidebarStateProps = {
-  activeConnectionId: string | null;
+  onSelect: (id: string) => void;
 };
 
 /**
@@ -24,7 +33,7 @@ type UseSidebarStateProps = {
  * expand/collapse via `--sidebar-width`); this hook no longer exposes
  * sidebarRef/sidebarWidth/isResizing/handleMouseDown.
  */
-export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
+export function useSidebarState({ onSelect }: UseSidebarStateProps) {
   // Pinned projects management
   const {
     pinnedPaths,
@@ -79,6 +88,31 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
 
   // Refresh state
   const [isUserRefreshing, setIsUserRefreshing] = useState(false);
+  const [loadingMoreProjectPath, setLoadingMoreProjectPath] = useState<
+    string | null
+  >(null);
+  const [showArchived, setShowArchived] = useState(() => {
+    try {
+      return localStorage.getItem(SHOW_ARCHIVED_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  });
+  const [selectedSessionIds, setSelectedSessionIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [selectionAnchorId, setSelectionAnchorId] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    void window.api.setShowArchivedSessionTree?.(showArchived);
+    try {
+      localStorage.setItem(SHOW_ARCHIVED_KEY, String(showArchived));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [showArchived]);
 
   // Session status from OpenCode API
   const {
@@ -106,8 +140,21 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     }
   }, [isUserRefreshing, refreshSessionStatus]);
 
-  const handleLoadMoreSessions = useCallback(async (baseDirectory: string) => {
-    await window.api.loadMoreSessionTree?.(baseDirectory);
+  const handleLoadMoreSessions = useCallback(
+    async (baseDirectory: string) => {
+      if (loadingMoreProjectPath !== null) return;
+      setLoadingMoreProjectPath(baseDirectory);
+      try {
+        await window.api.loadMoreSessionTree?.(baseDirectory);
+      } finally {
+        setLoadingMoreProjectPath(null);
+      }
+    },
+    [loadingMoreProjectPath],
+  );
+
+  const handleToggleArchived = useCallback(() => {
+    setShowArchived((current) => !current);
   }, []);
 
   // Show the spinner as rotating during cold-start while OpenCode is still
@@ -131,19 +178,15 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
   const {
     filter,
     setFilter,
-    showInactive,
     filteredProjects,
     filteredDirectConnections,
     providerCounts,
     providerTabs,
     runningCount,
-    inactiveCount,
-    handleToggleInactive,
   } = useSessionFiltering({
     openCodeTree,
     directConnections,
     projects,
-    activeConnectionId,
     getStatus,
     statusMap,
   });
@@ -156,6 +199,76 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     return filteredProjects.filter((p) => p.path === selectedProjectPath);
   }, [filteredProjects, selectedProjectPath]);
 
+  const visibleSessionIds = useMemo(
+    () => getVisibleSessionIds(displayProjects, collapsedSessions),
+    [collapsedSessions, displayProjects],
+  );
+
+  const handleSelectSession = useCallback(
+    (sessionId: string, event: React.MouseEvent<HTMLButtonElement>) => {
+      const providerSessionId =
+        sessionGraphStore.state.nodes.get(sessionId)?.providerSessionId ??
+        sessionId;
+      const toggleKey = event.metaKey || event.ctrlKey;
+
+      if (event.shiftKey || toggleKey) {
+        event.preventDefault();
+        const result = resolveSessionSelection({
+          current: selectedSessionIds,
+          clickedId: providerSessionId,
+          visibleIds: visibleSessionIds,
+          anchorId: selectionAnchorId,
+          shiftKey: event.shiftKey,
+          toggleKey,
+        });
+        setSelectedSessionIds(result.selectedIds);
+        setSelectionAnchorId(result.anchorId);
+        return;
+      }
+
+      setSelectedSessionIds(new Set());
+      setSelectionAnchorId(providerSessionId);
+      onSelect(sessionId);
+    },
+    [onSelect, selectedSessionIds, selectionAnchorId, visibleSessionIds],
+  );
+
+  const handleArchiveSession = useCallback(
+    async (sessionId: string, archived: boolean) => {
+      const nodes = sessionGraphStore.state.nodes;
+      const targetSessionIds = getBulkArchiveSessionIds(
+        nodes,
+        selectedSessionIds,
+        sessionId,
+      );
+
+      let optimisticNodes = nodes;
+      for (const targetSessionId of targetSessionIds) {
+        optimisticNodes = applyOptimisticArchiveState(
+          optimisticNodes,
+          targetSessionId,
+          archived,
+          showArchived,
+        );
+      }
+      setSessionGraphNodes(optimisticNodes);
+      setSelectedSessionIds(new Set());
+      setSelectionAnchorId(null);
+
+      const results = await Promise.all(
+        targetSessionIds.map((targetSessionId) =>
+          window.api.archiveOpenCodeSession?.(targetSessionId, archived),
+        ),
+      );
+      if (results.some((ok) => !ok)) {
+        await window.api.refreshSessionTree?.();
+        return;
+      }
+      await window.api.refreshSessionTree?.();
+    },
+    [selectedSessionIds, showArchived],
+  );
+
   // All projects for the rail (unfiltered by activity/selection - always show all)
   const allProjects = useMemo(() => {
     return projects;
@@ -165,11 +278,12 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     // State
     filter,
     setFilter,
-    showInactive,
     collapsedProjects,
     collapsedSessions,
     isRefreshing,
     selectedProjectPath,
+    loadingMoreProjectPath,
+    showArchived,
     // Computed
     filteredProjects: displayProjects,
     allProjects,
@@ -177,12 +291,10 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     providerCounts,
     providerTabs,
     runningCount,
-    inactiveCount,
     // Status
     getStatus,
     // Handlers
     handleRefresh,
-    handleToggleInactive,
     handleToggleProject,
     handleToggleSession,
     handleAddProject,
@@ -190,5 +302,9 @@ export function useSidebarState({ activeConnectionId }: UseSidebarStateProps) {
     handleRemoveProject,
     handleSelectProject,
     handleLoadMoreSessions,
+    handleToggleArchived,
+    handleArchiveSession,
+    handleSelectSession,
+    selectedSessionIds,
   };
 }

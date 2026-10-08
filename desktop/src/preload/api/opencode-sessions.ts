@@ -4,6 +4,7 @@ import type {
   OpenCodeFileNode,
   OpenCodeSdkStatus,
   OpenCodeUtilitySnapshot,
+  ReviewDiffFile,
   SessionTreeResult,
   SessionTreeNode,
 } from './types';
@@ -59,6 +60,15 @@ export function createOpenCodeSessionsApi() {
 
     loadMoreSessionTree: (baseDirectory: string): Promise<number> =>
       ipcRenderer.invoke('load-more-session-tree', baseDirectory),
+
+    setShowArchivedSessionTree: (showArchived: boolean): Promise<void> =>
+      ipcRenderer.invoke('set-show-archived-session-tree', showArchived),
+
+    archiveOpenCodeSession: (
+      sessionId: string,
+      archived: boolean,
+    ): Promise<boolean> =>
+      ipcRenderer.invoke('archive-opencode-session', sessionId, archived),
 
     // Fetch todos for an OpenCode session
     fetchSessionTodos: (
@@ -123,6 +133,13 @@ export function createOpenCodeSessionsApi() {
       branch: string | null;
       defaultBranch: string | null;
     } | null> => ipcRenderer.invoke('fetch-vcs-info', baseDirectory),
+
+    fetchVcsDiff: (options: {
+      mode: 'git' | 'branch';
+      baseDirectory?: string;
+    }): Promise<
+      { ok: true; data: ReviewDiffFile[] } | { ok: false; error: string }
+    > => ipcRenderer.invoke('fetch-vcs-diff', options),
 
     // Fetch session status from OpenCode
     fetchSessionStatus: (): Promise<Record<

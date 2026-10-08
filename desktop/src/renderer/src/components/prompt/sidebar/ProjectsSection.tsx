@@ -9,6 +9,7 @@ import type { Project } from '../../../hooks/session-tree-merge';
 import type { SessionStatusType } from '../../../hooks/useSessionStatus';
 import { ProviderFilter, PROVIDER_LABELS } from './types';
 import { ProjectSection } from './ProjectSection';
+import { shouldShowSessionSkeleton } from './sidebar-loading-state';
 
 type GroupedProjects = {
   key: string;
@@ -103,16 +104,42 @@ type ProjectsSectionProps = {
   onPinProject: (path: string, name: string) => void;
   onRemoveProject: (path: string) => void;
   activeConnectionId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, event: React.MouseEvent<HTMLButtonElement>) => void;
   getStatus: (sessionId: string) => SessionStatusType | null;
   onCreateSession?: (baseDirectory: string) => void;
   onLoadMoreSessions?: (baseDirectory: string) => void;
+  loadingMoreProjectPath?: string | null;
+  onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  selectedSessionIds: Set<string>;
+  showArchived: boolean;
   collapsedSessions: Set<string>;
   onToggleSession: (sessionId: string) => void;
   hasDirectConnections: boolean;
+  isLoadingSessions: boolean;
   /** Currently selected project path from the rail (null = all projects) */
   selectedProjectPath?: string | null;
 };
+
+function SessionSkeletonRows(): React.ReactElement {
+  return (
+    <SidebarGroupContent>
+      <div className="space-y-1 px-2 py-1" aria-label="Loading sessions">
+        {Array.from({ length: 4 }, (_, index) => (
+          <div
+            key={index}
+            className="flex animate-pulse items-center gap-2 rounded-lg border border-[var(--color-border-weak)]/40 bg-[var(--color-surface)]/20 px-2 py-2"
+          >
+            <div className="h-2.5 w-2.5 rounded-full bg-[var(--color-border)]/80" />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="h-2 w-3/4 rounded bg-[var(--color-border)]/80" />
+              <div className="h-1.5 w-1/2 rounded bg-[var(--color-border-weak)]/80" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </SidebarGroupContent>
+  );
+}
 
 /**
  * Projects section with header and list of project folders.
@@ -130,9 +157,14 @@ export const ProjectsSection = memo(function ProjectsSection({
   getStatus,
   onCreateSession,
   onLoadMoreSessions,
+  loadingMoreProjectPath,
+  onArchiveSession,
+  selectedSessionIds,
+  showArchived,
   collapsedSessions,
   onToggleSession,
   hasDirectConnections,
+  isLoadingSessions,
   selectedProjectPath,
 }: ProjectsSectionProps): React.ReactElement {
   const groupedProjects = useMemo(
@@ -141,6 +173,11 @@ export const ProjectsSection = memo(function ProjectsSection({
   );
   const isProjectSelected =
     selectedProjectPath !== null && selectedProjectPath !== undefined;
+  const showSessionSkeleton = shouldShowSessionSkeleton({
+    isLoadingSessions,
+    projectCount: projects.length,
+    hasDirectConnections,
+  });
 
   return (
     <SidebarGroup className="gap-0 p-0">
@@ -153,15 +190,18 @@ export const ProjectsSection = memo(function ProjectsSection({
           </span>
         </div>
       )}
-      {projects.length === 0 && !hasDirectConnections && (
-        <SidebarGroupContent>
-          <p className="px-4 py-1 text-xs text-[var(--color-text-faint)] italic">
-            {filter === 'all'
-              ? 'No sessions yet'
-              : `No ${PROVIDER_LABELS[filter]} sessions`}
-          </p>
-        </SidebarGroupContent>
-      )}
+      {showSessionSkeleton && <SessionSkeletonRows />}
+      {!showSessionSkeleton &&
+        projects.length === 0 &&
+        !hasDirectConnections && (
+          <SidebarGroupContent>
+            <p className="px-4 py-1 text-xs text-[var(--color-text-faint)] italic">
+              {filter === 'all'
+                ? 'No sessions yet'
+                : `No ${PROVIDER_LABELS[filter]} sessions`}
+            </p>
+          </SidebarGroupContent>
+        )}
       {groupedProjects.map((group, index) => (
         <div key={group.key} className={index > 0 ? 'mt-2' : ''}>
           <div className="flex items-center gap-2 px-2 py-1">
@@ -193,6 +233,10 @@ export const ProjectsSection = memo(function ProjectsSection({
                   getStatus={getStatus}
                   onCreateSession={onCreateSession}
                   onLoadMoreSessions={onLoadMoreSessions}
+                  loadingMoreSessions={loadingMoreProjectPath === project.path}
+                  onArchiveSession={onArchiveSession}
+                  selectedSessionIds={selectedSessionIds}
+                  showArchived={showArchived}
                   collapsedSessions={collapsedSessions}
                   onToggleSession={onToggleSession}
                 />

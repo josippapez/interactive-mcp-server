@@ -361,13 +361,21 @@ export function fetchTodosForSession(
 
 // ─── vcs-api ────────────────────────────────────────────────────────────────
 
-import type { VcsInfo } from './backend/vcs-api';
+import type { VcsDiffMode, VcsFileDiff, VcsInfo } from './backend/vcs-api';
 
 export function fetchVcsInfo(
   openCodePort: number,
   baseDirectory?: string,
 ): Promise<VcsInfo | null> {
   return call('opencode.fetchVcsInfo', [openCodePort, baseDirectory]);
+}
+
+export function fetchVcsDiff(
+  openCodePort: number,
+  mode: VcsDiffMode,
+  baseDirectory?: string,
+): Promise<VcsFileDiff[]> {
+  return call('opencode.fetchVcsDiff', [openCodePort, mode, baseDirectory]);
 }
 
 // ─── session-status ─────────────────────────────────────────────────────────

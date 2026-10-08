@@ -15,7 +15,7 @@ import {
   ToolNameBadge,
   ToolStatusBadge,
   countDiagnostics,
-  extractDiagnosticsForFile,
+  extractVisibleErrorsForFile,
 } from './ToolCallShared';
 import { useWrapCodeBlocks } from './use-wrap-code-blocks';
 import {
@@ -137,7 +137,7 @@ const EditToolRow = memo(function EditToolRow({
     if (isPending) return null;
     return getEditCounts(tool);
   }, [isPending, tool]);
-  const diagnostics = extractDiagnosticsForFile(tool.metadata, filePath);
+  const diagnostics = extractVisibleErrorsForFile(tool.metadata, filePath);
   const diagnosticCounts = countDiagnostics(diagnostics);
 
   return (

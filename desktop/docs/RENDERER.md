@@ -202,7 +202,7 @@ Central state manager for renderer session nodes. Owns the `Map<string, SessionN
 
 The renderer reconciles against the session tree it **pulls on demand** via `window.api.getSessionTree()` instead of consuming pushed full snapshots or maintaining a separate restored-tab model.
 
-- On mount and on every payload-free `session-tree-invalidated` IPC event, the renderer calls `window.api.getSessionTree()`. The returned flat snapshot supplies live OpenCode sessions within the currently selected folder enriched with `registered_connections` metadata. See [`ARCHITECTURE.md — Per-folder session scoping`](./ARCHITECTURE.md#per-folder-session-scoping).
+- On mount and on every payload-free `session-tree-invalidated` IPC event, the renderer calls `window.api.getSessionTree()`. The returned flat snapshot supplies live OpenCode sessions from pinned folders enriched with `registered_connections` metadata. See [`ARCHITECTURE.md — Pinned-folder session pagination`](./ARCHITECTURE.md#pinned-folder-session-pagination).
 - `mergeSessionTreeSnapshot` rebuilds the node map using `openCodeSessionId ?? connectionId` keys while preserving runtime state such as prompts, messages, unread counts, and statuses.
 - If a snapshot node claims a `connectionId` that previously existed as a direct connection, the direct node's runtime state is absorbed into the OpenCode-keyed node.
 - History is loaded once per claimed `connectionId` via `getSessionChannelHistory(connectionId)`.
@@ -464,20 +464,9 @@ Horizontal tab bar at the top with provider-specific filters:
 
 Each tab shows the count of sessions for that provider. Tabs are only shown if there are sessions of that type.
 
-##### Show/Hide Inactive Toggle
+##### Archive Toggle
 
-Button in the Sessions header that toggles visibility of inactive sessions:
-
-- When showing only active: displays "(N active)" count
-- When hidden, shows "+N more" button to reveal inactive sessions
-- Stored in `localStorage` under `sidebar-show-inactive`
-
-##### Tree-Aware Activity Filtering
-
-When hiding inactive sessions, the filter is tree-aware:
-
-- Parent sessions are shown if any child is active (running, pending prompt, or unread)
-- The entire parent chain is preserved to maintain hierarchy
+Button in the Sessions header toggles between active and archived OpenCode sessions. Inactive sessions remain visible; archived visibility is controlled by the backend session-tree query.
 
 ##### Session Sorting
 

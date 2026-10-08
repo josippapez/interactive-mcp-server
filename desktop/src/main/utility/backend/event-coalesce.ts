@@ -91,6 +91,8 @@ export function semanticKey(event: ConversationEvent): string | null {
       return `mcp.browser.fail:${event.mcpName}:${event.url}`;
     case 'installation.update-available':
       return `install.upd:${event.version}`;
+    case 'connection.status':
+      return `conn:global`;
     case 'message.part.delta':
       return null; // deltas accumulate, they don't coalesce
     default:

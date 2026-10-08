@@ -5,6 +5,10 @@ import {
   useRef,
   useState,
 } from 'react';
+import {
+  BOTTOM_ANCHOR_INITIAL_FRAMES,
+  getNextBottomAnchorFrameCount,
+} from '../components/prompt/chat/streaming-auto-scroll';
 
 /**
  * Auto-scroll behavior for chat views — single source of truth.
@@ -94,6 +98,8 @@ export interface UseAutoScrollReturn {
   handleScroll: () => void;
   /** Attach to the scroll container's `onWheel` (deltaY). */
   handleWheel: (deltaY: number) => void;
+  /** Mark pointer-driven scroll intent before drag/scrollbar movement. */
+  handlePointerDown: () => void;
   /** Pause follow mode only when the user made a real text selection. */
   handleInteraction: () => void;
   /** Channel-switch reset: sticky=true and scroll to bottom. */
@@ -128,18 +134,22 @@ export function shouldPauseAutoScrollOnWheel(deltaY: number): boolean {
 /**
  * Pure transition: given a scroll event, decide the next `isStickyToBottom`.
  *
- * - If the scroll was programmatic (`wasAuto`) → keep previous sticky state.
- * - Else if distance ≤ threshold → sticky=true (user is back at bottom).
- * - Else → sticky=false (user scrolled away).
+ * - If distance ≤ threshold → sticky=true (user is back at bottom).
+ * - Else if the user intentionally scrolled away → sticky=false.
+ * - Else if the scroll was programmatic (`wasAuto`) → keep previous sticky state.
+ * - Else → keep previous sticky state (layout/content drift).
  */
 export function nextStickyStateOnScroll(input: {
   prev: boolean;
   distance: number;
   threshold: number;
   wasAuto: boolean;
+  hadUserIntent?: boolean;
 }): boolean {
+  if (input.distance <= input.threshold) return true;
+  if (input.hadUserIntent) return false;
   if (input.wasAuto) return input.prev;
-  return input.distance <= input.threshold;
+  return input.prev;
 }
 
 export function isWithinProgrammaticScrollWindow(
@@ -147,6 +157,14 @@ export function isWithinProgrammaticScrollWindow(
   now: number = Date.now(),
 ): boolean {
   return windowUntil > 0 && now < windowUntil;
+}
+
+export function getProgrammaticScrollWindowUntil(
+  behavior: ScrollBehavior,
+  now: number = Date.now(),
+): number {
+  if (behavior !== 'smooth') return 0;
+  return now + PROGRAMMATIC_SCROLL_WINDOW_MS;
 }
 
 export interface AutoScrollMarker {
@@ -191,6 +209,36 @@ export function getProgrammaticScrollTarget(input: {
   return { type: 'scrollTop', top: input.fallbackTop };
 }
 
+export function shouldUseBottomAnchor(input: {
+  behavior: ScrollBehavior;
+  bottomAnchor: HTMLElement | null;
+}): boolean {
+  return input.behavior === 'smooth' && input.bottomAnchor !== null;
+}
+
+export function shouldAnchorAfterResize(input: {
+  canScroll: boolean;
+  sticky: boolean;
+}): boolean {
+  return input.canScroll && input.sticky;
+}
+
+export function isMeasuredAtBottom(input: {
+  scrollHeight: number;
+  clientHeight: number;
+  scrollTop: number;
+}): boolean {
+  return input.scrollHeight - input.clientHeight - input.scrollTop <= 4;
+}
+
+export function anchorScrollContainerToBottom(
+  element: HTMLDivElement | null,
+): boolean {
+  if (!element) return false;
+  element.scrollTop = element.scrollHeight;
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // The hook
 // ---------------------------------------------------------------------------
@@ -218,6 +266,9 @@ export function useAutoScroll(
   const stickyRef = useRef(stickyPreference ?? true);
   const markerRef = useRef(createAutoScrollMarker());
   const programmaticScrollUntilRef = useRef<number>(0);
+  const bottomAnchorFrameRef = useRef<number | null>(null);
+  const bottomAnchorFramesRef = useRef(0);
+  const userScrollIntentRef = useRef(false);
   // Keep the latest onStickyChange callback in a ref so setSticky stays stable
   // even when the consumer passes an inline callback.
   const onStickyChangeRef = useRef(onStickyChange);
@@ -274,10 +325,13 @@ export function useAutoScroll(
       const targetTop = Math.max(0, el.scrollHeight - el.clientHeight);
       markerRef.current.mark(targetTop);
       programmaticScrollUntilRef.current =
-        Date.now() + PROGRAMMATIC_SCROLL_WINDOW_MS;
+        getProgrammaticScrollWindowUntil(behavior);
 
+      const bottomAnchor = bottomAnchorRef?.current ?? null;
       const target = getProgrammaticScrollTarget({
-        bottomAnchor: bottomAnchorRef?.current ?? null,
+        bottomAnchor: shouldUseBottomAnchor({ behavior, bottomAnchor })
+          ? bottomAnchor
+          : null,
         fallbackTop: el.scrollHeight,
       });
       if (target.type === 'anchor') {
@@ -285,7 +339,7 @@ export function useAutoScroll(
       } else if (behavior === 'smooth') {
         el.scrollTo({ top: target.top, behavior: 'smooth' });
       } else {
-        el.scrollTop = target.top;
+        anchorScrollContainerToBottom(el);
       }
       if (makeSticky) setSticky(true);
       requestAnimationFrame(() => {
@@ -300,6 +354,37 @@ export function useAutoScroll(
     },
     [bottomAnchorRef, setSticky, syncDerivedState],
   );
+
+  const scheduleBottomAnchor = useCallback(() => {
+    bottomAnchorFramesRef.current = BOTTOM_ANCHOR_INITIAL_FRAMES;
+    if (bottomAnchorFrameRef.current !== null) return;
+
+    const tick = () => {
+      bottomAnchorFrameRef.current = null;
+      if (!stickyRef.current) {
+        bottomAnchorFramesRef.current = 0;
+        return;
+      }
+
+      const el = scrollElRef.current;
+      if (!el) {
+        bottomAnchorFramesRef.current = 0;
+        return;
+      }
+
+      anchorScrollContainerToBottom(el);
+      markerRef.current.mark(el.scrollTop);
+      syncDerivedState();
+      bottomAnchorFramesRef.current = getNextBottomAnchorFrameCount({
+        remainingFrames: bottomAnchorFramesRef.current,
+        working: workingRef.current,
+      });
+      if (bottomAnchorFramesRef.current <= 0) return;
+      bottomAnchorFrameRef.current = requestAnimationFrame(tick);
+    };
+
+    bottomAnchorFrameRef.current = requestAnimationFrame(tick);
+  }, [syncDerivedState]);
 
   const scrollToBottom = useCallback(
     (behavior: ScrollBehavior = 'auto') => {
@@ -327,7 +412,11 @@ export function useAutoScroll(
       wasAuto:
         markerRef.current.isAuto(el.scrollTop) ||
         isWithinProgrammaticScrollWindow(programmaticScrollUntilRef.current),
+      hadUserIntent: userScrollIntentRef.current,
     });
+    if (distance <= threshold || nextSticky === false) {
+      userScrollIntentRef.current = false;
+    }
     if (nextSticky !== stickyRef.current) setSticky(nextSticky);
     // Derived state still reflects the raw distance (for the jump button).
     const derived = resolveAutoScrollState(distance, threshold, jumpThreshold);
@@ -347,12 +436,17 @@ export function useAutoScroll(
     (deltaY: number) => {
       if (!shouldPauseAutoScrollOnWheel(deltaY)) return;
       // User intent to scroll up → flip sticky=false immediately.
+      userScrollIntentRef.current = true;
       markerRef.current.clear();
       programmaticScrollUntilRef.current = 0;
       setSticky(false);
     },
     [setSticky],
   );
+
+  const handlePointerDown = useCallback(() => {
+    userScrollIntentRef.current = true;
+  }, []);
 
   const handleInteraction = useCallback(() => {
     if (!options.working) return;
@@ -375,6 +469,22 @@ export function useAutoScroll(
     [scrollToBottomInternal, setSticky],
   );
 
+  useEffect(() => {
+    if (!options.working) return;
+    if (!stickyRef.current) return;
+    scheduleBottomAnchor();
+  }, [options.working, scheduleBottomAnchor]);
+
+  useEffect(() => {
+    return () => {
+      if (bottomAnchorFrameRef.current !== null) {
+        cancelAnimationFrame(bottomAnchorFrameRef.current);
+      }
+      bottomAnchorFrameRef.current = null;
+      bottomAnchorFramesRef.current = 0;
+    };
+  }, []);
+
   const scrollRef = useCallback(
     (node: HTMLDivElement | null) => {
       scrollElRef.current = node;
@@ -389,7 +499,9 @@ export function useAutoScroll(
   }, [isStickyToBottom, updateOverflowAnchor]);
 
   useLayoutEffect(() => {
-    const content = scrollElRef.current?.firstElementChild;
+    const scrollElement = scrollElRef.current;
+    const content = scrollElement?.firstElementChild;
+    if (!(scrollElement instanceof HTMLElement)) return;
     if (!(content instanceof HTMLElement)) return;
 
     const observer = new ResizeObserver(() => {
@@ -401,17 +513,18 @@ export function useAutoScroll(
         syncDerivedState();
         return;
       }
-      if (workingRef.current && stickyRef.current) {
-        scrollToBottomInternal('auto', false);
+      if (shouldAnchorAfterResize({ canScroll, sticky: stickyRef.current })) {
+        scheduleBottomAnchor();
         return;
       }
       syncDerivedState();
     });
 
+    observer.observe(scrollElement);
     observer.observe(content);
 
     return () => observer.disconnect();
-  }, [scrollToBottomInternal, setSticky, syncDerivedState]);
+  }, [scheduleBottomAnchor, setSticky, syncDerivedState]);
 
   // External stick-to-bottom preference (Bug 3). When the consumer flips the
   // preference (e.g. via the toggle button or on channel switch), reflect it
@@ -442,6 +555,7 @@ export function useAutoScroll(
     resume,
     handleScroll,
     handleWheel,
+    handlePointerDown,
     handleInteraction,
     reset,
   };

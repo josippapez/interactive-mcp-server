@@ -122,4 +122,27 @@ describe('event-coalesce — first-delta regression', () => {
     );
     expect((deltas[0] as { delta: string; partId: string }).partId).toBe('pB');
   });
+
+  it('coalesces rapid connection.status flips to the latest state per tick', () => {
+    const s = createCoalesceState();
+
+    enqueueEvent(s, {
+      type: 'connection.status',
+      status: 'reconnecting',
+      attempt: 1,
+    });
+    enqueueEvent(s, {
+      type: 'connection.status',
+      status: 'connected',
+      attempt: 0,
+    });
+
+    const flushed = drainFlush(s);
+    expect(flushed).toHaveLength(1);
+    expect(flushed[0]).toEqual({
+      type: 'connection.status',
+      status: 'connected',
+      attempt: 0,
+    });
+  });
 });

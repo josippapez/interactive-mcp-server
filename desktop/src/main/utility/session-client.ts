@@ -120,6 +120,19 @@ export function loadMoreSessionTreeForDirectory(
   return call('session.tree.loadMoreForDirectory', [baseDirectory]);
 }
 
+export function setShowArchivedSessionTree(
+  showArchived: boolean,
+): Promise<void> {
+  return call<void>('session.tree.setShowArchived', [showArchived]);
+}
+
+export function archiveOpenCodeSession(
+  sessionId: string,
+  archived: boolean,
+): Promise<boolean> {
+  return call<boolean>('session.tree.archive', [sessionId, archived]);
+}
+
 export function invalidateSessionTree(): Promise<void> {
   return call<void>('session.tree.invalidate', []);
 }

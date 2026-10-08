@@ -220,7 +220,7 @@ const ContextToolGroup = memo(function ContextToolGroup({
       // toolbar — matching previous `useEffect(setIsExpanded)` behavior.
       key={forceExpanded ? 'expanded' : 'collapsed'}
       defaultOpen={forceExpanded}
-      className="w-full"
+      className="min-w-0 w-full overflow-hidden"
     >
       <CollapsibleTrigger
         render={
@@ -228,7 +228,7 @@ const ContextToolGroup = memo(function ContextToolGroup({
             <span className="text-[var(--text-base)]">
               {GATHER_CONTEXT_TOOL_NAME}
             </span>
-            <span className="text-[var(--text-weaker)] truncate flex-1">
+            <span className="min-w-0 flex-1 truncate text-[var(--text-weaker)]">
               {summary}
             </span>
             {anyRunning ? <RunningSpinner /> : <Chevron />}
@@ -236,7 +236,10 @@ const ContextToolGroup = memo(function ContextToolGroup({
         }
       />
 
-      <CollapsibleContent data-component="context-tool-group-list">
+      <CollapsibleContent
+        data-component="context-tool-group-list"
+        className="min-w-0 w-full overflow-hidden"
+      >
         {tools.map((tool) => (
           <ToolCallView
             key={tool.id}

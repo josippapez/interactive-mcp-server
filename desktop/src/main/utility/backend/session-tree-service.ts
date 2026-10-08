@@ -35,6 +35,7 @@ import {
 import { createKeyedDebouncer } from './debounce-tree-invalidate';
 import { getMainRpcOrNull } from './rpc';
 import {
+  archiveOpenCodeSession,
   expandOpenCodeSessionTree,
   fetchRootSessionsForDirectory,
   type OpenCodeSession,
@@ -54,7 +55,7 @@ void log;
 const INVALIDATE_COALESCE_MS = 50;
 const KEYED_INVALIDATE_DEBOUNCE_MS = 200;
 const SESSION_RECENT_LIMIT = 10;
-const SESSION_LOAD_MORE_STEP = 10;
+const SESSION_LOAD_MORE_STEP = 5;
 
 // ─── Module state ────────────────────────────────────────────────────────────
 
@@ -62,6 +63,8 @@ interface ServiceState {
   getOpenCodePort: (() => number) | null;
   /** Currently selected project folder (null = empty sidebar state). */
   selectedFolder: string | null;
+  /** Whether the session tree should show archived OpenCode sessions. */
+  showArchivedSessions: boolean;
   /** Root-session page size per base directory. */
   sessionLimitsByDirectory: Map<string, number>;
   /** User-deleted sessions; excluded from every build until restart. */
@@ -73,6 +76,7 @@ interface ServiceState {
 const state: ServiceState = {
   getOpenCodePort: null,
   selectedFolder: null,
+  showArchivedSessions: false,
   sessionLimitsByDirectory: new Map(),
   tombstones: new Set(),
   invalidateTimer: null,
@@ -123,6 +127,26 @@ export function setSelectedFolder(folder: string | null): void {
   if (state.selectedFolder === folder) return;
   state.selectedFolder = folder;
   invalidateSessionTree();
+}
+
+export function getShowArchivedSessions(): boolean {
+  return state.showArchivedSessions;
+}
+
+export function setShowArchivedSessions(showArchived: boolean): void {
+  if (state.showArchivedSessions === showArchived) return;
+  state.showArchivedSessions = showArchived;
+  invalidateSessionTree();
+}
+
+export async function setOpenCodeSessionArchived(
+  openCodeSessionId: string,
+  archived: boolean,
+): Promise<boolean> {
+  const port = state.getOpenCodePort?.() ?? 4096;
+  const ok = await archiveOpenCodeSession(port, openCodeSessionId, archived);
+  if (ok) invalidateSessionTree();
+  return ok;
 }
 
 export function increaseSessionTreeLimit(baseDirectory: string): number {
@@ -184,14 +208,12 @@ export function invalidateSessionTreeForKey(key: string): void {
  * handler whenever the renderer refetches. No caching — OpenCode REST + DB
  * are the sources of truth.
  *
- * Always returns the full aggregate (unscoped + per-pinned-directory list,
- * deduplicated). The renderer filters by selectedFolder for display so
- * that new sessions in other directories appear immediately when SSE
- * fires `session.created`, without requiring the user to click the
- * project rail folder.
+ * Always returns the per-pinned-directory list, deduplicated. Each pinned
+ * folder is fetched with its own page size so load-more is scoped to that
+ * folder instead of expanding every project at once.
  *
- * `selectedFolder` is retained as renderer-facing state but no longer
- * scopes REST queries.
+ * `selectedFolder` is retained as renderer-facing state but pinned folders,
+ * not the selected folder, scope REST queries.
  *
  * Returns `null` when the OpenCode REST fetch failed (server unreachable
  * or transient error). The renderer treats `null` as "retry shortly" and
@@ -205,16 +227,7 @@ export async function fetchSessionTree(): Promise<SessionTreeResult | null> {
     .map((p) => normalizeDirectoryKey(p.path))
     .filter(Boolean);
   const registeredConnections = getAllRegisteredConnections();
-  const registeredOpenCodeDirectories = registeredConnections
-    .filter(
-      (connection) =>
-        connection.providerType === 'opencode' && connection.baseDirectory,
-    )
-    .map((connection) => normalizeDirectoryKey(connection.baseDirectory))
-    .filter(Boolean);
-  const directories = Array.from(
-    new Set([...pinnedDirectories, ...registeredOpenCodeDirectories]),
-  );
+  const directories = Array.from(new Set(pinnedDirectories));
   for (const directory of directories) {
     startMissingIndexForBaseDirectory(directory);
   }
@@ -222,23 +235,44 @@ export async function fetchSessionTree(): Promise<SessionTreeResult | null> {
   const pages = await Promise.all(
     directories.map(async (directory) => {
       const limit = getSessionLimitForDirectory(directory);
-      const roots = await fetchRootSessionsForDirectory(port, directory, limit);
-      return roots ? { directory, limit, roots } : null;
+      const roots = await fetchRootSessionsForDirectory(
+        port,
+        directory,
+        limit,
+        state.showArchivedSessions,
+      );
+      const visibleRoots = roots?.filter((session) =>
+        state.showArchivedSessions
+          ? Boolean(session.time?.archived)
+          : !session.time?.archived,
+      );
+      return visibleRoots
+        ? {
+            directory,
+            limit,
+            roots: visibleRoots,
+            archived: state.showArchivedSessions,
+            hasMore: roots.length >= limit,
+          }
+        : null;
     }),
   );
   if (pages.some((page) => page === null)) return null;
 
   const projectPages = pages.map((page) => {
-    const rootCount = new Set(page!.roots.map((session) => session.id)).size;
     return {
       path: page!.directory,
       limit: page!.limit,
-      hasMore: rootCount >= page!.limit,
+      hasMore: page!.hasMore,
+      archived: page!.archived,
     };
   });
   const rootSessions = pages.flatMap((page) => page!.roots);
   const hasMore = projectPages.some((page) => page.hasMore);
-  const sessions = await expandOpenCodeSessionTree(port, rootSessions);
+  const sessions = includeRegisteredOpenCodeChildren(
+    await expandOpenCodeSessionTree(port, rootSessions),
+    registeredConnections,
+  );
 
   const byOpenCodeId = new Map<string, RegisteredConnection>(
     registeredConnections
@@ -307,6 +341,41 @@ function hasTombstonedAncestor(
   return hasTombstonedAncestor(session.parentID, sessionById, visited);
 }
 
+function includeRegisteredOpenCodeChildren(
+  sessions: OpenCodeSession[],
+  registeredConnections: RegisteredConnection[],
+): OpenCodeSession[] {
+  const sessionById = new Map<string, OpenCodeSession>(
+    sessions.map((session) => [session.id, session]),
+  );
+
+  for (const connection of registeredConnections) {
+    if (
+      connection.providerType !== 'opencode' ||
+      !connection.providerSessionId ||
+      !connection.parentSessionId ||
+      sessionById.has(connection.providerSessionId) ||
+      !sessionById.has(connection.parentSessionId)
+    ) {
+      continue;
+    }
+
+    const parent = sessionById.get(connection.parentSessionId);
+    sessionById.set(connection.providerSessionId, {
+      id: connection.providerSessionId,
+      parentID: connection.parentSessionId,
+      title: connection.channelName,
+      directory: connection.baseDirectory ?? parent?.directory,
+      time: {
+        created: Date.parse(connection.createdAt) || parent?.time?.created || 0,
+        updated: Date.parse(connection.updatedAt) || parent?.time?.updated || 0,
+      },
+    });
+  }
+
+  return Array.from(sessionById.values());
+}
+
 function computeDepth(
   sessionId: string,
   sessionById: Map<string, OpenCodeSession>,
@@ -353,6 +422,7 @@ function buildSessionNodeData(
     directory: session.directory ?? '',
     createdAt: session.time?.created ?? 0,
     updatedAt: session.time?.updated ?? 0,
+    archivedAt: session.time?.archived ?? null,
     depth: computeDepth(sessionId, sessionById, depthCache),
     connectionId: rc?.connectionId ?? null,
     channelName: rc?.channelName ?? null,

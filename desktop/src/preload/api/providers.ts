@@ -30,6 +30,7 @@ export function createProvidersApi() {
             reasoning?: boolean;
             variants?: string[];
             defaultVariant?: string;
+            isFree?: boolean;
           }[];
         }[]
       | null
@@ -52,6 +53,7 @@ export function createProvidersApi() {
           reasoning?: boolean;
           variants?: string[];
           defaultVariant?: string;
+          isFree?: boolean;
         }[];
       }[];
       connectedProviderIds: string[];
@@ -114,6 +116,7 @@ export function createProvidersApi() {
             reasoning?: boolean;
             variants?: string[];
             defaultVariant?: string;
+            isFree?: boolean;
           }[];
         }[];
         connectedProviderIds: string[];
@@ -135,6 +138,7 @@ export function createProvidersApi() {
               reasoning?: boolean;
               variants?: string[];
               defaultVariant?: string;
+              isFree?: boolean;
             }[];
           }[];
           connectedProviderIds: string[];

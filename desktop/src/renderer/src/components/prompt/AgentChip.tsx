@@ -72,7 +72,7 @@ function AgentChip({
       onClick={onClick}
       disabled={disabled}
       aria-label={tooltip}
-      className={`inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-md border select-none max-w-[180px] transition-colors ${
+      className={`inline-flex min-w-0 max-w-full items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] select-none transition-colors ${
         disabled
           ? 'bg-[var(--color-surface-alt)] border-[var(--color-border)] text-[var(--color-text-faint)] cursor-not-allowed'
           : isOpen

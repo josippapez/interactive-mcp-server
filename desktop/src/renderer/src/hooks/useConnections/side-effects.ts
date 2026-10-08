@@ -16,6 +16,18 @@ interface UseSideEffectsOptions {
   loadedHistoryIds: React.MutableRefObject<Set<string>>;
 }
 
+export function resolveNodeHistoryLoadId(
+  node: SessionNode | null,
+): string | null {
+  if (!node) return null;
+
+  return (
+    node.providerSessionId ??
+    node.sessionChannel?.sessionId ??
+    node.connectionId
+  );
+}
+
 export function resolveHistoryLoadId(
   nodes: Map<string, SessionNode>,
   activeId: string | null,
@@ -26,10 +38,7 @@ export function resolveHistoryLoadId(
   const node = nodes.get(activeId);
   if (!node) return null;
 
-  const historyId =
-    node.providerSessionId ??
-    node.sessionChannel?.sessionId ??
-    node.connectionId;
+  const historyId = resolveNodeHistoryLoadId(node);
   if (!historyId || loadedHistoryIds.has(historyId)) {
     return null;
   }

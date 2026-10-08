@@ -437,6 +437,12 @@ export interface LspDiagnostic {
   };
 }
 
+const MAX_VISIBLE_DIAGNOSTICS_PER_FILE = 3;
+
+function normalizeDiagnosticPath(filePath: string): string {
+  return filePath.replaceAll('\\', '/');
+}
+
 /**
  * Extract diagnostics for a given file path from a tool's `metadata`.
  * The edit/write tools emit `metadata.diagnostics` as
@@ -466,6 +472,25 @@ export function extractDiagnosticsForFile(
     }
   }
   return [];
+}
+
+export function extractVisibleErrorsForFile(
+  metadata: Record<string, unknown> | undefined,
+  filePath: string,
+): LspDiagnostic[] {
+  if (!metadata || !filePath) return [];
+  const raw = metadata['diagnostics'];
+  if (!raw || typeof raw !== 'object') return [];
+  const map = raw as Record<string, unknown>;
+  const normalized = normalizeDiagnosticPath(filePath);
+  const direct = map[normalized] ?? map[filePath];
+  const diagnostics = Array.isArray(direct)
+    ? (direct as LspDiagnostic[])
+    : extractDiagnosticsForFile(metadata, filePath);
+
+  return diagnostics
+    .filter((diagnostic) => diagnostic.severity === 1)
+    .slice(0, MAX_VISIBLE_DIAGNOSTICS_PER_FILE);
 }
 
 export interface DiagnosticCounts {

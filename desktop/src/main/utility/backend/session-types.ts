@@ -65,7 +65,7 @@ export interface SessionInfo {
   parentID?: string | null;
   title?: string;
   directory?: string;
-  time?: { created?: number; updated?: number };
+  time?: { created?: number; updated?: number; archived?: number };
   /** Git version string from OpenCode (e.g., "0.0.0-work/feature-branch-123") */
   version?: string;
   /** Change summary from OpenCode */
@@ -102,6 +102,8 @@ export interface SessionNodeData {
   createdAt: number;
   /** Unix ms timestamp from OpenCode. */
   updatedAt: number;
+  /** Unix ms timestamp when OpenCode archived this session, or null. */
+  archivedAt: number | null;
   /** 0 = root/main agent, 1 = direct subagent, etc. */
   depth: number;
   /**
@@ -131,6 +133,7 @@ export interface SessionTreeResult {
     path: string;
     limit: number;
     hasMore: boolean;
+    archived: boolean;
   }>;
 }
 

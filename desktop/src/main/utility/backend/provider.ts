@@ -76,6 +76,8 @@ export interface ProviderModel {
   reasoning?: boolean;
   variants?: string[];
   defaultVariant?: string;
+  /** True when the model has zero input and output token cost. */
+  isFree?: boolean;
 }
 
 /** Provider definition from OpenCode API. */
@@ -93,6 +95,7 @@ interface RawModel {
   capabilities?: { reasoning?: boolean };
   variants?: Record<string, unknown>;
   providerID?: string;
+  cost?: { input?: number; output?: number };
 }
 
 /** Raw provider from OpenCode API (before transformation). */
@@ -143,6 +146,8 @@ export interface Model {
   reasoning?: boolean;
   variants?: string[];
   defaultVariant?: string;
+  /** True when the model has zero input and output token cost. */
+  isFree?: boolean;
 }
 
 // ─── In-memory cache ─────────────────────────────────────────────────────────
@@ -252,6 +257,13 @@ function transformModel(raw: RawModel, providerId?: string): ProviderModel {
     defaultVariant: normalizeReasoningVariant(
       inferDefaultVariant(raw.id, providerId ?? raw.providerID, variants),
     ),
+    // A model is "free" when both input and output token costs are zero.
+    // The v2 model-list endpoint omits cost, so this only resolves from the
+    // legacy `/provider` payload — leave undefined when cost is unknown.
+    isFree:
+      raw.cost === undefined
+        ? undefined
+        : (raw.cost.input ?? 0) === 0 && (raw.cost.output ?? 0) === 0,
   };
 
   if (raw.limit?.context) {
@@ -321,6 +333,8 @@ function mergeV2ModelMetadata(
     defaultVariant: hasV2Variants
       ? v2Model.defaultVariant
       : legacyModel.defaultVariant,
+    // v2 model-list has no cost; keep the legacy cost-derived flag.
+    isFree: legacyModel.isFree,
   };
 }
 
@@ -520,6 +534,7 @@ export async function fetchModels(openCodePort: number): Promise<Model[]> {
         reasoning: model.reasoning,
         variants: model.variants,
         defaultVariant: model.defaultVariant,
+        isFree: model.isFree,
       });
     }
   }
@@ -549,6 +564,7 @@ export function getModelById(modelId: string): Model | null {
         reasoning: model.reasoning,
         variants: model.variants,
         defaultVariant: model.defaultVariant,
+        isFree: model.isFree,
       };
     }
   }

@@ -34,7 +34,7 @@ export const DirectConnectionsSection = memo(function DirectConnectionsSection({
               key={node.id}
               node={node}
               isActive={node.id === activeConnectionId}
-              onSelect={onSelect}
+              onSelect={(id) => onSelect(id)}
               sessionStatus={null}
             />
           ))}

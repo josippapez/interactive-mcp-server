@@ -53,6 +53,7 @@ export interface SessionListQuery {
   start?: number;
   search?: string;
   limit?: number;
+  archived?: boolean;
   workspace?: string;
 }
 

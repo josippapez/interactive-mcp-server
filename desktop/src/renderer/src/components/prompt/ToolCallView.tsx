@@ -200,7 +200,7 @@ const ToolCallView = memo(function ToolCallView({
 
   return (
     <div
-      className={shouldAnimateRef.current ? 'anim-tool-enter' : undefined}
+      className={`min-w-0 w-full max-w-full overflow-hidden ${shouldAnimateRef.current ? 'anim-tool-enter' : ''}`.trim()}
       data-component="tool-card-shell"
       data-tool-category={getToolCategory(tool.name)}
       data-tool-status={tool.status ?? 'completed'}

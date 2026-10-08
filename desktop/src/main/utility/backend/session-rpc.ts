@@ -28,7 +28,10 @@ import {
   invalidateSessionTreeForKey,
   tombstoneOpenCodeSession,
   getSelectedFolder,
+  getShowArchivedSessions,
+  setOpenCodeSessionArchived,
   setSelectedFolder,
+  setShowArchivedSessions,
 } from './session-tree-service';
 import { reconcileSessionConnections } from './session-reconnect';
 import { startMissingIndexesForRegisteredConnections } from './repository-index/autostart';
@@ -153,6 +156,21 @@ export function registerSessionRpcHandlers(bridge: Bridge): void {
     const [folder] = argsOf(payload) as [string | null];
     setSelectedFolder(folder);
     return { ok: true };
+  });
+
+  bridge.handle('session.tree.getShowArchived', () => {
+    return getShowArchivedSessions();
+  });
+
+  bridge.handle('session.tree.setShowArchived', (payload) => {
+    const [showArchived] = argsOf(payload) as [boolean];
+    setShowArchivedSessions(showArchived);
+    return { ok: true };
+  });
+
+  bridge.handle('session.tree.archive', (payload) => {
+    const [sessionId, archived] = argsOf(payload) as [string, boolean];
+    return setOpenCodeSessionArchived(sessionId, archived);
   });
 
   // Keep the port getter current when the tree service is already running

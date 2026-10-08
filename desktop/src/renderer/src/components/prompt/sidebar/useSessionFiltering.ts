@@ -6,13 +6,11 @@ import type {
   SessionStatusType,
 } from '../../../hooks/useSessionStatus';
 import { ProviderFilter } from './types';
-import { filterVisibleSessionIds } from './sidebar-activity';
 
 type UseSessionFilteringProps = {
   openCodeTree: SessionNode[];
   directConnections: SessionNode[];
   projects: Project[];
-  activeConnectionId: string | null;
   /**
    * Stable identity across renders. Value lookups go through
    * `statusMap` so filter memos depend on the derived map rather than
@@ -32,9 +30,6 @@ type UseSessionFilteringProps = {
  * Hook for filtering, sorting, and computing session statistics.
  *
  * Perf notes (H5):
- *   - Parent walk in `filterByActivity` uses a pre-built Map instead of
- *     `nodes.find(...)` inside the while-loop, dropping the per-pass
- *     cost from O(N × depth) to O(N + depth).
  *   - `sortNodes` returns the previous array when the sorted tuple is
  *     element-for-element equal, so downstream memos (`filteredProjects`
  *     / `filteredDirectConnections`) keep their identity across no-op
@@ -44,15 +39,10 @@ export function useSessionFiltering({
   openCodeTree,
   directConnections,
   projects,
-  activeConnectionId,
   getStatus,
   statusMap,
 }: UseSessionFilteringProps) {
   const [filter, setFilter] = useState<ProviderFilter>('all');
-  const [showInactive, setShowInactive] = useState(() => {
-    const saved = localStorage.getItem('sidebar-show-inactive');
-    return saved === 'true';
-  });
 
   // Helper to check if a node is "running" (active).
   //
@@ -79,19 +69,6 @@ export function useSessionFiltering({
       return nodes.filter((node) => node.providerType === filter);
     },
     [filter],
-  );
-
-  // Filter nodes by activity status (running vs inactive)
-  const filterByActivity = useCallback(
-    (nodes: SessionNode[]): SessionNode[] => {
-      if (showInactive) return nodes;
-
-      const visibleIds = new Set(
-        filterVisibleSessionIds(nodes, activeConnectionId, getStatus),
-      );
-      return nodes.filter((node) => visibleIds.has(node.id));
-    },
-    [showInactive, activeConnectionId, getStatus, statusMap],
   );
 
   // Sort nodes by running status and recency.
@@ -143,16 +120,16 @@ export function useSessionFiltering({
   );
 
   const filteredDirectConnections = useMemo(
-    () => sortNodes(filterByActivity(filterByProvider(directConnections))),
-    [sortNodes, filterByActivity, filterByProvider, directConnections],
+    () => sortNodes(filterByProvider(directConnections)),
+    [sortNodes, filterByProvider, directConnections],
   );
 
   const filteredProjects = useMemo(() => {
     return projects.map((project) => ({
       ...project,
-      sessions: filterByActivity(filterByProvider(project.sessions)),
+      sessions: filterByProvider(project.sessions),
     }));
-  }, [projects, filterByActivity, filterByProvider]);
+  }, [projects, filterByProvider]);
 
   // Get all nodes for counting
   const allNodes = useMemo(
@@ -181,7 +158,6 @@ export function useSessionFiltering({
     () => allNodes.filter(isNodeRunning).length,
     [allNodes, isNodeRunning],
   );
-  const inactiveCount = allNodes.length - runningCount;
 
   // Provider tabs based on actual counts
   const providerTabs = useMemo(() => {
@@ -193,22 +169,13 @@ export function useSessionFiltering({
     return tabs;
   }, [providerCounts]);
 
-  const handleToggleInactive = useCallback(() => {
-    const newValue = !showInactive;
-    setShowInactive(newValue);
-    localStorage.setItem('sidebar-show-inactive', String(newValue));
-  }, [showInactive]);
-
   return {
     filter,
     setFilter,
-    showInactive,
     filteredProjects,
     filteredDirectConnections,
     providerCounts,
     providerTabs,
     runningCount,
-    inactiveCount,
-    handleToggleInactive,
   };
 }

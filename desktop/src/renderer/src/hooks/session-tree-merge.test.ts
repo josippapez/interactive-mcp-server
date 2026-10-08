@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { SessionNode } from '../types';
 import {
+  applyOptimisticArchiveState,
+  getSessionChildSummary,
   groupByProject,
   mergeSessionTreeSnapshot,
   toPinnedProjectOptions,
@@ -103,7 +105,94 @@ describe('mergeSessionTreeSnapshot', () => {
   });
 });
 
+describe('applyOptimisticArchiveState', () => {
+  it('removes a session and descendants from the active sidebar immediately', () => {
+    const prev = new Map<string, SessionNode>([
+      [
+        'ses_parent',
+        makeNode({ id: 'ses_parent', providerSessionId: 'ses_parent' }),
+      ],
+      [
+        'ses_child',
+        makeNode({
+          id: 'ses_child',
+          providerSessionId: 'ses_child',
+          openCodeParentId: 'ses_parent',
+        }),
+      ],
+      [
+        'ses_other',
+        makeNode({ id: 'ses_other', providerSessionId: 'ses_other' }),
+      ],
+    ]);
+
+    const next = applyOptimisticArchiveState(prev, 'ses_parent', true, false);
+
+    expect(Array.from(next.keys())).toEqual(['ses_other']);
+  });
+
+  it('removes a session and descendants from the archived sidebar immediately when unarchived', () => {
+    const prev = new Map<string, SessionNode>([
+      [
+        'ses_parent',
+        makeNode({
+          id: 'ses_parent',
+          providerSessionId: 'ses_parent',
+          archivedAt: 100,
+        }),
+      ],
+      [
+        'ses_child',
+        makeNode({
+          id: 'ses_child',
+          providerSessionId: 'ses_child',
+          openCodeParentId: 'ses_parent',
+          archivedAt: 100,
+        }),
+      ],
+    ]);
+
+    const next = applyOptimisticArchiveState(prev, 'ses_parent', false, true);
+
+    expect(next.size).toBe(0);
+  });
+});
+
 describe('groupByProject', () => {
+  it('keeps child sessions under their parent inside the project group', () => {
+    const nodes = new Map<string, SessionNode>([
+      [
+        'ses_parent',
+        makeNode({
+          id: 'ses_parent',
+          providerSessionId: 'ses_parent',
+          title: 'Parent',
+          baseDirectory: '/tmp/project',
+          directory: '/tmp/project',
+        }),
+      ],
+      [
+        'ses_child',
+        makeNode({
+          id: 'ses_child',
+          providerSessionId: 'ses_child',
+          openCodeParentId: 'ses_parent',
+          title: 'Child',
+          baseDirectory: '/tmp/project',
+          directory: '/tmp/project',
+        }),
+      ],
+    ]);
+
+    const projects = groupByProject(nodes);
+
+    expect(projects[0].sessions.map((node) => node.id)).toEqual([
+      'ses_parent',
+      'ses_child',
+    ]);
+    expect(projects[0].sessions.map((node) => node.depth)).toEqual([0, 1]);
+  });
+
   it('sorts pinned projects first, then unpinned projects by latest session creation date', () => {
     const nodes = new Map<string, SessionNode>([
       [
@@ -216,6 +305,30 @@ describe('groupByProject', () => {
     );
 
     expect(projects[0].hasMoreSessions).toBe(true);
+  });
+});
+
+describe('getSessionChildSummary', () => {
+  it('counts all descendant sessions and active descendant sessions', () => {
+    const sessions = [
+      makeNode({ id: 'root', providerSessionId: 'root' }),
+      makeNode({
+        id: 'child',
+        providerSessionId: 'child',
+        openCodeParentId: 'root',
+        hasPendingPrompt: true,
+      }),
+      makeNode({
+        id: 'grandchild',
+        providerSessionId: 'grandchild',
+        openCodeParentId: 'child',
+      }),
+    ];
+
+    expect(getSessionChildSummary(sessions, 'root')).toEqual({
+      total: 2,
+      active: 1,
+    });
   });
 });
 

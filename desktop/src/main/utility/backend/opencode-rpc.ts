@@ -240,6 +240,15 @@ export function registerOpencodeRpcHandlers(bridge: Bridge): void {
     return vcsApi.fetchVcsInfo(port, baseDirectory);
   });
 
+  bridge.handle('opencode.fetchVcsDiff', (p) => {
+    const [port, mode, baseDirectory] = argsOf(p) as [
+      number,
+      vcsApi.VcsDiffMode,
+      string | undefined,
+    ];
+    return vcsApi.fetchVcsDiff(port, mode, baseDirectory);
+  });
+
   // ── session-status ───────────────────────────────────────────────────────
   bridge.handle('opencode.fetchSessionStatus', (p) => {
     const [port] = argsOf(p) as [number];

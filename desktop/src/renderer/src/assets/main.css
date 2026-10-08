@@ -1954,6 +1954,398 @@ textarea::placeholder {
   border-radius: var(--radius-md);
   overflow: hidden;
 }
+
+/* --- Session review sidebar (opencode session-review.css inspired) --- */
+[data-component='session-review-panel'] {
+  box-shadow: -1px 0 0 var(--border-weaker-base);
+}
+[data-component='session-review-panel'][data-mobile='true'] {
+  box-shadow: none;
+}
+[data-component='session-review-panel'][data-embedded='true'] {
+  box-shadow: none;
+}
+[data-component='session-review-panel']
+  [data-slot='session-review-resize-handle'] {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -4px;
+  z-index: 10;
+  width: 8px;
+  cursor: col-resize;
+  border: 0;
+  background: transparent;
+}
+[data-component='session-review-panel']
+  [data-slot='session-review-resize-handle']::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 3px;
+  width: 1px;
+  background: transparent;
+  transition: background-color 0.15s ease;
+}
+[data-component='session-review-panel']
+  [data-slot='session-review-resize-handle']:hover::after,
+[data-component='session-review-panel']
+  [data-slot='session-review-resize-handle']:focus-visible::after {
+  background: var(--color-agent);
+}
+[data-component='session-review'] [data-slot='session-review-header'] {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border-weaker-base);
+  background: var(--background-base);
+  padding: 8px 12px;
+}
+[data-component='session-review'] [data-slot='session-review-title'] {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+}
+[data-component='session-review'] [data-slot='session-review-actions'] {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+[data-component='session-review'] [data-slot='session-review-diff-style'] {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--background-stronger);
+}
+[data-component='session-review'] [data-slot='session-review-source-tabs'] {
+  display: flex;
+  overflow: hidden;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--background-stronger);
+}
+[data-component='session-review']
+  [data-slot='session-review-source-tabs']
+  button,
+[data-component='session-review']
+  [data-slot='session-review-diff-style']
+  button,
+[data-component='session-review'] [data-slot='session-review-expand-all'] {
+  border: 0;
+  background: transparent;
+  color: var(--text-weak);
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 8px;
+}
+[data-component='session-review']
+  [data-slot='session-review-source-tabs']
+  button:hover,
+[data-component='session-review']
+  [data-slot='session-review-source-tabs']
+  button[data-active='true'],
+[data-component='session-review']
+  [data-slot='session-review-diff-style']
+  button:hover,
+[data-component='session-review']
+  [data-slot='session-review-diff-style']
+  button[data-active='true'],
+[data-component='session-review']
+  [data-slot='session-review-expand-all']:hover {
+  background: var(--background-base);
+  color: var(--text-strong);
+}
+[data-component='session-review'] [data-slot='session-review-expand-all'] {
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--background-stronger);
+}
+[data-component='session-review'] [data-slot='session-review-scroll'] {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+[data-component='session-review'] [data-slot='session-review-container'] {
+  padding: 8px 12px 24px;
+}
+[data-component='session-review'] [data-slot='session-review-summary'] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 2px 10px;
+  color: var(--text-weaker);
+  font-size: 11px;
+}
+[data-component='session-review'] [data-slot='session-review-empty'] {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--text-weaker);
+  font-size: 12px;
+}
+[data-component='session-review'] [data-slot='session-review-accordion'] {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+[data-component='session-review'] [data-slot='session-review-accordion-item'] {
+  overflow: hidden;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-lg);
+  background: var(--background-base);
+}
+[data-component='session-review']
+  [data-slot='session-review-accordion-item'][data-selected] {
+  border-color: color-mix(in srgb, var(--color-agent) 36%, transparent);
+}
+[data-component='session-review'] [data-slot='session-review-trigger'] {
+  width: 100%;
+  border: 0;
+  background: var(--background-stronger);
+  color: inherit;
+  text-align: left;
+}
+[data-component='session-review'] [data-slot='session-review-trigger-content'] {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 8px 10px;
+}
+[data-component='session-review'] [data-slot='session-review-file-info'],
+[data-component='session-review'] [data-slot='session-review-trigger-actions'] {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+[data-component='session-review'] [data-slot='session-review-file-info'] {
+  flex: 1;
+}
+[data-component='session-review'] [data-slot='session-review-file-icon'] {
+  display: inline-flex;
+  width: 24px;
+  height: 18px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-weak);
+  color: var(--text-weaker);
+  font-family: var(--font-family-mono);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: -0.03em;
+}
+[data-component='session-review']
+  [data-slot='session-review-file-icon'][data-tone='blue'] {
+  background: color-mix(in srgb, #38bdf8 20%, transparent);
+  color: #38bdf8;
+}
+[data-component='session-review']
+  [data-slot='session-review-file-icon'][data-tone='yellow'] {
+  background: color-mix(in srgb, #facc15 20%, transparent);
+  color: #facc15;
+}
+[data-component='session-review']
+  [data-slot='session-review-file-icon'][data-tone='green'] {
+  background: color-mix(in srgb, var(--color-success) 18%, transparent);
+  color: var(--color-success);
+}
+[data-component='session-review']
+  [data-slot='session-review-file-icon'][data-tone='red'] {
+  background: color-mix(in srgb, var(--color-error) 18%, transparent);
+  color: var(--color-error);
+}
+[data-component='session-review']
+  [data-slot='session-review-file-icon'][data-tone='purple'] {
+  background: color-mix(in srgb, #c084fc 18%, transparent);
+  color: #c084fc;
+}
+[data-component='session-review']
+  [data-slot='session-review-file-icon'][data-tone='orange'] {
+  background: color-mix(in srgb, var(--color-agent-info) 18%, transparent);
+  color: var(--color-agent-info);
+}
+[data-component='session-review']
+  [data-slot='session-review-file-name-container'] {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+}
+[data-component='session-review'] [data-slot='session-review-directory'] {
+  direction: rtl;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-weaker);
+}
+[data-component='session-review'] [data-slot='session-review-filename'] {
+  flex: none;
+  color: var(--text-strong);
+}
+[data-component='session-review'] [data-slot='session-review-change'] {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-weaker);
+}
+[data-component='session-review']
+  [data-slot='session-review-change'][data-type='added'] {
+  color: var(--text-diff-add-base);
+}
+[data-component='session-review']
+  [data-slot='session-review-change'][data-type='deleted'] {
+  color: var(--text-diff-delete-base);
+}
+[data-component='session-review']
+  [data-slot='session-review-accordion-content'] {
+  border-top: 1px solid var(--border-weaker-base);
+}
+[data-component='session-review'] [data-slot='session-review-diff-wrapper'] {
+  padding: 8px;
+}
+[data-component='session-review'] [data-slot='review-diff'] {
+  overflow: auto;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--background-base);
+  font-family: var(--font-family-mono);
+  font-size: 11px;
+  max-height: 58vh;
+}
+[data-component='session-review']
+  [data-component='diff-view'][data-commentable='true'][data-variant='unified']
+  [data-slot='diff-row'] {
+  grid-template-columns: 4ch 4ch 18px 1.5ch minmax(0, 1fr);
+}
+[data-component='session-review']
+  [data-component='diff-view'][data-commentable='true'][data-variant='side-by-side']
+  [data-slot='diff-row'] {
+  grid-template-columns: 3ch 18px 1.5ch 1fr;
+}
+[data-component='session-review'] [data-slot='diff-comment-button'] {
+  width: 16px;
+  height: 16px;
+  align-self: center;
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-sm);
+  background: var(--background-stronger);
+  color: var(--text-weaker);
+  font-size: 12px;
+  line-height: 1;
+  opacity: 0;
+}
+[data-component='session-review'] [data-slot='diff-comment-button']:disabled {
+  visibility: hidden;
+}
+[data-component='session-review']
+  [data-component='diff-view'][data-commentable='true']
+  [data-slot='diff-row']:hover
+  [data-slot='diff-comment-button'],
+[data-component='session-review']
+  [data-slot='diff-comment-button']:focus-visible {
+  opacity: 1;
+}
+[data-component='session-review'] [data-slot='diff-comment-button']:hover,
+[data-component='session-review']
+  [data-slot='diff-comment-button']:focus-visible {
+  border-color: color-mix(in srgb, var(--color-agent) 45%, transparent);
+  color: var(--color-agent);
+}
+[data-component='session-review'] [data-slot='review-comment-editor'] {
+  border-top: 1px solid var(--border-weaker-base);
+  border-bottom: 1px solid var(--border-weaker-base);
+  background: var(--background-stronger);
+  padding: 8px 10px 8px 76px;
+}
+[data-component='session-review'] [data-slot='review-comment-editor'] textarea {
+  width: 100%;
+  resize: vertical;
+  border: 1px solid var(--border-weak-base);
+  border-radius: var(--radius-md);
+  background: var(--background-base);
+  color: var(--text-base);
+  font-family: var(--font-family-sans);
+  font-size: 12px;
+  outline: none;
+  padding: 8px;
+}
+[data-component='session-review'] [data-slot='review-comment-editor-actions'] {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+}
+[data-component='session-review']
+  [data-slot='review-comment-editor-actions']
+  button,
+[data-component='session-review']
+  [data-slot='session-review-large-diff']
+  button {
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--background-base);
+  color: var(--text-weak);
+  font-size: 11px;
+  padding: 6px 10px;
+}
+[data-component='session-review']
+  [data-slot='review-comment-editor-actions']
+  button:last-child:not(:disabled) {
+  border-color: color-mix(in srgb, var(--color-agent) 45%, transparent);
+  color: var(--color-agent);
+}
+[data-component='session-review'] [data-slot='session-review-empty-diff'],
+[data-component='session-review'] [data-slot='session-review-diff-placeholder'],
+[data-component='session-review'] [data-slot='session-review-large-diff'] {
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--background-stronger);
+  color: var(--text-weaker);
+  font-size: 12px;
+  padding: 16px;
+}
+[data-component='session-review']
+  [data-slot='session-review-diff-placeholder'] {
+  display: flex;
+  min-height: 132px;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+[data-component='session-review']
+  [data-slot='session-review-diff-placeholder']
+  button {
+  border: 1px solid var(--border-weaker-base);
+  border-radius: var(--radius-md);
+  background: var(--background-base);
+  color: var(--text-weak);
+  font-size: 11px;
+  padding: 6px 10px;
+}
+[data-component='session-review']
+  [data-slot='session-review-large-diff-title'] {
+  color: var(--text-strong);
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+[data-component='session-review'] [data-slot='session-review-large-diff-meta'] {
+  margin-bottom: 12px;
+}
 [data-component='diff-view'] [data-slot='diff-header'] {
   display: flex;
   align-items: center;
@@ -2259,6 +2651,7 @@ textarea::placeholder {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
   min-height: 24px;
   padding: 2px 0;
   font-family: var(--font-family-mono);
@@ -2282,6 +2675,9 @@ textarea::placeholder {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
   padding-left: 12px;
 }
 
@@ -2335,6 +2731,9 @@ textarea::placeholder {
    ============================================================= */
 [data-component='tool-card-shell'] {
   position: relative;
+  min-width: 0;
+  max-width: 100%;
+  overflow-x: hidden;
   border: 1px solid var(--border-weaker-base);
   border-left-width: 2px;
   border-left-color: var(--tool-accent, var(--tool-accent-default));
@@ -2423,6 +2822,10 @@ textarea::placeholder {
 [data-component='tool-card-shell'] {
   position: relative;
 }
+[data-component='tool-card-shell'],
+[data-component='tool-card-shell'] * {
+  min-width: 0;
+}
 /* The inner trigger buttons had a natural vertical padding. Drop
    it to 0 now that the shell owns the card padding — keeps the
    row visual density unchanged. Also neutralize the pill chrome
@@ -2455,6 +2858,20 @@ textarea::placeholder {
    24px left-pad the row used to add itself. */
 [data-component='tool-card-shell'] [data-component='tool-loaded-file'] {
   padding-left: 0;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  max-width: 100%;
+}
+[data-component='tool-card-shell']
+  [data-component='tool-loaded-file']
+  [data-slot='file-path'] {
+  display: block;
+  flex: 1 1 100%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 /* Expanded content should hug the left edge of the card interior
    instead of the 24px icon indent that was used when the trigger

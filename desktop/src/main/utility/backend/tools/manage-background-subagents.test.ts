@@ -3,6 +3,7 @@ import {
   buildBackgroundSubagentModel,
   buildBackgroundSubagentCompletionMessage,
   buildBackgroundSubagentCompletionInjection,
+  buildBackgroundSubagentCoordinationMessage,
   buildBackgroundSubagentPromptBody,
   buildBackgroundSubagentPromptModel,
   buildConnectedBackgroundSubagentModels,
@@ -347,6 +348,24 @@ describe('manage-background-subagents helpers', () => {
     );
   });
 
+  it('builds child coordination injection with noReply enabled', () => {
+    const injection = buildBackgroundSubagentCoordinationMessage({
+      record: {
+        sessionId: 'ses_child',
+        parentSessionId: 'ses_parent',
+      },
+      message:
+        'Please report current status before starting overlapping edits.',
+      reason: 'status check',
+    });
+
+    expect(injection.sessionId).toBe('ses_child');
+    expect(injection.noReply).toBe(true);
+    expect(injection.message).toContain('<background-subagent-message>');
+    expect(injection.message).toContain('- Direction: to_subagent');
+    expect(injection.message).toContain('- Reason: status check');
+  });
+
   it('summarizes status using live OpenCode status first', () => {
     expect(
       summarizeBackgroundSubagentStatus({
@@ -406,6 +425,7 @@ describe('manage-background-subagents helpers', () => {
     expect(TOOL_DESCRIPTION).toContain('action="wait"');
     expect(TOOL_DESCRIPTION).toContain('preset');
     expect(TOOL_DESCRIPTION).toContain('noReply=false');
+    expect(TOOL_DESCRIPTION).toContain('action="message"');
     expect(TOOL_DESCRIPTION).toContain('gpt-5-mini');
   });
 });

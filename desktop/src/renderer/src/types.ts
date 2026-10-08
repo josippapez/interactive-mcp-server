@@ -95,10 +95,7 @@ export type PendingQuestion = {
  */
 /** Provider types supported by the multi-provider architecture. */
 export type ProviderType =
-  | 'opencode'
-  | 'copilot-cli'
-  | 'claude-sdk'
-  | 'standalone';
+  'opencode' | 'copilot-cli' | 'claude-sdk' | 'standalone';
 
 /** VCS (version control) information for a session. */
 export type VcsInfo = {
@@ -138,6 +135,9 @@ export type SessionNode = {
 
   /** Unix ms timestamp when this session was created (if known). */
   createdAt?: number;
+
+  /** Unix ms timestamp when OpenCode archived this session, or null. */
+  archivedAt?: number | null;
 
   /** 0 = root / top-level agent, >0 = subagent depth. */
   depth: number;
@@ -209,6 +209,7 @@ export type SessionTreeResult = {
     path: string;
     limit: number;
     hasMore: boolean;
+    archived: boolean;
   }>;
 };
 

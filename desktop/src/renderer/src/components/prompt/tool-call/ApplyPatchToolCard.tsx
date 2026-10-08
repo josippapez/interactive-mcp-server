@@ -26,7 +26,7 @@ import {
   DiffChanges,
   ToolDurationBadge,
   countDiagnostics,
-  extractDiagnosticsForFile,
+  extractVisibleErrorsForFile,
 } from './ToolCallShared';
 import { useWrapCodeBlocks } from './use-wrap-code-blocks';
 
@@ -74,7 +74,7 @@ const FileDiffBody = memo(function FileDiffBody({
 }: {
   file: ApplyPatchFileDiff;
   wrapLines: boolean;
-  diagnostics: ReturnType<typeof extractDiagnosticsForFile>;
+  diagnostics: ReturnType<typeof extractVisibleErrorsForFile>;
   mode: 'unified' | 'side-by-side';
   onModeChange: (mode: 'unified' | 'side-by-side') => void;
 }): React.ReactElement {
@@ -160,7 +160,7 @@ const FileDiffAccordionItem = memo(function FileDiffAccordionItem({
   metadata: Record<string, unknown> | undefined;
 }): React.ReactElement {
   const diagnostics = useMemo(
-    () => extractDiagnosticsForFile(metadata, file.filePath),
+    () => extractVisibleErrorsForFile(metadata, file.filePath),
     [metadata, file.filePath],
   );
   const [mode, setMode] = useState<'unified' | 'side-by-side'>('side-by-side');

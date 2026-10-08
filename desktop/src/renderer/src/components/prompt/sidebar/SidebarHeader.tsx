@@ -2,15 +2,15 @@ import { memo } from 'react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { ProviderFilter, PROVIDER_LABELS, PROVIDER_ICONS } from './types';
+import { shouldShowProviderTabs } from './sidebar-provider-tabs';
 
 type SidebarHeaderProps = {
   filter: ProviderFilter;
   onFilterChange: (filter: ProviderFilter) => void;
   providerTabs: ProviderFilter[];
   providerCounts: Record<ProviderFilter, number>;
-  showInactive: boolean;
-  inactiveCount: number;
-  onToggleInactive: () => void;
+  showArchived: boolean;
+  onToggleArchived: () => void;
   isRefreshing: boolean;
   onRefresh: () => void;
 };
@@ -23,17 +23,12 @@ export const SidebarHeader = memo(function SidebarHeader({
   onFilterChange,
   providerTabs,
   providerCounts,
-  showInactive,
-  inactiveCount,
-  onToggleInactive,
+  showArchived,
+  onToggleArchived,
   isRefreshing,
   onRefresh,
 }: SidebarHeaderProps): React.ReactElement {
-  const inactiveLabel = showInactive
-    ? 'Hide inactive'
-    : inactiveCount > 0
-      ? `Show inactive (${inactiveCount})`
-      : 'Show inactive';
+  const showProviderTabs = shouldShowProviderTabs(providerTabs);
 
   return (
     <div className="border-b border-[var(--color-border-weak)]">
@@ -43,15 +38,17 @@ export const SidebarHeader = memo(function SidebarHeader({
           <div className="flex min-w-0 items-center justify-end gap-1">
             <Button
               variant="ghost"
-              onClick={onToggleInactive}
-              title={inactiveLabel}
+              onClick={onToggleArchived}
+              title={
+                showArchived ? 'Show active sessions' : 'View archived sessions'
+              }
               className={`h-6 shrink-0 rounded-full px-2 text-[10px] ${
-                showInactive
+                showArchived
                   ? 'bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] text-[var(--color-agent)] hover:bg-[color-mix(in_srgb,var(--color-agent)_22%,transparent)] hover:text-[var(--color-agent)]'
                   : 'text-[var(--color-text-faint)] hover:bg-[color-mix(in_srgb,var(--color-text)_8%,transparent)] hover:text-[var(--color-text)]'
               }`}
             >
-              {showInactive ? 'Hide inactive' : 'Show inactive'}
+              {showArchived ? 'Archived' : 'Archive'}
             </Button>
             <Button
               variant="ghost"
@@ -82,30 +79,32 @@ export const SidebarHeader = memo(function SidebarHeader({
           </div>
         </div>
 
-        <Tabs
-          value={filter}
-          onValueChange={(value: string) =>
-            onFilterChange(value as ProviderFilter)
-          }
-          className="w-full"
-        >
-          <TabsList className="flex h-auto w-full flex-wrap items-center justify-start gap-1 bg-transparent p-0">
-            {providerTabs.map((provider) => (
-              <TabsTrigger
-                key={provider}
-                value={provider}
-                title={`Show ${PROVIDER_LABELS[provider]} sessions`}
-                className="flex h-6 items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[10px] font-normal whitespace-nowrap text-[var(--color-text-faint)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_8%,transparent)] hover:text-[var(--color-text-muted)] data-[state=active]:border-[color-mix(in_srgb,var(--color-agent)_22%,transparent)] data-[state=active]:bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] data-[state=active]:text-[var(--color-agent)] data-[state=active]:shadow-none"
-              >
-                <span>{PROVIDER_ICONS[provider]}</span>
-                <span>{PROVIDER_LABELS[provider]}</span>
-                <span className="text-[9px] opacity-60">
-                  ({providerCounts[provider]})
-                </span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+        {showProviderTabs && (
+          <Tabs
+            value={filter}
+            onValueChange={(value: string) =>
+              onFilterChange(value as ProviderFilter)
+            }
+            className="w-full"
+          >
+            <TabsList className="flex h-auto w-full flex-wrap items-center justify-start gap-1 bg-transparent p-0">
+              {providerTabs.map((provider) => (
+                <TabsTrigger
+                  key={provider}
+                  value={provider}
+                  title={`Show ${PROVIDER_LABELS[provider]} sessions`}
+                  className="flex h-6 items-center gap-1 rounded-full border border-transparent px-2 py-0.5 text-[10px] font-normal whitespace-nowrap text-[var(--color-text-faint)] transition-colors hover:bg-[color-mix(in_srgb,var(--color-text)_8%,transparent)] hover:text-[var(--color-text-muted)] data-[state=active]:border-[color-mix(in_srgb,var(--color-agent)_22%,transparent)] data-[state=active]:bg-[color-mix(in_srgb,var(--color-agent)_15%,transparent)] data-[state=active]:text-[var(--color-agent)] data-[state=active]:shadow-none"
+                >
+                  <span>{PROVIDER_ICONS[provider]}</span>
+                  <span>{PROVIDER_LABELS[provider]}</span>
+                  <span className="text-[9px] opacity-60">
+                    ({providerCounts[provider]})
+                  </span>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        )}
       </div>
     </div>
   );

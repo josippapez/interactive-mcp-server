@@ -15,6 +15,16 @@ export interface VcsInfo {
   files?: number;
 }
 
+export type VcsDiffMode = 'git' | 'branch';
+
+export interface VcsFileDiff {
+  file: string;
+  patch?: string;
+  additions: number;
+  deletions: number;
+  status?: 'added' | 'deleted' | 'modified';
+}
+
 /**
  * Fetch VCS info from the OpenCode server using SDK.
  *
@@ -56,4 +66,28 @@ export async function fetchVcsInfo(
   } catch {
     return null;
   }
+}
+
+export async function fetchVcsDiff(
+  openCodePort: number,
+  mode: VcsDiffMode,
+  baseDirectory?: string,
+): Promise<VcsFileDiff[]> {
+  const client = getClient(openCodePort, baseDirectory);
+  const response = await client.vcs.diff(
+    { mode },
+    { signal: AbortSignal.timeout(10_000) },
+  );
+
+  if (response.error) {
+    const message =
+      typeof response.error === 'object' &&
+      response.error !== null &&
+      'message' in response.error
+        ? String(response.error.message)
+        : 'Failed to fetch VCS diff';
+    throw new Error(message);
+  }
+
+  return Array.isArray(response.data) ? (response.data as VcsFileDiff[]) : [];
 }

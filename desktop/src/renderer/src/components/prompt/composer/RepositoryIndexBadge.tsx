@@ -89,7 +89,7 @@ function RepositoryIndexBadgeContent({
             type="button"
             title={title}
             aria-label={title}
-            className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
+            className={`inline-flex h-8 min-w-0 max-w-full items-center gap-1.5 rounded-full border px-2.5 text-xs transition-colors ${
               isReady
                 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/15'
                 : isError
@@ -104,7 +104,7 @@ function RepositoryIndexBadgeContent({
             ) : (
               <Database size={12} aria-hidden="true" />
             )}
-            <span className="whitespace-nowrap">
+            <span className="truncate whitespace-nowrap">
               {getLabel(viewState, percentage)}
             </span>
           </button>

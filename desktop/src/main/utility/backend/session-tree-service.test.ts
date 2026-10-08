@@ -55,7 +55,7 @@ beforeEach(() => {
 });
 
 describe('fetchSessionTree', () => {
-  it('includes registered OpenCode directories in the session fetch fallback set', async () => {
+  it('fetches only pinned directories initially so pagination is per pinned folder', async () => {
     mocks.getPinnedProjects.mockReturnValue([{ path: '/pinned-repo' }]);
     mocks.getAllRegisteredConnections.mockReturnValue([
       {
@@ -106,24 +106,16 @@ describe('fetchSessionTree', () => {
 
     await fetchSessionTree();
 
+    expect(mocks.fetchRootSessionsForDirectory).toHaveBeenCalledTimes(1);
     expect(mocks.fetchRootSessionsForDirectory).toHaveBeenCalledWith(
       PORT,
       '/pinned-repo',
       10,
-    );
-    expect(mocks.fetchRootSessionsForDirectory).toHaveBeenCalledWith(
-      PORT,
-      '/parent-repo',
-      10,
-    );
-    expect(mocks.fetchRootSessionsForDirectory).toHaveBeenCalledWith(
-      PORT,
-      '/child-repo',
-      10,
+      false,
     );
   });
 
-  it('returns per-project load-more metadata and increases limit by ten', async () => {
+  it('returns per-project load-more metadata and increases limit by five', async () => {
     mocks.getPinnedProjects.mockReturnValue([{ path: '/repo' }]);
     mocks.fetchRootSessionsForDirectory.mockResolvedValue(
       Array.from({ length: 10 }, (_, index) => ({
@@ -139,7 +131,7 @@ describe('fetchSessionTree', () => {
     expect(first?.limit).toBe(10);
     expect(first?.hasMore).toBe(true);
     expect(first?.projectPages).toEqual([
-      { path: '/repo', limit: 10, hasMore: true },
+      { path: '/repo', limit: 10, hasMore: true, archived: false },
     ]);
 
     increaseSessionTreeLimit('/repo');
@@ -148,7 +140,107 @@ describe('fetchSessionTree', () => {
     expect(mocks.fetchRootSessionsForDirectory).toHaveBeenLastCalledWith(
       PORT,
       '/repo',
-      20,
+      15,
+      false,
     );
+  });
+
+  it('includes newly registered child sessions before REST child traversal catches up', async () => {
+    mocks.getPinnedProjects.mockReturnValue([{ path: '/repo' }]);
+    mocks.getAllRegisteredConnections.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_parent',
+        connectionId: null,
+        channelName: 'Parent',
+        projectName: 'OpenCode',
+        baseDirectory: '/repo',
+        idFilePath: '',
+        parentSessionId: null,
+        createdAt: '',
+        updatedAt: '',
+      },
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_child',
+        connectionId: null,
+        channelName: 'Background subagent',
+        projectName: 'OpenCode',
+        baseDirectory: '/repo',
+        idFilePath: '',
+        parentSessionId: 'ses_parent',
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+    mocks.fetchRootSessionsForDirectory.mockResolvedValue([
+      {
+        id: 'ses_parent',
+        parentID: null,
+        title: 'Parent',
+        directory: '/repo',
+        time: { created: 1, updated: 1 },
+      },
+    ]);
+
+    const result = await fetchSessionTree();
+
+    expect(result?.nodes.map((node) => node.providerSessionId)).toEqual([
+      'ses_parent',
+      'ses_child',
+    ]);
+    expect(
+      result?.nodes.find((node) => node.providerSessionId === 'ses_child'),
+    ).toMatchObject({
+      openCodeParentId: 'ses_parent',
+      title: 'Background subagent',
+      directory: '/repo',
+      baseDirectory: '/repo',
+      depth: 1,
+      providerType: 'opencode',
+    });
+  });
+
+  it('does not reinsert registered children under archived parents in the active tree', async () => {
+    mocks.getPinnedProjects.mockReturnValue([{ path: '/repo' }]);
+    mocks.getAllRegisteredConnections.mockReturnValue([
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_parent',
+        connectionId: null,
+        channelName: 'Parent',
+        projectName: 'OpenCode',
+        baseDirectory: '/repo',
+        idFilePath: '',
+        parentSessionId: null,
+        createdAt: '',
+        updatedAt: '',
+      },
+      {
+        providerType: 'opencode',
+        providerSessionId: 'ses_child',
+        connectionId: null,
+        channelName: 'Background subagent',
+        projectName: 'OpenCode',
+        baseDirectory: '/repo',
+        idFilePath: '',
+        parentSessionId: 'ses_parent',
+        createdAt: '',
+        updatedAt: '',
+      },
+    ]);
+    mocks.fetchRootSessionsForDirectory.mockResolvedValue([
+      {
+        id: 'ses_parent',
+        parentID: null,
+        title: 'Parent',
+        directory: '/repo',
+        time: { created: 1, updated: 1, archived: 2 },
+      },
+    ]);
+
+    const result = await fetchSessionTree();
+
+    expect(result?.nodes).toEqual([]);
   });
 });

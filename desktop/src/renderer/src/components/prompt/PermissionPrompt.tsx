@@ -1,4 +1,5 @@
 import type { PendingPermission } from '../../types';
+import { getPermissionActions } from '../permission-actions';
 import { Button } from '../ui/button';
 
 type Props = {
@@ -55,50 +56,28 @@ export default function PermissionPrompt({
             </div>
           </div>
           <div className="flex items-center gap-2 mt-3">
-            <Button
-              size="sm"
-              onClick={() =>
-                onReplyPermission(
-                  perm.sessionID,
-                  perm.requestId,
-                  'once',
-                  perm.directory,
-                )
-              }
-            >
-              Allow Once
-            </Button>
-            {perm.always && (
+            {getPermissionActions().map((item) => (
               <Button
-                variant="outline"
+                key={item.action}
+                variant={item.variant}
                 size="sm"
                 onClick={() =>
                   onReplyPermission(
                     perm.sessionID,
                     perm.requestId,
-                    'always',
+                    item.action,
                     perm.directory,
                   )
                 }
+                className={
+                  item.action === 'reject'
+                    ? 'hover:border-[var(--color-error)] hover:text-[var(--color-error)]'
+                    : undefined
+                }
               >
-                Always Allow
+                {item.label}
               </Button>
-            )}
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() =>
-                onReplyPermission(
-                  perm.sessionID,
-                  perm.requestId,
-                  'reject',
-                  perm.directory,
-                )
-              }
-              className="hover:border-[var(--color-error)] hover:text-[var(--color-error)]"
-            >
-              Reject
-            </Button>
+            ))}
           </div>
         </div>
       ))}

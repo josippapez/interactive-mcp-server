@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useAtomValue } from 'jotai';
+import type { ReviewDiffFile, ReviewDiffSource } from '../../../../preload';
 import { useConversation } from '../../hooks/useConversation';
+import { useIpcQuery } from '../../hooks/useIpcQuery';
 import { useMcpServers } from '../../hooks/useMcpServers';
 import { useSessionModelId } from '../../hooks/useSessionModelId';
 import { useSessionStatus } from '../../hooks/useSessionStatus';
@@ -9,6 +11,12 @@ import { useVcsInfo } from '../../hooks/useVcsInfo';
 import type { NativeOpenCodeSkill } from '../../../../preload/api/types';
 import { useSessionModelSelection } from '../../store/session-models';
 import { findModelById, modelsAtom } from '../../store/providers';
+import { useConversationSelector } from '../../store/conversation-store';
+import {
+  getReviewDiffSourceOptions,
+  normalizeReviewDiffSource,
+  selectReviewDiffs,
+} from './usePromptConnectionData.helpers';
 
 const STATUS_VISIBILITY_MS = 4000;
 
@@ -51,6 +59,12 @@ export function usePromptConnectionData({
     useConversation(providerSessionId);
   const conversationMessages = messages;
   const conversationAvailable = isOpenCodeSession;
+  const reviewDiffs = useConversationSelector(
+    (state) => selectReviewDiffs(state, providerSessionId),
+    (a, b) => a === b,
+  );
+  const [reviewDiffSource, setReviewDiffSource] =
+    useState<ReviewDiffSource>('git');
 
   const {
     modelId: currentModelId,
@@ -70,6 +84,45 @@ export function usePromptConnectionData({
     return findModelById(models, currentModelId, currentProviderId)
       ?.contextWindow;
   }, [models, currentModelId, currentProviderId]);
+
+  const reviewDiffSourceOptions = useMemo(
+    () => getReviewDiffSourceOptions({ vcsInfo }),
+    [vcsInfo],
+  );
+  const normalizedReviewDiffSource = normalizeReviewDiffSource(
+    reviewDiffSource,
+    reviewDiffSourceOptions,
+  );
+
+  useEffect(() => {
+    if (normalizedReviewDiffSource !== reviewDiffSource) {
+      setReviewDiffSource(normalizedReviewDiffSource);
+    }
+  }, [normalizedReviewDiffSource, reviewDiffSource]);
+
+  const shouldFetchVcsDiff =
+    isOpenCodeSession &&
+    Boolean(sessionBaseDirectory) &&
+    (normalizedReviewDiffSource === 'git' ||
+      normalizedReviewDiffSource === 'branch');
+  const {
+    data: fetchedReviewDiffs,
+    error: reviewDiffError,
+    loading: reviewDiffLoading,
+    refetch: refreshReviewDiffs,
+  } = useIpcQuery<ReviewDiffFile[]>(() => {
+    if (!shouldFetchVcsDiff) {
+      return Promise.resolve({ ok: true, data: [] });
+    }
+    return window.api.fetchVcsDiff({
+      mode: normalizedReviewDiffSource,
+      baseDirectory: sessionBaseDirectory ?? undefined,
+    });
+  }, [shouldFetchVcsDiff, normalizedReviewDiffSource, sessionBaseDirectory]);
+  const displayedReviewDiffs =
+    normalizedReviewDiffSource === 'turn'
+      ? reviewDiffs
+      : (fetchedReviewDiffs ?? []);
 
   const { getStatus } = useSessionStatus(isOpenCodeSession);
   const sessionBusy =
@@ -142,6 +195,13 @@ export function usePromptConnectionData({
     todosError,
     refreshTodos,
     vcsInfo,
+    reviewDiffs: displayedReviewDiffs,
+    reviewDiffSource: normalizedReviewDiffSource,
+    reviewDiffSourceOptions,
+    reviewDiffLoading,
+    reviewDiffError,
+    setReviewDiffSource,
+    refreshReviewDiffs,
     conversationMessages,
     conversationAvailable,
     conversationIsSeeding,

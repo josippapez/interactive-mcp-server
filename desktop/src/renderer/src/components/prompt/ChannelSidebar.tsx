@@ -107,21 +107,21 @@ const ChannelSidebar = memo(function ChannelSidebar({
   const {
     filter,
     setFilter,
-    showInactive,
     collapsedProjects,
     collapsedSessions,
     isRefreshing,
     selectedProjectPath,
+    loadingMoreProjectPath,
+    showArchived,
     filteredProjects,
     allProjects,
     filteredDirectConnections,
     providerCounts,
     providerTabs,
     runningCount,
-    inactiveCount,
     getStatus,
     handleRefresh,
-    handleToggleInactive,
+    handleToggleArchived,
     handleToggleProject,
     handleToggleSession,
     handleAddProject,
@@ -129,7 +129,10 @@ const ChannelSidebar = memo(function ChannelSidebar({
     handleRemoveProject,
     handleSelectProject,
     handleLoadMoreSessions,
-  } = useSidebarState({ activeConnectionId });
+    handleArchiveSession,
+    handleSelectSession,
+    selectedSessionIds,
+  } = useSidebarState({ onSelect });
 
   useEffect(() => {
     try {
@@ -293,9 +296,8 @@ const ChannelSidebar = memo(function ChannelSidebar({
             onFilterChange={setFilter}
             providerTabs={providerTabs}
             providerCounts={providerCounts}
-            showInactive={showInactive}
-            inactiveCount={inactiveCount}
-            onToggleInactive={handleToggleInactive}
+            showArchived={showArchived}
+            onToggleArchived={handleToggleArchived}
             isRefreshing={isRefreshing}
             onRefresh={handleRefresh}
           />
@@ -313,20 +315,25 @@ const ChannelSidebar = memo(function ChannelSidebar({
                 onPinProject={handlePinProject}
                 onRemoveProject={handleRemoveProject}
                 activeConnectionId={activeConnectionId}
-                onSelect={onSelect}
+                onSelect={handleSelectSession}
                 getStatus={getStatus}
                 onCreateSession={onCreateSession}
                 onLoadMoreSessions={handleLoadMoreSessions}
+                loadingMoreProjectPath={loadingMoreProjectPath}
+                onArchiveSession={handleArchiveSession}
+                selectedSessionIds={selectedSessionIds}
+                showArchived={showArchived}
                 collapsedSessions={collapsedSessions}
                 onToggleSession={handleToggleSession}
                 hasDirectConnections={filteredDirectConnections.length > 0}
+                isLoadingSessions={isRefreshing}
                 selectedProjectPath={selectedProjectPath}
               />
 
               <DirectConnectionsSection
                 connections={filteredDirectConnections}
                 activeConnectionId={activeConnectionId}
-                onSelect={onSelect}
+                onSelect={handleSelectSession}
               />
             </div>
           </ScrollArea>

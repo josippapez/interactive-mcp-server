@@ -7,6 +7,7 @@ import {
   fetchPendingPermissions,
   fetchPendingQuestions,
   fetchSessionStatus,
+  fetchVcsDiff,
   fetchVcsInfo,
   findOpenCodeFiles,
   listOpenCodeFiles,
@@ -14,6 +15,7 @@ import {
 import { withIpcResult } from './ipc-result';
 import { IpcHandlerDeps } from './types';
 import { getEffectiveOpenCodePort } from './shared';
+import type { ReviewDiffFile } from '../../../preload/api/types';
 
 export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
   ipcMain.handle(
@@ -75,6 +77,21 @@ export function registerOpenCodeStatusHandlers(deps: IpcHandlerDeps): void {
       const openCodePort = getEffectiveOpenCodePort(deps);
       return fetchVcsInfo(openCodePort, baseDirectory);
     },
+  );
+
+  ipcMain.handle(
+    'fetch-vcs-diff',
+    withIpcResult(
+      async (
+        _event,
+        options: { mode: 'git' | 'branch'; baseDirectory?: string },
+      ): Promise<ReviewDiffFile[]> => {
+        const { agentBackend } = deps.getSettings();
+        if (agentBackend !== 'opencode') return [];
+        const openCodePort = getEffectiveOpenCodePort(deps);
+        return fetchVcsDiff(openCodePort, options.mode, options.baseDirectory);
+      },
+    ),
   );
 
   ipcMain.handle(

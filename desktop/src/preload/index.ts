@@ -39,6 +39,8 @@ export type {
   RepositoryIndexStatus,
   RepositoryIndexStatusPayload,
   RepositoryIndexSummary,
+  ReviewDiffFile,
+  ReviewDiffSource,
   SelectPrompt,
   SessionChannelHistoryRecord,
   NativeOpenCodeSkill,

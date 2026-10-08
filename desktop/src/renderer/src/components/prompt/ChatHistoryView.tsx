@@ -16,8 +16,6 @@ import { useAutoScroll } from '../../hooks/useAutoScroll';
 import ImageModal from './chat/ImageModal';
 import ScrollToBottomButton from './chat/ScrollToBottomButton';
 import MessageList from './chat/MessageList';
-import { computeAutoScrollSignature } from './chat/auto-scroll-signature';
-import { shouldDelayStreamingAutoScroll } from './chat/streaming-auto-scroll';
 import { messageAnchorId, messageIdFromHash } from './message-id-from-hash';
 import { useSettings } from '../../store';
 import { getChatTextSizeClasses, type ChatTextSize } from './chat-text-size';
@@ -158,6 +156,7 @@ export default function ChatHistoryView({
     jumpToBottom,
     handleScroll: handleAutoScroll,
     handleWheel: handleAutoScrollWheel,
+    handlePointerDown: handleAutoScrollPointerDown,
     handleInteraction: handleAutoScrollInteraction,
     pause: pauseAutoScroll,
     reset: resetAutoScroll,
@@ -381,40 +380,14 @@ export default function ChatHistoryView({
     setExpandedImage({ src, name });
   }, []);
 
-  const autoScrollSignature = computeAutoScrollSignature(stagedMessages);
-  const previousAutoScrollSignatureRef = useRef<string | null>(null);
-  const autoScrollCancelRef = useRef<(() => void) | null>(null);
   useEffect(() => {
-    const previousSignature = previousAutoScrollSignatureRef.current;
-    previousAutoScrollSignatureRef.current = autoScrollSignature;
     if (!isStickyToBottom) return;
     if (stagedMessages.length === 0) return;
-    autoScrollCancelRef.current?.();
-    const delayScroll = shouldDelayStreamingAutoScroll({
-      previousSignature,
-      nextSignature: autoScrollSignature,
-    });
-    const scroll = () => {
-      autoScrollCancelRef.current = null;
-      forceScrollToBottom();
-    };
-    if (delayScroll) {
-      const timeout = window.setTimeout(scroll, 50);
-      autoScrollCancelRef.current = () => window.clearTimeout(timeout);
-    } else {
-      const frame = requestAnimationFrame(scroll);
-      autoScrollCancelRef.current = () => cancelAnimationFrame(frame);
-    }
+    const frame = requestAnimationFrame(forceScrollToBottom);
     return () => {
-      autoScrollCancelRef.current?.();
-      autoScrollCancelRef.current = null;
+      cancelAnimationFrame(frame);
     };
-  }, [
-    autoScrollSignature,
-    forceScrollToBottom,
-    isStickyToBottom,
-    stagedMessages.length,
-  ]);
+  }, [forceScrollToBottom, isStickyToBottom, stagedMessages]);
 
   // Stable callback for closing the image modal
   const handleCloseImage = useCallback(() => {
@@ -565,6 +538,7 @@ export default function ChatHistoryView({
         data-scrollable="true"
         onScroll={handleScroll}
         onWheel={handleWheel}
+        onPointerDown={handleAutoScrollPointerDown}
         onMouseUp={handleAutoScrollInteraction}
         role="log"
         aria-label="Conversation history"

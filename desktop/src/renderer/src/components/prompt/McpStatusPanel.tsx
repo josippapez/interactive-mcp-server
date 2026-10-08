@@ -1,4 +1,4 @@
-import React, { useState, useCallback, memo } from 'react';
+import React, { useState, useCallback, memo, useEffect, useRef } from 'react';
 import type { McpServer } from '../../hooks/useMcpServers';
 import {
   getMcpPrimaryAction,
@@ -350,7 +350,7 @@ const McpServerItem = memo(function McpServerItem({
 
 // ─── MCP Status Panel ─────────────────────────────────────────────────────────
 
-interface McpStatusPanelProps {
+export interface McpStatusPanelProps {
   servers: McpServer[];
   isLoading: boolean;
   error: string | null;
@@ -370,6 +370,10 @@ export function getVisibleMcpTools(
   tools: NonNullable<McpServer['tools']>,
 ): NonNullable<McpServer['tools']> {
   return tools;
+}
+
+export function shouldCloseMcpDropdownOnKey(key: string): boolean {
+  return key === 'Escape';
 }
 
 export default function McpStatusPanel({
@@ -634,6 +638,149 @@ export default function McpStatusPanel({
               <span className="font-mono">.opencode/opencode.jsonc</span>
             </div>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function McpStatusDropdown({
+  servers,
+  isLoading,
+  error,
+  onRefresh,
+  onConnect,
+  onDisconnect,
+  onAuthenticate,
+  onRemoveAuth,
+  onOpenSettings,
+}: McpStatusPanelProps): React.ReactElement {
+  const [open, setOpen] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const connectedCount = servers.filter((s) => s.status === 'connected').length;
+  const needsAuthCount = servers.filter(
+    (s) =>
+      s.status === 'needs_auth' || s.status === 'needs_client_registration',
+  ).length;
+  const totalCount = servers.length;
+  const statusText =
+    totalCount === 0 ? 'MCP' : `MCP ${connectedCount}/${totalCount}`;
+
+  useEffect(() => {
+    if (!open) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const root = dropdownRef.current;
+      if (!root || root.contains(event.target as Node)) return;
+      setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (shouldCloseMcpDropdownOnKey(event.key)) {
+        setOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={dropdownRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((current) => !current)}
+        className={`flex h-8 items-center gap-1.5 rounded-full px-2 text-[11px] transition-colors ${
+          needsAuthCount > 0
+            ? 'bg-amber-500/10 text-amber-600 hover:bg-amber-500/20'
+            : connectedCount > 0
+              ? 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20'
+              : 'bg-[color-mix(in_srgb,var(--color-text)_6%,transparent)] text-[var(--color-text-muted)] hover:bg-[color-mix(in_srgb,var(--color-text)_10%,transparent)] hover:text-[var(--color-text)]'
+        }`}
+        aria-expanded={open}
+        aria-haspopup="dialog"
+        title="MCP servers"
+      >
+        <PlugIcon />
+        <span>{statusText}</span>
+        {isLoading && (
+          <span className="h-2.5 w-2.5 rounded-full border-2 border-current border-t-transparent animate-spin" />
+        )}
+      </button>
+      {open && (
+        <div className="absolute right-0 bottom-full z-50 mb-2 w-[min(420px,calc(100vw-2rem))] rounded-lg border border-[var(--color-border)] bg-[var(--color-surface)] p-2 shadow-xl">
+          <div className="space-y-2">
+            <div className="flex items-center justify-between gap-2">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-[var(--color-text)]">
+                  MCP Servers
+                </div>
+                <div className="text-[10px] text-[var(--color-text-faint)]">
+                  {totalCount === 0
+                    ? 'No MCP servers configured'
+                    : `${connectedCount}/${totalCount} connected`}
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <button
+                  type="button"
+                  onClick={onRefresh}
+                  disabled={isLoading}
+                  className="rounded p-1 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-alt)] hover:text-[var(--color-text)] disabled:opacity-50"
+                  title="Refresh MCP servers"
+                  aria-label="Refresh MCP servers"
+                >
+                  <RefreshIcon />
+                </button>
+                {onOpenSettings && (
+                  <button
+                    type="button"
+                    onClick={onOpenSettings}
+                    className="rounded p-1 text-[var(--color-text-faint)] hover:bg-[var(--color-surface-alt)] hover:text-[var(--color-text)]"
+                    title="MCP Settings"
+                    aria-label="MCP Settings"
+                  >
+                    <SettingsIcon />
+                  </button>
+                )}
+              </div>
+            </div>
+            {error && (
+              <div className="rounded bg-red-500/10 px-2 py-1 text-[10px] text-red-500">
+                {error}
+              </div>
+            )}
+            {servers.length > 0 ? (
+              <div className="max-h-[300px] space-y-1.5 overflow-y-auto">
+                {servers.map((server) => (
+                  <McpServerItem
+                    key={server.name}
+                    server={server}
+                    onConnect={onConnect}
+                    onDisconnect={onDisconnect}
+                    onAuthenticate={onAuthenticate}
+                    onRemoveAuth={onRemoveAuth}
+                    actionInProgress={null}
+                    isExpanded
+                    onToggleExpand={() => undefined}
+                  />
+                ))}
+              </div>
+            ) : (
+              !isLoading &&
+              !error && (
+                <div className="py-4 text-center text-xs text-[var(--color-text-faint)]">
+                  No MCP servers found.
+                  <br />
+                  Configure MCPs in your project's{' '}
+                  <span className="font-mono">.opencode/opencode.jsonc</span>
+                </div>
+              )
+            )}
+          </div>
         </div>
       )}
     </div>

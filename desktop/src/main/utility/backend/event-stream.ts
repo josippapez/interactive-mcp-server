@@ -66,6 +66,7 @@ import {
 import { getSettingsSnapshot } from './settings-mirror';
 import { handleBackgroundSubagentSessionStatus } from './tools/manage-background-subagents';
 import { writeSessionLog } from '../../utils/session-logger';
+import { abortOpenCodeSession } from './abort';
 
 const log = createLogger('event-stream');
 
@@ -97,6 +98,23 @@ const HEARTBEAT_TIMEOUT_MS = 15_000;
 
 /** Delay between reconnect attempts — matches opencode's `RECONNECT_DELAY_MS`. */
 const RECONNECT_DELAY_MS = 250;
+
+/**
+ * App-side retry cap. OpenCode's own retry ladder is unbounded (and this
+ * build's config schema rejects `experimental.chatMaxRetries`), so a hard
+ * provider failure (e.g. a 429 usage-limit that won't reset for hours)
+ * retries forever. Once a session's retry `attempt` reaches this cap we
+ * abort the run and surface a terminal `session.status` error so the user
+ * gets an actionable banner instead of an endless backoff.
+ */
+const MAX_PROVIDER_RETRY_ATTEMPTS = 3;
+
+/**
+ * Sessions we've already auto-aborted this retry cycle. Prevents repeated
+ * abort calls while the in-flight retries drain. Cleared when the session
+ * leaves the retry state (any non-retry `session.status`).
+ */
+const autoAbortedSessions = new Set<string>();
 
 /** IPC channel (single channel per merge-plan decision #4). */
 const CHANNEL = 'conversation-batch';
@@ -148,6 +166,8 @@ type StreamState = {
   /** Last CPU sample for delta computation. */
   perfLastCpu: NodeJS.CpuUsage | null;
   perfLastCpuAt: number;
+  /** Consecutive failed SSE connect attempts; 0 while connected. */
+  reconnectAttempts: number;
 };
 
 let state: StreamState | null = null;
@@ -230,6 +250,62 @@ function flush(): void {
   } catch (err) {
     log.warn(`Failed to send batch seq=${batch.seq}: ${String(err)}`);
   }
+}
+
+// ─── Connection status ───────────────────────────────────────────────────────
+
+/**
+ * Surface SSE pump connectivity to the renderer. Routed through the same
+ * coalescing batch pipeline (semantic key `conn:global`), so rapid
+ * reconnect cycles collapse to the latest state per flush tick.
+ */
+function emitConnectionStatus(status: 'connected' | 'reconnecting'): void {
+  if (!state) return;
+  enqueue({
+    type: 'connection.status',
+    status,
+    attempt: state.reconnectAttempts,
+  });
+}
+
+/**
+ * Abort a session whose provider retry `attempt` has reached the cap, and
+ * emit a terminal `session.status` error so the renderer's banner switches
+ * from "retrying…" to an actionable error. Idempotent per retry cycle via
+ * {@link autoAbortedSessions}.
+ */
+function maybeAutoAbortRetry(
+  port: number,
+  sessionId: string,
+  retry: { attempt: number; message: string },
+): void {
+  if (retry.attempt < MAX_PROVIDER_RETRY_ATTEMPTS) return;
+  if (autoAbortedSessions.has(sessionId)) return;
+  autoAbortedSessions.add(sessionId);
+
+  writeSessionLog(
+    getSettingsSnapshot().logsDir,
+    sessionId,
+    'WARN',
+    'retry-cap',
+    `attempt=${retry.attempt} reached cap=${MAX_PROVIDER_RETRY_ATTEMPTS} — aborting session`,
+  );
+
+  void abortOpenCodeSession(port, sessionId)
+    .catch((err) => {
+      log.warn(`auto-abort failed for session=${sessionId}: ${String(err)}`);
+      return false;
+    })
+    .finally(() => {
+      // Surface a terminal error regardless of abort outcome — the user
+      // needs the banner to stop saying "retrying" after the cap.
+      emitConversationEvent({
+        type: 'session.status',
+        sessionId,
+        status: 'error',
+        error: `Stopped after ${MAX_PROVIDER_RETRY_ATTEMPTS} retries: ${retry.message}`,
+      });
+    });
 }
 
 // ─── Heartbeat ───────────────────────────────────────────────────────────────
@@ -422,6 +498,10 @@ async function runLoop(): Promise<void> {
 
       resetHeartbeat();
 
+      // Stream handshake succeeded — clear any reconnecting indicator.
+      if (state) state.reconnectAttempts = 0;
+      emitConnectionStatus('connected');
+
       for await (const envelope of result.stream) {
         resetHeartbeat();
 
@@ -443,8 +523,7 @@ async function runLoop(): Promise<void> {
         const lifecycleType = getSessionLifecycleType(payload.type);
         if (lifecycleType) {
           const props = payload.properties as
-            | Parameters<typeof handleSessionCreated>[0]
-            | undefined;
+            Parameters<typeof handleSessionCreated>[0] | undefined;
           if (props && props.info) {
             if (lifecycleType === 'session.created')
               handleSessionCreated(props, {
@@ -560,6 +639,26 @@ async function runLoop(): Promise<void> {
               sessionId: ev.sessionId,
               status,
             });
+            // Ground-truth trace for provider backoff / session errors —
+            // these drive the renderer's SessionIssueBanner.
+            if (ev.retry || ev.status === 'error') {
+              writeSessionLog(
+                getSettingsSnapshot().logsDir,
+                ev.sessionId,
+                'INFO',
+                'sse:session.status',
+                ev.retry
+                  ? `retry attempt=${ev.retry.attempt} next=${ev.retry.next} message=${ev.retry.message}`
+                  : `error=${ev.error ?? '(none)'}`,
+              );
+            }
+            // App-side retry cap — abort once attempts exceed the cap.
+            if (ev.retry) {
+              maybeAutoAbortRetry(port, ev.sessionId, ev.retry);
+            } else {
+              // Left the retry state — reset the per-session abort guard.
+              autoAbortedSessions.delete(ev.sessionId);
+            }
           } else if (ev.type === 'session.next.model.switched') {
             writeSessionLog(
               getSettingsSnapshot().logsDir,
@@ -593,6 +692,11 @@ async function runLoop(): Promise<void> {
     }
 
     if (outer.signal.aborted || !state?.running) return;
+
+    // Any path here (error, heartbeat abort, clean stream end) means the
+    // stream is down and we're about to retry — tell the renderer.
+    state.reconnectAttempts += 1;
+    emitConnectionStatus('reconnecting');
 
     // Short delay before the next attempt. SDK has its own exponential
     // backoff for network-level retries; this is the outer ladder.
@@ -637,6 +741,7 @@ export function startEventStream(options: StartEventStreamOptions): void {
     perfHeapTimer: null,
     perfLastCpu: null,
     perfLastCpuAt: 0,
+    reconnectAttempts: 0,
   };
 
   log.info('Event stream started');
@@ -658,6 +763,7 @@ export function stopEventStream(): void {
   }
   clearHeartbeat();
   stopPerfSamplers();
+  autoAbortedSessions.clear();
   state.outerAbort?.abort();
   state.attemptAbort?.abort();
   state = null;

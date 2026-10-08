@@ -8,10 +8,7 @@ import {
   getPromptPlaceholder,
   getQueueComposerBaseDirectory,
 } from './prompt-utils';
-import {
-  countRunningBackgroundSubagents,
-  deriveBackgroundSubagents,
-} from './background-subagents';
+import { deriveBackgroundSubagents } from './background-subagents';
 import { useDeriveSessionAgentEffect } from './useDeriveSessionAgentEffect';
 import { usePromptConnectionData } from './usePromptConnectionData';
 import { usePromptInteractionState } from './usePromptInteractionState';
@@ -86,8 +83,6 @@ export function usePromptViewState(props: PromptViewProps) {
     connections,
     providerSessionId,
   );
-  const runningBackgroundSubagentCount =
-    countRunningBackgroundSubagents(backgroundSubagents);
   const {
     noReply,
     expandAllTools,
@@ -106,13 +101,14 @@ export function usePromptViewState(props: PromptViewProps) {
     setMcpSettingsOpen,
     removeError,
     setRemoveError,
-    tasksOverlayOpen,
-    handleToggleTasksOverlay,
-    handleCloseTasksOverlay,
+    tasksCollapsed,
+    handleToggleTasksCollapsed,
     commandPaletteOpen,
     setCommandPaletteOpen,
     chatFullWidth,
     handleToggleChatFullWidth,
+    reviewSidebarOpen,
+    handleToggleReviewSidebar,
   } = usePromptInteractionState(activeConnectionId);
 
   const {
@@ -127,6 +123,13 @@ export function usePromptViewState(props: PromptViewProps) {
     todosError,
     refreshTodos,
     vcsInfo,
+    reviewDiffs,
+    reviewDiffSource,
+    reviewDiffSourceOptions,
+    reviewDiffLoading,
+    reviewDiffError,
+    setReviewDiffSource,
+    refreshReviewDiffs,
     conversationMessages,
     conversationAvailable,
     conversationIsSeeding,
@@ -181,13 +184,6 @@ export function usePromptViewState(props: PromptViewProps) {
   });
 
   const canAbort = Boolean(providerSessionId);
-  const activeTaskCount = useMemo(
-    () =>
-      todos.filter(
-        (todo) => todo.status === 'pending' || todo.status === 'in_progress',
-      ).length + runningBackgroundSubagentCount,
-    [runningBackgroundSubagentCount, todos],
-  );
   const [channelSearchQuery, setChannelSearchQuery] = useState('');
   const [activeSearchMatchIndex, setActiveSearchMatchIndex] = useState(-1);
   const [channelSearchOpen, setChannelSearchOpen] = useState(false);
@@ -371,13 +367,18 @@ export function usePromptViewState(props: PromptViewProps) {
     handleNavigateToParent,
     handleNavigateToSession,
     backgroundSubagents,
-    runningBackgroundSubagentCount,
-    activeTaskCount,
     todos,
     todosLoading,
     todosError,
     refreshTodos,
     vcsInfo,
+    reviewDiffs,
+    reviewDiffSource,
+    reviewDiffSourceOptions,
+    reviewDiffLoading,
+    reviewDiffError,
+    setReviewDiffSource,
+    refreshReviewDiffs,
     conversationMessages,
     conversationAvailable,
     conversationIsSeeding,
@@ -403,12 +404,12 @@ export function usePromptViewState(props: PromptViewProps) {
     removeError,
     setRemoveError,
     noReply,
-    tasksOverlayOpen,
-    handleToggleTasksOverlay,
-    handleCloseTasksOverlay,
+    tasksCollapsed,
+    handleToggleTasksCollapsed,
     commandPaletteOpen,
     setCommandPaletteOpen,
     chatFullWidth,
+    reviewSidebarOpen,
     expandAllTools,
     showThinking,
     chatTextSize,
@@ -427,6 +428,7 @@ export function usePromptViewState(props: PromptViewProps) {
     handleExpandAllToolsChange,
     handleShowThinkingChange,
     handleChatTextSizeChange,
+    handleToggleReviewSidebar,
     handleModelSelect,
     handleCreateSession: handleCreateSessionWithModel,
     handleAddProject,

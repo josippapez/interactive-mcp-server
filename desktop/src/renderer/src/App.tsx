@@ -54,11 +54,15 @@ export default function App(): React.ReactElement {
     activeConn,
     clientInfo,
     handleSubmit,
+    handleSubmitForSession,
     handleSelectOption,
+    handleSelectOptionForSession,
     handleDismissStatus,
     handleDismissSession,
     handleQueueSessionMessage,
+    handleQueueSessionMessageForSession,
     handleInjectWithReply,
+    handleInjectWithReplyForSession,
     handleClearChannelMessages,
     handleRemoveSession,
     handleToggleDocContext,
@@ -66,6 +70,7 @@ export default function App(): React.ReactElement {
     handleReplyQuestion,
     handleRejectQuestion,
     jumpToFirstPendingPrompt,
+    ensureChannelHistoryLoaded,
   } = useConnections(switchToPrompt);
 
   usePermissionToasts({
@@ -151,16 +156,24 @@ export default function App(): React.ReactElement {
               sessionStatuses={activeConn?.sessionStatuses ?? []}
               docContextEnabled={activeConn?.docContextEnabled !== false}
               onSubmit={handleSubmit}
+              onSubmitForSession={handleSubmitForSession}
               onSelectOption={handleSelectOption}
+              onSelectOptionForSession={handleSelectOptionForSession}
               onDismissStatus={handleDismissStatus}
               onDismissSession={handleDismissSession}
               onQueueSessionMessage={handleQueueSessionMessage}
+              onQueueSessionMessageForSession={
+                handleQueueSessionMessageForSession
+              }
               onInjectWithReply={handleInjectWithReply}
+              onInjectWithReplyForSession={handleInjectWithReplyForSession}
               onClearMessages={handleClearChannelMessages}
               onRemoveSession={handleRemoveSession}
               onToggleDocContext={() =>
                 activeConnectionId && handleToggleDocContext(activeConnectionId)
               }
+              onToggleDocContextForSession={handleToggleDocContext}
+              onEnsureSessionHistory={ensureChannelHistoryLoaded}
               onReplyQuestion={handleReplyQuestion}
               onRejectQuestion={handleRejectQuestion}
               activeTab={activeTab}

@@ -100,6 +100,12 @@ interface SideBySideRow {
   right: SideCell;
 }
 
+export type DiffLineCommentTarget = {
+  side: 'old' | 'new';
+  lineNumber: number;
+  content: string;
+};
+
 type UnifiedDiffRowKind = 'hunk' | 'context' | 'removal' | 'addition';
 
 interface UnifiedDiffRow {
@@ -403,10 +409,12 @@ const SideColumn = memo(function SideColumn({
   rows,
   side,
   language,
+  onLineComment,
 }: {
   rows: SideBySideRow[];
   side: 'left' | 'right';
   language: BundledLanguage;
+  onLineComment?: (target: DiffLineCommentTarget) => void;
 }) {
   const { source, lineIndexByRow } = useMemo(
     () => buildSideSource(rows, side),
@@ -421,6 +429,7 @@ const SideColumn = memo(function SideColumn({
         const lineIdx = lineIndexByRow[rowIdx];
         const tokens =
           tokenized && lineIdx !== null ? tokenized[lineIdx] : undefined;
+        const commentTarget = getSideCommentTarget(cell, side);
         return (
           <div
             key={row.key}
@@ -429,6 +438,23 @@ const SideColumn = memo(function SideColumn({
             data-side={side}
           >
             <span data-slot="diff-gutter">{cell.lineNumber ?? ''}</span>
+            {onLineComment && (
+              <button
+                type="button"
+                data-slot="diff-comment-button"
+                disabled={!commentTarget}
+                aria-label={
+                  commentTarget
+                    ? `Comment on ${commentTarget.side} line ${commentTarget.lineNumber}`
+                    : 'Cannot comment on empty diff row'
+                }
+                onClick={() => {
+                  if (commentTarget) onLineComment(commentTarget);
+                }}
+              >
+                +
+              </button>
+            )}
             <span data-slot="diff-marker">
               {cell.kind === 'removal'
                 ? '-'
@@ -445,6 +471,18 @@ const SideColumn = memo(function SideColumn({
     </div>
   );
 });
+
+function getSideCommentTarget(
+  cell: SideCell,
+  side: 'left' | 'right',
+): DiffLineCommentTarget | null {
+  if (cell.kind === 'empty' || cell.lineNumber === null) return null;
+  return {
+    side: side === 'left' ? 'old' : 'new',
+    lineNumber: cell.lineNumber,
+    content: cell.content,
+  };
+}
 
 function buildUnifiedSource(rows: UnifiedDiffRow[]): {
   source: string;
@@ -467,10 +505,12 @@ export const UnifiedDiffRows = memo(function UnifiedDiffRows({
   rows,
   language,
   wrapLines = false,
+  onLineComment,
 }: {
   rows: UnifiedDiffRow[];
   language: BundledLanguage;
   wrapLines?: boolean;
+  onLineComment?: (target: DiffLineCommentTarget) => void;
 }): React.ReactElement {
   const { source, lineIndexByRow } = useMemo(
     () => buildUnifiedSource(rows),
@@ -483,16 +523,35 @@ export const UnifiedDiffRows = memo(function UnifiedDiffRows({
       data-component="diff-view"
       data-variant="unified"
       data-wrap={wrapLines ? 'true' : 'false'}
+      data-commentable={onLineComment ? 'true' : undefined}
       data-scrollable="true"
     >
       {rows.map((row, rowIdx) => {
         const lineIdx = lineIndexByRow[rowIdx];
         const tokens =
           tokenized && lineIdx !== null ? tokenized[lineIdx] : undefined;
+        const commentTarget = getUnifiedCommentTarget(row);
         return (
           <div key={row.key} data-slot="diff-row" data-kind={row.kind}>
             <span data-slot="diff-gutter-old">{row.oldLineNumber ?? ''}</span>
             <span data-slot="diff-gutter-new">{row.newLineNumber ?? ''}</span>
+            {onLineComment && (
+              <button
+                type="button"
+                data-slot="diff-comment-button"
+                disabled={!commentTarget}
+                aria-label={
+                  commentTarget
+                    ? `Comment on ${commentTarget.side} line ${commentTarget.lineNumber}`
+                    : 'Cannot comment on hunk header'
+                }
+                onClick={() => {
+                  if (commentTarget) onLineComment(commentTarget);
+                }}
+              >
+                +
+              </button>
+            )}
             <span data-slot="diff-marker">
               {row.kind === 'removal'
                 ? '-'
@@ -515,6 +574,31 @@ export const UnifiedDiffRows = memo(function UnifiedDiffRows({
     </div>
   );
 });
+
+function getUnifiedCommentTarget(
+  row: UnifiedDiffRow,
+): DiffLineCommentTarget | null {
+  if (row.kind === 'removal' && row.oldLineNumber !== null) {
+    return {
+      side: 'old',
+      lineNumber: row.oldLineNumber,
+      content: row.content,
+    };
+  }
+
+  if (
+    (row.kind === 'addition' || row.kind === 'context') &&
+    row.newLineNumber !== null
+  ) {
+    return {
+      side: 'new',
+      lineNumber: row.newLineNumber,
+      content: row.content,
+    };
+  }
+
+  return null;
+}
 
 export function DiffDisplayModeToggle({
   mode,
@@ -722,10 +806,12 @@ export const SideBySideDiffGrid = memo(function SideBySideDiffGrid({
   rows,
   language,
   wrapLines = false,
+  onLineComment,
 }: {
   rows: SideBySideRow[];
   language: BundledLanguage;
   wrapLines?: boolean;
+  onLineComment?: (target: DiffLineCommentTarget) => void;
 }): React.ReactElement {
   return (
     <div
@@ -733,10 +819,21 @@ export const SideBySideDiffGrid = memo(function SideBySideDiffGrid({
       data-variant="side-by-side"
       data-embedded="true"
       data-wrap={wrapLines ? 'true' : 'false'}
+      data-commentable={onLineComment ? 'true' : undefined}
     >
       <div data-slot="diff-grid" data-scrollable="true">
-        <SideColumn rows={rows} side="left" language={language} />
-        <SideColumn rows={rows} side="right" language={language} />
+        <SideColumn
+          rows={rows}
+          side="left"
+          language={language}
+          onLineComment={onLineComment}
+        />
+        <SideColumn
+          rows={rows}
+          side="right"
+          language={language}
+          onLineComment={onLineComment}
+        />
       </div>
     </div>
   );

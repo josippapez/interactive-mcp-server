@@ -23,10 +23,21 @@ export type PromptViewProps = {
   sessionStatuses: SessionStatus[];
   docContextEnabled: boolean;
   onSubmit: (answer: string, attachments?: Attachment[]) => void;
+  onSubmitForSession: (
+    sessionId: string,
+    answer: string,
+    attachments?: Attachment[],
+  ) => void;
   onSelectOption: (option: string) => void;
+  onSelectOptionForSession: (sessionId: string, option: string) => void;
   onDismissStatus: (connectionId: string, timestamp: Date) => void;
   onDismissSession: (connectionId: string) => void;
   onQueueSessionMessage: (
+    sessionId: string,
+    message: string,
+    attachments?: Attachment[],
+  ) => void;
+  onQueueSessionMessageForSession: (
     sessionId: string,
     message: string,
     attachments?: Attachment[],
@@ -45,9 +56,18 @@ export type PromptViewProps = {
      */
     agent?: string,
   ) => void;
+  onInjectWithReplyForSession?: (
+    sessionId: string,
+    message: string,
+    attachments?: Attachment[],
+    modelOverride?: ModelOverride,
+    agent?: string,
+  ) => void;
   onClearMessages: (sessionId: string) => void;
   onRemoveSession: (sessionId: string) => Promise<boolean>;
   onToggleDocContext: () => void;
+  onToggleDocContextForSession: (sessionId: string) => void;
+  onEnsureSessionHistory: (sessionId: string) => void;
   onReplyQuestion: (
     requestId: string,
     answers: string[][],
@@ -67,7 +87,7 @@ export type PromptViewProps = {
    * Used so non-channel views (Skills, Settings) can keep the sidebar
    * mounted and visible — letting the user navigate back to "Home" via
    * the sidebar's nav rows. When provided, ChannelHeader / chat history /
-   * composer / TasksOverlay are NOT rendered.
+   * composer are NOT rendered.
    */
   rightPaneOverride?: React.ReactNode;
 };

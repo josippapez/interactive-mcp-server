@@ -31,6 +31,8 @@ export interface ProviderModel {
   variants?: string[];
   /** The recommended default variant/effort level for this model. */
   defaultVariant?: string;
+  /** True when the model has zero input and output token cost. */
+  isFree?: boolean;
 }
 
 /** Provider definition. */
@@ -55,6 +57,8 @@ export interface Model {
   variants?: string[];
   /** The recommended default variant/effort level for this model. */
   defaultVariant?: string;
+  /** True when the model has zero input and output token cost. */
+  isFree?: boolean;
 }
 
 // -----------------------------------------------------------------------------
@@ -216,6 +220,7 @@ export const hydrateProvidersAtom = atom(
           reasoning: model.reasoning,
           variants: model.variants,
           defaultVariant: model.defaultVariant,
+          isFree: model.isFree,
         });
       }
     }

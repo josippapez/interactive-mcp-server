@@ -254,7 +254,7 @@ The main process is the application's Node.js runtime. It bootstraps in `index.t
    - `syncRemoteConfig()` — ensure `~/.config/opencode/opencode.json` has a `type: "remote"` MCP entry (if `autoSyncOpencode` enabled).
    - `startSessionTreeService()` — subscribe to OpenCode SSE stream and fire coalesced `session-tree-invalidated` signals (renderer pulls fresh data via `get-session-tree`).
    - `startBusEventSubscription()` — subscribe to OpenCode global-event bus (session.status, permission.\*).
-   - `reconcileSessionConnections(port, baseDirectory)` — reconcile persisted `registered_connections` against live OpenCode sessions. Scoped to the currently selected folder: the value is `null` at startup (no-op until the renderer reports a selection) and is re-invoked with a concrete `baseDirectory` by the `set-selected-folder` IPC handler. Only DB rows whose `base_directory` matches the selected folder are reconciled. See [Per-folder session scoping](#per-folder-session-scoping) below.
+   - `reconcileSessionConnections(port, baseDirectory)` — reconcile persisted `registered_connections` against live OpenCode sessions. Scoped to the currently selected folder: the value is `null` at startup (no-op until the renderer reports a selection) and is re-invoked with a concrete `baseDirectory` by the `set-selected-folder` IPC handler. Only DB rows whose `base_directory` matches the selected folder are reconciled. See [Pinned-folder session pagination](#pinned-folder-session-pagination) below.
    - `registerMcpWithRetry()` — re-register with OpenCode on startup (fire-and-forget with retries).
 7. For Claude SDK backend: `detectClaudeSdkRuntime()` — detect Claude SDK runtime availability.
 8. `createWindow()` — create the `BrowserWindow`; hide it immediately if the app was opened at login.
@@ -285,21 +285,21 @@ Subscribes to the OpenCode `/global/event` SSE stream (which carries both in-pro
 - **Session bootstrap injection**: For child sessions (parentID present), injects the session ID into the agent's OpenCode context via `<system-reminder>` so the agent knows its own `openCodeSessionId` before its first tool call.
 - **VCS info extraction**: Extracts git branch name from OpenCode version string and change summary (additions, deletions, files). See `session/vcs.ts`.
 - **Invalidation signal, no payload**: On any relevant SSE event, the service fires a payload-free `session-tree-invalidated` IPC event. Bursts are coalesced to ~20 Hz (50 ms timer) via `invalidateSessionTree()`. The renderer pulls a fresh tree via `window.api.getSessionTree()` in response.
-- **Pull endpoint**: `fetchSessionTree()` builds the current tree on demand from OpenCode REST (scoped to the selected folder) merged with `registered_connections` from SQLite. Exposed to the renderer as the `get-session-tree` IPC handler.
+- **Pull endpoint**: `fetchSessionTree()` builds the current tree on demand from OpenCode REST (scoped to pinned project folders, paginated per folder) merged with `registered_connections` from SQLite. Exposed to the renderer as the `get-session-tree` IPC handler.
 - **Tombstoning**: Sessions deleted via the Desktop app are tombstoned (`tombstoneOpenCodeSession` / `isTombstoned`) and excluded from all future pulls.
 
 Exports: `startSessionTreeService`, `stopSessionTreeService`, `setSelectedFolder`, `getSelectedFolder`, `tombstoneOpenCodeSession`, `isTombstoned`, `invalidateSessionTree`, `fetchSessionTree`.
 
 For OpenCode-backed sessions, the session tree treats the OpenCode session's own directory/creation metadata as the primary grouping source. `registered_connections.base_directory` remains important for repo-aware features such as indexing and file completion, but it is not the canonical sidebar grouping signal.
 
-#### Per-folder session scoping
+#### Pinned-folder session pagination
 
-Session fetching is scoped to the **currently selected project folder** rather than running globally. The main process holds a single `selectedFolder: string | null` in `session/session-tree-service.ts` (accessed via `getSelectedFolder()` / `setSelectedFolder()`) that gates all OpenCode REST fetches:
+Session fetching is scoped to **pinned project folders** rather than running globally. Each pinned folder has its own root-session page size in `session/session-tree-service.ts`, so load-more expands only the requested folder:
 
-- **`fetchSessionTree`** (`session/session-tree-service.ts`) returns an empty tree when `selectedFolder` is `null`. When non-null, it calls `fetchSessionsForDirectory(port, baseDirectory)` (defined in `opencode/session.ts`) instead of the former global `fetchAllOpenCodeSessions`. There is no background poller — the renderer pulls on mount and on every `session-tree-invalidated` signal.
+- **`fetchSessionTree`** (`session/session-tree-service.ts`) reads pinned projects from SQLite and calls `fetchRootSessionsForDirectory(port, baseDirectory, limit, archived)` for each pinned folder. The default page size is 10 roots per folder; `loadMoreSessionTree(baseDirectory)` increases only that folder's limit by 5. There is no background poller — the renderer pulls on mount and on every `session-tree-invalidated` signal.
 - **Startup reconcile** (`index.ts`) passes `null` to `reconcileSessionConnections`, deferring all reconciliation until the user selects a folder.
-- **`set-selected-folder` IPC handler** (`ipc/handlers/session-tree-handlers.ts`) is the single entry point used by the renderer to change selection. It updates the service's `selectedFolder`, fires `session-tree-invalidated` so the renderer pulls the (empty) tree immediately, and — when the new value is non-null — reconciles connections scoped to the new folder.
-- **Renderer** (`useSidebarState.ts`) calls `window.api.setSelectedFolder(selectedProjectPath)` whenever the sidebar's selected project changes (persisted under `sidebar-selected-project` in localStorage). When no folder is selected, the sidebar renders an empty state and no fetches are performed.
+- **`set-selected-folder` IPC handler** (`ipc/handlers/session-tree-handlers.ts`) keeps the selected folder for renderer state and scoped reconciliation, but it does not decide which folders are fetched. Pinned folders do.
+- **Renderer** (`useSidebarState.ts`) calls `window.api.setSelectedFolder(selectedProjectPath)` whenever the sidebar's selected project changes (persisted under `sidebar-selected-project` in localStorage). The project rail can show all pinned folders, and each folder renders its own `Load more` affordance when more roots are available.
 
 Additionally, all OpenCode REST/SDK calls thread `baseDirectory` through `getClient(port, directory?)` and attach a per-request `x-opencode-directory` header so `path.cwd` on new assistant messages matches the folder (mirroring the upstream OpenCode Tauri app's per-directory client pattern).
 
@@ -706,7 +706,7 @@ index.ts
  │   ├─ session/auto-register.ts (autoRegisterSession)
  │   ├─ session/vcs.ts   (VCS branch + change summary extraction)
  │   ├─ opencode/injector.ts (injectOpenCodeMessage)
- │   └─ opencode/session.ts (fetchSessionsForDirectory — scoped to selectedFolder; see [Per-folder session scoping](#per-folder-session-scoping))
+ │   └─ opencode/session.ts (fetchRootSessionsForDirectory — paginated per pinned folder; see [Pinned-folder session pagination](#pinned-folder-session-pagination))
  ├─ opencode/event-stream.ts (startEventStream, stopEventStream — SSE subscription, event coalescing, batch dispatch)
  ├─ session/reconnect.ts (reconcileSessionConnections)
  ├─ claude-sdk-runtime.ts (detectClaudeSdkRuntime)

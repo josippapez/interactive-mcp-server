@@ -15,6 +15,7 @@ import {
   sessionChildren,
   sessionCreate,
   sessionPromptAsync,
+  sessionUpdate,
 } from './session-api';
 import type { SessionCreateBody } from './session-api';
 import { errorMessage } from '../../utils/errors';
@@ -31,7 +32,7 @@ export interface OpenCodeSession {
   parentID?: string | null;
   title?: string;
   directory?: string;
-  time?: { created?: number; updated?: number };
+  time?: { created?: number; updated?: number; archived?: number };
   version?: string;
   summary?: { additions?: number; deletions?: number; files?: number };
 }
@@ -39,6 +40,7 @@ export interface OpenCodeSession {
 export interface SessionListOptions {
   roots?: boolean;
   limit?: number;
+  archived?: boolean;
 }
 
 function sortByRecentActivity(a: OpenCodeSession, b: OpenCodeSession): number {
@@ -59,7 +61,11 @@ async function fetchSessions(
   try {
     const response = await sessionList(
       openCodePort,
-      { roots: options?.roots, limit: options?.limit },
+      {
+        roots: options?.roots,
+        limit: options?.limit,
+        archived: options?.archived,
+      },
       { directory, signal: AbortSignal.timeout(2000) },
     );
 
@@ -146,15 +152,60 @@ export async function fetchRootSessionsForDirectory(
   openCodePort: number,
   baseDirectory: string,
   limit: number,
+  archived = false,
 ): Promise<OpenCodeSession[] | null> {
   const trimmed = baseDirectory.trim();
   if (trimmed.length === 0) return [];
   const sessions = await fetchSessions(openCodePort, trimmed, {
     roots: true,
     limit,
+    archived,
   });
   if (!sessions) return null;
   return [...sessions].sort(sortByRecentActivity);
+}
+
+export async function archiveOpenCodeSession(
+  openCodePort: number,
+  sessionID: string,
+  archived: boolean,
+): Promise<boolean> {
+  const archivedAt = archived ? Date.now() : undefined;
+  return setSessionArchivedRecursive(openCodePort, sessionID, archivedAt);
+}
+
+async function setSessionArchivedRecursive(
+  openCodePort: number,
+  sessionID: string,
+  archivedAt: number | undefined,
+  directory?: string,
+): Promise<boolean> {
+  const children = await fetchOpenCodeSessionChildren(
+    openCodePort,
+    sessionID,
+    directory,
+  );
+  if (children === null) return false;
+
+  const childResults = await Promise.all(
+    children.map((child) =>
+      setSessionArchivedRecursive(
+        openCodePort,
+        child.id,
+        archivedAt,
+        child.directory ?? directory,
+      ),
+    ),
+  );
+  if (childResults.some((ok) => !ok)) return false;
+
+  const response = await sessionUpdate(
+    openCodePort,
+    sessionID,
+    { time: { archived: archivedAt } },
+    directory ? { directory } : undefined,
+  );
+  return !response.error;
 }
 
 /**

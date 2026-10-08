@@ -10,17 +10,21 @@ import React, {
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { UnifiedMessage } from '../../../types/unified-message';
 import MessageItem from '../MessageItem';
+import MarkdownContent from '../../MarkdownContent';
 import UnreadDivider from './UnreadDivider';
 import {
   getStreamingMessageId,
   useSeenMessageIds,
 } from './message-list-helpers';
+import { ReasoningSection, ToolCallsSection } from '../message-item-sections';
 import {
   VIRTUAL_MESSAGE_ESTIMATED_HEIGHT_PX,
   VIRTUAL_MESSAGE_OVERSCAN,
+  buildTimelineRows,
   getVirtualizedMessageIndex,
   registerVirtualMessageRow,
   shouldVirtualizeMessageList,
+  type TimelineRow,
 } from './message-list-virtualization';
 
 interface MessageListProps {
@@ -48,8 +52,7 @@ interface MessageListProps {
   isBusy?: boolean;
   /** Ref callback forwarded to the content wrapper (parent scroll container observes it). */
   contentRef?:
-    | React.RefCallback<HTMLDivElement>
-    | React.RefObject<HTMLDivElement | null>;
+    React.RefCallback<HTMLDivElement> | React.RefObject<HTMLDivElement | null>;
   matchedMessageIds?: string[];
   activeSearchMatchId?: string | null;
   /**
@@ -68,6 +71,8 @@ interface MessageListProps {
 // MessageItems due to new [] identity on every render of parents.
 const EMPTY_EXCLUSIONS: string[] = [];
 const EMPTY_MATCHED_IDS: string[] = [];
+const CHAT_MARKDOWN_TEXT_CLASS =
+  '[&_.prose]:text-[var(--chat-message-size)] [&_.prose]:leading-[var(--chat-message-line-height)] [&_.prose_p]:!text-[var(--chat-message-size)] [&_.prose_p]:leading-[var(--chat-message-line-height)] [&_.prose_li]:!text-[var(--chat-message-size)] [&_.prose_li]:leading-[var(--chat-message-line-height)] [&_.prose_code]:text-[calc(var(--chat-message-size)-1px)]';
 
 /**
  * Non-virtualized message list. Auto-scroll is owned by the parent
@@ -138,10 +143,15 @@ const MessageList = memo(function MessageList({
   const focusedIdRef = useRef<string | null>(focusedId);
   focusedIdRef.current = focusedId;
   const previousMessageCountRef = useRef(messages.length);
-  const shouldVirtualize = shouldVirtualizeMessageList(messages.length);
+  const timelineRows = useMemo(() => buildTimelineRows(messages), [messages]);
+  const messageById = useMemo(
+    () => new Map(messages.map((message) => [message.id, message] as const)),
+    [messages],
+  );
+  const shouldVirtualize = shouldVirtualizeMessageList(timelineRows.length);
 
   const rowVirtualizer = useVirtualizer({
-    count: messages.length,
+    count: timelineRows.length,
     getScrollElement: () => scrollContainerRef?.current ?? null,
     estimateSize: () => VIRTUAL_MESSAGE_ESTIMATED_HEIGHT_PX,
     overscan: VIRTUAL_MESSAGE_OVERSCAN,
@@ -267,7 +277,7 @@ const MessageList = memo(function MessageList({
     if (!activeSearchMatchId) return;
     if (shouldVirtualize) {
       const targetIndex = getVirtualizedMessageIndex(
-        messages,
+        timelineRows,
         activeSearchMatchId,
       );
       if (targetIndex >= 0) {
@@ -294,23 +304,26 @@ const MessageList = memo(function MessageList({
     node.scrollIntoView({ block: 'center', behavior: 'smooth' });
   }, [
     activeSearchMatchId,
-    messages,
     rowVirtualizer,
     scrollContainerRef,
     shouldVirtualize,
+    timelineRows,
   ]);
 
   useEffect(() => {
     if (!deepLinkMessageId || !shouldVirtualize) return;
-    const targetIndex = getVirtualizedMessageIndex(messages, deepLinkMessageId);
+    const targetIndex = getVirtualizedMessageIndex(
+      timelineRows,
+      deepLinkMessageId,
+    );
     if (targetIndex < 0) return;
     rowVirtualizer.scrollToIndex(targetIndex, {
       align: 'start',
       behavior: 'smooth',
     });
-  }, [deepLinkMessageId, messages, rowVirtualizer, shouldVirtualize]);
+  }, [deepLinkMessageId, rowVirtualizer, shouldVirtualize, timelineRows]);
 
-  const renderMessageRow = useCallback(
+  const renderWholeMessage = useCallback(
     (msg: UnifiedMessage, index: number) => {
       const isActive = msg.isActivePrompt ?? false;
       const showOptions = Boolean(
@@ -368,6 +381,116 @@ const MessageList = memo(function MessageList({
     ],
   );
 
+  const renderTimelineRow = useCallback(
+    (row: TimelineRow, index: number) => {
+      const msg = messageById.get(row.messageId);
+      if (!msg) return null;
+      const showDividerBefore =
+        showUnreadDivider && row.firstForMessage && index === unreadStartIndex;
+      const isStreaming = msg.id === streamingMessageId;
+
+      if (row.type === 'message') {
+        return (
+          <>
+            {showDividerBefore && <UnreadDivider />}
+            {renderWholeMessage(msg, index)}
+          </>
+        );
+      }
+
+      const activePromptClass = msg.isActivePrompt
+        ? 'ring-1 ring-[var(--color-agent)]/40 bg-[var(--color-agent)]/10'
+        : '';
+      const searchRingClass =
+        activeSearchMatchId === msg.id
+          ? 'ring-2 ring-[var(--color-warning,#f59e0b)]/70 bg-[var(--color-warning,#f59e0b)]/10'
+          : matchedIdSet.has(msg.id)
+            ? 'ring-1 ring-[var(--color-warning,#f59e0b)]/35 bg-[var(--color-warning,#f59e0b)]/5'
+            : '';
+      const focusRingClass =
+        focusedId === msg.id ? 'ring-1 ring-[var(--color-agent)]/60' : '';
+      const deepLinkClass =
+        deepLinkMessageId === msg.id
+          ? 'ring-2 ring-[var(--color-agent)]/80 bg-[var(--color-agent)]/12 animate-pulse'
+          : '';
+
+      return (
+        <>
+          {showDividerBefore && <UnreadDivider />}
+          <article
+            id={row.firstForMessage ? `message-${msg.id}` : undefined}
+            data-slot={`session-turn-${row.type}`}
+            data-message-id={msg.id}
+            className={`group relative flex w-full flex-col items-start outline-none ${focusRingClass} ${deepLinkClass} ${searchRingClass} ${activePromptClass}`.trim()}
+            aria-label="Assistant message part"
+            aria-current={msg.isActivePrompt ? 'true' : undefined}
+            tabIndex={-1}
+            onClick={() => handleRequestFocus(msg.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                handleKeyNavigate(msg.id, 'down');
+              } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                handleKeyNavigate(msg.id, 'up');
+              } else if (event.key === 'Escape') {
+                handleKeyNavigate(msg.id, 'escape');
+              }
+            }}
+          >
+            {row.type === 'assistant-reasoning' && msg.reasoning && (
+              <ReasoningSection
+                reasoning={msg.reasoning}
+                defaultExpanded={showThinking}
+                isStreaming={isStreaming}
+              />
+            )}
+            {row.type === 'assistant-text' && msg.text && (
+              <div
+                className={`mb-1 min-w-0 w-full ${CHAT_MARKDOWN_TEXT_CLASS}`}
+              >
+                <MarkdownContent content={msg.text} streaming={isStreaming} />
+              </div>
+            )}
+            {row.type === 'assistant-tools' && row.toolCalls && (
+              <ToolCallsSection
+                toolCalls={row.toolCalls}
+                expandAllTools={expandAllTools}
+                toolAutoExpandExclusions={toolAutoExpandExclusions}
+                onNavigateToSession={onNavigateToSession}
+              />
+            )}
+            {row.type === 'assistant-thinking' && (
+              <div
+                data-slot="session-turn-thinking"
+                className="text-[var(--color-text-muted)] animate-pulse"
+              >
+                Thinking...
+              </div>
+            )}
+          </article>
+        </>
+      );
+    },
+    [
+      activeSearchMatchId,
+      deepLinkMessageId,
+      expandAllTools,
+      focusedId,
+      handleKeyNavigate,
+      handleRequestFocus,
+      matchedIdSet,
+      messageById,
+      onNavigateToSession,
+      renderWholeMessage,
+      showThinking,
+      showUnreadDivider,
+      streamingMessageId,
+      toolAutoExpandExclusions,
+      unreadStartIndex,
+    ],
+  );
+
   if (shouldVirtualize) {
     return (
       <div
@@ -381,21 +504,21 @@ const MessageList = memo(function MessageList({
           style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
         >
           {rowVirtualizer.getVirtualItems().map((virtualRow) => {
-            const msg = messages[virtualRow.index];
-            if (!msg) return null;
+            const row = timelineRows[virtualRow.index];
+            if (!row) return null;
             return (
               <div
-                key={msg.id}
+                key={row.key}
                 data-index={virtualRow.index}
-                data-message-id={msg.id}
-                ref={getVirtualRefSetter(msg.id)}
+                data-message-id={row.messageId}
+                ref={getVirtualRefSetter(row.key)}
                 className="absolute left-0 top-0 w-full"
                 style={{
                   transform: `translateY(${virtualRow.start}px)`,
                 }}
               >
                 <div className="pb-5">
-                  {renderMessageRow(msg, virtualRow.index)}
+                  {renderTimelineRow(row, virtualRow.index)}
                 </div>
               </div>
             );
@@ -419,7 +542,7 @@ const MessageList = memo(function MessageList({
             data-message-id={msg.id}
             ref={getRefSetter(msg.id)}
           >
-            {renderMessageRow(msg, index)}
+            {renderWholeMessage(msg, index)}
           </div>
         );
       })}

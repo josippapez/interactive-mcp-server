@@ -33,6 +33,48 @@ describe('bridgeEvent', () => {
     ]);
   });
 
+  it('forwards retry details from the session.status retry variant', () => {
+    const events = bridgeEvent({
+      type: 'session.status',
+      properties: {
+        sessionID: 'ses_1',
+        status: {
+          type: 'retry',
+          attempt: 2,
+          message: 'The usage limit has been reached',
+          next: 1_780_000_000_000,
+        },
+      },
+    } as SdkEvent);
+
+    expect(events).toEqual([
+      {
+        type: 'session.status',
+        sessionId: 'ses_1',
+        status: 'streaming',
+        retry: {
+          attempt: 2,
+          message: 'The usage limit has been reached',
+          next: 1_780_000_000_000,
+        },
+      },
+    ]);
+  });
+
+  it('maps busy session.status without a retry payload', () => {
+    const events = bridgeEvent({
+      type: 'session.status',
+      properties: {
+        sessionID: 'ses_1',
+        status: { type: 'busy' },
+      },
+    } as SdkEvent);
+
+    expect(events).toEqual([
+      { type: 'session.status', sessionId: 'ses_1', status: 'streaming' },
+    ]);
+  });
+
   it('maps permission asked directory from the event envelope', () => {
     const events = bridgeEvent(
       {

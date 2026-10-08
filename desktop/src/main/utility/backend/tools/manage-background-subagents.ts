@@ -29,6 +29,7 @@ import {
   getOpenCodePort,
   invalidateSessionTree,
 } from '../session-tree-service';
+import { buildBackgroundSubagentMessage } from './background-subagent-message';
 
 type BackgroundSubagentState = BackgroundSubagentRecord['status'];
 
@@ -86,6 +87,7 @@ This tool creates child OpenCode sessions and sends their prompt with prompt_asy
 - (!important!) Child sessions attach to the current parent OpenCode session. By default they run in the parent's resolved baseDirectory; pass baseDirectory only when the child should run in a different working directory while still staying attached to the same parent session.
 - (!important!) For cross-agent coordination (pausing work, requesting a wait, signalling handoff, sharing intermediate findings, reporting progress, or notifying completion outside of the normal completion-notification path) use the companion tool \`message_background_subagent\`. Do NOT spawn an extra subagent just to deliver a message, and do NOT rely on polling \`status\`/\`output\` when an explicit message is more appropriate.
 - (!important!) \`message_background_subagent\` is bidirectional. Parent → child: pass \`direction="to_subagent"\` and either \`backgroundId\` (returned from \`start\`) or \`targetSessionId\`. Child → parent: pass \`direction="to_parent"\` plus its own \`openCodeSessionId\`; the message is injected into the parent session. Sibling → sibling: pass \`targetSessionId\` of the peer (no automatic sibling discovery — the parent must hand peer session ids to children in their spawn prompts when sibling coordination is required).
+- (!important!) Parent agents can also use action="message" with id plus message to send a no-reply status-check or coordination note to a tracked running child before starting overlapping work. This is a convenience wrapper around the same no-reply message envelope used by \`message_background_subagent\`; use the companion tool directly for child→parent or sibling messages.
 - (!important!) When you start a background subagent that may need to coordinate, include in its initial prompt the peer/parent session ids it will be allowed to talk to, plus an instruction to use \`message_background_subagent\` for those specific coordination events.
 </importantNotes>
 
@@ -94,6 +96,7 @@ This tool creates child OpenCode sessions and sends their prompt with prompt_asy
 - "models": List connected provider/model pairs, recommendations, and suggested variants that are valid for start providerId/modelId.
 - "list": List background subagents started through this MCP server process.
 - "status": Refresh one background subagent's status. Requires id.
+- "message": Send a no-reply status-check/coordination message to one tracked background subagent. Requires id and message. Optional reason.
 - "wait": Wait for one background subagent's OpenCode session to become idle, then refresh and return its record. Requires id.
 - "output": Return current assistant output for one background subagent. Requires id.
 - "cancel": Abort a running background subagent. Requires id.
@@ -406,6 +409,24 @@ export function buildBackgroundSubagentCompletionInjection(input: {
   };
 }
 
+export function buildBackgroundSubagentCoordinationMessage(input: {
+  record: Pick<BackgroundSubagentRecord, 'sessionId' | 'parentSessionId'>;
+  message: string;
+  reason?: string;
+}): { sessionId: string; message: string; noReply: true } {
+  return {
+    sessionId: input.record.sessionId,
+    message: buildBackgroundSubagentMessage({
+      direction: 'to_subagent',
+      fromSessionId: input.record.parentSessionId,
+      toSessionId: input.record.sessionId,
+      message: input.message,
+      reason: input.reason,
+    }),
+    noReply: true,
+  };
+}
+
 async function getLiveStatus(
   openCodePort: number,
   sessionId: string,
@@ -617,6 +638,7 @@ export function registerManageBackgroundSubagentsTool(
           'models',
           'list',
           'status',
+          'message',
           'wait',
           'output',
           'cancel',
@@ -626,6 +648,16 @@ export function registerManageBackgroundSubagentsTool(
           .string()
           .optional()
           .describe('Prompt for the child subagent.'),
+        message: z
+          .string()
+          .optional()
+          .describe(
+            'No-reply status-check/coordination message for action="message".',
+          ),
+        reason: z
+          .string()
+          .optional()
+          .describe('Optional short coordination reason for action="message".'),
         title: z.string().optional().describe('Optional child session title.'),
         agent: z
           .string()
@@ -669,6 +701,8 @@ export function registerManageBackgroundSubagentsTool(
       action,
       id,
       prompt,
+      message,
+      reason,
       title,
       agent,
       providerId,
@@ -916,6 +950,50 @@ export function registerManageBackgroundSubagentsTool(
             ok: true,
             action: 'status',
             backgroundSubagent: serializeBackgroundSubagentRecord(record),
+          });
+        }
+
+        case 'message': {
+          if (!id)
+            return jsonError('MISSING_ID', 'The "message" action requires id.');
+          if (!message || !message.trim()) {
+            return jsonError(
+              'MISSING_MESSAGE',
+              'The "message" action requires a non-empty message.',
+            );
+          }
+          const record = getRecordById(id);
+          if (!record)
+            return jsonError(
+              'NOT_FOUND',
+              `No background subagent found for id ${id}.`,
+            );
+          await refreshRecordStatus(record, openCodePort);
+          const injection = buildBackgroundSubagentCoordinationMessage({
+            record,
+            message,
+            reason,
+          });
+          const injected = await injectOpenCodeMessage(
+            injection.sessionId,
+            injection.message,
+            undefined,
+            openCodePort,
+            undefined,
+            injection.noReply,
+          );
+          if (!injected.ok) {
+            return jsonError(
+              'INJECT_FAILED',
+              injected.error ?? 'Failed to inject message into target session.',
+            );
+          }
+          return jsonResult({
+            ok: true,
+            action: 'message',
+            backgroundSubagent: serializeBackgroundSubagentRecord(record),
+            toSessionId: record.sessionId,
+            noReply: true,
           });
         }
 

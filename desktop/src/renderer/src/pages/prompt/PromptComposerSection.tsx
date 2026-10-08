@@ -1,10 +1,14 @@
 import ChannelComposer from '../../components/prompt/ChannelComposer';
+import QuestionDock from '../../components/prompt/QuestionDock';
 import { SessionLoadedSkillsPanel } from '../../components/prompt/SessionLoadedSkillsPanel';
 import type { ModelOverride } from '../../hooks/useProviderInjection';
 import type { Model } from '../../hooks/useProviders';
 import type { NativeOpenCodeSkill } from '../../../../preload/api/types';
 import type { Attachment } from '../../types';
+import type { PendingQuestion } from '../../types';
+import type { McpStatusPanelProps } from '../../components/prompt/McpStatusPanel';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
+import type { QuestionDockLayout } from '../../components/prompt/question-dock-display';
 
 type Props = {
   promptActive: boolean;
@@ -25,6 +29,9 @@ type Props = {
   activeSkills: NativeOpenCodeSkill[];
   connectionId: string | null;
   docContextEnabled: boolean;
+  mcpStatus?: McpStatusPanelProps;
+  pendingQuestion?: PendingQuestion;
+  questionDockLayout: QuestionDockLayout;
   onSubmit: (text: string, attachments?: Attachment[]) => void;
   onQueueSubmit: (text: string, attachments?: Attachment[]) => void;
   onSubmitWithReply?: (
@@ -38,6 +45,12 @@ type Props = {
   onCommandPaletteChange: (open: boolean) => void;
   onModelSelect: (model: Model, variant?: string) => void;
   onToggleDocContext: () => void;
+  onReplyQuestion: (
+    requestId: string,
+    answers: string[][],
+    sessionID: string,
+  ) => void;
+  onRejectQuestion: (requestId: string, sessionID: string) => void;
   currentModelOverride?: ModelOverride;
 };
 
@@ -60,6 +73,9 @@ export function PromptComposerSection({
   activeSkills,
   connectionId,
   docContextEnabled,
+  mcpStatus,
+  pendingQuestion,
+  questionDockLayout,
   onSubmit,
   onQueueSubmit,
   onSubmitWithReply,
@@ -67,6 +83,8 @@ export function PromptComposerSection({
   onCommandPaletteChange,
   onModelSelect,
   onToggleDocContext,
+  onReplyQuestion,
+  onRejectQuestion,
   currentModelOverride,
 }: Props): React.ReactElement {
   const logComposerSubmit = (
@@ -98,31 +116,50 @@ export function PromptComposerSection({
     );
   };
 
+  const questionDock = pendingQuestion ? (
+    <div className={questionDockLayout.rootContainer}>
+      <div className={questionDockLayout.desktopContainer}>
+        <QuestionDock
+          question={pendingQuestion}
+          onReply={onReplyQuestion}
+          onReject={onRejectQuestion}
+          fill
+          className={questionDockLayout.dockClassName}
+        />
+      </div>
+    </div>
+  ) : null;
+
   if (promptActive) {
     return (
-      <ChannelComposer
-        enabled
-        baseDirectory={sessionBaseDirectory ?? promptBaseDirectory}
-        placeholder={promptPlaceholder}
-        onSubmit={onSubmit}
-        sessionId={providerSessionId}
-        providerSessionId={providerSessionId}
-        commandPaletteOpen={commandPaletteOpen}
-        onCommandPaletteChange={onCommandPaletteChange}
-        modelId={modelId ?? undefined}
-        providerId={providerId ?? undefined}
-        variant={variant}
-        onModelSelect={onModelSelect}
-        isOpenCodeSession={isOpenCodeSession}
-        connectionId={connectionId}
-        docContextEnabled={docContextEnabled}
-        onToggleDocContext={onToggleDocContext}
-      />
+      <>
+        {questionDock}
+        <ChannelComposer
+          enabled
+          baseDirectory={sessionBaseDirectory ?? promptBaseDirectory}
+          placeholder={promptPlaceholder}
+          onSubmit={onSubmit}
+          sessionId={providerSessionId}
+          providerSessionId={providerSessionId}
+          commandPaletteOpen={commandPaletteOpen}
+          onCommandPaletteChange={onCommandPaletteChange}
+          modelId={modelId ?? undefined}
+          providerId={providerId ?? undefined}
+          variant={variant}
+          onModelSelect={onModelSelect}
+          isOpenCodeSession={isOpenCodeSession}
+          connectionId={connectionId}
+          docContextEnabled={docContextEnabled}
+          onToggleDocContext={onToggleDocContext}
+          mcpStatus={mcpStatus}
+        />
+      </>
     );
   }
 
   return (
     <>
+      {questionDock}
       {isOpenCodeSession && <SessionLoadedSkillsPanel skills={activeSkills} />}
       <ChannelComposer
         enabled={enabled}
@@ -160,6 +197,7 @@ export function PromptComposerSection({
         connectionId={connectionId}
         docContextEnabled={docContextEnabled}
         onToggleDocContext={onToggleDocContext}
+        mcpStatus={mcpStatus}
       />
     </>
   );

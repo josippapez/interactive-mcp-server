@@ -16,7 +16,7 @@ import {
 import { useStartupHistory } from './startup-history';
 import { useStartupPrompts } from './startup-prompts';
 import { useChannelHistoryLoader } from './channel-history';
-import { useSideEffects } from './side-effects';
+import { resolveNodeHistoryLoadId, useSideEffects } from './side-effects';
 import { usePromptHandlers } from './prompt-handlers';
 import { useSessionHandlers } from './session-handlers';
 import { useMessageHandlers } from './message-handlers';
@@ -158,6 +158,26 @@ export function useConnections(onActivatePromptTab: () => void) {
     loadedHistoryIds,
   });
 
+  const ensureChannelHistoryLoaded = useCallback(
+    (sessionId: string) => {
+      const exactNode = nodesRef.current.get(sessionId) ?? null;
+      const matchedNode =
+        exactNode ??
+        [...nodesRef.current.values()].find(
+          (node) => node.providerSessionId === sessionId,
+        ) ??
+        null;
+      const historyId = resolveNodeHistoryLoadId(matchedNode);
+      if (!historyId || loadedHistoryIds.current.has(historyId)) {
+        return;
+      }
+
+      loadedHistoryIds.current.add(historyId);
+      void loadChannelHistory(historyId);
+    },
+    [loadChannelHistory],
+  );
+
   // ---------------------------------------------------------------------------
   // Derived values
   // ---------------------------------------------------------------------------
@@ -182,7 +202,12 @@ export function useConnections(onActivatePromptTab: () => void) {
   // Handler sub-hooks
   // ---------------------------------------------------------------------------
 
-  const { handleSubmit, handleSelectOption } = usePromptHandlers({
+  const {
+    handleSubmit,
+    handleSubmitForSession,
+    handleSelectOption,
+    handleSelectOptionForSession,
+  } = usePromptHandlers({
     nodesRef,
     setNodes,
   });
@@ -202,7 +227,9 @@ export function useConnections(onActivatePromptTab: () => void) {
 
   const {
     handleQueueSessionMessage,
+    handleQueueSessionMessageForSession,
     handleInjectWithReply,
+    handleInjectWithReplyForSession,
     handleClearChannelMessages,
   } = useMessageHandlers({
     nodesRef,
@@ -246,11 +273,15 @@ export function useConnections(onActivatePromptTab: () => void) {
     activeConn,
     clientInfo,
     handleSubmit,
+    handleSubmitForSession,
     handleSelectOption,
+    handleSelectOptionForSession,
     handleDismissStatus,
     handleDismissSession,
     handleQueueSessionMessage,
+    handleQueueSessionMessageForSession,
     handleInjectWithReply,
+    handleInjectWithReplyForSession,
     handleClearChannelMessages,
     handleRemoveSession,
     handleToggleDocContext,
@@ -258,5 +289,6 @@ export function useConnections(onActivatePromptTab: () => void) {
     handleReplyQuestion,
     handleRejectQuestion,
     jumpToFirstPendingPrompt,
+    ensureChannelHistoryLoaded,
   };
 }

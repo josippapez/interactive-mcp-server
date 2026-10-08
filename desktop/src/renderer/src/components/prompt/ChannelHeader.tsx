@@ -40,6 +40,9 @@ type Props = {
   onChatTextSizeChange?: (value: ChatTextSize) => void;
   chatFullWidth?: boolean;
   onToggleChatFullWidth?: () => void;
+  reviewOpen?: boolean;
+  reviewCount?: number;
+  onToggleReview?: () => void;
   /**
    * Copy the full session transcript to the clipboard as Markdown.
    * Resolves to `true` on success, `false` on failure or empty transcript.
@@ -59,15 +62,6 @@ type Props = {
   onSearchNext?: () => void;
   onSearchPrevious?: () => void;
   onSearchClear?: () => void;
-  /**
-   * Whether the floating Tasks panel is currently open. Omit to hide the
-   * Tasks toggle button (e.g. for non-OpenCode sessions).
-   */
-  tasksOpen?: boolean;
-  /** Toggle callback for the Tasks panel. */
-  onToggleTasks?: () => void;
-  /** Active task count, displayed as a badge on the toggle when > 0. */
-  activeTaskCount?: number;
 };
 
 /** Git branch icon */
@@ -150,6 +144,9 @@ function ChannelHeader({
   onChatTextSizeChange,
   chatFullWidth = false,
   onToggleChatFullWidth,
+  reviewOpen = false,
+  reviewCount = 0,
+  onToggleReview,
   onCopyTranscript,
   onOpenSessionLog,
   onCopySessionLogPath,
@@ -163,9 +160,6 @@ function ChannelHeader({
   onSearchNext,
   onSearchPrevious,
   onSearchClear,
-  tasksOpen = false,
-  onToggleTasks,
-  activeTaskCount = 0,
 }: Props): React.ReactElement {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [confirmAbort, setConfirmAbort] = useState(false);
@@ -252,61 +246,6 @@ function ChannelHeader({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-surface)]/80 p-1 shadow-sm">
-            {onToggleTasks && (
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={onToggleTasks}
-                      className={`relative h-7 w-7 hover:bg-[var(--color-border)] ${
-                        tasksOpen
-                          ? 'text-[var(--color-agent)]'
-                          : 'text-[var(--color-text-faint)] hover:text-[var(--color-text)]'
-                      }`}
-                      aria-label={
-                        tasksOpen ? 'Hide tasks panel' : 'Show tasks panel'
-                      }
-                      aria-pressed={tasksOpen}
-                    >
-                      {/* Checklist icon */}
-                      <svg
-                        width="14"
-                        height="14"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <path d="M2.5 4l1.5 1.5L6.5 3" />
-                        <path d="M2.5 8l1.5 1.5L6.5 7" />
-                        <path d="M2.5 12l1.5 1.5L6.5 11" />
-                        <path d="M9 4h5" />
-                        <path d="M9 8h5" />
-                        <path d="M9 12h5" />
-                      </svg>
-                      {activeTaskCount > 0 && (
-                        <span
-                          aria-hidden="true"
-                          className="absolute -right-0.5 -top-0.5 inline-flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-[var(--color-user)] px-1 text-[9px] font-semibold leading-none text-white"
-                        >
-                          {activeTaskCount > 99 ? '99+' : activeTaskCount}
-                        </span>
-                      )}
-                    </Button>
-                  }
-                />
-                <TooltipContent>
-                  {tasksOpen
-                    ? 'Hide tasks panel'
-                    : `Show tasks panel${activeTaskCount > 0 ? ` (${activeTaskCount} active)` : ''}`}
-                </TooltipContent>
-              </Tooltip>
-            )}
             {onSearchQueryChange && onSearchOpenChange && (
               <Tooltip>
                 <TooltipTrigger
@@ -372,6 +311,50 @@ function ChannelHeader({
                   }
                 />
                 <TooltipContent>Abort running session</TooltipContent>
+              </Tooltip>
+            )}
+            {onToggleReview && (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={onToggleReview}
+                      className={`relative h-7 w-7 text-[var(--color-text-faint)] hover:text-[var(--color-text)] hover:bg-[var(--color-border)] ${
+                        reviewOpen ? 'text-[var(--color-agent)]' : ''
+                      }`}
+                      aria-label={
+                        reviewOpen ? 'Hide inspector' : 'Show inspector'
+                      }
+                      aria-pressed={reviewOpen}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <path d="M3 3.5h10" />
+                        <path d="M3 8h10" />
+                        <path d="M3 12.5h6" />
+                      </svg>
+                      {reviewCount > 0 && (
+                        <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[var(--color-agent)] px-1 text-[9px] leading-none text-[var(--color-accent-text)]">
+                          {reviewCount > 9 ? '9+' : reviewCount}
+                        </span>
+                      )}
+                    </Button>
+                  }
+                />
+                <TooltipContent>
+                  {reviewOpen ? 'Hide inspector' : 'Show inspector'}
+                </TooltipContent>
               </Tooltip>
             )}
             {onToggleExpandAllTools && (

@@ -1,6 +1,9 @@
 import { useCallback } from 'react';
 import type { Attachment, SessionNode } from '../../types';
-import { resolveInteractiveMessageTarget } from '../../store/message-dispatch';
+import {
+  resolveInteractiveMessageTarget,
+  resolveTargetBySessionId,
+} from '../../store/message-dispatch';
 import type { ModelOverride } from '../useProviderInjection';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
 import { appendChannelMessage } from './channel-message-state';
@@ -40,6 +43,77 @@ export function useMessageHandlers({
   setNodes,
   inject,
 }: MessageHandlersOptions) {
+  const appendOutboundMessage = useCallback(
+    (
+      target: NonNullable<ReturnType<typeof resolveTargetBySessionId>>,
+      outboundId: string,
+      message: string,
+      attachments?: Attachment[],
+    ) => {
+      setNodes((prev) => {
+        const key = target.nodeKey;
+        if (!key) return prev;
+        const node = prev.get(key);
+        if (
+          !node ||
+          node.channelMessages.some((item) => item.id === outboundId)
+        ) {
+          return prev;
+        }
+        const next = new Map(prev);
+        next.set(key, {
+          ...node,
+          channelMessages: appendChannelMessage(node.channelMessages, {
+            id: outboundId,
+            kind: 'outbound' as const,
+            text: message,
+            timestamp: new Date(),
+            attachments,
+          }),
+        });
+        return next;
+      });
+    },
+    [setNodes],
+  );
+
+  const handleQueueSessionMessageForSession = useCallback(
+    (sessionId: string, message: string, attachments?: Attachment[]) => {
+      const target = resolveTargetBySessionId(nodesRef.current, sessionId);
+
+      logHandler(
+        'handleQueueSessionMessageForSession',
+        'called',
+        {
+          sessionId,
+          resolvedSessionId: target?.sessionId ?? sessionId,
+          nodeKey: target?.nodeKey,
+          messageLength: message.length,
+        },
+        target?.sessionId ?? sessionId,
+      );
+
+      if (!target) {
+        logHandler(
+          'handleQueueSessionMessageForSession',
+          'target-not-found',
+          {
+            sessionId,
+            nodesCount: nodesRef.current.size,
+          },
+          sessionId,
+        );
+        return;
+      }
+
+      const outboundId = `local-outbound-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      window.api.queueSessionMessage(target.sessionId, message);
+      appendOutboundMessage(target, outboundId, message, attachments);
+      void inject(target.sessionId, outboundId, message, attachments);
+    },
+    [appendOutboundMessage, inject, nodesRef],
+  );
+
   const handleQueueSessionMessage = useCallback(
     (sessionId: string, message: string, attachments?: Attachment[]) => {
       const activeChannelId = getActiveChannelIdSnapshot();
@@ -80,35 +154,72 @@ export function useMessageHandlers({
 
       const outboundId = `local-outbound-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-      // Always queue in SQLite for VS Code extension polling
-      // Use the resolved session ID if available, fallback to provided sessionId
       window.api.queueSessionMessage(target.sessionId, message);
-
-      // Update the UI with the outbound message
-      setNodes((prev) => {
-        const key = target.nodeKey;
-        if (!key) return prev;
-        const node = prev.get(key)!;
-        if (node.channelMessages.some((m) => m.id === outboundId)) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(key, {
-          ...node,
-          channelMessages: appendChannelMessage(node.channelMessages, {
-            id: outboundId,
-            kind: 'outbound' as const,
-            text: message,
-            timestamp: new Date(),
-            attachments,
-          }),
-        });
-        return next;
-      });
-
+      appendOutboundMessage(target, outboundId, message, attachments);
       void inject(target.sessionId, outboundId, message, attachments);
     },
-    [nodesRef, setNodes, inject],
+    [appendOutboundMessage, inject, nodesRef],
+  );
+
+  const handleInjectWithReplyForSession = useCallback(
+    (
+      sessionId: string,
+      message: string,
+      attachments?: Attachment[],
+      modelOverride?: ModelOverride,
+      agent?: string,
+    ) => {
+      const target = resolveTargetBySessionId(nodesRef.current, sessionId);
+
+      logHandler(
+        'handleInjectWithReplyForSession',
+        'called',
+        {
+          sessionId,
+          resolvedSessionId: target?.sessionId ?? sessionId,
+          nodeKey: target?.nodeKey,
+          nodeTitle: target?.node?.title,
+          messageLength: message.length,
+          attachmentsCount: attachments?.length ?? 0,
+          hasModelOverride: !!modelOverride,
+          modelOverride: modelOverride
+            ? {
+                providerId: modelOverride.providerId,
+                modelId: modelOverride.modelId,
+                variant: modelOverride.variant ?? '(default)',
+              }
+            : null,
+          agent: agent ?? '(none)',
+        },
+        target?.sessionId ?? sessionId,
+      );
+
+      if (!target) {
+        logHandler(
+          'handleInjectWithReplyForSession',
+          'target-not-found',
+          {
+            sessionId,
+            nodesCount: nodesRef.current.size,
+          },
+          sessionId,
+        );
+        return;
+      }
+
+      const outboundId = `local-outbound-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      appendOutboundMessage(target, outboundId, message, attachments);
+      void inject(
+        target.sessionId,
+        outboundId,
+        message,
+        attachments,
+        false,
+        modelOverride,
+        agent,
+      );
+    },
+    [appendOutboundMessage, inject, nodesRef],
   );
 
   /**
@@ -177,52 +288,7 @@ export function useMessageHandlers({
 
       const outboundId = `local-outbound-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
-      // Add outbound message to UI immediately using resolved target
-      setNodes((prev) => {
-        const key = target.nodeKey;
-        if (!key) {
-          logHandler(
-            'handleInjectWithReply',
-            'CRITICAL-key-null',
-            {
-              sessionId,
-              outboundId,
-              nodesCount: prev.size,
-            },
-            sessionId,
-          );
-          return prev;
-        }
-        const node = prev.get(key)!;
-        if (node.channelMessages.some((m) => m.id === outboundId)) {
-          return prev;
-        }
-        const next = new Map(prev);
-        next.set(key, {
-          ...node,
-          channelMessages: appendChannelMessage(node.channelMessages, {
-            id: outboundId,
-            kind: 'outbound' as const,
-            text: message,
-            timestamp: new Date(),
-            attachments,
-          }),
-        });
-        logHandler(
-          'handleInjectWithReply',
-          'message-added',
-          {
-            key,
-            outboundId,
-            newMessagesCount: node.channelMessages.length + 1,
-          },
-          target.sessionId,
-        );
-        return next;
-      });
-
-      // Inject with noReply=false to trigger agent response
-      // Use the resolved session ID for correct routing
+      appendOutboundMessage(target, outboundId, message, attachments);
       void inject(
         target.sessionId,
         outboundId,
@@ -233,7 +299,7 @@ export function useMessageHandlers({
         agent,
       );
     },
-    [nodesRef, setNodes, inject],
+    [appendOutboundMessage, inject, nodesRef],
   );
 
   const handleClearChannelMessages = useCallback((sessionId: string) => {
@@ -242,7 +308,9 @@ export function useMessageHandlers({
 
   return {
     handleQueueSessionMessage,
+    handleQueueSessionMessageForSession,
     handleInjectWithReply,
+    handleInjectWithReplyForSession,
     handleClearChannelMessages,
   };
 }

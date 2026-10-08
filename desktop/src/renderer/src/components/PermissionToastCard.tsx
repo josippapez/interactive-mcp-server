@@ -1,5 +1,9 @@
 import { AlertTriangle } from 'lucide-react';
 import type { PendingPermission } from '../types';
+import {
+  getPermissionActions,
+  type PermissionAction,
+} from './permission-actions';
 import { getPermissionDisplay } from './permission-display';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
@@ -30,6 +34,11 @@ export default function PermissionToastCard({
   const truncatedTitle =
     sessionTitle.length > 24 ? `${sessionTitle.slice(0, 24)}…` : sessionTitle;
   const display = getPermissionDisplay(perm);
+  const handlers: Record<PermissionAction, () => void> = {
+    once: onAllowOnce,
+    always: onAlways,
+    reject: onReject,
+  };
 
   return (
     <div className="w-[380px] rounded-lg border border-border bg-popover text-popover-foreground shadow-lg overflow-hidden">
@@ -83,22 +92,19 @@ export default function PermissionToastCard({
       </div>
 
       <div className="flex items-center gap-2 px-3 py-2 bg-muted/40 border-t border-border">
-        <Button size="sm" onClick={onAllowOnce}>
-          Allow Once
-        </Button>
-        {perm.always && (
-          <Button variant="outline" size="sm" onClick={onAlways}>
-            Always
+        {getPermissionActions().map((item) => (
+          <Button
+            key={item.action}
+            variant={item.variant}
+            size="sm"
+            onClick={handlers[item.action]}
+            className={
+              item.action === 'reject' ? 'hover:text-destructive' : undefined
+            }
+          >
+            {item.label}
           </Button>
-        )}
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={onReject}
-          className="ml-auto hover:text-destructive"
-        >
-          Reject
-        </Button>
+        ))}
       </div>
     </div>
   );

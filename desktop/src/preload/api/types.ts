@@ -504,6 +504,29 @@ export type ConversationEvent =
       sessionId: string;
       status: 'idle' | 'streaming' | 'error';
       error?: string;
+      /**
+       * Present while the provider request is in a retry/backoff cycle
+       * (SDK `SessionStatus` type='retry', e.g. 429 usage-limit errors).
+       */
+      retry?: {
+        attempt: number;
+        message: string;
+        /** Epoch ms of the next retry attempt. */
+        next: number;
+        /**
+         * Optional provider-supplied recovery suggestion (v2 SDK). Carries a
+         * human-facing title/message and an optional link the user can act on
+         * (e.g. "upgrade plan", "switch model").
+         */
+        action?: {
+          reason: string;
+          provider: string;
+          title: string;
+          message: string;
+          label: string;
+          link?: string;
+        };
+      };
     }
   | {
       type: 'session.compacted';
@@ -636,13 +659,7 @@ export type ConversationEvent =
   | {
       type: 'session.diff';
       sessionId: string;
-      diff: Array<{
-        file?: string;
-        patch?: string;
-        additions: number;
-        deletions: number;
-        status?: 'added' | 'deleted' | 'modified';
-      }>;
+      diff: ReviewDiffFile[];
     }
   | {
       type: 'mcp.tools.changed';
@@ -656,6 +673,16 @@ export type ConversationEvent =
   | {
       type: 'installation.update-available';
       version: string;
+    }
+  // ── Main-side SSE pump connection health. Emitted by `event-stream.ts`
+  //    when the OpenCode event stream drops (reconnecting) or re-opens
+  //    (connected), so the renderer can surface backend connectivity
+  //    instead of reconnecting silently.
+  | {
+      type: 'connection.status';
+      status: 'connected' | 'reconnecting';
+      /** Consecutive failed connect attempts; 0 once connected. */
+      attempt: number;
     };
 
 /**
@@ -671,6 +698,16 @@ export type ConversationBatch = {
   flushedAt: number;
 };
 
+export type ReviewDiffSource = 'git' | 'branch' | 'turn';
+
+export type ReviewDiffFile = {
+  file: string;
+  patch?: string;
+  additions: number;
+  deletions: number;
+  status?: 'added' | 'deleted' | 'modified';
+};
+
 // Shared node shape used by session tree events.
 export type SessionTreeNode = {
   providerSessionId: string;
@@ -679,6 +716,7 @@ export type SessionTreeNode = {
   directory: string;
   createdAt: number;
   updatedAt: number;
+  archivedAt: number | null;
   depth: number;
   connectionId: string | null;
   channelName: string | null;
@@ -702,5 +740,6 @@ export type SessionTreeResult = {
     path: string;
     limit: number;
     hasMore: boolean;
+    archived: boolean;
   }>;
 };

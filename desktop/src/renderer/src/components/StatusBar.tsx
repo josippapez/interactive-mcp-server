@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useTheme } from '../ThemeContext';
 import { useOpenCodeHealth } from '../hooks/useOpenCodeHealth';
 import { MCP_STATUS_REFRESH_EVENT } from '../hooks/useMcpServers';
+import { useConversationSelector } from '../store/conversation-store';
 import {
   Tooltip,
   TooltipContent,
@@ -38,6 +39,10 @@ export default function StatusBar({
     isChecking,
     refresh: refreshHealth,
   } = useOpenCodeHealth(isOpenCodeBackend);
+
+  // SSE pump connectivity — `reconnecting` while the OpenCode event
+  // stream is down and the main process is retrying.
+  const streamConnection = useConversationSelector((state) => state.connection);
 
   useEffect(() => {
     window.api.getServerStatus().then(setStatus);
@@ -181,6 +186,21 @@ export default function StatusBar({
                 <TooltipContent>Refresh OpenCode health status</TooltipContent>
               </Tooltip>
             </div>
+            {streamConnection.status === 'reconnecting' && (
+              <div
+                className="flex items-center gap-1.5 whitespace-nowrap shrink-0 text-yellow-500"
+                data-testid="stream-reconnecting"
+                title="Lost connection to the OpenCode event stream — reconnecting automatically"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-yellow-500 animate-pulse shrink-0" />
+                <span>
+                  Reconnecting…
+                  {streamConnection.attempt > 1
+                    ? ` (${streamConnection.attempt})`
+                    : ''}
+                </span>
+              </div>
+            )}
           </>
         )}
         {connectionCount > 0 && (

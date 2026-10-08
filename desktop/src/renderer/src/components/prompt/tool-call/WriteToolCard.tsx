@@ -16,7 +16,7 @@ import {
   ToolNameBadge,
   ToolStatusBadge,
   countDiagnostics,
-  extractDiagnosticsForFile,
+  extractVisibleErrorsForFile,
   splitPath,
 } from './ToolCallShared';
 import { classifyTool } from './tool-registry';
@@ -96,7 +96,7 @@ export const WriteToolCard = memo(function WriteToolCard({
   const lineCount = countLines(content);
   const showSuccessFooter =
     tool.status === 'completed' && isSuccessOutput(tool.output) && filePath;
-  const diagnostics = extractDiagnosticsForFile(tool.metadata, filePath);
+  const diagnostics = extractVisibleErrorsForFile(tool.metadata, filePath);
   const diagnosticCounts = countDiagnostics(diagnostics);
 
   return (

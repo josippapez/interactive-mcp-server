@@ -34,6 +34,7 @@ import type {
   ConversationMessagePart,
   ConversationSessionSideChannel,
   ConversationTodoItem,
+  ReviewDiffFile,
 } from '../../../preload/api/types';
 
 export type ConversationSessionStatus = 'idle' | 'streaming' | 'error';
@@ -43,6 +44,32 @@ export type ConversationFileEdit = {
   file: string;
   at: number;
 };
+
+/** Active provider retry (rate limit / transient failure) for a session. */
+export type ConversationRetryState = {
+  attempt: number;
+  message: string;
+  isRetryable: boolean;
+  statusCode?: number;
+  at: number;
+  /** Optional provider-supplied recovery suggestion (v2 SDK retry action). */
+  action?: {
+    reason: string;
+    provider: string;
+    title: string;
+    message: string;
+    label: string;
+    link?: string;
+  };
+};
+
+/** Main-process SSE pump connectivity (from `connection.status`). */
+export type ConversationConnectionState = {
+  status: 'connected' | 'reconnecting';
+  attempt: number;
+};
+
+export type ConversationReviewDiff = ReviewDiffFile;
 
 export type ConversationState = {
   /** Messages per session, sorted by id asc. */
@@ -55,12 +82,27 @@ export type ConversationState = {
   todos: Record<string, ConversationTodoItem[]>;
   /** Context usage per session (live updates from `context.usage`). */
   contextUsage: Record<string, ConversationContextUsage>;
+  /** Review diffs per session (live updates from `session.diff`). */
+  reviewDiffs: Record<string, ConversationReviewDiff[]>;
   /** Latest non-chat `session.next.*` side-channel metadata per session. */
   sessionSideChannels: Record<string, ConversationSessionSideChannel>;
   /** Most recent VCS branch reported by `vcs.updated`. */
   vcsBranch: string | null;
   /** Most recent file edit event (for cache invalidation / UX hints). */
   lastFileEdit: ConversationFileEdit | null;
+  /**
+   * Latest provider error message per session (from `session.status`
+   * error events). Cleared when the session starts streaming again or
+   * the user dismisses the banner.
+   */
+  errors: Record<string, string>;
+  /**
+   * Active retry per session (from `session.next.retried`). Cleared when
+   * message data resumes flowing or the session reaches idle/error.
+   */
+  retries: Record<string, ConversationRetryState>;
+  /** SSE pump connectivity; `reconnecting` while the stream is down. */
+  connection: ConversationConnectionState;
   /** Last seen batch seq, for gap detection telemetry. */
   lastSeq: number;
 };
@@ -71,9 +113,13 @@ export const initialConversationState: ConversationState = {
   status: {},
   todos: {},
   contextUsage: {},
+  reviewDiffs: {},
   sessionSideChannels: {},
   vcsBranch: null,
   lastFileEdit: null,
+  errors: {},
+  retries: {},
+  connection: { status: 'connected', attempt: 0 },
   lastSeq: 0,
 };
 
@@ -196,11 +242,57 @@ function applyPartDeltaDraft(
 
 function applySessionStatusDraft(
   draft: ConversationDraft,
-  sessionId: string,
-  status: ConversationSessionStatus,
+  event: Extract<ConversationEvent, { type: 'session.status' }>,
 ): void {
+  const { sessionId, status, error, retry } = event;
+  if (retry) {
+    // Provider backoff in progress (SDK SessionStatus type='retry',
+    // e.g. 429 usage-limit). Surface it for the chat banner.
+    draft.retries[sessionId] = {
+      attempt: retry.attempt,
+      message: retry.message,
+      isRetryable: true,
+      at: retry.next,
+      ...(retry.action ? { action: retry.action } : {}),
+    };
+  } else if (draft.retries[sessionId]) {
+    // Any non-retry status (busy resume, idle, error) ends the cycle.
+    delete draft.retries[sessionId];
+  }
+  if (status === 'error') {
+    draft.errors[sessionId] = error ?? 'Unknown error';
+  } else if (status === 'streaming' && draft.errors[sessionId]) {
+    // New activity supersedes a stale error banner.
+    delete draft.errors[sessionId];
+  }
   if (draft.status[sessionId] === status) return;
   draft.status[sessionId] = status;
+}
+
+function applySessionRetriedDraft(
+  draft: ConversationDraft,
+  event: Extract<ConversationEvent, { type: 'session.next.retried' }>,
+): void {
+  draft.retries[event.sessionId] = {
+    attempt: event.attempt,
+    message: event.error.message,
+    isRetryable: event.error.isRetryable,
+    statusCode: event.error.statusCode,
+    at: event.timestamp,
+  };
+}
+
+function applyConnectionStatusDraft(
+  draft: ConversationDraft,
+  event: Extract<ConversationEvent, { type: 'connection.status' }>,
+): void {
+  if (
+    draft.connection.status === event.status &&
+    draft.connection.attempt === event.attempt
+  ) {
+    return;
+  }
+  draft.connection = { status: event.status, attempt: event.attempt };
 }
 
 function applySessionCompactedDraft(
@@ -369,6 +461,14 @@ function applyFileEditedDraft(
   draft.lastFileEdit = { directory, file, at: Date.now() };
 }
 
+function applySessionDiffDraft(
+  draft: ConversationDraft,
+  sessionId: string,
+  diff: readonly ConversationReviewDiff[],
+): void {
+  draft.reviewDiffs[sessionId] = diff.map((item) => ({ ...item }));
+}
+
 /**
  * Draft-mutating dispatch for a single event. Never allocates a new
  * root state — all changes flow through the supplied draft.
@@ -391,10 +491,11 @@ function applyEventToDraft(
       applyPartDeltaDraft(draft, event.messageId, event.partId, event.delta);
       return;
     case 'session.status':
-      applySessionStatusDraft(draft, event.sessionId, event.status);
+      applySessionStatusDraft(draft, event);
       return;
     case 'session.compacted':
       applySessionCompactedDraft(draft, event.sessionId);
+      delete draft.reviewDiffs[event.sessionId];
       return;
     case 'todo.updated':
       applyTodosUpdatedDraft(draft, event.sessionId, event.todos);
@@ -432,6 +533,8 @@ function applyEventToDraft(
       applySessionNextStepStartedDraft(draft, event);
       return;
     case 'session.next.retried':
+      applySessionRetriedDraft(draft, event);
+      return;
     case 'session.next.compaction.started':
     case 'session.next.compaction.ended':
       return;
@@ -440,6 +543,9 @@ function applyEventToDraft(
       return;
     case 'file.edited':
       applyFileEditedDraft(draft, event.directory, event.file);
+      return;
+    case 'session.diff':
+      applySessionDiffDraft(draft, event.sessionId, event.diff);
       return;
     // Events below are consumed by dedicated hooks (usePermissionHandlers,
     // useQuestionHandlers, status/tools listeners) rather than by the
@@ -451,10 +557,12 @@ function applyEventToDraft(
     case 'permission.replied':
     case 'question.asked':
     case 'question.cleared':
-    case 'session.diff':
     case 'mcp.tools.changed':
     case 'mcp.browser.open.failed':
     case 'installation.update-available':
+      return;
+    case 'connection.status':
+      applyConnectionStatusDraft(draft, event);
       return;
     default: {
       // Exhaustiveness guard — compile error if a new event type is added

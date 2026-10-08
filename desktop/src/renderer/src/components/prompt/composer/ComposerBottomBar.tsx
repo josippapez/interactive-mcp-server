@@ -9,6 +9,8 @@ import { ArrowUpIcon, AttachIcon, DocIcon } from './ComposerIcons';
 import { ReplyToggle } from './ReplyToggle';
 import { RepositoryIndexBadge } from './RepositoryIndexBadge';
 import type { Provider } from '../../../hooks/useProviders';
+import { McpStatusDropdown } from '../McpStatusPanel';
+import type { McpStatusPanelProps } from '../McpStatusPanel';
 
 type ComposerBottomBarProps = {
   enabled: boolean;
@@ -39,6 +41,7 @@ type ComposerBottomBarProps = {
   onToggleDocContext: (() => void) | undefined;
   baseDirectory?: string | null;
   providerSessionId: string | null | undefined;
+  mcpStatus?: McpStatusPanelProps;
   // Attachment props
   onFilePicker: () => void;
   // Reply toggle props
@@ -78,6 +81,7 @@ function ComposerBottomBarComponent({
   onToggleDocContext,
   baseDirectory,
   providerSessionId,
+  mcpStatus,
   onFilePicker,
   showReplyButton,
   noReply,
@@ -87,9 +91,9 @@ function ComposerBottomBarComponent({
   submitLabel,
 }: ComposerBottomBarProps): React.ReactElement {
   return (
-    <div className="flex items-center gap-2 px-3 py-2">
+    <div className="flex flex-wrap items-start gap-2 px-3 py-2">
       {/* Left side - Model selector + variant + agent */}
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {showModelSelector && (
           <>
             <ModelChip
@@ -123,6 +127,7 @@ function ComposerBottomBarComponent({
           baseDirectory={baseDirectory}
           providerSessionId={providerSessionId}
         />
+        {mcpStatus && <McpStatusDropdown {...mcpStatus} />}
       </div>
 
       {/* Model popover - positioned above the model chip */}
@@ -148,10 +153,8 @@ function ComposerBottomBarComponent({
         />
       )}
 
-      <div className="flex-1" />
-
       {/* Right side - Actions */}
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="ml-auto flex shrink-0 items-center gap-1.5 self-end">
         {/* Doc context toggle — small circular icon button */}
         {onToggleDocContext && (
           <button

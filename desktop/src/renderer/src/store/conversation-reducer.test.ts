@@ -12,6 +12,7 @@ import {
 import {
   conversationStore,
   _resetConversationStoreForTest,
+  dismissSessionError,
   replaceSessionStatusSnapshot,
   seedMessages,
   seedSessionStatus,
@@ -49,6 +50,54 @@ function toolPart(
 }
 
 describe('conversation-reducer', () => {
+  it('stores session review diffs keyed by session id', () => {
+    const updated = applyConversationEvent(initialConversationState, {
+      type: 'session.diff',
+      sessionId: 'ses_1',
+      diff: [
+        {
+          file: 'src/app.ts',
+          patch: '@@ -1 +1 @@\n-old\n+new',
+          additions: 1,
+          deletions: 1,
+          status: 'modified',
+        },
+      ],
+    });
+
+    expect(updated.reviewDiffs.ses_1).toEqual([
+      {
+        file: 'src/app.ts',
+        patch: '@@ -1 +1 @@\n-old\n+new',
+        additions: 1,
+        deletions: 1,
+        status: 'modified',
+      },
+    ]);
+  });
+
+  it('clears session review diffs when a session is compacted', () => {
+    const seeded = applyConversationEvent(initialConversationState, {
+      type: 'session.diff',
+      sessionId: 'ses_1',
+      diff: [
+        {
+          file: 'src/app.ts',
+          additions: 1,
+          deletions: 0,
+        },
+      ],
+    });
+
+    const updated = applyConversationEvent(seeded, {
+      type: 'session.compacted',
+      sessionId: 'ses_1',
+      messageId: 'msg_1',
+    });
+
+    expect(updated.reviewDiffs.ses_1).toBeUndefined();
+  });
+
   it('preserves existing message variant when later updates omit it', () => {
     const seeded = applyConversationEvent(initialConversationState, {
       type: 'message.updated',
@@ -187,6 +236,134 @@ describe('conversation-reducer', () => {
     });
   });
 
+  it('tracks an active retry from session.next.retried', () => {
+    const updated = applyConversationEvent(initialConversationState, {
+      type: 'session.next.retried',
+      sessionId: 'ses_1',
+      attempt: 2,
+      error: {
+        message: 'Rate limit exceeded',
+        isRetryable: true,
+        statusCode: 429,
+      },
+      timestamp: 500,
+    });
+
+    expect(updated.retries.ses_1).toEqual({
+      attempt: 2,
+      message: 'Rate limit exceeded',
+      isRetryable: true,
+      statusCode: 429,
+      at: 500,
+    });
+  });
+
+  it('tracks provider backoff from the session.status retry variant', () => {
+    const updated = applyConversationEvent(initialConversationState, {
+      type: 'session.status',
+      sessionId: 'ses_1',
+      status: 'streaming',
+      retry: {
+        attempt: 3,
+        message: 'The usage limit has been reached',
+        next: 1_780_000_000_000,
+      },
+    });
+
+    expect(updated.status.ses_1).toBe('streaming');
+    expect(updated.retries.ses_1).toEqual({
+      attempt: 3,
+      message: 'The usage limit has been reached',
+      isRetryable: true,
+      at: 1_780_000_000_000,
+    });
+  });
+
+  it('clears the retry when the session resumes without a retry status', () => {
+    const retrying = applyConversationEvent(initialConversationState, {
+      type: 'session.status',
+      sessionId: 'ses_1',
+      status: 'streaming',
+      retry: { attempt: 1, message: 'overloaded', next: 500 },
+    });
+
+    const updated = applyConversationEvent(retrying, {
+      type: 'session.status',
+      sessionId: 'ses_1',
+      status: 'streaming',
+    });
+
+    expect(updated.retries.ses_1).toBeUndefined();
+  });
+
+  it('clears the retry when the session settles to idle', () => {
+    const retrying = applyConversationEvent(initialConversationState, {
+      type: 'session.next.retried',
+      sessionId: 'ses_1',
+      attempt: 1,
+      error: { message: 'overloaded', isRetryable: true },
+      timestamp: 500,
+    });
+
+    const updated = applyConversationEvent(retrying, {
+      type: 'session.status',
+      sessionId: 'ses_1',
+      status: 'idle',
+    });
+
+    expect(updated.retries.ses_1).toBeUndefined();
+  });
+
+  it('stores the error message from a session.status error event', () => {
+    const updated = applyConversationEvent(initialConversationState, {
+      type: 'session.status',
+      sessionId: 'ses_1',
+      status: 'error',
+      error: 'Provider exploded',
+    });
+
+    expect(updated.status.ses_1).toBe('error');
+    expect(updated.errors.ses_1).toBe('Provider exploded');
+  });
+
+  it('clears a stale session error when streaming resumes', () => {
+    const errored = applyConversationEvent(initialConversationState, {
+      type: 'session.status',
+      sessionId: 'ses_1',
+      status: 'error',
+      error: 'Provider exploded',
+    });
+
+    const updated = applyConversationEvent(errored, {
+      type: 'session.status',
+      sessionId: 'ses_1',
+      status: 'streaming',
+    });
+
+    expect(updated.errors.ses_1).toBeUndefined();
+  });
+
+  it('tracks SSE pump connectivity from connection.status', () => {
+    const reconnecting = applyConversationEvent(initialConversationState, {
+      type: 'connection.status',
+      status: 'reconnecting',
+      attempt: 3,
+    });
+
+    expect(reconnecting.connection).toEqual({
+      status: 'reconnecting',
+      attempt: 3,
+    });
+
+    const connected = applyConversationEvent(reconnecting, {
+      type: 'connection.status',
+      status: 'connected',
+      attempt: 0,
+    });
+
+    expect(connected.connection).toEqual({ status: 'connected', attempt: 0 });
+  });
+
   it('does not let stale session.next.tool.progress overwrite a completed tool', () => {
     const seeded = applyConversationEvent(initialConversationState, {
       type: 'message.part.updated',
@@ -210,6 +387,18 @@ describe('conversation-reducer', () => {
 });
 
 describe('conversation-store status snapshot', () => {
+  it('dismissSessionError removes only the targeted session error', () => {
+    _resetConversationStoreForTest();
+    conversationStore.setState((prev) => ({
+      ...prev,
+      errors: { ses_1: 'boom', ses_2: 'other' },
+    }));
+
+    dismissSessionError('ses_1');
+
+    expect(conversationStore.state.errors).toEqual({ ses_2: 'other' });
+  });
+
   it('removes stale busy statuses missing from the latest REST snapshot', () => {
     conversationStore.setState(initialConversationState);
     seedSessionStatus('ses_stale', 'streaming');

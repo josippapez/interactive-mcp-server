@@ -91,7 +91,7 @@ export const ToolCallsSection = memo(function ToolCallsSection({
   const toolGroups = useMemo(() => groupContextTools(toolCalls), [toolCalls]);
 
   return (
-    <div className="mt-1.5 space-y-0.5">
+    <div className="mt-1.5 min-w-0 w-full space-y-0.5 overflow-hidden">
       {toolGroups.map((group) => {
         if (group.type === 'context' && group.tools) {
           const isExcluded = toolAutoExpandExclusions.some(

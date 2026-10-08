@@ -1,7 +1,10 @@
 import { useCallback } from 'react';
 import type { Attachment, SessionNode } from '../../types';
 import { getActiveChannelIdSnapshot } from '../../store/channel-selection';
-import { resolvePromptTarget } from '../../store/message-dispatch';
+import {
+  resolvePromptTarget,
+  resolveTargetBySessionId,
+} from '../../store/message-dispatch';
 import { appendChannelMessage } from './channel-message-state';
 
 interface PromptHandlersOptions {
@@ -100,6 +103,67 @@ export function usePromptHandlers({
     [nodesRef, setNodes],
   );
 
+  const handleSubmitForSession = useCallback(
+    (sessionId: string, answer: string, attachments?: Attachment[]) => {
+      const target = resolveTargetBySessionId(nodesRef.current, sessionId);
+      const prompt = target?.node.prompt;
+      if (!target || !prompt) {
+        window.api.log?.(
+          'warn',
+          'prompt-handlers',
+          'handleSubmitForSession could not resolve prompt target',
+          sessionId,
+        );
+        return;
+      }
+
+      const { node: currentNode, nodeKey } = target;
+      setNodes((prev) => {
+        const node = prev.get(nodeKey);
+        if (!node) return prev;
+        const promptMessage = node.prompt?.message;
+        const channelMessages = promptMessage
+          ? ensureQuestionMessage(node, promptMessage)
+          : node.channelMessages;
+        const next = new Map(prev);
+        next.set(nodeKey, {
+          ...node,
+          channelMessages: appendChannelMessage(channelMessages, {
+            id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            kind: 'answer' as const,
+            text: answer,
+            timestamp: new Date(),
+            attachments,
+          }),
+          prompt: null,
+          hasPendingPrompt: false,
+        });
+        return next;
+      });
+
+      const { connectionId, docContextEnabled, baseDirectory } = currentNode;
+      if (
+        target.providerSessionId &&
+        connectionId &&
+        docContextEnabled !== false
+      ) {
+        void window.api.injectDocContext?.(
+          connectionId,
+          target.providerSessionId,
+          answer,
+          baseDirectory ?? undefined,
+        );
+      }
+
+      window.api.sendPromptResponse({
+        id: prompt.id,
+        answer,
+        attachments: attachments?.length ? attachments : undefined,
+      });
+    },
+    [nodesRef, setNodes],
+  );
+
   const handleSelectOption = useCallback(
     (option: string) => {
       // Use central dispatch system to resolve the correct target.
@@ -163,8 +227,69 @@ export function usePromptHandlers({
     [nodesRef, setNodes],
   );
 
+  const handleSelectOptionForSession = useCallback(
+    (sessionId: string, option: string) => {
+      const target = resolveTargetBySessionId(nodesRef.current, sessionId);
+      const prompt = target?.node.prompt;
+      if (!target || !prompt) {
+        window.api.log?.(
+          'warn',
+          'prompt-handlers',
+          'handleSelectOptionForSession could not resolve prompt target',
+          sessionId,
+        );
+        return;
+      }
+
+      const { node: currentNode, nodeKey } = target;
+      setNodes((prev) => {
+        const node = prev.get(nodeKey);
+        if (!node) return prev;
+        const promptMessage = node.prompt?.message;
+        const channelMessages = promptMessage
+          ? ensureQuestionMessage(node, promptMessage)
+          : node.channelMessages;
+        const next = new Map(prev);
+        next.set(nodeKey, {
+          ...node,
+          channelMessages: appendChannelMessage(channelMessages, {
+            id: `local-answer-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+            kind: 'answer' as const,
+            text: option,
+            timestamp: new Date(),
+          }),
+          prompt: null,
+          hasPendingPrompt: false,
+        });
+        return next;
+      });
+
+      const { connectionId, docContextEnabled, baseDirectory } = currentNode;
+      if (
+        target.providerSessionId &&
+        connectionId &&
+        docContextEnabled !== false
+      ) {
+        void window.api.injectDocContext?.(
+          connectionId,
+          target.providerSessionId,
+          option,
+          baseDirectory ?? undefined,
+        );
+      }
+
+      window.api.sendPromptResponse({
+        id: prompt.id,
+        answer: option,
+      });
+    },
+    [nodesRef, setNodes],
+  );
+
   return {
     handleSubmit,
+    handleSubmitForSession,
     handleSelectOption,
+    handleSelectOptionForSession,
   };
 }

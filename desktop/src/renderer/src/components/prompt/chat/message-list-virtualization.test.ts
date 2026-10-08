@@ -1,23 +1,80 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  VIRTUAL_MESSAGE_THRESHOLD,
+  buildTimelineRows,
   getVirtualizedMessageIndex,
   registerVirtualMessageRow,
   shouldVirtualizeMessageList,
 } from './message-list-virtualization';
 
 describe('shouldVirtualizeMessageList', () => {
-  it('keeps the plain list path at and below the threshold', () => {
-    expect(shouldVirtualizeMessageList(VIRTUAL_MESSAGE_THRESHOLD - 1)).toBe(
-      false,
-    );
-    expect(shouldVirtualizeMessageList(VIRTUAL_MESSAGE_THRESHOLD)).toBe(false);
+  it('uses virtualization consistently like the OpenCode timeline', () => {
+    expect(shouldVirtualizeMessageList(0)).toBe(true);
+    expect(shouldVirtualizeMessageList(1)).toBe(true);
+  });
+});
+
+describe('buildTimelineRows', () => {
+  it('splits assistant reasoning, text, and tools into timeline rows', () => {
+    const rows = buildTimelineRows([
+      {
+        id: 'assistant_1',
+        source: 'conversation',
+        role: 'assistant',
+        text: 'Done',
+        reasoning: 'Planning',
+        timestamp: 1,
+        toolCalls: [
+          { id: 'tool_1', name: 'read', status: 'completed' },
+          { id: 'tool_2', name: 'grep', status: 'completed' },
+          { id: 'tool_3', name: 'bash', status: 'completed' },
+        ],
+      },
+    ]);
+
+    expect(rows.map((row) => row.type)).toEqual([
+      'assistant-reasoning',
+      'assistant-text',
+      'assistant-tools',
+      'assistant-tools',
+    ]);
+    expect(rows.map((row) => row.key)).toEqual([
+      'assistant-reasoning:assistant_1',
+      'assistant-text:assistant_1',
+      'assistant-tools:assistant_1:context:tool_1',
+      'assistant-tools:assistant_1:tool:tool_3',
+    ]);
   });
 
-  it('uses virtualization after the threshold', () => {
-    expect(shouldVirtualizeMessageList(VIRTUAL_MESSAGE_THRESHOLD + 1)).toBe(
-      true,
-    );
+  it('adds an active thinking row when the assistant is busy without visible content', () => {
+    const rows = buildTimelineRows([
+      {
+        id: 'assistant_1',
+        source: 'conversation',
+        role: 'assistant',
+        text: '',
+        timestamp: 1,
+        isActivePrompt: true,
+      },
+    ]);
+
+    expect(rows.map((row) => row.type)).toEqual(['assistant-thinking']);
+    expect(rows[0]?.messageId).toBe('assistant_1');
+  });
+
+  it('keeps user messages as a single user row', () => {
+    const rows = buildTimelineRows([
+      {
+        id: 'user_1',
+        source: 'conversation',
+        role: 'user',
+        text: 'Hello',
+        timestamp: 1,
+      },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.type).toBe('message');
+    expect(rows[0]?.messageId).toBe('user_1');
   });
 });
 

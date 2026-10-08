@@ -21,8 +21,10 @@ import { rejectPendingQuestionsForSession } from '../../utility/opencode-client'
 import {
   fetchSessionTree,
   getSelectedFolder,
+  archiveOpenCodeSession,
   invalidateSessionTree,
   loadMoreSessionTreeForDirectory,
+  setShowArchivedSessionTree,
   setSelectedFolder,
 } from '../../utility/session-client';
 import { reconcileSessionConnections } from '../../utility/session-client';
@@ -55,6 +57,20 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
     'load-more-session-tree',
     async (_event, baseDirectory: string) => {
       return loadMoreSessionTreeForDirectory(baseDirectory);
+    },
+  );
+
+  ipcMain.handle(
+    'set-show-archived-session-tree',
+    async (_event, showArchived: boolean) => {
+      return setShowArchivedSessionTree(showArchived);
+    },
+  );
+
+  ipcMain.handle(
+    'archive-opencode-session',
+    async (_event, sessionId: string, archived: boolean) => {
+      return archiveOpenCodeSession(sessionId, archived);
     },
   );
 
@@ -96,9 +112,8 @@ export function registerSessionTreeHandlers(deps: IpcHandlerDeps): void {
     invalidateSessionTree();
   });
 
-  // Set the currently selected project folder for sidebar session scoping.
-  // When `baseDirectory` is null, the sidebar renders its empty state until
-  // the user picks a folder.
+  // Set the currently selected project folder for sidebar display and scoped
+  // reconciliation. Pinned projects, not this selection, drive tree fetching.
   ipcMain.handle(
     'set-selected-folder',
     async (_event, baseDirectory: string | null): Promise<void> => {

@@ -210,8 +210,12 @@ export function bridgeEvent(
 
     case 'session.status': {
       // SDK `SessionStatus` is a discriminated union `{type: 'idle' | 'retry' | 'busy'}`.
-      // Map to our coarse streaming/idle/error triplet.
-      const kind = payload.properties.status?.type;
+      // Map to our coarse streaming/idle/error triplet. The `retry` variant
+      // (provider backoff, e.g. 429 usage-limit errors) additionally carries
+      // attempt/message/next — forward those so the renderer can show a
+      // rate-limit/retry banner instead of a silent "busy" state.
+      const sessionStatus = payload.properties.status;
+      const kind = sessionStatus?.type;
       let status: 'idle' | 'streaming' | 'error';
       if (kind === 'busy' || kind === 'retry') {
         status = 'streaming';
@@ -223,6 +227,18 @@ export function bridgeEvent(
           type: 'session.status',
           sessionId: payload.properties.sessionID,
           status,
+          ...(sessionStatus?.type === 'retry'
+            ? {
+                retry: {
+                  attempt: sessionStatus.attempt,
+                  message: sessionStatus.message,
+                  next: sessionStatus.next,
+                  ...(sessionStatus.action
+                    ? { action: sessionStatus.action }
+                    : {}),
+                },
+              }
+            : {}),
         },
       ];
     }
@@ -371,10 +387,7 @@ export function bridgeEvent(
             id: `todo-${i}`,
             content: t.content,
             status: t.status as
-              | 'pending'
-              | 'in_progress'
-              | 'completed'
-              | 'cancelled',
+              'pending' | 'in_progress' | 'completed' | 'cancelled',
             priority: t.priority as 'high' | 'medium' | 'low',
           })),
         },

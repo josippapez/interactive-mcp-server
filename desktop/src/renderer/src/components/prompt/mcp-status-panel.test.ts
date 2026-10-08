@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   getVisibleMcpTools,
+  shouldCloseMcpDropdownOnKey,
   shouldRenderMcpStatusPanel,
 } from './McpStatusPanel';
 
@@ -15,5 +16,10 @@ describe('McpStatusPanel helpers', () => {
     }));
 
     expect(getVisibleMcpTools(tools)).toHaveLength(12);
+  });
+
+  it('closes the compact MCP dropdown on Escape only', () => {
+    expect(shouldCloseMcpDropdownOnKey('Escape')).toBe(true);
+    expect(shouldCloseMcpDropdownOnKey('Enter')).toBe(false);
   });
 });

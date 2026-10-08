@@ -254,6 +254,7 @@ export function resetConversationSeedCache(): void {
       Object.keys(prev.status).length === 0 &&
       Object.keys(prev.todos).length === 0 &&
       Object.keys(prev.contextUsage).length === 0 &&
+      Object.keys(prev.reviewDiffs).length === 0 &&
       prev.vcsBranch === null &&
       prev.lastFileEdit === null
     ) {
@@ -265,6 +266,7 @@ export function resetConversationSeedCache(): void {
       status: {},
       todos: {},
       contextUsage: {},
+      reviewDiffs: {},
       sessionSideChannels: {},
       vcsBranch: null,
       lastFileEdit: null,

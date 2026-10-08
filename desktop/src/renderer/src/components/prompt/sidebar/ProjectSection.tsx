@@ -4,7 +4,10 @@ import {
   SidebarMenuButton,
   SidebarMenuSub,
 } from '@/components/ui/sidebar';
-import type { Project } from '../../../hooks/session-tree-merge';
+import {
+  getSessionChildSummary,
+  type Project,
+} from '../../../hooks/session-tree-merge';
 import type { SessionStatusType } from '../../../hooks/useSessionStatus';
 import { ChannelItem } from './ChannelItem';
 
@@ -15,13 +18,19 @@ type ProjectSectionProps = {
   onRemove?: () => void;
   onPin?: () => void;
   activeConnectionId: string | null;
-  onSelect: (id: string) => void;
+  onSelect: (id: string, event: React.MouseEvent<HTMLButtonElement>) => void;
   getStatus: (sessionId: string) => SessionStatusType | null;
   onCreateSession?: (baseDirectory: string) => void;
   onLoadMoreSessions?: (baseDirectory: string) => void;
+  loadingMoreSessions?: boolean;
+  onArchiveSession?: (sessionId: string, archived: boolean) => void;
+  selectedSessionIds: Set<string>;
+  showArchived: boolean;
   collapsedSessions: Set<string>;
   onToggleSession: (sessionId: string) => void;
 };
+
+const OPEN_CODE_LOAD_MORE_STEP = 5;
 
 /**
  * Collapsible project section showing all sessions for a project directory.
@@ -37,10 +46,18 @@ export const ProjectSection = memo(function ProjectSection({
   getStatus,
   onCreateSession,
   onLoadMoreSessions,
+  loadingMoreSessions = false,
+  onArchiveSession,
+  selectedSessionIds,
+  showArchived,
   collapsedSessions,
   onToggleSession,
 }: ProjectSectionProps): React.ReactElement {
   const sessionCount = project.sessions.length;
+  const nextSessionLimit =
+    project.sessionLimit === undefined
+      ? undefined
+      : project.sessionLimit + OPEN_CODE_LOAD_MORE_STEP;
   const hasActive = project.sessions.some((s) => s.id === activeConnectionId);
 
   return (
@@ -216,16 +233,29 @@ export const ProjectSection = memo(function ProjectSection({
               const hasChildren = project.sessions.some(
                 (s) => s.openCodeParentId === node.providerSessionId,
               );
+              const childSummary = node.providerSessionId
+                ? getSessionChildSummary(
+                    project.sessions,
+                    node.providerSessionId,
+                  )
+                : { total: 0, active: 0 };
 
               return (
                 <ChannelItem
                   key={node.id}
                   node={node}
                   isActive={node.id === activeConnectionId}
+                  isSelected={
+                    node.providerSessionId
+                      ? selectedSessionIds.has(node.providerSessionId)
+                      : false
+                  }
+                  selectedCount={selectedSessionIds.size}
                   onSelect={onSelect}
                   sessionStatus={getStatus(node.providerSessionId ?? '')}
                   showStartTime={!node.openCodeParentId}
                   hasChildren={hasChildren}
+                  childSummary={childSummary}
                   isSessionCollapsed={collapsedSessions.has(
                     node.providerSessionId ?? '',
                   )}
@@ -233,6 +263,18 @@ export const ProjectSection = memo(function ProjectSection({
                     hasChildren
                       ? () => onToggleSession(node.providerSessionId ?? '')
                       : undefined
+                  }
+                  onArchive={
+                    node.providerSessionId && onArchiveSession
+                      ? () =>
+                          onArchiveSession(
+                            node.providerSessionId ?? '',
+                            !showArchived,
+                          )
+                      : undefined
+                  }
+                  archiveLabel={
+                    showArchived ? 'Unarchive session' : 'Archive session'
                   }
                 />
               );
@@ -261,13 +303,24 @@ export const ProjectSection = memo(function ProjectSection({
             </button>
           )}
           {project.hasMoreSessions && onLoadMoreSessions && (
-            <button
-              type="button"
-              onClick={() => onLoadMoreSessions(project.path)}
-              className="flex w-full items-center rounded-lg px-2.5 py-1.5 text-xs text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-agent)]"
-            >
-              Load more
-            </button>
+            <div className="relative w-full py-1">
+              <button
+                type="button"
+                onClick={(event) => {
+                  onLoadMoreSessions(project.path);
+                  event.currentTarget.blur();
+                }}
+                disabled={loadingMoreSessions}
+                className="flex h-8 w-full items-center justify-start rounded-md px-2 text-left text-xs text-[var(--color-text-faint)] transition-colors hover:bg-[var(--color-border)] hover:text-[var(--color-text-muted)] disabled:pointer-events-none disabled:opacity-60"
+                title={
+                  nextSessionLimit === undefined
+                    ? 'Load more sessions'
+                    : `Load ${nextSessionLimit} recent sessions`
+                }
+              >
+                {loadingMoreSessions ? 'Loading...' : 'Load more'}
+              </button>
+            </div>
           )}
         </SidebarMenuSub>
       )}

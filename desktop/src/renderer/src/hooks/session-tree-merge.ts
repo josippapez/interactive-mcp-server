@@ -20,6 +20,7 @@ export interface SnapshotNode {
   directory: string;
   createdAt?: number;
   updatedAt?: number;
+  archivedAt?: number | null;
   depth: number;
   connectionId: string | null;
   channelName: string | null;
@@ -87,6 +88,7 @@ function mergeSnapshotNode(
     title: resolvedLabel,
     directory: snap.directory,
     createdAt: snap.createdAt ?? mergeSource?.createdAt,
+    archivedAt: snap.archivedAt ?? null,
     depth: snap.depth,
     connectionId: snap.connectionId,
     hasMcpChannel: snap.hasMcpChannel,
@@ -141,10 +143,6 @@ export function mergeSessionTreeSnapshot(
   snapshotNodes: SnapshotNode[],
 ): Map<string, SessionNode> {
   const next = new Map<string, SessionNode>();
-  const snapshotSessionIds = new Set(
-    snapshotNodes.map((snap) => snap.providerSessionId),
-  );
-
   // Build a set of connectionIds claimed by the snapshot so we can detect
   // direct-connection nodes that should be absorbed.
   const snapshotConnectionIds = new Set<string>();
@@ -183,6 +181,51 @@ export function mergeSessionTreeSnapshot(
   }
 
   return next;
+}
+
+export function applyOptimisticArchiveState(
+  prev: Map<string, SessionNode>,
+  providerSessionId: string,
+  archived: boolean,
+  showArchived: boolean,
+): Map<string, SessionNode> {
+  const affected = new Set<string>([providerSessionId]);
+  let changed = true;
+
+  while (changed) {
+    changed = false;
+    for (const node of prev.values()) {
+      if (
+        node.providerSessionId &&
+        node.openCodeParentId &&
+        affected.has(node.openCodeParentId) &&
+        !affected.has(node.providerSessionId)
+      ) {
+        affected.add(node.providerSessionId);
+        changed = true;
+      }
+    }
+  }
+
+  if (archived !== showArchived) {
+    let removed = false;
+    const next = new Map(prev);
+    for (const id of affected) {
+      removed = next.delete(id) || removed;
+    }
+    return removed ? next : prev;
+  }
+
+  const archivedAt = archived ? Date.now() : null;
+  let next: Map<string, SessionNode> | null = null;
+  for (const id of affected) {
+    const node = prev.get(id);
+    if (!node || node.archivedAt === archivedAt) continue;
+    next ??= new Map(prev);
+    next.set(id, { ...node, archivedAt });
+  }
+
+  return next ?? prev;
 }
 
 /**
@@ -257,6 +300,33 @@ function buildSubtreeStats(
 
   for (const node of nodes) visit(node);
   return statsById;
+}
+
+export function getSessionChildSummary(
+  sessions: SessionNode[],
+  parentSessionId: string,
+): { total: number; active: number } {
+  const childrenByParent = buildChildrenByParent(sessions);
+  let total = 0;
+  let active = 0;
+  const stack = [...(childrenByParent.get(parentSessionId) ?? [])];
+
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) continue;
+    total += 1;
+    if (
+      node.hasPendingPrompt ||
+      node.unreadCount > 0 ||
+      node.sessionStatuses.some((status) => status.type === 'working')
+    ) {
+      active += 1;
+    }
+
+    stack.push(...(childrenByParent.get(node.providerSessionId) ?? []));
+  }
+
+  return { total, active };
 }
 
 /**
@@ -363,6 +433,8 @@ export type Project = {
   isPinned: boolean;
   /** Whether more root sessions are available for this project. */
   hasMoreSessions?: boolean;
+  /** Current root-session page size for this project. */
+  sessionLimit?: number;
 };
 
 /**
@@ -392,7 +464,10 @@ function getProjectName(projectPath: string): string {
 export function groupByProject(
   nodes: Map<string, SessionNode>,
   pinnedPaths: string[] = [],
-  projectPages: Map<string, { hasMore: boolean }> = new Map(),
+  projectPages: Map<
+    string,
+    { limit: number; hasMore: boolean; archived?: boolean }
+  > = new Map(),
 ): Project[] {
   const all = Array.from(nodes.values());
   const ocNodes = all.filter((n) => !n.isDirectConnection);
@@ -443,6 +518,7 @@ export function groupByProject(
         latestSessionCreatedAt: 0,
         isPinned,
         hasMoreSessions: projectPages.get(path)?.hasMore ?? false,
+        sessionLimit: projectPages.get(path)?.limit,
       });
       continue;
     }
@@ -503,6 +579,7 @@ export function groupByProject(
       latestSessionCreatedAt,
       isPinned,
       hasMoreSessions: projectPages.get(path)?.hasMore ?? false,
+      sessionLimit: projectPages.get(path)?.limit,
     });
   }
 

@@ -23,6 +23,12 @@ export type IpcListenerOpts = {
     nodes: Map<string, SessionNode>;
     limit: number;
     hasMore: boolean;
+    projectPages?: Array<{
+      path: string;
+      limit: number;
+      hasMore: boolean;
+      archived?: boolean;
+    }>;
   }) => void;
   /**
    * Select a channel using the global Jotai store.

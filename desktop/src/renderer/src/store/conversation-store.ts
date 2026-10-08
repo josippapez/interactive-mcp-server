@@ -201,8 +201,14 @@ export function clearSession(sessionId: string): void {
     delete nextTodos[sessionId];
     const nextContextUsage = { ...prev.contextUsage };
     delete nextContextUsage[sessionId];
+    const nextReviewDiffs = { ...prev.reviewDiffs };
+    delete nextReviewDiffs[sessionId];
     const nextSessionSideChannels = { ...prev.sessionSideChannels };
     delete nextSessionSideChannels[sessionId];
+    const nextErrors = { ...prev.errors };
+    delete nextErrors[sessionId];
+    const nextRetries = { ...prev.retries };
+    delete nextRetries[sessionId];
     const retainedIndex = retainedSessionOrder.indexOf(sessionId);
     if (retainedIndex !== -1) retainedSessionOrder.splice(retainedIndex, 1);
     return {
@@ -212,8 +218,24 @@ export function clearSession(sessionId: string): void {
       status: nextStatus,
       todos: nextTodos,
       contextUsage: nextContextUsage,
+      reviewDiffs: nextReviewDiffs,
       sessionSideChannels: nextSessionSideChannels,
+      errors: nextErrors,
+      retries: nextRetries,
     };
+  });
+}
+
+/**
+ * Dismiss the provider-error banner for a session. The error stays in
+ * the store until the user dismisses it or the session resumes streaming.
+ */
+export function dismissSessionError(sessionId: string): void {
+  conversationStore.setState((prev) => {
+    if (!(sessionId in prev.errors)) return prev;
+    const nextErrors = { ...prev.errors };
+    delete nextErrors[sessionId];
+    return { ...prev, errors: nextErrors };
   });
 }
 

@@ -31,9 +31,9 @@ function createNode(overrides: Partial<SessionNode> = {}): SessionNode {
 }
 
 describe('filterVisibleSessionIds', () => {
-  it('hides inactive sessions without unread or pending work', () => {
+  it('keeps inactive sessions visible when they are not archived out by the backend', () => {
     const idleNode = createNode();
-    expect(filterVisibleSessionIds([idleNode], null)).toEqual([]);
+    expect(filterVisibleSessionIds([idleNode], null)).toEqual(['session-1']);
   });
 
   it('keeps sessions with local working status visible', () => {
@@ -66,7 +66,7 @@ describe('filterVisibleSessionIds', () => {
     ).toEqual(['ses_parent', 'ses_child']);
   });
 
-  it('treats explicit idle provider status as authoritative over stale local working status', () => {
+  it('keeps explicitly idle sessions visible', () => {
     const staleWorkingNode = createNode({
       sessionStatuses: [
         { status: 'Busy', type: 'working', timestamp: new Date() },
@@ -75,7 +75,7 @@ describe('filterVisibleSessionIds', () => {
 
     expect(
       filterVisibleSessionIds([staleWorkingNode], null, () => 'idle'),
-    ).toEqual([]);
+    ).toEqual(['session-1']);
   });
 
   it('keeps pending questions visible even when provider status is idle', () => {

@@ -16,7 +16,12 @@ function normalizeSessionTreePayload(
   nodes: SnapshotNodes;
   limit: number;
   hasMore: boolean;
-  projectPages?: Array<{ path: string; limit: number; hasMore: boolean }>;
+  projectPages?: Array<{
+    path: string;
+    limit: number;
+    hasMore: boolean;
+    archived?: boolean;
+  }>;
 } {
   if (Array.isArray(payload)) {
     return { nodes: payload, limit: payload.length, hasMore: false };
@@ -64,7 +69,12 @@ export function useSessionTreeHandler({
     nodes: SnapshotNodes;
     limit: number;
     hasMore: boolean;
-    projectPages?: Array<{ path: string; limit: number; hasMore: boolean }>;
+    projectPages?: Array<{
+      path: string;
+      limit: number;
+      hasMore: boolean;
+      archived?: boolean;
+    }>;
   }): void => {
     const snapshotNodes = payload.nodes;
     // Track candidate for auto-selection before updating state

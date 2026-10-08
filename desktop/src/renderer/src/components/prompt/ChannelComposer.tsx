@@ -11,6 +11,7 @@ import { useAttachments } from '../../hooks/useAttachments';
 import { ComposerBottomBar } from './composer/ComposerBottomBar';
 import { ImageLightbox } from './composer/ImageLightbox';
 import { resolveCurrentModel } from './model-resolution';
+import type { McpStatusPanelProps } from './McpStatusPanel';
 import {
   sessionAgentsAtom,
   setSessionAgentAtom,
@@ -68,6 +69,7 @@ type Props = {
   docContextEnabled?: boolean;
   /** Callback to toggle doc context */
   onToggleDocContext?: () => void;
+  mcpStatus?: McpStatusPanelProps;
 };
 
 function ChannelComposer({
@@ -92,6 +94,7 @@ function ChannelComposer({
   connectionId,
   docContextEnabled = false,
   onToggleDocContext,
+  mcpStatus,
 }: Props): React.ReactElement {
   const draftKey = useMemo(
     () =>
@@ -372,13 +375,13 @@ function ChannelComposer({
 
   return (
     <>
-      <div className="p-3" data-composer>
+      <div className="min-w-0 p-3" data-composer>
         {/* Main composer container — rounded-rectangle surface via global
             `.composer-surface` utility (radius / border / background /
             focus ring all owned by the global utility in main.css). */}
         <div
           ref={containerRef}
-          className={`composer-surface relative flex flex-col transition-all duration-150 ${
+          className={`composer-surface relative flex min-w-0 flex-col transition-all duration-150 ${
             !enabled ? 'opacity-60' : ''
           }`}
         >
@@ -479,7 +482,7 @@ function ChannelComposer({
               }
             }}
             placeholder={placeholder}
-            className="w-full bg-transparent px-5 pt-4 pb-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none resize-none overflow-y-auto"
+            className="min-w-0 w-full resize-none overflow-y-auto bg-transparent px-4 pt-4 pb-2 text-sm text-[var(--color-text)] placeholder-[var(--color-text-faint)] focus:outline-none"
             rows={1}
             style={{ height: '24px', maxHeight: '300px' }}
           />
@@ -511,6 +514,7 @@ function ChannelComposer({
             onToggleDocContext={onToggleDocContext}
             baseDirectory={baseDirectory}
             providerSessionId={providerSessionId}
+            mcpStatus={mcpStatus}
             onFilePicker={handleFilePicker}
             showReplyButton={showReplyButton}
             noReply={noReply}

@@ -183,6 +183,14 @@ function ModelPopover({
                             )}
                           </span>
                           <span className="flex items-center gap-1.5">
+                            {model.isFree && (
+                              <span
+                                className="text-[9px] font-medium text-emerald-500 whitespace-nowrap"
+                                title="No token cost"
+                              >
+                                Free
+                              </span>
+                            )}
                             {model.contextWindow && (
                               <span className="text-[9px] text-[var(--color-text-faint)] whitespace-nowrap">
                                 {Math.round(model.contextWindow / 1000)}K
