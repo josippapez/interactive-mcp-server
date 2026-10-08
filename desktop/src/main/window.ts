@@ -1,6 +1,7 @@
 import { BrowserWindow, shell, nativeImage } from 'electron';
 import { join } from 'path';
 import { is } from '@electron-toolkit/utils';
+import { isSafeExternalUrl } from './external-url';
 
 export interface CreateWindowOptions {
   startHidden?: boolean;
@@ -50,7 +51,7 @@ export function createWindow(
   });
 
   window.webContents.setWindowOpenHandler((details) => {
-    shell.openExternal(details.url);
+    if (isSafeExternalUrl(details.url)) shell.openExternal(details.url);
     return { action: 'deny' };
   });
 
@@ -74,7 +75,7 @@ export function createWindow(
     }
 
     event.preventDefault();
-    shell.openExternal(url);
+    if (isSafeExternalUrl(url)) shell.openExternal(url);
   });
 
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
